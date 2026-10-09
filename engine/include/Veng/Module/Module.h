@@ -400,10 +400,14 @@ extern "C"
 /// Version 93 gives a trail its emitter's shape: Trail grows CrossSection, TrailSample grows the
 /// emitter's AxisX and AxisY, and AdvanceTrail gains an overload taking the head's world transform.
 /// A module spawns and writes trails, so a stale module lays both out short.
+/// Version 94 lets a trail be a swept tube that is fired out of its emitter: Trail grows Shape,
+/// Outline, Softness, EmitVelocity, InheritVelocity, Drag and its runtime head, TrailSample grows
+/// Velocity, and RestartTrail is new. A module spawns and writes trails, so a stale module lays both
+/// out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 93u
+#define VENG_MODULE_ABI_VERSION 94u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

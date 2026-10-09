@@ -9,9 +9,15 @@ namespace Veng
     class Scene;
     struct Trail;
 
-    /// @brief Advances one trail by a frame: ages its samples, drops the expired, records the head.
+    /// @brief Advances one trail by a frame: moves and ages its samples, drops the expired, records
+    ///        the head.
     ///
-    /// Every sample ages by @p delta and those at or past the trail's Lifetime are dropped. While
+    /// Every sample moves by its velocity over @p delta as that velocity decays by the trail's Drag,
+    /// exactly rather than in steps, so its path does not depend on the frame rate; then it ages
+    /// by @p delta and those at or past the trail's Lifetime are dropped. A new sample leaves with
+    /// the trail's EmitVelocity carried into world space by the head's rotation (not its scale),
+    /// plus InheritVelocity of the emitter's velocity — the head's travel since the last advance
+    /// over @p delta, zero on the first advance after a restart. While
     /// the trail is Emitting, @p head is recorded as a new sample when the trail holds none or when
     /// it lies further than MinSampleDistance from the newest; then the oldest are dropped until at
     /// most MaxSamples remain. A trail whose head stops moving therefore empties to its one newest
@@ -46,6 +52,14 @@ namespace Veng
     [[nodiscard]] VE_API f32 TrailCrossSectionWidth(const vec3& semiX, const vec3& semiY,
                                                     const vec3& tangent, const vec3& eyeToPoint);
 
+    /// @brief Empties a trail and forgets where its head stood, so it starts afresh at the next
+    ///        advance.
+    ///
+    /// What a teleported or re-stood emitter needs: its old samples would join it across the jump,
+    /// and the jump would read as one frame's enormous velocity for its first new sample.
+    /// @param trail  The trail to restart.
+    VE_API void RestartTrail(Trail& trail);
+
     /// @brief Gives @p entity a trail that starts fresh at its current position.
     ///
     /// Adds @p trail to the entity, or replaces the trail it carries, with any recorded samples
@@ -65,6 +79,7 @@ namespace Veng
     /// follows by itself: left alone, a trail streams off along its viewer's own motion. Call it
     /// with the displacement each time the origin moves, before RibbonSystem records the frame's
     /// heads. An entity's Transform is not touched; re-basing it is the owner's, as it always is.
+    /// The head position a trail remembers for its emitter's velocity moves with its samples.
     /// @param scene   The scene whose ribbons and trails are re-based.
     /// @param offset  The displacement every world position moved by.
     VE_API void OffsetRibbons(Scene& scene, const vec3& offset);

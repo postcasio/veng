@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
+#include <optional>
+#include <span>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/matrix.hpp>
 
 #include <Veng/Assert.h>
@@ -40,9 +44,21 @@ namespace Veng::Renderer
         constexpr AssetId RibbonPostResolveVertId{0x3E89E5673CF50020ULL};
         constexpr AssetId RibbonPostResolveFragId{0x4D7810339113239AULL};
         constexpr AssetId RibbonPostResolveMaskedFragId{0xF6C14E1276C14FEDULL};
+        // The tube shaders: a segment swept between two rings of its outline, glowing by how
+        // squarely it faces the eye. Scene placement only.
+        constexpr AssetId RibbonTubeVertId{0xA7CAC74C1DC3143DULL};
+        constexpr AssetId RibbonTubeFragId{0xBD4211ED1668BCB8ULL};
+        constexpr AssetId RibbonTubeMaskedFragId{0x759BE1D5728983B8ULL};
 
         // Six vertices (two triangles) per record quad.
         constexpr u32 RibbonVertexCount = 6;
+
+        // A tube segment draws a quad per outline side, at the most sides an outline has; the
+        // vertex stage collapses the quads past its own outline's count.
+        constexpr u32 TubeVertexCount = MaxTrailOutlinePoints * RibbonVertexCount;
+
+        // The size of a ring region a pass holds but never fills.
+        constexpr u64 TokenRegionBytes = 256;
 
         // Two strip points closer than this, in world units, are one point: a zero-length segment
         // has no direction to face the camera about.
@@ -99,6 +115,7 @@ namespace Veng::Renderer
             RibbonDrawPlan& Plan;
             vector<std::pair<f32, GpuRibbonSegment>> Sorted;
             vector<std::pair<f32, GpuRibbonSegment>> SortedUnoccluded;
+            vector<std::pair<f32, GpuTrailTube>> SortedTubes;
         };
 
         // Packs records into the plans, rebased to the eye, against the per-frame budget the two
@@ -144,6 +161,52 @@ namespace Veng::Renderer
                         .EndTangent = vec4(0.0f),
                     },
                     additive);
+            }
+
+            // Adds a tube trail's outline to the scene plan's table; nullopt when it would not fit.
+            optional<uvec2> AddOutline(const std::span<const vec2> outline)
+            {
+                vector<vec2>& table = Scene.Plan.Outlines;
+                if (table.size() + outline.size() > MaxTrailOutlinePointsPerFrame)
+                {
+                    return std::nullopt;
+                }
+                const auto first = static_cast<u32>(table.size());
+                table.insert(table.end(), outline.begin(), outline.end());
+                return uvec2(first, static_cast<u32>(outline.size()));
+            }
+
+            // A tube segment between two trail points, whose SemiX and SemiY are the axes their
+            // outline points run along.
+            void AddTube(const StripPoint& start, const StripPoint& end, const uvec2 outline,
+                         const f32 softness, const bool additive)
+            {
+                if (Gathered >= MaxRibbonSegmentsPerFrame)
+                {
+                    ++Scene.Plan.Dropped;
+                    return;
+                }
+                ++Gathered;
+                const vec3 startAt(start.Position - Eye);
+                const vec3 endAt(end.Position - Eye);
+                const GpuTrailTube record{
+                    .Start = vec4(startAt, 0.0f),
+                    .End = vec4(endAt, 0.0f),
+                    .StartColor = start.Color,
+                    .EndColor = end.Color,
+                    .StartAxisX = vec4(start.SemiX, softness),
+                    .StartAxisY = vec4(start.SemiY, 0.0f),
+                    .EndAxisX = vec4(end.SemiX, 0.0f),
+                    .EndAxisY = vec4(end.SemiY, 0.0f),
+                    .Outline = uvec4(outline.x, outline.y, 0u, 0u),
+                };
+                if (additive)
+                {
+                    Scene.Plan.AdditiveTubes.push_back(record);
+                    return;
+                }
+                const f32 viewZ = (Rotation * ((startAt + endAt) * 0.5f)).z;
+                Scene.SortedTubes.emplace_back(viewZ, record);
             }
 
             void Push(const GpuRibbonSegment& record, const bool additive)
@@ -224,18 +287,43 @@ namespace Veng::Renderer
             }
         }
 
+        // A tube trail's outline: its own, or the ellipse its CrossSection spans, or a circle Width
+        // across. Fewer than three points enclose nothing.
+        void ResolveTrailOutline(const Trail& trail, vector<vec2>& outline)
+        {
+            outline.clear();
+            if (!trail.Outline.empty())
+            {
+                const usize count = std::min<usize>(trail.Outline.size(), MaxTrailOutlinePoints);
+                outline.assign(trail.Outline.begin(),
+                               trail.Outline.begin() + static_cast<std::ptrdiff_t>(count));
+                return;
+            }
+            const vec2 radii =
+                trail.CrossSection == vec2(0.0f) ? vec2(0.5f) : trail.CrossSection * 0.5f;
+            for (u32 i = 0; i < MaxTrailOutlinePoints; ++i)
+            {
+                const f32 angle = 2.0f * glm::pi<f32>() * static_cast<f32>(i) /
+                                  static_cast<f32>(MaxTrailOutlinePoints);
+                outline.emplace_back(radii.x * std::cos(angle), radii.y * std::sin(angle));
+            }
+        }
+
         void GatherTrail(const Trail& trail, const optional<mat4>& head, SegmentSink& sink,
-                         vector<StripPoint>& points)
+                         vector<StripPoint>& points, vector<vec2>& outline)
         {
             if (trail.Lifetime <= 0.0f)
             {
                 return;
             }
+            const bool tube = trail.Shape == TrailShape::Tube;
 
             // The point at an age: full at the head, fading and tapering to the tail; a
-            // cross-section tapers with the width, about the axes the sample was recorded with.
-            const auto pointAt =
-                [&trail](const vec3& position, const vec3& axisX, const vec3& axisY, const f32 age)
+            // cross-section tapers with the width, about the axes the sample was recorded with. A
+            // tube's axes are what its outline's points scale, so they carry the width alone.
+            const vec2 across = tube ? vec2(1.0f) : trail.CrossSection * 0.5f;
+            const auto pointAt = [&trail, across](const vec3& position, const vec3& axisX,
+                                                  const vec3& axisY, const f32 age)
             {
                 const f32 t = std::clamp(age / trail.Lifetime, 0.0f, 1.0f);
                 const f32 width = trail.Width * (1.0f + (trail.TailWidthScale - 1.0f) * t);
@@ -243,8 +331,8 @@ namespace Veng::Renderer
                     .Position = dvec3(position),
                     .Width = width,
                     .Color = vec4(trail.Color, trail.Opacity * (1.0f - t)),
-                    .SemiX = axisX * (0.5f * trail.CrossSection.x * width),
-                    .SemiY = axisY * (0.5f * trail.CrossSection.y * width),
+                    .SemiX = axisX * (across.x * width),
+                    .SemiY = axisY * (across.y * width),
                 };
             };
 
@@ -259,7 +347,34 @@ namespace Veng::Renderer
                 const mat4& pose = *head;
                 AppendPoint(points, pointAt(vec3(pose[3]), vec3(pose[0]), vec3(pose[1]), 0.0f));
             }
-            JoinStrip(points, false, trail.Additive, sink);
+            if (!tube)
+            {
+                JoinStrip(points, false, trail.Additive, sink);
+                return;
+            }
+            if (points.size() < 2)
+            {
+                return;
+            }
+            ResolveTrailOutline(trail, outline);
+            if (outline.size() < 3)
+            {
+                return;
+            }
+            const optional<uvec2> placed = sink.AddOutline(outline);
+            if (!placed)
+            {
+                sink.Scene.Plan.Dropped += static_cast<u32>(points.size() - 1);
+                return;
+            }
+            for (usize i = 0; i + 1 < points.size(); ++i)
+            {
+                if (points[i].Color.a <= 0.0f && points[i + 1].Color.a <= 0.0f)
+                {
+                    continue;
+                }
+                sink.AddTube(points[i], points[i + 1], *placed, trail.Softness, trail.Additive);
+            }
         }
 
         void GatherPath(const RibbonPath& path, const mat4& world, SegmentSink& sink,
@@ -320,6 +435,12 @@ namespace Veng::Renderer
                     alpha->push_back(record);
                 }
             }
+            std::ranges::stable_sort(sink.SortedTubes, {}, &std::pair<f32, GpuTrailTube>::first);
+            sink.Plan.AlphaTubes.reserve(sink.SortedTubes.size());
+            for (const auto& [depth, record] : sink.SortedTubes)
+            {
+                sink.Plan.AlphaTubes.push_back(record);
+            }
         }
 
         // The pose an entity's meshes draw at: interpolated while the scene interpolates, the
@@ -352,6 +473,9 @@ namespace Veng::Renderer
             plan->Additive.clear();
             plan->UnoccludedAlpha.clear();
             plan->UnoccludedAdditive.clear();
+            plan->AlphaTubes.clear();
+            plan->AdditiveTubes.clear();
+            plan->Outlines.clear();
             plan->Dropped = 0;
         }
 
@@ -390,6 +514,7 @@ namespace Veng::Renderer
         }
 
         vector<StripPoint> points;
+        vector<vec2> outline;
         for (auto [entity, trail] : scene.View<Trail>())
         {
             if (!drawn(entity, trail.Layer))
@@ -401,7 +526,7 @@ namespace Veng::Renderer
             {
                 head = DrawnWorld(scene, entity, alpha);
             }
-            GatherTrail(trail, head, sink, points);
+            GatherTrail(trail, head, sink, points, outline);
         }
 
         for (auto [entity, path] : scene.View<RibbonPath>())
@@ -442,6 +567,14 @@ namespace Veng::Renderer
                            .Bindings = {{.Binding = 0,
                                          .Type = DescriptorType::StorageBuffer,
                                          .Count = 1,
+                                         .Stages = ShaderStage::Vertex},
+                                        {.Binding = 1,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex},
+                                        {.Binding = 2,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
                                          .Stages = ShaderStage::Vertex}},
                        });
         m_Layout = PipelineLayout::Create(
@@ -452,8 +585,9 @@ namespace Veng::Renderer
                                ShaderStage::Vertex | ShaderStage::Fragment)},
                        });
 
-        const auto makePipeline =
-            [&](const char* name, const BlendState& colorBlend, const bool occluded)
+        const auto makePipeline = [&](const char* name, const BlendState& colorBlend,
+                                      const bool occluded, const AssetHandle<Veng::Shader>& vertex,
+                                      const AssetHandle<Veng::Shader>& fragment)
         {
             vector<PipelineAttachmentInfo> attachments = {
                 {.Format = info.TargetFormat, .Blend = colorBlend}};
@@ -473,8 +607,8 @@ namespace Veng::Renderer
                     .PipelineLayout = m_Layout,
                     .ShaderStages =
                         {
-                            {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                            {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                            {.Stage = ShaderStage::Vertex, .Module = vertex.Get()->Module},
+                            {.Stage = ShaderStage::Fragment, .Module = fragment.Get()->Module},
                         },
                     .Topology = PrimitiveTopology::TriangleList,
                     // The quad turns to face the camera, so it may present either winding.
@@ -485,13 +619,26 @@ namespace Veng::Renderer
                     .DepthCompareOp = CompareOp::GreaterOrEqual,
                 });
         };
-        m_AlphaPipeline = makePipeline("Ribbon Alpha Pipeline", BlendState::AlphaBlend(), true);
+        m_AlphaPipeline =
+            makePipeline("Ribbon Alpha Pipeline", BlendState::AlphaBlend(), true, vs, fs);
         m_AdditivePipeline =
-            makePipeline("Ribbon Additive Pipeline", BlendState::AlphaAdditive(), true);
-        m_UnoccludedAlphaPipeline =
-            makePipeline("Ribbon Unoccluded Alpha Pipeline", BlendState::AlphaBlend(), false);
-        m_UnoccludedAdditivePipeline =
-            makePipeline("Ribbon Unoccluded Additive Pipeline", BlendState::AlphaAdditive(), false);
+            makePipeline("Ribbon Additive Pipeline", BlendState::AlphaAdditive(), true, vs, fs);
+        m_UnoccludedAlphaPipeline = makePipeline("Ribbon Unoccluded Alpha Pipeline",
+                                                 BlendState::AlphaBlend(), false, vs, fs);
+        m_UnoccludedAdditivePipeline = makePipeline("Ribbon Unoccluded Additive Pipeline",
+                                                    BlendState::AlphaAdditive(), false, vs, fs);
+        // Trails are scene-placed, so only the scene placement draws tubes.
+        if (!postResolve)
+        {
+            const AssetHandle<Veng::Shader> tubeVs =
+                LoadShader(assets, RibbonTubeVertId, "ribbon tube vertex");
+            const AssetHandle<Veng::Shader> tubeFs = LoadShader(
+                assets, masked ? RibbonTubeMaskedFragId : RibbonTubeFragId, "ribbon tube fragment");
+            m_TubeAlphaPipeline = makePipeline("Ribbon Tube Alpha Pipeline",
+                                               BlendState::AlphaBlend(), true, tubeVs, tubeFs);
+            m_TubeAdditivePipeline = makePipeline(
+                "Ribbon Tube Additive Pipeline", BlendState::AlphaAdditive(), true, tubeVs, tubeFs);
+        }
 
         m_RegionStride = static_cast<u64>(MaxRibbonSegmentsPerFrame) * sizeof(GpuRibbonSegment);
         m_Records = Buffer::Create(m_Context, {
@@ -503,12 +650,39 @@ namespace Veng::Renderer
 
         // One set per frame in flight, each bound once to its own ring region: rewriting a shared
         // set still referenced by a pending command buffer is a validation error.
+        // A post-resolve pass draws no tube, so its tube and outline rings are a token size: the
+        // set's bindings still need a buffer each. A token region is 256 bytes, the widest storage
+        // offset alignment a device asks, so every frame's region starts aligned; the full-size
+        // regions are already multiples of it.
+        m_TubeRegionStride =
+            postResolve ? TokenRegionBytes
+                        : static_cast<u64>(MaxRibbonSegmentsPerFrame) * sizeof(GpuTrailTube);
+        m_TubeRecords = Buffer::Create(m_Context, {
+                                                      .Name = "Ribbon Tube Records",
+                                                      .Size = m_TubeRegionStride * m_FramesInFlight,
+                                                      .Usage = BufferUsage::Storage,
+                                                      .HostMapped = true,
+                                                  });
+        m_OutlineRegionStride =
+            postResolve ? TokenRegionBytes
+                        : static_cast<u64>(MaxTrailOutlinePointsPerFrame) * sizeof(vec2);
+        m_Outlines = Buffer::Create(m_Context, {
+                                                   .Name = "Ribbon Tube Outlines",
+                                                   .Size = m_OutlineRegionStride * m_FramesInFlight,
+                                                   .Usage = BufferUsage::Storage,
+                                                   .HostMapped = true,
+                                               });
+
         m_Sets.reserve(m_FramesInFlight);
         for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
         {
             Ref<DescriptorSet> set =
                 DescriptorSet::Create(m_Context, {.Name = "Ribbon Set", .Layout = m_SetLayout});
             set->Write(0, m_Records, static_cast<u64>(frame) * m_RegionStride, m_RegionStride);
+            set->Write(1, m_TubeRecords, static_cast<u64>(frame) * m_TubeRegionStride,
+                       m_TubeRegionStride);
+            set->Write(2, m_Outlines, static_cast<u64>(frame) * m_OutlineRegionStride,
+                       m_OutlineRegionStride);
             m_Sets.push_back(std::move(set));
         }
     }
@@ -575,6 +749,32 @@ namespace Veng::Renderer
         return count;
     }
 
+    u32 RibbonScenePass::UploadTubes(const u32 budget) const
+    {
+        const RibbonDrawPlan& plan = *m_Plan;
+        if (m_TubeAlphaPipeline == nullptr)
+        {
+            return 0;
+        }
+        const u32 region = m_Context.GetCurrentFrameInFlight();
+        auto* tubes = static_cast<u8*>(m_TubeRecords->GetMappedData()) +
+                      static_cast<usize>(region) * m_TubeRegionStride;
+        u32 count = 0;
+        for (const vector<GpuTrailTube>* set : {&plan.AlphaTubes, &plan.AdditiveTubes})
+        {
+            const auto take = static_cast<u32>(std::min<usize>(set->size(), budget - count));
+            std::memcpy(tubes + static_cast<usize>(count) * sizeof(GpuTrailTube), set->data(),
+                        static_cast<usize>(take) * sizeof(GpuTrailTube));
+            count += take;
+        }
+        auto* outlines = static_cast<u8*>(m_Outlines->GetMappedData()) +
+                         static_cast<usize>(region) * m_OutlineRegionStride;
+        std::memcpy(outlines, plan.Outlines.data(),
+                    std::min<usize>(plan.Outlines.size(), MaxTrailOutlinePointsPerFrame) *
+                        sizeof(vec2));
+        return count;
+    }
+
     void RibbonScenePass::Record(const ScenePassContext& ctx) const
     {
         CommandBuffer& cmd = ctx.Cmd();
@@ -590,6 +790,8 @@ namespace Veng::Renderer
         }
 
         const u32 count = Upload();
+        const u32 tubes = UploadTubes(static_cast<u32>(
+            std::min<usize>(m_Plan->GetSegmentCount(), MaxRibbonSegmentsPerFrame) - count));
 
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         RibbonPushConstants push{.ViewConstantsIndex = registry.GetCurrentViewConstantsIndex()};
@@ -625,9 +827,40 @@ namespace Veng::Renderer
                   {&m_Plan->Additive, &m_AdditivePipeline},
                   {&m_Plan->UnoccludedAlpha, &m_UnoccludedAlphaPipeline},
                   {&m_Plan->UnoccludedAdditive, &m_UnoccludedAdditivePipeline}}};
-        u32 first = 0;
-        for (usize i = 0; i < sets.size() && first < count; ++i)
+        // Tubes are occluded content, so they draw after the occluded bands and before the
+        // unoccluded sets that go over everything. A tube's run is selected the same way, by its
+        // first vertex over TubeVertexCount.
+        const auto drawTubes = [&]
         {
+            const auto alpha = static_cast<u32>(std::min<usize>(m_Plan->AlphaTubes.size(), tubes));
+            const std::array<std::pair<u32, const Ref<GraphicsPipeline>*>, 2> runs{
+                {{alpha, &m_TubeAlphaPipeline}, {tubes - alpha, &m_TubeAdditivePipeline}}};
+            push.Occluded = 1u;
+            u32 at = 0;
+            for (const auto& [length, pipeline] : runs)
+            {
+                if (length > 0)
+                {
+                    cmd.BindPipeline(*pipeline);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_Sets[frame]},
+                        .FirstSet = BindlessRegistry::FirstUserSet,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(push);
+                    cmd.Draw(length * TubeVertexCount, 1, at * TubeVertexCount, 0);
+                }
+                at += length;
+            }
+        };
+        u32 first = 0;
+        for (usize i = 0; i < sets.size(); ++i)
+        {
+            if (i == 2 && tubes > 0)
+            {
+                drawTubes();
+            }
             const auto segments =
                 static_cast<u32>(std::min<usize>(sets[i].first->size(), count - first));
             push.Occluded = i < 2 ? 1u : 0u;

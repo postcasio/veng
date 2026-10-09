@@ -1390,6 +1390,18 @@ namespace Veng
         f32 Age = 0.0f;
     };
 
+    /// @brief The most points a Trail's Outline holds; the rest are ignored.
+    inline constexpr u32 MaxTrailOutlinePoints = 16;
+
+    /// @brief How a Trail is drawn.
+    enum class TrailShape : u8
+    {
+        /// @brief A camera-facing band through the samples.
+        Band = 0,
+        /// @brief A tube swept through the samples with the trail's cross-section outline.
+        Tube = 1,
+    };
+
     /// @brief One recorded position of a Trail's head, and how long ago it was recorded.
     struct TrailSample
     {
@@ -1401,6 +1413,8 @@ namespace Veng
         vec3 AxisX{1.0f, 0.0f, 0.0f};
         /// @brief The entity's local Y axis in world space as it stood, carrying its world scale.
         vec3 AxisY{0.0f, 1.0f, 0.0f};
+        /// @brief The world velocity the sample moves at, decaying by the trail's Drag.
+        vec3 Velocity{0.0f};
     };
 
     /// @brief A ribbon through the recent positions of its entity: a projectile's tracer, a
@@ -1420,6 +1434,15 @@ namespace Veng
     /// extents lie along the entity's local X and Y as each sample was recorded, drawn as that tube's
     /// silhouette from the viewer, so a flat emitter leaves a plume that reads wide from one side and
     /// thin from the other. Width then scales the cross-section, tapering by TailWidthScale as it does.
+    /// Shape Tube draws the trail as real geometry instead: the Outline (or, with none, the
+    /// CrossSection's ellipse, or a circle Width across) swept through the samples, each ring in
+    /// the plane of the axes its sample recorded, glowing brightest where it faces the viewer.
+    ///
+    /// Samples need not stay where they were recorded. A new one leaves the emitter at
+    /// EmitVelocity (along the entity's local axes) plus InheritVelocity of the emitter's own
+    /// velocity, and every sample's velocity decays by Drag: so a jet stays straight out of its
+    /// nozzle while it is fast, and slows to rest into an ordinary trail. With all three zero, as
+    /// they default, a sample stays where it was recorded.
     struct Trail
     {
         /// @brief Seconds a sample lives; a trail with none draws nothing.
@@ -1429,6 +1452,21 @@ namespace Veng
         /// @brief The full extents of the trail's cross-section across its entity's local X and Y,
         ///        in the entity's units; zero on both draws a camera-facing band of Width.
         vec2 CrossSection{0.0f};
+        /// @brief Whether the trail draws as a camera-facing band or a swept tube.
+        TrailShape Shape = TrailShape::Band;
+        /// @brief A Tube's cross-section as a closed polygon in the entity's local X and Y units,
+        ///        scaled by Width; empty takes the CrossSection's ellipse. At most
+        ///        MaxTrailOutlinePoints are used.
+        vector<vec2> Outline;
+        /// @brief How sharply a Tube's glow falls off toward its silhouette; 0 draws it flat.
+        f32 Softness = 1.0f;
+        /// @brief The velocity a new sample leaves with, along the entity's local axes, in world
+        ///        units per second.
+        vec3 EmitVelocity{0.0f};
+        /// @brief The share of the emitter's own world velocity a new sample keeps.
+        f32 InheritVelocity = 0.0f;
+        /// @brief The rate a sample's velocity decays at, per second; 0 keeps it.
+        f32 Drag = 0.0f;
         /// @brief The width at the tail as a fraction of Width; 1 keeps the trail even, 0 tapers it.
         f32 TailWidthScale = 1.0f;
         /// @brief The linear HDR colour; above 1 drives bloom.
@@ -1451,6 +1489,11 @@ namespace Veng
         /// @brief The recorded samples, oldest first; advanced by RibbonSystem. Runtime-only: it
         ///        carries no VE_FIELD and never serializes.
         vector<TrailSample> Samples;
+        /// @brief Where the head stood at the last advance, from which the emitter's velocity is
+        ///        read. Runtime-only.
+        vec3 PreviousHead{0.0f};
+        /// @brief Whether PreviousHead holds an advance's head. Runtime-only.
+        bool HasPreviousHead = false;
     };
 
     /// @brief Where in the frame a RibbonPath draws.
@@ -2133,6 +2176,11 @@ VE_FIELD(Lifetime, .DisplayName = "Lifetime",
 VE_FIELD(Age, .DisplayName = "Age", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
+VE_ENUM(::Veng::TrailShape, 0xB110381580C8CCB2ULL)
+VE_ENUMERATOR(Band)
+VE_ENUMERATOR(Tube)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::Trail, 0xCA5518C6D69E6858ULL)
 VE_FIELD(Lifetime, .DisplayName = "Lifetime", .Tooltip = "Seconds a sample lives",
          .Display = {.Min = 0.0, .Step = 0.01})
@@ -2140,6 +2188,19 @@ VE_FIELD(Width, .DisplayName = "Width", .Display = {.Min = 0.0, .Step = 0.01})
 VE_FIELD(CrossSection, .DisplayName = "Cross Section",
          .Tooltip = "Extents across the entity's local X and Y; zero draws a camera-facing band",
          .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(Shape, .DisplayName = "Shape", .Tooltip = "A camera-facing band or a swept tube")
+VE_ARRAY_FIELD(Outline, .DisplayName = "Outline",
+               .Tooltip = "A tube's cross-section polygon in the entity's local X and Y")
+VE_FIELD(Softness, .DisplayName = "Softness",
+         .Tooltip = "How sharply a tube's glow falls off toward its silhouette",
+         .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(EmitVelocity, .DisplayName = "Emit Velocity",
+         .Tooltip = "Velocity a new sample leaves with, along the entity's local axes")
+VE_FIELD(InheritVelocity, .DisplayName = "Inherit Velocity",
+         .Tooltip = "Share of the emitter's own velocity a new sample keeps",
+         .Display = {.Min = 0.0, .Max = 1.0, .Step = 0.05})
+VE_FIELD(Drag, .DisplayName = "Drag", .Tooltip = "Per-second decay of a sample's velocity",
+         .Display = {.Min = 0.0, .Step = 0.1})
 VE_FIELD(TailWidthScale, .DisplayName = "Tail Width Scale",
          .Tooltip = "Width at the tail as a fraction of the head's", .Display = {.Min = 0.0})
 VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR colour")

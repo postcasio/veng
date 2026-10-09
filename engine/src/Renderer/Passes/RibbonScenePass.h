@@ -58,9 +58,42 @@ namespace Veng::Renderer
         return record.StartTangent.w > 0.5f;
     }
 
+    /// @brief One segment of a tube trail, between two rings of its cross-section outline.
+    ///
+    /// A ring is the outline's points placed about its end's centre along that end's two axes,
+    /// which carry the trail's taper. The outline's points live in the plan's outline table.
+    struct GpuTrailTube
+    {
+        /// @brief xyz: the start ring's centre, relative to the eye; w unused.
+        vec4 Start{0.0f};
+        /// @brief xyz: the end ring's centre, relative to the eye; w unused.
+        vec4 End{0.0f};
+        /// @brief rgb: the linear HDR colour at the start; a: the opacity there.
+        vec4 StartColor{1.0f};
+        /// @brief rgb: the linear HDR colour at the end; a: the opacity there.
+        vec4 EndColor{1.0f};
+        /// @brief xyz: the world axis an outline point's x runs along at the start; w: Softness.
+        vec4 StartAxisX{0.0f};
+        /// @brief xyz: the world axis an outline point's y runs along at the start; w unused.
+        vec4 StartAxisY{0.0f};
+        /// @brief xyz: the world axis an outline point's x runs along at the end; w unused.
+        vec4 EndAxisX{0.0f};
+        /// @brief xyz: the world axis an outline point's y runs along at the end; w unused.
+        vec4 EndAxisY{0.0f};
+        /// @brief x: the outline's first point in the plan's table; y: its point count.
+        uvec4 Outline{0u};
+    };
+
+    static_assert(sizeof(GpuTrailTube) == 144,
+                  "GpuTrailTube must be 144 bytes (matches ribbon_tube.vert.slang)");
+
     /// @brief The most ribbon records the frame draws across both placements; a frame gathering
-    ///        more drops the rest. A dot is one record.
+    ///        more drops the rest. A dot is one record, and so is one segment of a tube.
     inline constexpr u32 MaxRibbonSegmentsPerFrame = 8192;
+
+    /// @brief The most outline points a frame's tube trails hold between them; a tube trail whose
+    ///        outline would not fit is dropped.
+    inline constexpr u32 MaxTrailOutlinePointsPerFrame = 8192;
 
     /// @brief One placement's gathered ribbon records for a frame, split by compositing.
     struct RibbonDrawPlan
@@ -73,6 +106,12 @@ namespace Veng::Renderer
         vector<GpuRibbonSegment> UnoccludedAlpha;
         /// @brief Additive records of unoccluded paths, in gather order.
         vector<GpuRibbonSegment> UnoccludedAdditive;
+        /// @brief Alpha-composited tube segments, sorted back to front.
+        vector<GpuTrailTube> AlphaTubes;
+        /// @brief Additive tube segments, in gather order.
+        vector<GpuTrailTube> AdditiveTubes;
+        /// @brief The cross-section outlines the tube segments index, every trail's in turn.
+        vector<vec2> Outlines;
         /// @brief Records of this placement gathered past MaxRibbonSegmentsPerFrame and not drawn.
         u32 Dropped = 0;
 
@@ -83,7 +122,7 @@ namespace Veng::Renderer
         [[nodiscard]] usize GetSegmentCount() const
         {
             return Alpha.size() + Additive.size() + UnoccludedAlpha.size() +
-                   UnoccludedAdditive.size();
+                   UnoccludedAdditive.size() + AlphaTubes.size() + AdditiveTubes.size();
         }
     };
 
@@ -178,8 +217,13 @@ namespace Veng::Renderer
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
-        /// @brief Copies this frame's records into its ring region; returns the count copied.
+        /// @brief Copies this frame's band records into its ring region; returns the count copied.
         u32 Upload() const;
+
+        /// @brief Copies this frame's tube segments and outlines into their ring regions; returns
+        ///        the segment count copied.
+        /// @param budget  The records the band upload left of the frame's budget.
+        u32 UploadTubes(u32 budget) const;
 
         /// @brief Records the ribbon draws.
         void Record(const ScenePassContext& ctx) const;
@@ -203,7 +247,8 @@ namespace Veng::Renderer
         /// @brief Frames in flight, the depth of the record ring.
         u32 m_FramesInFlight;
 
-        /// @brief The record set's layout (binding 0, the record SSBO).
+        /// @brief The record set's layout: binding 0 the band records, 1 the tube segments, 2 the
+        ///        outline points.
         Ref<DescriptorSetLayout> m_SetLayout;
         /// @brief The pipeline layout shared by both pipelines.
         Ref<PipelineLayout> m_Layout;
@@ -216,10 +261,22 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_UnoccludedAlphaPipeline;
         /// @brief The additive pipeline for unoccluded paths.
         Ref<GraphicsPipeline> m_UnoccludedAdditivePipeline;
+        /// @brief The straight-alpha tube pipeline; the scene placement's alone.
+        Ref<GraphicsPipeline> m_TubeAlphaPipeline;
+        /// @brief The additive tube pipeline; the scene placement's alone.
+        Ref<GraphicsPipeline> m_TubeAdditivePipeline;
         /// @brief Host-mapped record ring, one region per frame in flight.
         Ref<Buffer> m_Records;
         /// @brief Byte size of one ring region.
         u64 m_RegionStride = 0;
+        /// @brief Host-mapped tube-segment ring, one region per frame in flight.
+        Ref<Buffer> m_TubeRecords;
+        /// @brief Byte size of one tube ring region.
+        u64 m_TubeRegionStride = 0;
+        /// @brief Host-mapped outline-point ring, one region per frame in flight.
+        Ref<Buffer> m_Outlines;
+        /// @brief Byte size of one outline ring region.
+        u64 m_OutlineRegionStride = 0;
         /// @brief One set per frame in flight, each bound to its own ring region.
         vector<Ref<DescriptorSet>> m_Sets;
     };

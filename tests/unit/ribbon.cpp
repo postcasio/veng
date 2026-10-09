@@ -5,9 +5,14 @@
 // expected segments with shared joints, placed by their entity's drawn pose, a one-point strip is a
 // dot of its width, and a path's placement routes it to the scene or the post-resolve plan under
 // one shared budget. A trail's cross-section draws the extent of its emitter's shape across the side
-// it is seen from.
+// it is seen from; a sample fired from its emitter leaves along its axis, slows to rest by a path
+// the frame rate does not change, and inherits the emitter's motion; and a tube trail gathers a
+// segment per sample pair around its outline, tapering with its age.
 
 #include <doctest/doctest.h>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -238,6 +243,139 @@ TEST_CASE("A trail records its emitter's axes and draws its cross-section from t
     const auto [topLeast, topMost] = widths();
     CHECK(topLeast == doctest::Approx(3.0f).epsilon(1e-3));
     CHECK(topMost == doctest::Approx(3.0f).epsilon(1e-3));
+}
+
+TEST_CASE("A sample leaves along its emitter's axis, never speeds up, and comes to rest")
+{
+    // Turned a quarter about y, the emitter's local -z points along world -x.
+    const quat turn = glm::angleAxis(std::numbers::pi_v<f32> / 2.0f, vec3(0.0f, 1.0f, 0.0f));
+    const mat4 head = glm::translate(mat4(1.0f), vec3(1.0f, 2.0f, 3.0f)) * glm::mat4_cast(turn);
+
+    // The travel of a trail's first sample over a second, at a given frame rate.
+    const auto flown = [&head](const u32 frames)
+    {
+        Trail trail{.Lifetime = 10.0f,
+                    .EmitVelocity = vec3(0.0f, 0.0f, -10.0f),
+                    .Drag = 2.0f,
+                    .MinSampleDistance = 1e9f};
+        AdvanceTrail(trail, head, 1.0f / static_cast<f32>(frames));
+        const vec3 start = trail.Samples.front().Position;
+        f32 previous = glm::length(trail.Samples.front().Velocity);
+        bool slowing = true;
+        bool straight = true;
+        for (u32 frame = 0; frame < frames; ++frame)
+        {
+            AdvanceTrail(trail, head, 1.0f / static_cast<f32>(frames));
+            const TrailSample& sample = trail.Samples.front();
+            const f32 speed = glm::length(sample.Velocity);
+            slowing = slowing && speed <= previous;
+            previous = speed;
+            const vec3 travel = sample.Position - start;
+            straight = straight && std::abs(travel.y) < 1e-4f && std::abs(travel.z) < 1e-4f &&
+                       travel.x <= 0.0f;
+        }
+        CHECK(slowing);
+        CHECK(straight);
+        return glm::length(trail.Samples.front().Position - start);
+    };
+
+    // It leaves at the emit speed along the emitter's axis.
+    Trail fresh{.EmitVelocity = vec3(0.0f, 0.0f, -10.0f)};
+    AdvanceTrail(fresh, head, 0.0f);
+    CHECK(glm::distance(fresh.Samples.front().Velocity, vec3(-10.0f, 0.0f, 0.0f)) < 1e-4f);
+
+    // Its path over a second does not depend on the frame rate, and is within the rest distance.
+    const f32 at60 = flown(60);
+    const f32 at15 = flown(15);
+    CHECK(at60 == doctest::Approx(at15).epsilon(1e-4));
+    CHECK(at60 < 10.0f / 2.0f);
+    CHECK(at60 > 0.8f * (10.0f / 2.0f));
+}
+
+TEST_CASE("A sample inherits its emitter's velocity, and a restart forgets where the head stood")
+{
+    // A whole inheritance and no drag: every sample keeps pace with an emitter flying straight.
+    Trail trail{.Lifetime = 10.0f, .InheritVelocity = 1.0f};
+    f32 lagging = 0.0f;
+    for (u32 frame = 0; frame <= 30; ++frame)
+    {
+        const vec3 position(static_cast<f32>(frame), 0.0f, 0.0f);
+        AdvanceTrail(trail, position, Frame);
+        for (const TrailSample& sample : trail.Samples)
+        {
+            // The first sample of a run has no velocity to inherit yet.
+            if (sample.Velocity != vec3(0.0f))
+            {
+                lagging = std::max(lagging, glm::distance(sample.Position, position));
+            }
+        }
+    }
+    CHECK(lagging < 1e-3f);
+
+    // After a restart, the jump to wherever the emitter now stands lends its first sample nothing.
+    RestartTrail(trail);
+    CHECK(trail.Samples.empty());
+    AdvanceTrail(trail, vec3(1000.0f, 0.0f, 0.0f), Frame);
+    CHECK(trail.Samples.front().Velocity == vec3(0.0f));
+}
+
+TEST_CASE("A tube trail gathers a segment per sample pair around its outline, and a band none")
+{
+    RibbonScene fixture;
+    Scene& scene = *fixture.World;
+    const vector<vec2> square{vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f),
+                              vec2(-1.0f, 1.0f)};
+
+    const auto stand = [&](const TrailShape shape)
+    {
+        const Entity entity = scene.CreateEntity();
+        scene.Add<Transform>(entity);
+        AttachTrail(scene, entity,
+                    Trail{.Lifetime = 1.0f,
+                          .Width = 2.0f,
+                          .Shape = shape,
+                          .Outline = square,
+                          .TailWidthScale = 0.5f,
+                          .MaxSamples = 64});
+        for (u32 frame = 0; frame < 10; ++frame)
+        {
+            fixture.Step(entity, vec3(static_cast<f32>(frame), 0.0f, 0.0f));
+        }
+        scene.Get<Trail>(entity).Emitting = false;
+        return entity;
+    };
+
+    const Entity band = stand(TrailShape::Band);
+    Renderer::RibbonDrawPlan plan = fixture.Gather();
+    CHECK(plan.AdditiveTubes.empty());
+    CHECK(plan.Outlines.empty());
+    scene.DestroyEntity(band);
+
+    const Entity tube = stand(TrailShape::Tube);
+    plan = fixture.Gather();
+    const usize samples = scene.Get<Trail>(tube).Samples.size();
+    CHECK(plan.Additive.empty());
+    CHECK(plan.AdditiveTubes.size() == samples - 1);
+    REQUIRE(plan.Outlines.size() == square.size());
+
+    // Each ring's axes carry the taper: the newest end at the full width, older ends narrower, and
+    // never wider than full.
+    f32 widest = 0.0f;
+    f32 narrowest = 1e9f;
+    for (const Renderer::GpuTrailTube& record : plan.AdditiveTubes)
+    {
+        CHECK(record.Outline == uvec4(0u, 4u, 0u, 0u));
+        for (const vec4& axis : {record.StartAxisX, record.EndAxisX})
+        {
+            const f32 width = glm::length(vec3(axis));
+            widest = std::max(widest, width);
+            narrowest = std::min(narrowest, width);
+        }
+    }
+    CHECK(widest <= 2.0f + 1e-4f);
+    CHECK(widest > 1.9f);
+    CHECK(narrowest < widest);
+    CHECK(narrowest >= 1.0f - 1e-4f);
 }
 
 TEST_CASE("A re-based origin carries every ribbon and trail sample with it, and their shape too")

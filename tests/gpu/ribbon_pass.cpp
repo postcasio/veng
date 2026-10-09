@@ -7,12 +7,14 @@
 // path draws through its own tail pass (and a scene of scene-placed paths never records it), glows
 // through the post-resolve bloom mask whether or not the mask was promoted, and is hidden behind
 // an opaque cube by its sampled-depth occlusion, at full and at reduced render scale. A one-point
-// strip draws a round dot in either placement.
+// strip draws a round dot in either placement, and a tube trail lights its path through the tube
+// pipeline.
 
 #include <filesystem>
 #include <vector>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/packing.hpp>
 
 #include <doctest/doctest.h>
@@ -33,6 +35,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
@@ -172,6 +175,41 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const vec3 position(-2.0f + 0.1f * static_cast<f32>(step), 0.0f, 0.0f);
         scene->Get<Transform>(mover).Position = position;
         AdvanceTrail(scene->Get<Trail>(mover), position, 1.0f / 60.0f);
+    }
+
+    const std::vector<u8> pixels = render.Render(Context, *scene);
+    const u32 mid = Extent.x / 2;
+    CHECK(RgbAt(pixels, mid, mid).x > 0.5f);
+    CHECK(RgbAt(pixels, mid, 4).x < 0.02f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a tube trail lights its path through its own pipeline")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    // A square-section tube swept left to right across the view's middle row, its cross-section
+    // in the plane the entity's X and Y span — turned to face along the sweep.
+    const Entity mover = scene->CreateEntity();
+    const quat along = glm::angleAxis(glm::half_pi<f32>(), vec3(0.0f, 1.0f, 0.0f));
+    scene->Add<Transform>(mover, Transform{.Position = vec3(-2.0f, 0.0f, 0.0f), .Rotation = along});
+    AttachTrail(*scene, mover,
+                Trail{.Lifetime = 10.0f,
+                      .Width = 1.0f,
+                      .Shape = TrailShape::Tube,
+                      .Outline = {vec2(-0.25f, -0.25f), vec2(0.25f, -0.25f), vec2(0.25f, 0.25f),
+                                  vec2(-0.25f, 0.25f)},
+                      .Softness = 0.0f,
+                      .Color = vec3(1.0f),
+                      .MaxSamples = 64});
+    for (u32 step = 0; step <= 40; ++step)
+    {
+        scene->Get<Transform>(mover).Position =
+            vec3(-2.0f + (0.1f * static_cast<f32>(step)), 0.0f, 0.0f);
+        AdvanceTrail(scene->Get<Trail>(mover), WorldMatrix(*scene, mover), 1.0f / 60.0f);
     }
 
     const std::vector<u8> pixels = render.Render(Context, *scene);
