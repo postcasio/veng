@@ -168,10 +168,10 @@ TEST_CASE("level cook: happy path — header, system ids, config record round-tr
 
     // The render record round-trips, and an omitted field keeps its default.
     const std::span<const u8> renderRecord(cursor, header.RenderRecordBytes);
-    LevelRenderSettings render;
-    REQUIRE(ReadFields(renderRecord, &render, module.Types.Info(TypeIdOf<LevelRenderSettings>()),
-                       module.Types)
-                .has_value());
+    RenderLook render;
+    REQUIRE(
+        ReadFields(renderRecord, &render, module.Types.Info(TypeIdOf<RenderLook>()), module.Types)
+            .has_value());
     CHECK(render.Exposure == doctest::Approx(2.5f));
     CHECK(render.Bloom == true);
     CHECK(render.BloomIntensity == doctest::Approx(1.5f));

@@ -424,22 +424,23 @@ namespace Veng
             m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry,
             m_GuiTranslator.get());
 
-        // Every viewport configured from a level's authored look resolves it through the graphics
-        // resolve seam, so a consumer's OnResolveGraphics composes over each look in the Configure
-        // that applies it — a world seed, a rebind, an overlay's open — instead of being reverted by
-        // it. Before the store exists (or without one) the look is mapped alone.
-        m_ManagedViewports->SetLevelLookResolver(
-            [this](const LevelRenderSettings& authored, Renderer::SceneRendererSettings& settings,
+        // Every viewport on the compositor resolves its scene's RenderLook through the graphics
+        // resolve seam, so a consumer's OnResolveGraphics composes over each look as the viewport
+        // configures it — whichever world it presents, and whenever the look changes — instead of
+        // being reverted by it. Before the store exists the look is mapped alone.
+        m_Compositor.SetLookResolver(
+            [this](const RenderLook& look, Renderer::SceneRendererSettings& settings,
                    Renderer::ViewState& view)
             {
-                if (m_GraphicsSettings)
+                if (!m_GraphicsSettings)
                 {
-                    ResolveLevelLook(*m_GraphicsSettings, authored, settings, view);
+                    ApplyRenderLook(look, settings, view);
+                    return;
                 }
-                else
-                {
-                    ApplyLevelRenderSettings(authored, settings, view);
-                }
+                const GraphicsResolveOutput output =
+                    ResolveGraphicsOutput(*m_GraphicsSettings, look, settings, view);
+                settings = output.Settings;
+                view = output.View;
             });
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
@@ -767,9 +768,8 @@ namespace Veng
         }
 
         // Standalone / server: open world #0 spawning the startup level (the scene owns the level's
-        // simulation). LoadInto seeds the level's render settings onto a settings entity, so the
-        // renderer config is read from the scene by the same TryGetFirst query a system uses, never
-        // from the Level asset directly.
+        // simulation). LoadInto seeds the level's render block as the scene's RenderLook, which the
+        // viewport presenting the scene reads each frame — never from the Level asset directly.
         const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(startupLevel);
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
@@ -780,14 +780,10 @@ namespace Veng
             .MaxTicksPerFrame = m_Info.World->MaxTicksPerFrame,
             .MaxSimMillisecondsPerFrame = m_Info.World->MaxSimMillisecondsPerFrame,
             .StartSimulation = true,
-            // Seed the viewport and hand the world to the subclass before the simulation starts, so a
-            // game can read its config from the scene, wait on residency, or capture input focus.
-            .OnLoaded =
-                [this](const WorldInstanceId world, Scene& scene, ResidencyBatch& pending)
-            {
-                SeedViewportFromWorld(scene);
-                OnWorldLoaded(world, scene, pending);
-            },
+            // Hand the world to the subclass before the simulation starts, so a game can read its
+            // config from the scene, wait on residency, or capture input focus.
+            .OnLoaded = [this](const WorldInstanceId world, Scene& scene, ResidencyBatch& pending)
+            { OnWorldLoaded(world, scene, pending); },
         });
 
         // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene and
@@ -902,25 +898,10 @@ namespace Veng
         }
     }
 
-    void Application::SeedViewportFromWorld(Scene& world)
-    {
-        // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
-        // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
-        // component), resolved through the set's level-look funnel so the consumer's graphics resolve
-        // composes over them in this one Configure. The sky is the scene's Sky component, resolved by
-        // the renderer itself each Execute — no consumer seeding.
-        Renderer::Viewport* primary = m_ManagedViewports->Get(0);
-        Renderer::SceneRendererSettings settings = primary->GetSettings();
-        if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
-        {
-            m_ManagedViewports->ResolveLevelLook(*render, settings, m_WorldView);
-        }
-        primary->Configure(settings);
-    }
-
-    GraphicsResolveOutput Application::ResolveGraphicsOutput(
-        const GraphicsSettings& store, const LevelRenderSettings& authored,
-        const Renderer::SceneRendererSettings& settings, const Renderer::ViewState& view)
+    GraphicsResolveOutput
+    Application::ResolveGraphicsOutput(const GraphicsSettings& store, const RenderLook& authored,
+                                       const Renderer::SceneRendererSettings& settings,
+                                       const Renderer::ViewState& view)
     {
         // Build the authored baseline: the authored look mapped onto the given topology and view
         // knobs, plus the primary viewport's current dynamic-resolution choice. The resolver receives
@@ -928,7 +909,7 @@ namespace Veng
         GraphicsResolveOutput output;
         output.Settings = settings;
         output.View = view;
-        ApplyLevelRenderSettings(authored, output.Settings, output.View);
+        ApplyRenderLook(authored, output.Settings, output.View);
         if (const Renderer::Viewport* primary =
                 m_ManagedViewports ? m_ManagedViewports->Get(0) : nullptr;
             primary != nullptr)
@@ -943,41 +924,6 @@ namespace Veng
             .Settings = store, .Display = store.GetDisplay(), .AuthoredLook = authored};
         OnResolveGraphics(input, output);
         return output;
-    }
-
-    void Application::ResolveLevelLook(const GraphicsSettings& store,
-                                       const LevelRenderSettings& authored,
-                                       Renderer::SceneRendererSettings& settings,
-                                       Renderer::ViewState& view)
-    {
-        // The display calibration is the engine's, last written by ApplyGraphicsSettings into the
-        // world view; every level-configured view carries that value rather than its own. Read
-        // before resolving, since @p view may be the world view itself.
-        const f32 brightness = m_WorldView.OutputBrightness;
-        const f32 gamma = m_WorldView.OutputGamma;
-
-        const GraphicsResolveOutput output = ResolveGraphicsOutput(store, authored, settings, view);
-        settings = output.Settings;
-        view = output.View;
-        view.OutputBrightness = brightness;
-        view.OutputGamma = gamma;
-    }
-
-    LevelRenderSettings Application::ResolveActiveAuthoredLook() const
-    {
-        if (m_WorldRunner && m_ManagedViewports)
-        {
-            const WorldInstanceId world = m_ManagedViewports->GetViewportWorld(0);
-            if (const World* active = m_WorldRunner->ResolveWorld(world))
-            {
-                if (const LevelRenderSettings* render =
-                        active->GetScene().TryGetFirst<LevelRenderSettings>())
-                {
-                    return *render;
-                }
-            }
-        }
-        return LevelRenderSettings{};
     }
 
     void Application::ApplyGraphicsSettings()
@@ -999,52 +945,52 @@ namespace Veng
             return;
         }
 
-        // An empty managed set (the editor) has no managed surface to reconfigure: the display group
-        // above and any level overlays are the whole apply there.
+        // Brightness/gamma are engine-owned display calibration, never the game resolver's to set:
+        // this apply is their single writer, and every managed and overlay push carries them.
+        m_ManagedViewports->SetOutputCalibration(display.Brightness, display.Gamma);
+
+        // An empty managed set (the editor) has no managed surface to rescale.
         if (!m_ManagedViewports->Empty())
         {
             ApplyGraphicsToManagedViewports(display);
         }
 
-        // Each overlay opened from a level re-resolves against its own authored look, after the
-        // managed apply so it carries the display calibration that apply just wrote.
-        m_ManagedViewports->ReresolveBoundLevelLooks();
+        // The scene-shaped half: every viewport resolves its own scene's look again at its next
+        // render, composing the new choices with that look.
+        m_Compositor.InvalidateLooks();
     }
 
     void Application::ApplyGraphicsToManagedViewports(const BuiltinDisplayChoices& display)
     {
-        const LevelRenderSettings authored = ResolveActiveAuthoredLook();
-        GraphicsResolveOutput output = ResolveGraphicsOutput(
-            *m_GraphicsSettings, authored, m_ManagedViewports->Get(0)->GetSettings(), m_WorldView);
-
-        // Brightness/gamma are engine-owned display calibration, not preset-eligible and never the
-        // game resolver's to set: this apply path is their single writer.
-        output.View.OutputBrightness = display.Brightness;
-        output.View.OutputGamma = display.Gamma;
-
-        // The global facet is machine-global, not viewport-shaped: it applies to the render Context's
-        // one sampler funnel here, beside the display arm, rather than through Viewport::Configure.
-        // SetGlobalAnisotropy early-outs on an unchanged value and clamps to the device maximum.
-        m_RenderContext.GetBindlessRegistry().SetGlobalAnisotropy(output.Global.AnisotropyEnabled,
-                                                                  output.Global.MaxAnisotropy);
-
-        // The mip-skip level is read when a texture is built, so this is reload-to-apply: it governs
-        // future texture builds, not the resident textures the AssetManager already caches by id.
-        m_AssetManager->SetTextureQualityMipSkip(output.Global.TextureQualityMipSkip);
-
-        // Settings are machine-global — every managed viewport (split-screen included) receives the
-        // same resolved settings. The per-frame view knobs ride m_WorldView, which PushViews carries
-        // into every managed viewport each frame.
-        m_WorldView = output.View;
         for (usize i = 0; i < m_ManagedViewports->GetCount(); ++i)
         {
             Renderer::Viewport* viewport = m_ManagedViewports->Get(i);
-            // Dirty-compare: a topology field is the only thing that forces a Configure recompile, so
-            // a resolve that touched only per-frame knobs reconfigures nothing.
-            if (!(viewport->GetSettings() == output.Settings))
+
+            // The dynamic-resolution choice is resolved against the look this viewport presents, so
+            // a consumer deciding it per look sees the right one; a scene with no look offers the
+            // default look, the total-on-the-default input the resolve seam promises.
+            RenderLook look;
+            if (const Scene* scene = viewport->GetPresentedScene(); scene != nullptr)
             {
-                viewport->Configure(output.Settings);
+                if (const auto* presented = scene->TryGetFirst<RenderLook>())
+                {
+                    look = *presented;
+                }
             }
+            const GraphicsResolveOutput output = ResolveGraphicsOutput(
+                *m_GraphicsSettings, look, viewport->GetSettings(), Renderer::ViewState{});
+
+            // The global facet is machine-global, not viewport-shaped: it applies once, from the
+            // primary, to the render Context's one sampler funnel. SetGlobalAnisotropy early-outs on
+            // an unchanged value and clamps to the device maximum. The mip-skip level is read when a
+            // texture is built, so it governs future texture builds, not the resident ones.
+            if (i == 0)
+            {
+                m_RenderContext.GetBindlessRegistry().SetGlobalAnisotropy(
+                    output.Global.AnisotropyEnabled, output.Global.MaxAnisotropy);
+                m_AssetManager->SetTextureQualityMipSkip(output.Global.TextureQualityMipSkip);
+            }
+
             // The static render scale is a display built-in, applied here like the dynamic-resolution
             // choice below it: it is the allocation scale while DRS is off and the value DRS clamps
             // into its band while on. Clamped to the accepted render-scale range — the setting only
@@ -2134,14 +2080,6 @@ namespace Veng
 
     void Application::StartWorldScene(const WorldInstanceId world, Scene& scene)
     {
-        // Seed the managed viewport only from the managed world; a joined world becomes presented
-        // through the consumer's RebindManagedViewport, whose apply re-seeds the viewport from the
-        // destination's authored LevelRenderSettings.
-        if (world == m_ManagedWorld)
-        {
-            SeedViewportFromWorld(scene);
-        }
-
         NetState::ClientWorldState& state = m_Net->ClientWorlds[world.Value];
         OnWorldLoaded(world, scene, state.Pending);
 
@@ -2707,11 +2645,6 @@ namespace Veng
         return m_WorldLevel;
     }
 
-    Renderer::ViewState& Application::GetWorldViewState(WorldInstanceId)
-    {
-        return m_WorldView;
-    }
-
     i32 Application::Run(vector<string> arguments)
     {
         // First, before anything can fault: a crash without it is a silent exit on Windows.
@@ -2838,7 +2771,7 @@ namespace Veng
             // runner; present-on-ready rebinds accrue this frame's delta toward their ready timeout.
             {
                 VE_PROFILE_SCOPE("Frame/ApplyReconfigure");
-                m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
+                m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta);
             }
 
             // A present-on-ready rebind that landed this frame is an arrival: fire its hook before the
@@ -3191,13 +3124,13 @@ namespace Veng
         // Pull each managed viewport's camera from the world it names and push it: a viewport naming a
         // Viewer gets that seat's camera resolved at its aspect, otherwise the world's scene primary
         // camera; a viewport whose world was closed renders a cleared target; one with no bound world
-        // is left for the game to drive. Plus the per-frame view knobs. After OnUpdate so a game's
-        // per-frame scene edits are reflected; before the viewport render phase reads it. A dedicated
+        // is left for the game to drive. After OnUpdate so a game's per-frame scene edits (its
+        // RenderLook among them) are reflected; before the viewport render phase reads it. A dedicated
         // server pushes nothing — it has no render tail.
         if (!dedicatedServer)
         {
             VE_PROFILE_SCOPE("Frame/ViewPush");
-            m_ManagedViewports->PushViews(*m_WorldRunner, m_WorldView, delta, m_SimAlpha);
+            m_ManagedViewports->PushViews(*m_WorldRunner, delta, m_SimAlpha);
         }
 
         {

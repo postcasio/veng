@@ -24,7 +24,7 @@ namespace Veng
     class Input;
     class InputRouter;
     class Texture;
-    struct LevelRenderSettings;
+    struct RenderLook;
 
     namespace Renderer
     {
@@ -81,16 +81,19 @@ namespace VengEditor
         /// output through the shared render-thread Download path.
         [[nodiscard]] Veng::Renderer::Viewport* GetViewport() const { return m_Viewport.get(); }
 
-        /// @brief Applies a level's post/pipeline render subset to the viewport, mirroring the runtime mapping.
+        /// @brief Applies an authoring look to a scene that carries none, mirroring the runtime mapping.
         ///
         /// Folds the topology toggles (Bloom/Shadows/AO) into the SceneRendererSettings, flagged for
         /// a Configure only when one actually changed, so a per-edit call never forces a needless
         /// recompile, and stores the per-frame Exposure / BloomIntensity the pushed ViewState carries
-        /// each frame. The sky is not here — it is the scene's Sky component, resolved by the
-        /// renderer itself each Execute. The level editor pushes its live settings here so an
-        /// edit shows in the viewport immediately, ahead of the recook.
-        /// @param render  The level's post/pipeline render settings.
-        void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
+        /// each frame — the look a level's render block or a project's preview level describes
+        /// without being a component of the edited scene. A scene that does carry a RenderLook (Play's
+        /// seeded one, a prefab authoring one) is resolved by the viewport itself, over these. The
+        /// sky is not here — it is the scene's Sky component, resolved by the renderer itself each
+        /// Execute. The level editor pushes its live settings here so an edit shows in the viewport
+        /// immediately, ahead of the recook.
+        /// @param render  The look to apply.
+        void ApplyRenderLook(const Veng::RenderLook& render);
 
         /// @brief Sets the editor camera's vertical field of view, and the one Reset All returns to.
         /// @param fovY  Radians.
@@ -231,7 +234,7 @@ namespace VengEditor
         Veng::Renderer::ViewState m_BaseView;
 
         /// @brief The render block last applied, which Reset All re-applies; none for the defaults.
-        Veng::optional<Veng::LevelRenderSettings> m_Render;
+        Veng::optional<Veng::RenderLook> m_Render;
 
         /// @brief The field of view Reset All returns to.
         Veng::f32 m_DefaultFovY = 0.0f;
@@ -257,8 +260,8 @@ namespace VengEditor
         /// @brief Whether the last pushed view resolved its lens fields from a Physical camera.
         bool m_DofFromPhysicalCamera = false;
 
-        /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
-        Veng::uvec2 m_TextureExtent{};
+        /// @brief The viewport output generation the ImGui texture was fetched at; re-fetch on a change.
+        Veng::u64 m_TextureGeneration = 0;
 
         /// @brief Resident light-icon texture (keeps its bindless TextureHandle alive); null if unmounted.
         Veng::AssetHandle<Veng::Texture> m_LightIcon;

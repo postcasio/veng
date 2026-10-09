@@ -6,7 +6,10 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneViewport.h>
+#include <Veng/UI/Inspector.h>
 #include <Veng/UI/Layout.h>
 #include <Veng/UI/Query.h>
 #include <Veng/UI/Scopes.h>
@@ -912,6 +915,54 @@ namespace Veng::UI
             // by default — authoring aids a consumer enables for a viewport's lifetime.
             changed |= UI::Checkbox("Debug draw", settings.DebugDraw);
             changed |= UI::Checkbox("Picking", settings.Picking);
+        }
+
+        return changed;
+    }
+
+    bool RenderSettingsEditor(RenderLook& look, SceneRendererSettings& settings, Viewport& viewport,
+                              const TypeRegistry& types)
+    {
+        const Renderer::Context& context =
+            viewport.GetRenderer().GetOutput()->GetImage()->GetContext();
+
+        bool changed = false;
+        changed |= DebugViewCombo(settings.Mode);
+        changed |= UI::Checkbox("G-buffer shading override", settings.GBufferShadingOverride);
+        i32 aa = static_cast<i32>(settings.AntiAliasing);
+        if (UI::Combo("Anti-aliasing", aa, Renderer::AntiAliasingModeNames))
+        {
+            settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
+            changed = true;
+        }
+
+        if (const auto section = UI::CollapsingHeader("Render look", TreeFlags::DefaultOpen))
+        {
+            // A Physical camera's lens authors focus and aperture on every push, so the look's values
+            // are stored but not consulted.
+            const bool lensFromCamera = viewport.GetViewState().DofFromPhysicalCamera;
+            if (lensFromCamera)
+            {
+                UI::TextDisabled(DofPhysicalCameraNote);
+            }
+            const InspectorHooks hooks{
+                .Registry = &types,
+                .FieldEnabled =
+                    [lensFromCamera](const FieldDescriptor& field)
+                {
+                    return !lensFromCamera ||
+                           (field.Name != "DofFocusDistance" && field.Name != "DofAperture");
+                },
+            };
+            if (const auto table = UI::PropertyTable("##RenderLook"))
+            {
+                (void)DrawFields(&look, types.Info(TypeIdOf<RenderLook>()).Fields, hooks);
+            }
+        }
+
+        if (const auto section = UI::CollapsingHeader("Resolution"))
+        {
+            DrawResolutionControls(viewport, context);
         }
 
         return changed;

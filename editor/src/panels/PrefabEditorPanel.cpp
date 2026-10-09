@@ -117,7 +117,7 @@ namespace VengEditor
         {
             if (m_Look->Render)
             {
-                m_Viewport->ApplyLevelRenderSettings(*m_Look->Render);
+                m_Viewport->ApplyRenderLook(*m_Look->Render);
             }
             m_Viewport->SetFovY(m_Look->FovY);
             m_Viewport->SetPreviewLook(*m_Look);

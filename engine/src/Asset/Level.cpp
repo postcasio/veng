@@ -10,14 +10,14 @@
 namespace Veng
 {
     Ref<Level> Level::Create(AssetHandle<Prefab> world, vector<SystemId> systems,
-                             GameModeConfig gameMode, LevelRenderSettings render)
+                             GameModeConfig gameMode, RenderLook render)
     {
         return Ref<Level>(new Level(std::move(world), std::move(systems), std::move(gameMode),
                                     std::move(render)));
     }
 
     Level::Level(AssetHandle<Prefab> world, vector<SystemId> systems, GameModeConfig gameMode,
-                 LevelRenderSettings render)
+                 RenderLook render)
         : m_World(std::move(world)), m_Systems(std::move(systems)), m_GameMode(std::move(gameMode)),
           m_Render(std::move(render))
     {
@@ -56,10 +56,10 @@ namespace Veng
         return instance;
     }
 
-    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render)
+    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const RenderLook& render)
     {
         const Entity settings = scene.CreateEntity();
         scene.Add<GameModeConfig>(settings, gameMode);
-        scene.Add<LevelRenderSettings>(settings, render);
+        scene.Add<RenderLook>(settings, render);
     }
 }

@@ -204,7 +204,7 @@ namespace Veng::Cook
                 fmt::format("level importer: '{}': 'render' must be an object", file));
         }
         const Result<vector<u8>> renderRecord = CookConfigRecord(
-            renderJson, registry.Info(TypeIdOf<LevelRenderSettings>()), registry, file, "render");
+            renderJson, registry.Info(TypeIdOf<RenderLook>()), registry, file, "render");
         if (!renderRecord)
         {
             return std::unexpected(renderRecord.error());

@@ -92,11 +92,11 @@ namespace Veng
         /// @brief Opens @p info's level as a secondary overlay over @p app's running frame.
         ///
         /// Sequences: open an owned world through the runner (spawning the source, running
-        /// info.Populate against the fresh scene, not started) → resolve the level's render settings
-        /// through the managed set's level-look funnel (ManagedViewportSet::ResolveLevelLook, so the
-        /// host's graphics resolve composes over them) → create and register a Presented
-        /// viewport configured with the result for the region and bind it to the world through the
-        /// overlay's seat (ManagedViewportSet::RegisterBoundViewport) for the per-frame camera pull → route
+        /// info.Populate against the fresh scene, not started) → create and register a Presented
+        /// viewport for the region — which resolves the level's RenderLook itself each frame it
+        /// renders, through the resolver the compositor hands it (the host's graphics resolve) —
+        /// and bind it to the world through the overlay's seat
+        /// (ManagedViewportSet::RegisterBoundViewport) for the per-frame camera pull → route
         /// input (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less
         /// focus scope suspending info.SuspendSeat) → hold a PauseScope on info.CoveredWorld when
         /// valid → start the world's simulation. The returned handle is move-only.
@@ -144,15 +144,6 @@ namespace Veng
 
         /// @brief Returns the overlay's world handle, for resolving it through the runner.
         [[nodiscard]] WorldInstanceId GetWorld() const { return m_World; }
-
-        /// @brief Returns the overlay's per-frame view knobs, as the engine carries them into each push.
-        ///
-        /// The photometric half of the overlay's ViewState (exposure, bloom, SSR, …), resolved from the
-        /// level's LevelRenderSettings at open through the managed set's level-look funnel, and again
-        /// on every Application::ApplyGraphicsSettings. The reference is live: it reads the knobs the
-        /// next push carries.
-        /// @pre IsOpen().
-        [[nodiscard]] const Renderer::ViewState& GetViewState() const;
 
         /// @brief Returns the overlay's own input seat, or a null-Viewer ref if its level seats none.
         [[nodiscard]] SeatRef GetSeat() const { return m_OverlaySeat; }

@@ -76,9 +76,9 @@ namespace Veng
             return std::unexpected(Corrupt(id, gmRead.error()));
         }
 
-        LevelRenderSettings render;
+        RenderLook render;
         const VoidResult renderRead =
-            ReadFields(renderRecord, &render, types.Info(TypeIdOf<LevelRenderSettings>()), types);
+            ReadFields(renderRecord, &render, types.Info(TypeIdOf<RenderLook>()), types);
         if (!renderRead)
         {
             return std::unexpected(Corrupt(id, renderRead.error()));

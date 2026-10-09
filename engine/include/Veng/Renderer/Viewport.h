@@ -21,6 +21,7 @@ namespace Veng
 {
     class Scene;
     class AssetManager;
+    struct RenderLook;
     class GuiDriverRegistry;
     struct GuiOverlay;
     struct GuiSurface;
@@ -175,6 +176,21 @@ namespace Veng::Renderer
         /// at neutral (1). Carried into SceneView::OutputGamma each push; not preset-eligible.
         f32 OutputGamma = 1.0f;
     };
+
+    /// @brief Resolves a scene's render look into what a viewport presenting it renders with.
+    ///
+    /// Run by a viewport over the RenderLook of the scene it presents, only when that look changes
+    /// or the viewport is told to resolve again (Viewport::InvalidateLook) — never per frame. It
+    /// must perform the look mapping itself (ApplyRenderLook) and may layer over it — a player's
+    /// chosen quality, say; an unset resolver is that mapping alone. The viewport configures the
+    /// resulting topology (Viewport::Configure no-ops an unchanged one) and writes the look-owned
+    /// per-frame fields of the resulting view over every view pushed to it (CopyLookKnobs); the
+    /// view's other fields are not carried.
+    /// @param look      The presented scene's render look.
+    /// @param settings  The topology to configure, arriving as the viewport's current settings.
+    /// @param view      The per-frame knobs to resolve, arriving default-constructed.
+    using LookResolver =
+        function<void(const RenderLook& look, SceneRendererSettings& settings, ViewState& view)>;
 
     /// @brief Construction parameters for Viewport.
     struct ViewportInfo
@@ -415,6 +431,28 @@ namespace Veng::Renderer
         /// @param state  The scene, camera, and per-frame tone/bloom knobs to render with.
         void SetViewState(const ViewState& state);
 
+        /// @brief Returns the retained view: the last push, with the presented look written over it.
+        ///
+        /// The ViewState the last SetViewState pushed, carrying — once a Render has resolved the
+        /// presented scene's RenderLook — that look's per-frame fields (CopyLookKnobs), so it reads
+        /// what the last frame rendered with. Default-constructed before any push.
+        [[nodiscard]] const ViewState& GetViewState() const { return m_ViewState; }
+
+        /// @brief Sets the resolver this viewport runs over the look of the scene it presents.
+        ///
+        /// A ViewportCompositor hands its own resolver to every viewport it registers, so a viewport
+        /// wanting another sets it after registering. The next Render resolves the look again
+        /// under the new resolver. An empty function maps the look alone (ApplyRenderLook).
+        /// @param resolver  The resolver, or an empty function for the plain look mapping.
+        void SetLookResolver(LookResolver resolver);
+
+        /// @brief Has the next Render resolve the presented scene's look again, changed or not.
+        ///
+        /// For a host whose resolver's own inputs moved (the player's chosen quality): the look did
+        /// not change, so the viewport would not otherwise run the resolver again. One re-resolve
+        /// however many calls precede the Render; a scene with no look resolves nothing.
+        void InvalidateLook() { m_LookStale = true; }
+
         /// @brief Drops the retained scene, and the pending one, wherever it is the given one.
         ///
         /// The retained ViewState outlives the frame it was pushed in, but not the scene it names: a
@@ -441,10 +479,14 @@ namespace Veng::Renderer
 
         /// @brief Renders the bound view into the viewport's texture and makes it sampleable.
         ///
-        /// Applies any pending region resize, builds the internal SceneView from the bound
-        /// ViewState, calls SceneRenderer::Execute, then transitions the output for sampling
-        /// (PrepareForAccess(Sample)). A null World (no ViewState set, or a closed document)
-        /// is a no-op — the viewport renders nothing rather than dereferencing null.
+        /// Applies any pending region resize, resolves the presented scene's RenderLook (running
+        /// the look resolver and configuring the topology only when the look changed or was
+        /// invalidated, then writing its per-frame fields over the bound ViewState), builds the
+        /// internal SceneView from the bound ViewState, calls SceneRenderer::Execute, then
+        /// transitions the output for sampling (PrepareForAccess(Sample)). A scene with no look
+        /// renders the pushed ViewState as pushed, on the topology last configured. A null World
+        /// (no ViewState set, or a closed document) is a no-op — the viewport renders nothing
+        /// rather than dereferencing null.
         /// @param cmd  The command buffer to record into.
         void Render(CommandBuffer& cmd);
 
@@ -926,6 +968,21 @@ namespace Veng::Renderer
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;
 
+        /// @brief The resolver run over the presented scene's look; empty maps the look alone.
+        LookResolver m_LookResolver;
+
+        /// @brief The look last resolved, compared each frame to detect a change; null when none.
+        Unique<RenderLook> m_ResolvedLook;
+
+        /// @brief The per-frame knobs the last look resolve produced, written over every push.
+        ViewState m_LookKnobs;
+
+        /// @brief Set to resolve the look again at the next Render, changed or not.
+        bool m_LookStale = false;
+
+        /// @brief Whether a scene carrying several RenderLooks has been warned about.
+        bool m_MultipleLooksWarned = false;
+
         /// @brief The scene an in-flight rebind will present (see SetPendingScene); null when none.
         const Scene* m_PendingScene = nullptr;
 
@@ -977,6 +1034,16 @@ namespace Veng::Renderer
         ///
         /// Set by AttachToDriveList; ~Viewport erases this viewport's pointer from it.
         vector<Viewport*>* m_DriveList = nullptr;
+
+        /// @brief Resolves the presented scene's RenderLook when it changed, and writes it over the view.
+        ///
+        /// Reads the first RenderLook of the bound scene (warning once when it carries several);
+        /// when it differs from the last one resolved, or the look was invalidated, runs the look
+        /// resolver from the current settings, configures the result, and keeps the resolved
+        /// per-frame knobs. Then writes those knobs over the bound ViewState every frame. A scene
+        /// with no look leaves the view as pushed and forgets the last look resolved.
+        /// @pre The bound ViewState names a scene.
+        void ResolvePresentedLook();
 
         /// @brief Drives every attached document and composites the layers over the scene output.
         ///

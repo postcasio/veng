@@ -51,9 +51,9 @@ namespace Veng
     ///
     /// A Level does not embed world entities — it references a world Prefab and adds the data
     /// that is not reusable-recipe data: the ordered active system set, the game-mode config,
-    /// and a render-settings subset. Loading a level (LoadInto) spawns its world into a fresh
+    /// and the scene's render look. Loading a level (LoadInto) spawns its world into a fresh
     /// Scene, builds a SceneSimulation from the system set, and seeds a settings entity from the
-    /// game-mode config — that is starting the game.
+    /// game-mode config and the look — that is starting the game.
     ///
     /// Level is CPU data with no GPU resource. Load it through AssetManager::Load like any
     /// other asset; its world prefab and the prefab's embedded asset refs resolve as ordinary
@@ -66,10 +66,10 @@ namespace Veng
         /// @param world     The resolved world-prefab handle (kept resident for the level's lifetime).
         /// @param systems   The ordered active SystemId set, in run order.
         /// @param gameMode  The decoded game-mode config seeded onto the settings entity at load.
-        /// @param render    The decoded render-settings subset the app maps onto the renderer.
+        /// @param render    The decoded render look its scene is seeded with.
         /// @return The constructed Level.
         static Ref<Level> Create(AssetHandle<Prefab> world, vector<SystemId> systems,
-                                 GameModeConfig gameMode, LevelRenderSettings render);
+                                 GameModeConfig gameMode, RenderLook render);
 
         /// @brief Spawns the world, builds the simulation, and seeds the settings — starting the game.
         ///
@@ -110,12 +110,12 @@ namespace Veng
         /// @brief Returns the game-mode config seeded onto the settings entity at load.
         [[nodiscard]] const GameModeConfig& GetGameMode() const { return m_GameMode; }
 
-        /// @brief Returns the render-settings subset the app maps onto the renderer.
-        [[nodiscard]] const LevelRenderSettings& GetRender() const { return m_Render; }
+        /// @brief Returns the authored render look the level seeds its scene with.
+        [[nodiscard]] const RenderLook& GetRender() const { return m_Render; }
 
     private:
         Level(AssetHandle<Prefab> world, vector<SystemId> systems, GameModeConfig gameMode,
-              LevelRenderSettings render);
+              RenderLook render);
 
         /// @brief The referenced world prefab, kept resident for the level's lifetime.
         AssetHandle<Prefab> m_World;
@@ -123,23 +123,23 @@ namespace Veng
         vector<SystemId> m_Systems;
         /// @brief The game-mode config seeded onto the settings entity at load.
         GameModeConfig m_GameMode;
-        /// @brief The render-settings subset the app maps onto the renderer.
-        LevelRenderSettings m_Render;
+        /// @brief The authored render look seeded onto the settings entity at load.
+        RenderLook m_Render;
     };
 
     /// @brief Materializes a level's runtime config onto a settings entity in the scene.
     ///
     /// Adds one entity carrying the level's @p gameMode and @p render — the level's authored
-    /// config made available as scene components, so rule systems read the game mode and the
-    /// engine reads the render settings by querying the scene (Scene::TryGetFirst), never
-    /// assuming a particular entity. The configs stay authored on the Level (and edited as
+    /// config made available as scene components, so rule systems read the game mode and every
+    /// viewport presenting the scene reads the RenderLook by querying the scene
+    /// (Scene::TryGetFirst), never assuming a particular entity — and a system may write it. The configs stay authored on the Level (and edited as
     /// separate level-editor panels); this is where that data enters the running world.
     /// Level::LoadInto calls this after spawning the world; the editor's Play calls it too, so a
     /// play session reaches the same initialized state the runtime does.
     /// @param scene     The scene the settings entity is created in.
     /// @param gameMode  The game-mode config a spawn rule reads.
-    /// @param render    The render settings the engine resolves onto the renderer.
-    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render);
+    /// @param render    The render look the scene's presenting viewports resolve.
+    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const RenderLook& render);
 
     /// @brief AssetTypeTrait specialization mapping Level to AssetTypes::Level.
     template <>

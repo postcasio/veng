@@ -110,7 +110,7 @@ TEST_CASE_FIXTURE(LevelFixture,
     // level's set (SystemA, though registered, must not run).
     const vector<SystemId> systems = {SystemIdOf<LevelSystemB>()};
 
-    const Ref<Level> level = Level::Create(world, systems, gameMode, LevelRenderSettings{});
+    const Ref<Level> level = Level::Create(world, systems, gameMode, RenderLook{});
     LevelInstance instance = level->LoadInto(*Assets, Systems);
 
     REQUIRE(instance.World != nullptr);
@@ -130,8 +130,8 @@ TEST_CASE_FIXTURE(LevelFixture,
     // The loader seeded one settings entity carrying the game-mode config + render settings.
     Entity settings = Entity::Null;
     usize seeded = 0;
-    instance.World->Each<GameModeConfig, LevelRenderSettings>(
-        [&](Entity e, GameModeConfig&, LevelRenderSettings&)
+    instance.World->Each<GameModeConfig, RenderLook>(
+        [&](Entity e, GameModeConfig&, RenderLook&)
         {
             settings = e;
             ++seeded;

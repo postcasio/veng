@@ -18,7 +18,7 @@ namespace VengEditor
     {
         /// @brief The render block of the level the project previews under — its exposure,
         /// tonemapper, bloom and ambient — or nothing for the renderer's own defaults.
-        Veng::optional<Veng::LevelRenderSettings> Render;
+        Veng::optional<Veng::RenderLook> Render;
         /// @brief The camera's vertical field of view, in radians.
         Veng::f32 FovY = glm::radians(45.0f);
         /// @brief The environment a preview is lit by; the invalid id for none.

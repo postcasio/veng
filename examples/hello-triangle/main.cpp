@@ -885,36 +885,18 @@ protected:
             scene.GetPhysicsWorld()->SetDebugDrawEnabled(true);
         }
 
-        // Seed the editable topology copy from the scene — the level's post knobs (a seeded
-        // LevelRenderSettings component) — read by the same query the engine used, so the debug
-        // RenderSettingsEditor starts in sync. The exposure and bloom already rode the engine's
-        // view push. The sky is the scene's Sky component, resolved by the renderer itself each
-        // Execute. Absent settings leave the defaults. The world handle is the hook's argument —
-        // GetManagedWorldId() is not yet bound while the runner is still opening this world.
-        if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
-        {
-            ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState(world));
-        }
-
-        // SSR is off by default in the engine; the sample opts in to show reflections off the
-        // gradient-roughness ground plane (at the engine-default half SSR resolution).
-        m_SceneSettings.SSR = true;
-
-        // The sample lifts the bloom knee so the weak lights bloom.
-        GetWorldViewState(world).BloomThreshold = 0.5f;
-
-        // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
-        // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
-        // can be captured and inspected.
+        // The sample's look — exposure, the lifted bloom knee that makes the weak lights bloom, SSR
+        // off the gradient-roughness ground plane — is the level's render block, seeded as the
+        // scene's RenderLook and resolved by the viewport presenting it. HT_DEBUG_VIEW pins a debug
+        // visualization by its DebugView enum index (the headless capture has no combo), which a
+        // look does not own: it overrides the Final mode so a g-buffer/battery target can be
+        // captured and inspected.
         if (const char* dv = std::getenv("HT_DEBUG_VIEW"))
         {
-            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
+            Renderer::SceneRendererSettings settings = GetManagedViewports().Get(0)->GetSettings();
+            settings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
+            ReconfigureScene(settings);
         }
-
-        // Apply the sample's topology (SSR + any HT_DEBUG_VIEW override) to the managed viewport;
-        // the engine already configured it from the level, so this layers the sample's extras on.
-        // Recreates the scene texture.
-        ReconfigureScene();
 
         SetupSocketDemo(scene);
         SetupToneSource(scene);
@@ -1638,9 +1620,9 @@ private:
     // after each call. The engine's gather reads the viewport output fresh per frame as its
     // placement, so it picks up the new view with no re-pointing here. Headless (smoke) has no
     // ImGui layer, so only the topology applies — there is no scene texture to refresh.
-    void ReconfigureScene()
+    void ReconfigureScene(const Renderer::SceneRendererSettings& settings)
     {
-        GetManagedViewports().Get(0)->Configure(m_SceneSettings);
+        GetManagedViewports().Get(0)->Configure(settings);
         if (GetImGuiLayer())
         {
             m_SceneTexture = GetImGuiLayer()->CreateTexture(
@@ -1662,16 +1644,21 @@ private:
             m_SceneTextureGeneration = viewport.GetOutputGeneration();
         }
 
-        // The renderer toggles, sliders, and per-frame view knobs are engine UI; a true return
-        // means a topology field changed, so the sample owns the Configure (the engine helper
-        // reports the edit but never reconfigures). The per-frame view knobs are the engine's
-        // managed-world ViewState, edited in place and pushed by the engine each frame.
+        // The look's fields are edited on the scene's RenderLook, which the viewport resolves on
+        // the next frame; a true return means a field the look does not own changed (the debug
+        // view), so the sample owns that Configure (the engine helper never reconfigures).
         if (const auto settingsWindow = UI::Window("Render Settings"))
         {
-            if (UI::RenderSettingsEditor(m_SceneSettings, GetWorldViewState(GetManagedWorldId()),
-                                         viewport))
+            if (Scene* scene = ManagedScene(); scene != nullptr)
             {
-                ReconfigureScene();
+                if (auto* look = scene->TryGetFirst<RenderLook>(); look != nullptr)
+                {
+                    Renderer::SceneRendererSettings settings = viewport.GetSettings();
+                    if (UI::RenderSettingsEditor(*look, settings, viewport, GetTypeRegistry()))
+                    {
+                        ReconfigureScene(settings);
+                    }
+                }
             }
         }
 
@@ -1896,11 +1883,6 @@ private:
 
     // The performance panel, owning its rolling history and sort key across frames.
     UI::PerformancePanel m_Performance;
-
-    // Topology/sizing knobs applied to the managed viewport through Configure; seeded from the
-    // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom
-    // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
-    Renderer::SceneRendererSettings m_SceneSettings;
 
     // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;

@@ -136,7 +136,7 @@ namespace
         const AssetHandle<Prefab> world =
             assets.Adopt<Prefab>(Prefab::Create(std::move(entities), {}));
         return assets.Adopt<Level>(
-            Level::Create(world, std::move(systems), GameModeConfig{}, LevelRenderSettings{}));
+            Level::Create(world, std::move(systems), GameModeConfig{}, RenderLook{}));
     }
 
     // A headless application driven by two closures: InitFn (from OnInitialize, engine ready) and

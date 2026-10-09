@@ -1,11 +1,14 @@
-// ApplyGraphicsSettings against a live headless Application: the no-world-reload apply path.
+// ApplyGraphicsSettings against a live headless Application: the no-world-reload apply path. Each
+// viewport re-resolves its scene's RenderLook at the render after the apply, so the outcomes are read
+// a frame later.
 //
 //  - a resolve output differing only in a per-frame view knob reconfigures nothing (the viewport's
-//    output generation does not move) — recompile only on a topology change;
+//    output generation does not move) and the knob reaches the view — recompile only on a topology
+//    change;
 //  - a resolve output changing a topology field reconfigures the viewport (generation moves, and the
 //    viewport's settings carry the new value), and the next render produces a valid output — the
 //    "no world reload" property, applied to a running, presented viewport;
-//  - a two-viewport set both reconfigure on one apply (settings are machine-global);
+//  - a two-viewport set both reconfigure on one apply;
 //  - an empty managed set (the editor) is a clean no-op.
 //
 // It drives a real Context through Run(), so it rides the gpu band.
@@ -42,7 +45,8 @@ namespace
         int Frames = 6;
         int Current = 0;
 
-        // Opens a world with a camera at `eye` and a seat viewing through it; returns the world.
+        // Opens a world with a camera at `eye`, a seat viewing through it, and a default RenderLook
+        // for its viewports to resolve the settings over; returns the world.
         WorldInstanceId OpenCameraWorld(vec3 eye)
         {
             const WorldInstanceId world =
@@ -53,6 +57,7 @@ namespace
             scene.Add<Camera>(camera);
             const Entity seat = scene.CreateEntity();
             scene.Add<Viewer>(seat).Camera = camera;
+            scene.Add<RenderLook>(scene.CreateEntity());
             return world;
         }
 
@@ -109,6 +114,7 @@ TEST_CASE("A per-frame-only resolve reconfigures nothing; a topology change reco
 
     u64 genBeforePerFrame = 0;
     u64 genAfterPerFrame = 0;
+    f32 appliedExposure = 0.0f;
     u64 genBeforeTopology = 0;
     u64 genAfterTopology = 0;
     u32 appliedShadowResolution = 0;
@@ -135,7 +141,11 @@ TEST_CASE("A per-frame-only resolve reconfigures nothing; a topology change reco
             { out.View.Exposure = 4.0f; };
             genBeforePerFrame = vp->GetOutputGeneration();
             app.ApplyGraphicsSettings();
+        }
+        else if (frame == 3)
+        {
             genAfterPerFrame = vp->GetOutputGeneration();
+            appliedExposure = vp->GetViewState().Exposure;
         }
         else if (frame == 4)
         {
@@ -144,6 +154,9 @@ TEST_CASE("A per-frame-only resolve reconfigures nothing; a topology change reco
             { out.Settings.ShadowResolution = 2048; };
             genBeforeTopology = vp->GetOutputGeneration();
             app.ApplyGraphicsSettings();
+        }
+        else if (frame == 5)
+        {
             genAfterTopology = vp->GetOutputGeneration();
             appliedShadowResolution = vp->GetSettings().ShadowResolution;
         }
@@ -152,10 +165,11 @@ TEST_CASE("A per-frame-only resolve reconfigures nothing; a topology change reco
     app.Frames = 6;
     app.Run({});
 
-    // Per-frame-only apply: no recompile.
+    // Per-frame-only apply: no recompile, and the knob is live.
     CHECK(genAfterPerFrame == genBeforePerFrame);
-    // Topology apply: a recompile, and the new setting is live.
-    CHECK(genAfterTopology > genBeforeTopology);
+    CHECK(appliedExposure == doctest::Approx(4.0f));
+    // Topology apply: exactly one recompile, and the new setting is live.
+    CHECK(genAfterTopology == genBeforeTopology + 1);
     CHECK(appliedShadowResolution == 2048);
 }
 
@@ -169,6 +183,8 @@ TEST_CASE("A topology apply reconfigures every viewport in the managed set")
 
     bool bothReconfigured = false;
     bool bothOutputsValid = false;
+    u64 g0 = 0;
+    u64 g1 = 0;
 
     app.InitFn = [&](GsApp& app)
     {
@@ -180,15 +196,18 @@ TEST_CASE("A topology apply reconfigures every viewport in the managed set")
 
     app.StepFn = [&](GsApp& app, int frame)
     {
+        const ManagedViewportSet& set = app.GetManagedViewports();
         if (frame == 3)
         {
-            const ManagedViewportSet& set = app.GetManagedViewports();
             REQUIRE(set.GetCount() == 2);
-            const u64 g0 = set.Get(0)->GetOutputGeneration();
-            const u64 g1 = set.Get(1)->GetOutputGeneration();
+            g0 = set.Get(0)->GetOutputGeneration();
+            g1 = set.Get(1)->GetOutputGeneration();
             app.Resolver = [](const GraphicsResolveInput&, GraphicsResolveOutput& out)
             { out.Settings.Bloom = !out.Settings.Bloom; };
             app.ApplyGraphicsSettings();
+        }
+        else if (frame == 4)
+        {
             bothReconfigured =
                 set.Get(0)->GetOutputGeneration() > g0 && set.Get(1)->GetOutputGeneration() > g1;
             bothOutputsValid =

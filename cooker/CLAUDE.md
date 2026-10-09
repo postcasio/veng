@@ -674,7 +674,7 @@ test pins the contract.
 The **`LevelImporter`** cooks a `*.level.json` (a world prefab reference + the ordered
 system set + the game-mode/render config) into the `CookedLevel` blob, beside the
 `PrefabImporter` and on the same module-reflection relaxation, and binds its config
-records (`GameModeConfig`, `LevelRenderSettings`, the session seed) through the
+records (`GameModeConfig`, `RenderLook`, the session seed) through the
 **same** `JsonReadFields` walker — no hooks of its own (a `Reference` field in level
 config is a located error, a deliberate posture rather than an unsupported-field-class
 gap). It requires the `--module`-loaded `TypeRegistry` **and** `SystemRegistry` (absent

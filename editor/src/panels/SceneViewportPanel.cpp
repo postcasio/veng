@@ -94,7 +94,6 @@ namespace VengEditor
             .RenderOnDemand = true,
         });
         app.RegisterViewport(*m_Viewport);
-        m_TextureExtent = extent;
 
         // Seed a sensible opening view; the camera produces the live one each OnUI.
         m_View = m_Camera.GetView();
@@ -109,6 +108,7 @@ namespace VengEditor
                          .AddressModeW = Renderer::AddressMode::ClampToEdge,
                      });
         m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
+        m_TextureGeneration = m_Viewport->GetOutputGeneration();
 
         // Resolve the gizmo icon textures from the editor icon pack (mounted by EditorHost).
         // A missing pack only drops the icon billboards; the wireframe gizmos still draw.
@@ -368,14 +368,14 @@ namespace VengEditor
         m_LightingReady = false;
     }
 
-    void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
+    void SceneViewportPanel::ApplyRenderLook(const RenderLook& render)
     {
         // Run the render block through the shared runtime mapping so the level→renderer wiring
         // lives in one place; the sky is the scene's Sky component, resolved by the renderer itself.
         // The editor-only bits (DebugDraw, Picking, the debug view) survive from the live settings.
         m_Render = render;
         Renderer::SceneRendererSettings next = m_Settings;
-        Veng::ApplyLevelRenderSettings(render, next, m_BaseView);
+        Veng::ApplyRenderLook(render, next, m_BaseView);
 
         // Called per settings-panel edit (an Exposure drag too), so reconfigure only when the
         // topology actually moved.
@@ -392,7 +392,7 @@ namespace VengEditor
         m_BaseView = {};
         if (m_Render)
         {
-            Veng::ApplyLevelRenderSettings(*m_Render, next, m_BaseView);
+            Veng::ApplyRenderLook(*m_Render, next, m_BaseView);
         }
         if (next != m_Settings)
         {
@@ -644,15 +644,15 @@ namespace VengEditor
 
     void SceneViewportPanel::OnUI()
     {
-        // The engine renders the viewport at frame start, applying any pending region resize
-        // and Configure before this runs; the output the panel samples is the one its prior
-        // SetRegion/SetViewState produced. Re-fetch the ImGui texture when that applied extent
-        // differs from the one the current texture views (a resize or Configure invalidated it).
+        // The engine renders the viewport at frame start, applying any pending region resize, and
+        // any Configure the presented scene's look resolved to, before this runs; the output the
+        // panel samples is the one its prior SetRegion/SetViewState produced. Re-fetch the ImGui
+        // texture whenever that replaced the output.
         const uvec2 appliedExtent = m_Viewport->GetRegion().Extent;
-        if (appliedExtent != m_TextureExtent && appliedExtent.x != 0 && appliedExtent.y != 0)
+        if (m_Viewport->GetOutputGeneration() != m_TextureGeneration)
         {
             m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
-            m_TextureExtent = appliedExtent;
+            m_TextureGeneration = m_Viewport->GetOutputGeneration();
         }
 
         const vec2 available = UI::ContentRegionAvail();
@@ -673,7 +673,10 @@ namespace VengEditor
         {
             m_Viewport->Configure(m_Settings);
             m_SettingsDirty = false;
+            // A RenderLook the presented scene carries governs its own fields over these.
+            m_Viewport->InvalidateLook();
             m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
+            m_TextureGeneration = m_Viewport->GetOutputGeneration();
         }
 
         UI::Image(m_SceneTexture, available);

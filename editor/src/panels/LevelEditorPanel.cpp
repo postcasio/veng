@@ -85,7 +85,7 @@ namespace VengEditor
 
         // Seed the viewport with the level's authored render subset so the first frame already
         // renders the level's exposure/bloom/shadow config, not the viewport defaults.
-        m_Viewport->ApplyLevelRenderSettings(m_Render);
+        m_Viewport->ApplyRenderLook(m_Render);
 
         m_SystemsChild =
             AddChild(CreateUnique<LevelChildPanel>("Systems", [this] { DrawSystemsPanel(); }));
@@ -125,7 +125,7 @@ namespace VengEditor
     {
         m_Systems.clear();
         m_GameMode = GameModeConfig{};
-        m_Render = LevelRenderSettings{};
+        m_Render = RenderLook{};
 
         const optional<nlohmann::json> levelResult = ReadJsonObject(m_SourcePath);
         if (!levelResult)
@@ -172,7 +172,7 @@ namespace VengEditor
         };
 
         readConfig("gameMode", &m_GameMode, TypeIdOf<GameModeConfig>());
-        readConfig("render", &m_Render, TypeIdOf<LevelRenderSettings>());
+        readConfig("render", &m_Render, TypeIdOf<RenderLook>());
     }
 
     bool LevelEditorPanel::SaveConfig()
@@ -193,7 +193,7 @@ namespace VengEditor
         { JsonWriteFields(level[key], obj, types.Info(type), types); };
 
         writeConfig("gameMode", &m_GameMode, TypeIdOf<GameModeConfig>());
-        writeConfig("render", &m_Render, TypeIdOf<LevelRenderSettings>());
+        writeConfig("render", &m_Render, TypeIdOf<RenderLook>());
 
         std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
         if (!out)
@@ -431,8 +431,8 @@ namespace VengEditor
             return !lensFromCamera ||
                    (field.Name != "DofFocusDistance" && field.Name != "DofAperture");
         };
-        const TypeInfo& renderInfo = types.Info(TypeIdOf<LevelRenderSettings>());
-        if (const auto table = UI::PropertyTable("##LevelRenderSettings"))
+        const TypeInfo& renderInfo = types.Info(TypeIdOf<RenderLook>());
+        if (const auto table = UI::PropertyTable("##RenderLook"))
         {
             changed |= DrawFields(&m_Render, renderInfo.Fields, renderCtx);
         }
@@ -441,7 +441,7 @@ namespace VengEditor
         {
             // Push the live render subset to the viewport so the edit shows immediately, ahead
             // of the debounced recook; m_GameMode edits do not touch rendering.
-            m_Viewport->ApplyLevelRenderSettings(m_Render);
+            m_Viewport->ApplyRenderLook(m_Render);
             MarkDirty();
         }
     }
@@ -449,9 +449,8 @@ namespace VengEditor
     vector<Inspectable> LevelEditorPanel::GetInspectables()
     {
         return {
-            Inspectable{.Name = "renderSettings",
-                        .Type = TypeIdOf<LevelRenderSettings>(),
-                        .Data = &m_Render},
+            Inspectable{
+                .Name = "renderSettings", .Type = TypeIdOf<RenderLook>(), .Data = &m_Render},
             Inspectable{
                 .Name = "gameMode", .Type = TypeIdOf<GameModeConfig>(), .Data = &m_GameMode},
         };
@@ -463,7 +462,7 @@ namespace VengEditor
         {
             // A render-settings write previews live in the viewport ahead of the debounced recook,
             // exactly as a DrawSettingsPanel edit does; a game-mode write only marks dirty.
-            m_Viewport->ApplyLevelRenderSettings(m_Render);
+            m_Viewport->ApplyRenderLook(m_Render);
         }
         MarkDirty();
     }

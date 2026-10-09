@@ -72,7 +72,7 @@ TEST_CASE("the default OnResolveGraphics is identity")
     ResolveApp app{ApplicationInfo{.Name = "graphics-resolve-test"}, types, systems};
 
     const GraphicsSettings store{GraphicsSettingsInfo{.Types = &types}};
-    const LevelRenderSettings authored;
+    const RenderLook authored;
 
     // A baseline the resolver must not touch: a non-default topology field and a non-default view knob.
     GraphicsResolveOutput output;

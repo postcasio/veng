@@ -80,16 +80,19 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   choosing a different config plus a different registered rule set — no C++ path
   picks the mode. Further mode parameters are the game's own components, authored
   on the world prefab beside the config.
-- **`render`** — a `LevelRenderSettings` subset of the renderer's knobs (exposure,
-  bloom, shadows, SSAO). These are a *reflected, tolerantly-serialized* struct, not
-  a renderer type — a new field never invalidates existing level blobs, and the
-  renderer stays untouched. The app maps them onto its `SceneRendererSettings` and
-  per-frame `SceneView` at load. It also carries the **auto-exposure metering**
-  envelope — `AutoExposureMaxLuminance`, `AutoExposureLowPercentile`,
+- **`render`** — the scene's `RenderLook`: the renderer's view-wide knobs (exposure,
+  the tone curve, bloom, shadows, SSAO, SSR, depth of field, the ambient floor). A
+  *reflected, tolerantly-serialized* struct, not a renderer type — a new field never
+  invalidates existing level blobs, and the renderer stays untouched. Loading seeds it
+  onto the settings entity as a component, and every viewport presenting the scene
+  resolves it onto its `SceneRendererSettings` and per-frame view itself — each frame
+  it changes — so a system writing the component changes the next frame's render, and
+  a prefab carrying one brings its look with it. It also carries the **auto-exposure
+  metering** envelope — `AutoExposureMaxLuminance`, `AutoExposureLowPercentile`,
   `AutoExposureHighPercentile` — authored beside the other post knobs; absent, each
-  falls back to the engine default, and present, the engine delivers them onto the
-  world's `ViewState` through the same load path (including a client's join-loaded
-  scene), so metering is level data rather than a value assigned in C++.
+  falls back to the engine default, so metering is level data rather than a value
+  assigned in C++. hello-triangle's level lifts the bloom knee (`BloomThreshold`) and
+  turns SSR on here rather than in code.
 
 The game mode itself is **rule systems over mode-state components** — not an
 object, no registry, no ABI bump. A game authors whatever mode-state components its

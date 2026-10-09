@@ -55,7 +55,7 @@ namespace Veng::TestSupport
     /// and that level as the startup level. Every path is absolute, so the bootstrap's
     /// ExecutableDirectory()-relative resolve (ExecutableDirectory() / absolute == absolute) lands on
     /// these temp files.
-    /// @param types  The registry holding the GameModeConfig / LevelRenderSettings schemas.
+    /// @param types  The registry holding the GameModeConfig / RenderLook schemas.
     /// @param tag    A per-test suffix keeping concurrent fixtures in one process distinct.
     /// @param extra  Further cooked assets to place in the same pack; empty for a bare world.
     /// @return The project path to feed ApplicationInfo::World.
@@ -71,10 +71,9 @@ namespace Veng::TestSupport
         const GameModeConfig gameMode;
         vector<u8> gameModeRecord;
         WriteFields(gameModeRecord, &gameMode, types.Info(TypeIdOf<GameModeConfig>()), types);
-        const LevelRenderSettings renderSettings;
+        const RenderLook renderSettings;
         vector<u8> renderRecord;
-        WriteFields(renderRecord, &renderSettings, types.Info(TypeIdOf<LevelRenderSettings>()),
-                    types);
+        WriteFields(renderRecord, &renderSettings, types.Info(TypeIdOf<RenderLook>()), types);
 
         vector<u8> level;
         PushPod(level, CookedLevelHeader{

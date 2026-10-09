@@ -13,7 +13,7 @@ namespace Veng::Renderer
     ///
     /// A view-wide post choice, carried on the per-frame SceneView and written into the tonemap
     /// material's parameter block each Execute; the tonemap fragment branches on it. Selectable per
-    /// level (the LevelRenderSettings "render" block) and from the render-settings debug panel, so
+    /// scene (its RenderLook, which a level's "render" block seeds) and from the render-settings debug panel, so
     /// the look is data, not a shader edit. Serialized by name (never ordinal) in the JSON blocks.
     enum class Tonemapper : u32
     {

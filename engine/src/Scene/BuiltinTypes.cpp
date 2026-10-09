@@ -230,9 +230,10 @@ namespace Veng
         registry.Register<FocusRequest>();
         registry.Register<PauseRequest>();
 
-        // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
+        // The scene's render look, which a Level's render block seeds and every presenting viewport
+        // resolves.
         registry.Register<Renderer::Tonemapper>();
-        registry.Register<LevelRenderSettings>();
+        registry.Register<RenderLook>();
 
         // The scene's one authored sky, resolved by the renderer per Execute. SkySource and its
         // alternatives (EnvironmentSky / AtmosphereSky / MaterialSky), SkyLighting, and

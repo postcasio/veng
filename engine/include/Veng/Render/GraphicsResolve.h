@@ -10,28 +10,28 @@
 namespace Veng
 {
     class GraphicsSettings;
-    struct LevelRenderSettings;
+    struct RenderLook;
 
     /// @brief The input to a graphics resolve: the user's chosen values plus the authoring context.
     ///
     /// Handed to Application::OnResolveGraphics so the game can compose the player's quality/cost
     /// preferences with the scene's authored look. It carries the persisted store (the schema and the
     /// chosen option/scalar per setting, read through GraphicsSettings) and the two authoring inputs
-    /// the composition needs: the world's authored LevelRenderSettings and the engine's built-in
-    /// display selections. The engine does not fix how the two axes combine — that is the game's, in
-    /// its resolver; the engine only invokes it and applies the result.
+    /// the composition needs: the RenderLook of the scene a viewport presents and the engine's
+    /// built-in display selections. The engine does not fix how the two axes combine — that is the
+    /// game's, in its resolver; the engine only invokes it and applies the result.
     ///
-    /// When no gameplay world is active (boot, a front menu), AuthoredLook is the presented menu
-    /// world's LevelRenderSettings if it authors one, else a default-constructed LevelRenderSettings —
-    /// so a resolver must be total on the default-constructed input.
+    /// A viewport resolves with its own scene's look; the settings apply's managed-viewport resolve
+    /// passes a default-constructed RenderLook for a viewport presenting no look — so a resolver
+    /// must be total on the default-constructed input.
     struct GraphicsResolveInput
     {
         /// @brief The per-machine graphics store: the schema and the chosen values (borrowed).
         const GraphicsSettings& Settings;
         /// @brief The engine's built-in display/output selections (a reference into Settings).
         const BuiltinDisplayChoices& Display;
-        /// @brief The authored look to compose with; a default-constructed value when no world is active.
-        const LevelRenderSettings& AuthoredLook;
+        /// @brief The scene's look to compose with; a default-constructed value when it has none.
+        const RenderLook& AuthoredLook;
     };
 
     /// @brief The machine-global renderer state a resolve produces, applied once per apply.
@@ -61,18 +61,20 @@ namespace Veng
     /// renderer surfaces, and the viewport's current dynamic-resolution choice) before invoking
     /// Application::OnResolveGraphics, so the identity default resolver returns the authored look
     /// unchanged by doing nothing. A game's resolver mutates these fields from the user's chosen
-    /// values; the engine then applies Settings through Viewport::Configure (only when a topology
-    /// field changed), pushes View's per-frame knobs, applies the dynamic-resolution choice, and
-    /// applies the Global facet to the render Context / BindlessRegistry.
+    /// values; the viewport presenting the look then applies Settings through Viewport::Configure
+    /// (only when a topology field changed) and writes View's look-owned per-frame fields over its
+    /// pushes (CopyLookKnobs), and the settings apply applies the dynamic-resolution choice and the
+    /// Global facet to the render Context / BindlessRegistry.
     ///
-    /// View is Renderer::ViewState — the per-frame knob subset of the renderer's SceneView — and the
-    /// engine is the single writer of its display-calibration OutputBrightness/OutputGamma fields
-    /// (filled from Display after the resolver runs, so a resolver never sets them).
+    /// View is Renderer::ViewState — the per-frame knob subset of the renderer's SceneView — of
+    /// which only the fields a look owns reach a render. The engine is the single writer of its
+    /// display-calibration OutputBrightness/OutputGamma fields (carried on every push from Display),
+    /// so a resolver never sets them.
     struct GraphicsResolveOutput
     {
         /// @brief The topology/sizing surface applied through Viewport::Configure on a change.
         Renderer::SceneRendererSettings Settings;
-        /// @brief The per-frame view knobs pushed into the managed viewports.
+        /// @brief The per-frame view knobs; a viewport writes the look-owned ones over its pushes.
         Renderer::ViewState View;
         /// @brief The adaptive render-resolution tuning applied when DynamicResolutionEnabled.
         Renderer::DynamicResolutionSettings DynamicResolution;

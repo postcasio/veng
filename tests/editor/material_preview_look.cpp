@@ -17,7 +17,7 @@ TEST_CASE("MaterialPreview: with no environment the preview opens sunlit")
 
 TEST_CASE("MaterialPreview: a project's look sets the opening field of view, environment and bloom")
 {
-    LevelRenderSettings render;
+    RenderLook render;
     render.Bloom = false;
     render.BloomIntensity = 0.7f;
     render.BloomRadius = 0.4f;

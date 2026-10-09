@@ -265,7 +265,7 @@ namespace Veng::Renderer
         /// Read by the lighting pass every Execute and pushed into both lighting pipelines. It is
         /// the ambient a surface receives in a scene with no lit sky — neither an environment nor
         /// an SH/IBL sky tier is active — so lowering it darkens shadowed surfaces in an unlit
-        /// scene. Filled from the authored LevelRenderSettings; the default is the engine's flat
+        /// scene. Filled from the scene's RenderLook; the default is the engine's flat
         /// ambient, so a scene authoring none renders exactly as before.
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
 

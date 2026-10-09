@@ -14,6 +14,12 @@
 /// wraps the panel it wants in a `UI::Window`/`UI::Child`, skips one in a shipping build, or
 /// embeds it in a larger profiler.
 
+namespace Veng
+{
+    class TypeRegistry;
+    struct RenderLook;
+}
+
 namespace Veng::Renderer
 {
     class Viewport;
@@ -264,4 +270,24 @@ namespace Veng::UI
     [[nodiscard]] bool RenderSettingsEditor(Renderer::SceneRendererSettings& settings,
                                             Renderer::ViewState& view,
                                             Renderer::Viewport& viewport);
+
+    /// @brief Draws the settings surface for a viewport presenting a scene that carries a RenderLook.
+    ///
+    /// A presented look owns its fields — the viewport resolves it into its topology and writes
+    /// its per-frame values over every push — so editing those on the viewport would be undone by
+    /// the next resolve. This overload edits them where they live, on the scene's component, every
+    /// field through the reflection inspector, live on the next frame (a topology field recompiles
+    /// once, a per-frame one not at all); the lens fields grey out while the viewport's camera
+    /// authors them. On @p settings it edits only what a look does not own — the debug view, the
+    /// shading override and the anti-aliasing mode — plus the viewport's adaptive-resolution
+    /// controls, which drive the viewport imperatively as in the other overload.
+    /// @param look      The presented scene's RenderLook, edited in place.
+    /// @param settings  The viewport's topology knobs, of which the non-look fields are edited.
+    /// @param viewport  The viewport presenting the look.
+    /// @param types     The type registry the look's fields are reflected through.
+    /// @return True the frame a field of @p settings changed (the caller should `Configure`).
+    [[nodiscard]] bool RenderSettingsEditor(RenderLook& look,
+                                            Renderer::SceneRendererSettings& settings,
+                                            Renderer::Viewport& viewport,
+                                            const TypeRegistry& types);
 }

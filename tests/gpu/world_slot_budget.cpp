@@ -184,7 +184,7 @@ namespace
                 GetAssetManager().Adopt<Prefab>(Prefab::Create({}, {}));
             const AssetHandle<Level> level = GetAssetManager().Adopt<Level>(
                 Level::Create(prefab, vector<SystemId>{SystemIdOf<PoolSystem>()}, GameModeConfig{},
-                              LevelRenderSettings{}));
+                              RenderLook{}));
             m_Levels.push_back(level);
             return GetWorldRunner().OpenWorld(WorldOpenInfo{
                 .Source = level,

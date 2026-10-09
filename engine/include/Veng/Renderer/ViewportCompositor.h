@@ -4,6 +4,7 @@
 #include <Veng/Renderer/CaptureSink.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
@@ -95,7 +96,8 @@ namespace Veng::Renderer
         ///
         /// Stores a non-owning pointer in registration order (which is render order), hands the
         /// viewport a back-reference so dropping its owning Unique self-unregisters it, and hands it
-        /// the compositor's device engines (SetDevices) for the Gui drivers it drives.
+        /// the compositor's device engines (SetDevices) for the Gui drivers it drives and, when one
+        /// is set, the compositor's look resolver (SetLookResolver).
         /// Double-registering a viewport is a fatal assert.
         /// @param viewport  The viewport to drive; its lifetime stays with the caller.
         void RegisterViewport(Viewport& viewport);
@@ -110,6 +112,21 @@ namespace Veng::Renderer
 
         /// @brief Returns the device engines handed to every registered viewport.
         [[nodiscard]] const ViewportDevices& GetDevices() const { return m_Devices; }
+
+        /// @brief Sets the look resolver every registered viewport runs over its scene's RenderLook.
+        ///
+        /// Applied to every viewport already registered and to every later registration, so a host
+        /// composing something over each scene's authored look (a player's chosen quality) reaches
+        /// every viewport it drives; a viewport wanting another sets its own after registering. An
+        /// empty function stops handing one to later registrations and leaves each registered
+        /// viewport mapping the look alone.
+        /// @param resolver  The resolver, or an empty function.
+        void SetLookResolver(LookResolver resolver);
+
+        /// @brief Has every registered viewport resolve its scene's look again at its next render.
+        ///
+        /// What a host calls when its resolver's own inputs moved (Viewport::InvalidateLook on each).
+        void InvalidateLooks();
 
         /// @brief Registers a scene capture into the drive-list rendered ahead of the viewports.
         ///
@@ -256,6 +273,9 @@ namespace Veng::Renderer
 
         /// @brief The device engines handed to every registered viewport.
         ViewportDevices m_Devices;
+
+        /// @brief The look resolver handed to every registered viewport; empty hands none.
+        LookResolver m_LookResolver;
 
         /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
         vector<SceneCapture*> m_Captures;

@@ -175,6 +175,27 @@ namespace Veng::Renderer
         m_Viewports.emplace_back(&viewport);
         viewport.AttachToDriveList(m_Viewports);
         viewport.SetDevices(m_Devices);
+        if (m_LookResolver)
+        {
+            viewport.SetLookResolver(m_LookResolver);
+        }
+    }
+
+    void ViewportCompositor::SetLookResolver(LookResolver resolver)
+    {
+        m_LookResolver = std::move(resolver);
+        for (Viewport* viewport : m_Viewports)
+        {
+            viewport->SetLookResolver(m_LookResolver);
+        }
+    }
+
+    void ViewportCompositor::InvalidateLooks()
+    {
+        for (Viewport* viewport : m_Viewports)
+        {
+            viewport->InvalidateLook();
+        }
     }
 
     void ViewportCompositor::SetDevices(const ViewportDevices& devices)

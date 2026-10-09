@@ -1,6 +1,6 @@
 // Device-free proof for the editor reflection seam + the generic editor MCP tools.
 //
-// A test-only AssetEditorPanel exposes a LevelRenderSettings inspectable and carries a real
+// A test-only AssetEditorPanel exposes a RenderLook inspectable and carries a real
 // CommandStack over a small Scene, standing in for a level editor without a live device. Wired
 // through an EditorMcpHost + the world mutation tools' ApplyMutation routing, driven over
 // loopback, it exercises: editor.list_panels (the panel + its inspectable names), editor.inspect
@@ -66,9 +66,8 @@ namespace
 
         [[nodiscard]] vector<VengEditor::Inspectable> GetInspectables() override
         {
-            return {VengEditor::Inspectable{.Name = "renderSettings",
-                                            .Type = TypeIdOf<LevelRenderSettings>(),
-                                            .Data = &m_Render}};
+            return {VengEditor::Inspectable{
+                .Name = "renderSettings", .Type = TypeIdOf<RenderLook>(), .Data = &m_Render}};
         }
 
         void OnInspectableChanged(string_view name) override
@@ -95,7 +94,7 @@ namespace
     private:
         VengEditor::PrefabEditContext m_Ctx;
         Unique<VengEditor::CommandStack> m_Commands;
-        LevelRenderSettings m_Render;
+        RenderLook m_Render;
         bool m_Dirty = false;
     };
 

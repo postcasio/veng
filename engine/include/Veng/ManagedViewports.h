@@ -56,21 +56,6 @@ namespace Veng
     /// @return True once the consumer considers @p world ready to become visible.
     using WorldPresentReadyGate = function<bool(const World& world)>;
 
-    /// @brief Resolves a level's authored look into what a viewport presenting that level configures.
-    ///
-    /// The one funnel every viewport configured from a level's LevelRenderSettings passes through —
-    /// the bootstrap and client-join world seed, a managed rebind, a LevelOverlay's open, and the
-    /// re-resolve of those viewports — so whatever a host composes over the authored look (a player's
-    /// chosen quality, say) reaches each of them and is applied in the same Configure that applies
-    /// the look, rather than reverted by it. It must perform the authored mapping itself
-    /// (ApplyLevelRenderSettings) and may layer over it; an unset resolver is that mapping alone.
-    /// @param authored  The level's authored render settings.
-    /// @param settings  The topology to configure, arriving as the viewport's current settings.
-    /// @param view      The per-frame view knobs, arriving as the viewport's current knobs.
-    using LevelLookResolver =
-        function<void(const LevelRenderSettings& authored,
-                      Renderer::SceneRendererSettings& settings, Renderer::ViewState& view)>;
-
     /// @brief One managed viewport's completed rebind: the index, the world it now presents, its seat.
     ///
     /// Recorded at the frame's rebind apply point and drained once
@@ -114,13 +99,6 @@ namespace Veng
         /// The seat whose camera a camera-pulling binding resolves (Entity::Null takes the scene
         /// primary), and the seat the locally-controlled marker is derived from.
         Entity Viewer = Entity::Null;
-        /// @brief The per-frame tone/bloom/environment knobs carried into each camera push.
-        Renderer::ViewState Knobs;
-        /// @brief The level look the viewport and Knobs were resolved from, or nullopt for none.
-        ///
-        /// Recorded so ReresolveBoundLevelLooks resolves them again; a viewport not configured from a
-        /// level is left alone by a re-resolve.
-        optional<LevelRenderSettings> Look;
         /// @brief Whether PushViews pulls the world's camera into the viewport each frame.
         ///
         /// False for an owner that pushes its own ViewState (a tool rendering a world through a
@@ -289,9 +267,9 @@ namespace Veng
         /// Called at the top of a frame, outside any Scene/viewport-list iteration. In order: applies a
         /// recorded reconfigure (rebuilds the set), applies each unconditional world rebind as a
         /// complete rebind (detaching the departed world's engine-driven overlay documents from the
-        /// viewport, re-resolving its seat in the destination, and re-seeding the viewport's render
-        /// settings and @p knobs from the destination's authored LevelRenderSettings, through
-        /// ResolveLevelLook and one Configure, when it carries one), then evaluates each present-on-ready rebind — applying it once its destination is
+        /// viewport and re-resolving its seat in the destination — the viewport resolves the
+        /// destination's RenderLook itself when it next renders it), then evaluates each
+        /// present-on-ready rebind — applying it once its destination is
         /// ready (the engine's own test and any SetPresentReadyGate predicate both passing),
         /// retrying a timed-out wait up to PresentReadyAttempts, or abandoning it (surfaced
         /// through GetAbandonedPresentWorld) once the attempts are spent or its destination
@@ -301,9 +279,7 @@ namespace Veng
         /// (DrainPresentedViewports / DrainAbandonedPresents).
         /// @param runner  The runner the departed/destination worlds resolve through.
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
-        /// @param knobs   The per-frame view knobs the managed viewports render with, re-seeded by a
-        ///                rebind whose destination authors LevelRenderSettings.
-        void ApplyPendingReconfigure(WorldRunner& runner, f32 delta, Renderer::ViewState& knobs);
+        void ApplyPendingReconfigure(WorldRunner& runner, f32 delta);
 
         /// @brief Moves the rebinds that completed in the last apply into @p out, clearing the queue.
         ///
@@ -445,27 +421,6 @@ namespace Veng
         /// @param gate  The predicate, or an empty function to remove the gate.
         void SetPresentReadyGate(WorldPresentReadyGate gate);
 
-        /// @brief Installs the resolver every level-configured viewport's settings pass through.
-        ///
-        /// The host installs one at construction (Application routes it through its graphics resolve
-        /// seam); a set nothing installs one on maps the authored look alone. Applies to every later
-        /// resolve — it does not reconfigure a viewport by itself (ReresolveBoundLevelLooks does).
-        /// @param resolver  The resolver, or an empty function for the plain authored mapping.
-        void SetLevelLookResolver(LevelLookResolver resolver);
-
-        /// @brief Resolves a level's authored look through the installed resolver.
-        ///
-        /// The funnel the set's own rebind uses, exposed so every other site configuring a viewport
-        /// from a level (the world seed, a LevelOverlay) takes the identical path: the installed
-        /// LevelLookResolver when one is set, else ApplyLevelRenderSettings. Configures nothing; the
-        /// caller applies @p settings through one Viewport::Configure.
-        /// @param authored  The level's authored render settings.
-        /// @param settings  The topology to update, pre-filled with the viewport's current settings.
-        /// @param view      The per-frame view knobs to update, pre-filled with the current knobs.
-        void ResolveLevelLook(const LevelRenderSettings& authored,
-                              Renderer::SceneRendererSettings& settings,
-                              Renderer::ViewState& view) const;
-
         /// @brief Registers a caller-owned viewport as a presentation of a world, driven beside the set.
         ///
         /// How a viewport the set did not build — an overlay's Presented viewport, a tool's Offscreen
@@ -484,7 +439,7 @@ namespace Veng
         /// binding (UnregisterBoundViewport) before dropping the viewport. Bound viewports are not
         /// indexed and Get / Build / Reconfigure never touch them.
         /// @param viewport  The caller-owned viewport.
-        /// @param info      The world, seat, knobs, look and camera-pull choice of the binding.
+        /// @param info      The world, seat and camera-pull choice of the binding.
         void RegisterBoundViewport(Renderer::Viewport& viewport, const BoundViewportInfo& info);
 
         /// @brief Removes a bound viewport's binding; a no-op if it is not bound.
@@ -496,22 +451,6 @@ namespace Veng
         /// @param viewport  The bound viewport whose binding to remove.
         void UnregisterBoundViewport(Renderer::Viewport& viewport);
 
-        /// @brief Resolves every bound viewport registered with a level look again, and applies it.
-        ///
-        /// For each bound viewport that recorded the look it was configured from, re-runs
-        /// ResolveLevelLook over that look from the viewport's current settings and carried knobs,
-        /// configures the viewport with the result (Viewport::Configure no-ops an unchanged
-        /// topology) and carries the resolved knobs into its later pushes. The overlay half of a
-        /// host's settings apply: a choice changed while an overlay is open reaches it without a
-        /// re-open. Bound viewports registered without a look are untouched.
-        void ReresolveBoundLevelLooks();
-
-        /// @brief Returns the per-frame knobs a bound viewport's pushes carry, or null if it is not bound.
-        /// @param viewport  The bound viewport.
-        /// @return The carried knobs (live: a re-resolve updates them), or null.
-        [[nodiscard]] const Renderer::ViewState*
-        FindBoundViewState(const Renderer::Viewport& viewport) const;
-
         /// @brief Pulls each managed and bound viewport's camera from the runner and pushes it, once per frame.
         ///
         /// For each managed viewport naming a valid World: resolves the world through @p runner and
@@ -519,16 +458,27 @@ namespace Veng
         /// the viewport's aspect; Entity::Null takes the scene primary). A viewport whose World was
         /// closed pushes a null-scene ViewState (a cleared target, inert). A managed viewport with an
         /// invalid World is left untouched for the game to drive. Each registered bound viewport
-        /// (RegisterBoundViewport) that pulls its camera is pushed the same way with its own carried
-        /// knobs and its world's own interpolation fraction; one that does not is left to its owner.
+        /// (RegisterBoundViewport) that pulls its camera is pushed the same way with its world's own
+        /// interpolation fraction; one that does not is left to its owner. A push carries the scene,
+        /// the camera, the delta, the alpha and the output calibration (SetOutputCalibration) and no
+        /// other knob: each viewport writes its scene's RenderLook over it as it renders.
         /// Each managed viewport is also handed the live scene of its in-flight rebind's destination,
         /// or none (Renderer::Viewport::SetPendingScene), so the compositor warms that scene's
         /// captures for the whole wait. The runner never learns a viewport asked.
         /// @param runner  The world runner cameras are resolved through.
-        /// @param knobs   The per-frame tone/bloom/environment view knobs carried into each managed push.
         /// @param delta   Frame delta in seconds, forwarded to the renderer.
         /// @param alpha   The fixed-timestep interpolation fraction for the managed viewports.
-        void PushViews(WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta, f32 alpha);
+        void PushViews(WorldRunner& runner, f32 delta, f32 alpha);
+
+        /// @brief Sets the output calibration every view this set pushes carries.
+        ///
+        /// The display half of a host's settings apply: brightness and gamma are a property of the
+        /// display rather than of any scene's look, so they ride every managed and camera-pulling
+        /// bound push (ViewState::OutputBrightness / OutputGamma) from the next PushViews on.
+        /// Neutral (1, 1) until set.
+        /// @param brightness  The output brightness multiplier; 1 is no adjustment.
+        /// @param gamma       The output gamma adjustment; 1 is no adjustment.
+        void SetOutputCalibration(f32 brightness, f32 gamma);
 
         /// @brief Holds or releases every managed viewport's render scale at its ceiling.
         ///
@@ -565,10 +515,6 @@ namespace Veng
             WorldInstanceId World;
             /// @brief The seat in World the viewport presents through, or Entity::Null for none.
             Entity Viewer = Entity::Null;
-            /// @brief The per-frame tone/bloom/environment knobs carried into the push.
-            Renderer::ViewState Knobs;
-            /// @brief The level look the viewport was resolved from; nullopt when it was not.
-            optional<LevelRenderSettings> Look;
             /// @brief Whether PushViews pulls the world's camera into this viewport.
             bool PullsCamera = true;
         };
@@ -578,28 +524,23 @@ namespace Veng
         /// @param world     The world the viewport presents.
         /// @param viewer    The seat whose camera to resolve, or Entity::Null for the scene primary.
         /// @param runner    The world runner the world and camera resolve through.
-        /// @param knobs     The per-frame view knobs carried into the push.
         /// @param delta     Frame delta in seconds.
         /// @param alpha     The interpolation fraction.
         void PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world, Entity viewer,
-                              WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta,
-                              f32 alpha) const;
+                              WorldRunner& runner, f32 delta, f32 alpha) const;
 
         /// @brief Applies a world rebind to a viewport: departed-overlay detach + seat re-resolution.
         ///
         /// The complete rebind at the apply point: detaches every engine-driven overlay of the departed
         /// world (when it still resolves and differs from the destination) from the viewport, re-points
         /// the viewport's seat association (and the cursor seat when the departed association owned it)
-        /// to the destination's resolved seat, resets Info.World and Info.Viewer, re-seeds the
-        /// viewport's render settings and @p knobs from the destination's authored LevelRenderSettings
-        /// through ResolveLevelLook, applied in one Configure (a destination authoring none keeps the
-        /// current settings), and leaves focus policy untouched.
+        /// to the destination's resolved seat, resets Info.World and Info.Viewer, and leaves focus
+        /// policy untouched. The destination's look needs no seeding: the viewport resolves it
+        /// itself the first frame it renders the destination's scene.
         /// @param index   The managed viewport index; out of range is a no-op.
         /// @param world   The destination world the viewport presents after the rebind.
         /// @param runner  The runner the departed/destination worlds resolve through.
-        /// @param knobs   The per-frame view knobs re-seeded from the destination's level settings.
-        void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner,
-                                 Renderer::ViewState& knobs);
+        void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner);
 
         /// @brief Points a viewport's seat association — and the cursor seat when it follows — at a seat.
         ///
@@ -693,8 +634,11 @@ namespace Veng
         /// @brief The consumer readiness predicate composed onto every present-on-ready wait; may be empty.
         WorldPresentReadyGate m_PresentReadyGate;
 
-        /// @brief The resolver level-configured viewports pass through; empty maps the look alone.
-        LevelLookResolver m_LevelLookResolver;
+        /// @brief The output brightness every push carries (SetOutputCalibration).
+        f32 m_OutputBrightness = 1.0f;
+
+        /// @brief The output gamma every push carries (SetOutputCalibration).
+        f32 m_OutputGamma = 1.0f;
 
         /// @brief Present-on-ready destinations abandoned on timeout or destination-close, cleared when
         ///        the index is superseded.

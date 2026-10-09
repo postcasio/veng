@@ -361,10 +361,15 @@ extern "C"
 /// Version 86 lets a capture light its scene: CaptureSurface grows Output and SceneView grows
 /// CaptureFace. A module spawns prefabs carrying the component and builds views for its own
 /// renderers, so a stale module lays both out short.
+/// Version 87 makes a scene's render look a component every viewport resolves itself: Viewport
+/// grows its look resolver and resolved look, BoundViewportInfo loses its knobs and look,
+/// LevelOverlay::GetViewState and Application's world view knobs go, and ManagedViewportSet's
+/// push no longer takes knobs. A module derives Application and builds bound viewports, so a
+/// stale one lays out and calls through the old shapes.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 86u
+#define VENG_MODULE_ABI_VERSION 87u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

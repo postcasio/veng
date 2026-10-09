@@ -124,7 +124,7 @@ namespace
             const AssetHandle<Prefab> prefab =
                 GetAssetManager().Adopt<Prefab>(Prefab::Create({}, {}));
             const AssetHandle<Level> level = GetAssetManager().Adopt<Level>(
-                Level::Create(prefab, std::move(systems), GameModeConfig{}, LevelRenderSettings{}));
+                Level::Create(prefab, std::move(systems), GameModeConfig{}, RenderLook{}));
             Levels.push_back(level);
             const WorldInstanceId id = GetWorldRunner().OpenWorld(WorldOpenInfo{
                 .Source = level,

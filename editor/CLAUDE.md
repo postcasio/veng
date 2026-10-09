@@ -185,7 +185,7 @@ across the whole project's one AssetId namespace, not just its own pack.
   children over the same dockspace: a **systems panel** listing the `SystemRegistry` catalog with
   a per-system enable toggle, phase labels, and drag-reorder over the active set — writing the
   level's ordered `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and the
-  post/pipeline `LevelRenderSettings` through the shared reflection inspector
+  level's `RenderLook` (its `render` block) through the shared reflection inspector
   (`DrawFieldWidget`). The sky is **not** in that panel: it is the scene's author-opt-in `Sky`
   component (plus an optional `TimeOfDay`), added to a world entity through the ordinary inspector
   Add-Component surface and resolved by the renderer itself each frame — so the sky appears the
@@ -193,7 +193,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   like any other; the level editor adds **no new inspector machinery** — the catalog drives the
   systems panel and reflection draws the config. Config edits (systems / game-mode / render)
   accumulate in memory and preview live in the viewport (render settings push through
-  `ApplyLevelRenderSettings`); they persist only on **Save**, which writes both the world
+  `ApplyRenderLook`, onto an edited scene that carries no `RenderLook` of its own); they persist
+  only on **Save**, which writes both the world
   `*.prefab.json` (the base scene save) and the `*.level.json` config — the config record binds
   through the same shared `JsonReadFields` (tolerant, `allowUnknownFields = true`) and merge-write
   `JsonWriteFields` the cooker's `LevelImporter` reads with, so the panel's config round-trip is
@@ -468,7 +469,7 @@ editor owns only the **UI**:
   look starts from the project's**: `EditorHost` resolves project.veng's `"preview"` block
   (`ProjectPreviewSettings`) into a `PreviewLook` — the preview level's `render` block,
   read through the reflection walk the level editor uses and applied by
-  `ApplyLevelRenderSettings`, its field of view, its opening environment — which both material
+  `ApplyRenderLook`, its field of view, its opening environment — which both material
   factories hand their panels, and the prefab factory its documents; without one the preview keeps the renderer's defaults and, having
   no environment, a sun. A save recooks off-thread and hot-reloads behind the stable
   `AssetHandle`; the shown texture re-registers whenever the viewport's output is replaced.

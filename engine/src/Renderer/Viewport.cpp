@@ -5,6 +5,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Diagnostics/Profiler.h>
+#include <Veng/Log.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Overlay.h>
@@ -19,6 +20,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneViewport.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Text/GlyphAtlas.h>
 
@@ -493,6 +495,61 @@ namespace Veng::Renderer
         RefreshOutputHandle();
     }
 
+    void Viewport::SetLookResolver(LookResolver resolver)
+    {
+        m_LookResolver = std::move(resolver);
+        m_LookStale = true;
+    }
+
+    void Viewport::ResolvePresentedLook()
+    {
+        const Scene& scene = *m_ViewState.World;
+        const auto* look = scene.TryGetFirst<RenderLook>();
+        if (look == nullptr)
+        {
+            // Forgotten so that a look gained later resolves even if it equals the last one, since
+            // the owner may have configured the topology by hand in between.
+            m_ResolvedLook.reset();
+            return;
+        }
+
+        if (!m_MultipleLooksWarned)
+        {
+            u32 looks = 0;
+            for ([[maybe_unused]] auto [entity, component] : scene.View<RenderLook>())
+            {
+                ++looks;
+            }
+            if (looks > 1)
+            {
+                Log::Warn("Viewport: {} RenderLook components in the presented scene; resolving "
+                          "the first, ignoring the rest.",
+                          looks);
+                m_MultipleLooksWarned = true;
+            }
+        }
+
+        if (m_LookStale || m_ResolvedLook == nullptr || !(*m_ResolvedLook == *look))
+        {
+            SceneRendererSettings settings = GetSettings();
+            ViewState knobs;
+            if (m_LookResolver)
+            {
+                m_LookResolver(*look, settings, knobs);
+            }
+            else
+            {
+                ApplyRenderLook(*look, settings, knobs);
+            }
+            m_ResolvedLook = CreateUnique<RenderLook>(*look);
+            m_LookKnobs = knobs;
+            m_LookStale = false;
+            Configure(settings);
+        }
+
+        CopyLookKnobs(m_LookKnobs, m_ViewState);
+    }
+
     const SceneRendererSettings& Viewport::GetSettings() const
     {
         return m_Renderer->GetSettings();
@@ -547,6 +604,10 @@ namespace Veng::Renderer
         {
             return;
         }
+
+        // Ahead of everything reading the view or the settings this frame, so a look edit lands
+        // on the frame it was made in.
+        ResolvePresentedLook();
 
         // Drive any SceneHdrPreBloom overlays into their draw lists before the scene render, so the
         // renderer's pre-bloom pass composites current content this frame (the RenderSurfaces

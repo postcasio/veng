@@ -5,7 +5,7 @@
 namespace Veng
 {
     class Scene;
-    struct LevelRenderSettings;
+    struct RenderLook;
 }
 
 namespace Veng::Renderer
@@ -57,19 +57,30 @@ namespace Veng
     /// @param viewportPixelHeight The target's vertical extent in pixels.
     void ResolveDofViewState(Renderer::ViewState& state, f32 viewportPixelHeight);
 
-    /// @brief Maps a level's post/pipeline render knobs onto a renderer's topology and per-frame view.
+    /// @brief Maps a render look onto a renderer's topology and per-frame view.
     ///
-    /// Splits LevelRenderSettings across the two renderer surfaces it feeds: the topology toggles
-    /// (Bloom / Shadows / AO) onto a SceneRendererSettings the caller applies through
-    /// Viewport::Configure, and the per-frame values (Exposure / BloomIntensity) onto a ViewState the
-    /// caller pushes each frame. The sky/environment knobs are not here — they are the Sky and
-    /// TimeOfDay scene components, resolved by the renderer itself. The single mapping the example
-    /// games, the managed world, and the editor viewport share, so the level→renderer wiring lives
-    /// in one place.
-    /// @param render    The level's post/pipeline render-settings subset.
-    /// @param settings  The topology/sizing knobs to update (the toggles are written in place).
-    /// @param view      The per-frame view to seed (the tone/bloom values are written).
-    void ApplyLevelRenderSettings(const LevelRenderSettings& render,
-                                  Renderer::SceneRendererSettings& settings,
-                                  Renderer::ViewState& view);
+    /// Splits RenderLook across the two renderer surfaces it feeds: the topology toggles (Bloom /
+    /// Shadows / AO / …) onto a SceneRendererSettings applied through Viewport::Configure, and the
+    /// per-frame values (Exposure / BloomIntensity / …) onto a ViewState. The sky/environment knobs
+    /// are not here — they are the Sky and TimeOfDay scene components, resolved by the renderer
+    /// itself. The single mapping a viewport's default look resolve, a host's graphics resolve and
+    /// the editor's authoring previews share, so the look→renderer wiring lives in one place. The
+    /// fields it writes onto @p view are exactly the ones CopyLookKnobs carries.
+    /// @param look      The look to map.
+    /// @param settings  The topology/sizing knobs to update (the look's toggles are written in place).
+    /// @param view      The per-frame view to update (the look's per-frame values are written).
+    void ApplyRenderLook(const RenderLook& look, Renderer::SceneRendererSettings& settings,
+                         Renderer::ViewState& view);
+
+    /// @brief Writes the look-owned per-frame fields of a resolved view over another view.
+    ///
+    /// The per-frame half of a viewport's look: the fields ApplyRenderLook writes onto a view,
+    /// copied from @p resolved (the view a look resolve produced) onto @p view (the one pushed this
+    /// frame), leaving every other field — the scene, camera, delta and alpha, and the knobs a look
+    /// does not own — as pushed. The lens fields (DofFocusDistance, DofAperture) are left alone
+    /// while @p view's camera authored them (ViewState::DofFromPhysicalCamera), and the two
+    /// depth-of-field quality knobs are clamped again, since a resolver may have written them.
+    /// @param resolved  The view carrying the resolved look's per-frame values.
+    /// @param view      The view to write them over.
+    void CopyLookKnobs(const Renderer::ViewState& resolved, Renderer::ViewState& view);
 }

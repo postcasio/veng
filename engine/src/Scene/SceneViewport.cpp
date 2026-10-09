@@ -53,40 +53,61 @@ namespace Veng
         state.DofRingCount = Renderer::ClampDofRingCount(state.DofRingCount);
     }
 
-    void ApplyLevelRenderSettings(const LevelRenderSettings& render,
-                                  Renderer::SceneRendererSettings& settings,
-                                  Renderer::ViewState& view)
+    void ApplyRenderLook(const RenderLook& look, Renderer::SceneRendererSettings& settings,
+                         Renderer::ViewState& view)
     {
-        settings.Bloom = render.Bloom;
-        settings.Shadows = render.Shadows;
-        settings.PunctualShadows = render.PunctualShadows;
-        settings.MaxShadowDistance = render.MaxShadowDistance;
-        settings.ShadowResolution = render.ShadowResolution;
-        settings.AutoExposure = render.AutoExposure;
-        settings.SSR = render.SSR;
-        settings.AO = render.AO;
-        settings.Refraction = render.Refraction;
-        settings.RefractionBlur = render.RefractionBlur;
-        settings.DepthOfField = render.DepthOfField;
+        settings.Bloom = look.Bloom;
+        settings.Shadows = look.Shadows;
+        settings.PunctualShadows = look.PunctualShadows;
+        settings.MaxShadowDistance = look.MaxShadowDistance;
+        settings.ShadowResolution = look.ShadowResolution;
+        settings.AutoExposure = look.AutoExposure;
+        settings.SSR = look.SSR;
+        settings.AO = look.AO;
+        settings.Refraction = look.Refraction;
+        settings.RefractionBlur = look.RefractionBlur;
+        settings.DepthOfField = look.DepthOfField;
 
-        view.AmbientFloor = render.AmbientFloor;
-        view.Exposure = render.Exposure;
-        view.Tonemapper = render.Tonemapper;
-        view.AutoExposureMinLuminance = render.AutoExposureMinLuminance;
-        view.AutoExposureMaxLuminance = render.AutoExposureMaxLuminance;
-        view.AutoExposureLowPercentile = render.AutoExposureLowPercentile;
-        view.AutoExposureHighPercentile = render.AutoExposureHighPercentile;
-        view.BloomThreshold = render.BloomThreshold;
-        view.BloomIntensity = render.BloomIntensity;
-        view.BloomRadius = render.BloomRadius;
+        view.AmbientFloor = look.AmbientFloor;
+        view.Exposure = look.Exposure;
+        view.Tonemapper = look.Tonemapper;
+        view.AutoExposureMinLuminance = look.AutoExposureMinLuminance;
+        view.AutoExposureMaxLuminance = look.AutoExposureMaxLuminance;
+        view.AutoExposureLowPercentile = look.AutoExposureLowPercentile;
+        view.AutoExposureHighPercentile = look.AutoExposureHighPercentile;
+        view.BloomThreshold = look.BloomThreshold;
+        view.BloomIntensity = look.BloomIntensity;
+        view.BloomRadius = look.BloomRadius;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
-        // being Physical without the level being reloaded. The two quality knobs are clamped here
-        // as well as at the push, because a cooked level is untrusted input.
-        view.DofFocusDistance = render.DofFocusDistance;
-        view.DofAperture = render.DofAperture;
-        view.DofMaxCoc = Renderer::ClampDofMaxCoc(render.DofMaxCoc);
-        view.DofRingCount = Renderer::ClampDofRingCount(render.DofRingCount);
+        // being Physical without the look being reapplied. The two quality knobs are clamped here as
+        // well as at the push, because a cooked level or prefab is untrusted input. CopyLookKnobs
+        // carries exactly these view fields; the two lists change together.
+        view.DofFocusDistance = look.DofFocusDistance;
+        view.DofAperture = look.DofAperture;
+        view.DofMaxCoc = Renderer::ClampDofMaxCoc(look.DofMaxCoc);
+        view.DofRingCount = Renderer::ClampDofRingCount(look.DofRingCount);
+    }
+
+    void CopyLookKnobs(const Renderer::ViewState& resolved, Renderer::ViewState& view)
+    {
+        view.AmbientFloor = resolved.AmbientFloor;
+        view.Exposure = resolved.Exposure;
+        view.Tonemapper = resolved.Tonemapper;
+        view.AutoExposureMinLuminance = resolved.AutoExposureMinLuminance;
+        view.AutoExposureMaxLuminance = resolved.AutoExposureMaxLuminance;
+        view.AutoExposureLowPercentile = resolved.AutoExposureLowPercentile;
+        view.AutoExposureHighPercentile = resolved.AutoExposureHighPercentile;
+        view.BloomThreshold = resolved.BloomThreshold;
+        view.BloomIntensity = resolved.BloomIntensity;
+        view.BloomRadius = resolved.BloomRadius;
+        if (!view.DofFromPhysicalCamera)
+        {
+            view.DofFocusDistance = resolved.DofFocusDistance;
+            view.DofAperture = resolved.DofAperture;
+        }
+        view.DofMaxCoc = Renderer::ClampDofMaxCoc(resolved.DofMaxCoc);
+        view.DofRingCount = Renderer::ClampDofRingCount(resolved.DofRingCount);
     }
 }

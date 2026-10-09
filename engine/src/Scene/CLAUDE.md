@@ -876,7 +876,7 @@ is game vocabulary. (The word "session" means something else entirely: the per-a
 `Net::SessionRecord` the host tier keeps — see [../Net/CLAUDE.md](../Net/CLAUDE.md).)
 
 **World-scoped config is a component found by type, not on a designated entity.** A rule system
-reads the `GameModeConfig` (and the engine reads `LevelRenderSettings`) through
+reads the `GameModeConfig` (and every presenting viewport reads the `RenderLook`) through
 **`Scene::TryGetFirst<T>()`** — the first component of a type, or `nullptr`. So world/level config
 lives on *some* settings entity without any consumer naming a well-known one: a `Level` seeds
 level-scoped config onto one (see **Levels**), and genuinely world-scoped config (a hypothetical
@@ -923,9 +923,9 @@ this way (`RemotePlaybackTick`).
 **A `Level` is the authored wiring artifact — a thin wrapper by reference.** A **`Level`** asset
 (`AssetTypes::Level`, `Veng/Asset/Level.h`) does not embed world entities: it *references* a
 **world prefab** by `AssetId` and adds the data that is not reusable-recipe data — the ordered
-active `SystemId` set, the `GameModeConfig`, and a tolerant **`LevelRenderSettings`** subset (the
-view-wide post/pipeline knobs — exposure, bloom, shadow/AO toggles the app maps onto its
-`SceneRendererSettings`/`SceneView`). The sky/environment is **not** a level field: it is the
+active `SystemId` set, the `GameModeConfig`, and a tolerant **`RenderLook`** — the scene's render
+look (the view-wide post/pipeline knobs — exposure, bloom, shadow/AO toggles each presenting
+viewport resolves onto its `SceneRendererSettings`/`SceneView`). The sky/environment is **not** a level field: it is the
 scene's one author-opt-in `Sky` component (plus an optional `TimeOfDay`) on the world prefab,
 resolved by the renderer itself each `Execute`. The level *reuses* prefab serialization rather
 than embedding a second copy: a prefab is a reusable recipe, the `Level` is the once-loaded
@@ -936,12 +936,14 @@ world prefab and that prefab's embedded asset refs resolve as ordinary load-time
 game*: it spawns the world prefab into a fresh `Scene`, builds a `SceneSimulation` from the
 level's `SystemId` set against the catalog and **attaches it to the `Scene`**
 (`Scene::SetSimulation` — the scene owns its simulation), and **`SeedLevel`s a settings entity**
-carrying the level's `GameModeConfig` and `LevelRenderSettings` as components, returning a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app
+carrying the level's `GameModeConfig` and `RenderLook` as components, returning a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app
 ticks (via `Scene::TickSimulation`) and renders. The level's config (game mode, render settings)
 stays **authored on the `Level`** (edited as separate level-editor panels, cooked into the level
 blob) but enters the running world as scene components — so rule systems and the engine read it by
-`Scene::TryGetFirst<T>()`, the engine resolving `LevelRenderSettings` onto the renderer from the
-scene rather than the `Level` object. A game is assembled as authored data, not hand-spawned in
+`Scene::TryGetFirst<T>()`, every viewport presenting the scene resolving its `RenderLook` each
+frame it changes rather than reading the `Level` object — so the look is the scene's from load on:
+a system may write it, and a prefab carrying one brings its own (see the Viewport section of
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)). A game is assembled as authored data, not hand-spawned in
 `main.cpp`; the engine-managed game world (see **Application** in
 [engine/CLAUDE.md](../../CLAUDE.md)) drives this end to end so a minimal `main.cpp` writes none of
 it.

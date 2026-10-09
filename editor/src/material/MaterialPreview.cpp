@@ -128,7 +128,7 @@ namespace VengEditor
         // controls then adjust.
         if (look.Render)
         {
-            ApplyLevelRenderSettings(*look.Render, m_BaseSettings, m_BaseView);
+            ApplyRenderLook(*look.Render, m_BaseSettings, m_BaseView);
         }
         m_Configured = m_BaseSettings;
         m_Viewport = Renderer::Viewport::Create({

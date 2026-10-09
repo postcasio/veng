@@ -85,7 +85,7 @@ namespace VengEditor
         ///
         /// The world scene is served by the world tools (through the document's CurrentWorld);
         /// this hands back the two config structs the settings panel draws through the inspector.
-        /// @return { "renderSettings": LevelRenderSettings, "gameMode": GameModeConfig }.
+        /// @return { "renderSettings": RenderLook, "gameMode": GameModeConfig }.
         [[nodiscard]] Veng::vector<Inspectable> GetInspectables() override;
 
         /// @brief Runs the settings panel's reaction to a config write: live preview + mark dirty.
@@ -154,7 +154,7 @@ namespace VengEditor
         /// @brief The game-mode config edited through the reflection inspector.
         Veng::GameModeConfig m_GameMode;
         /// @brief The render-settings subset edited through the reflection inspector.
-        Veng::LevelRenderSettings m_Render;
+        Veng::RenderLook m_Render;
 
         /// @brief The reloaded level handle, re-fetched behind the stable handle on each recook.
         Veng::AssetHandle<Veng::Level> m_Handle;

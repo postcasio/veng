@@ -1230,7 +1230,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_surface_component.cpp
             tests/unit/gui_driver_registry.cpp
             tests/unit/gui_component_driver.cpp
-            tests/unit/level_render_settings.cpp
+            tests/unit/render_look.cpp
             tests/unit/graphics_resolve.cpp
             tests/unit/audio_resolve.cpp
             tests/unit/display_settings.cpp
@@ -2019,12 +2019,13 @@ if (VENG_BUILD_TESTS)
             # managed viewport reconfigured, and an empty set a clean no-op (needs a Context for the
             # Application/viewports, so it rides the gpu band).
             tests/gpu/graphics_settings_apply.cpp
-            # level_look_resolve.cpp drives a headless Application through the level-look funnel: a
-            # consumer resolver surviving the world seed, a managed rebind (in one reconfigure) and a
-            # LevelOverlay open, the identity default leaving the authored look, and
-            # ApplyGraphicsSettings re-resolving managed and overlay viewports alike (needs a Context
-            # for the Application/viewports, so it rides the gpu band).
-            tests/gpu/level_look_resolve.cpp
+            # render_look_resolve.cpp drives a headless Application whose viewports resolve their
+            # scenes' RenderLook each frame: a look edit live (per-frame fields with no rebuild, a
+            # topology field in exactly one), two worlds keeping two looks, a consumer resolver
+            # composing per viewport and re-run once by ApplyGraphicsSettings, a spawned prefab's look
+            # applying, and the bootstrap, rebind and overlay viewports resolving theirs (needs a
+            # Context for the Application/viewports, so it rides the gpu band).
+            tests/gpu/render_look_resolve.cpp
             # application_settings_boot.cpp drives a headless managed-world Application through Run()
             # with a settings file already planted per domain, and pins what the settings boot has
             # finished by the time OnInitialize runs: the graphics, audio and language stores all

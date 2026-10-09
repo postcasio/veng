@@ -559,7 +559,7 @@ The editor surface is **consumed from** reflection, not **mirrored into** MCP. A
 hands back the reflected object(s) it edits through one small seam — `EditorPanel`'s
 `GetInspectables()` (returning `{ Name, Type, Data }` records) / `OnInspectableChanged()` — and
 the editor tools walk them with the same `FieldsToJson`/`JsonToFields` the inspector walks
-through `DrawFieldWidget`. Adding a field to `LevelRenderSettings` or a material's params
+through `DrawFieldWidget`. Adding a field to `RenderLook` or a material's params
 appears over MCP with **zero MCP change**; the per-panel code lives in the panel, beside the
 data it already draws, not as a second API surface to keep in sync. The bounded non-field verbs
 (save/undo/redo) ride `AssetEditorPanel`'s existing virtuals, and editor world-edits route

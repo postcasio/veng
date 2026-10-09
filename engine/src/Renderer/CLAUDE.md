@@ -1172,9 +1172,11 @@ ICD.
 
 **With a `Physical` camera, the camera wins — and the level's focus fields go inactive.** The five
 per-frame `ViewState`/`SceneView` fields are `DofFocusDistance`, `DofAperture`, `DofCocScale`,
-`DofMaxCoc`, and `DofRingCount`. `ApplyLevelRenderSettings` stays a **pure, unconditional
-mapping** — it records authored intent into the persistent knobs and never inspects the camera —
-while the viewport glue fills the lens-derived fields in the per-frame copy it pushes. So
+`DofMaxCoc`, and `DofRingCount`. `ApplyRenderLook` stays a **pure, unconditional
+mapping** — it records authored intent into the resolved knobs and never inspects the camera —
+while the viewport glue fills the lens-derived fields in the per-frame copy it pushes, and the
+viewport's per-frame look write (`CopyLookKnobs`) leaves the lens fields alone while that push
+reports a `Physical` camera. So
 camera-wins holds **by construction every frame**, the stored authored values survive untouched,
 and they come back to life the moment the camera stops being `Physical`. `DofCocScale` is
 *always* derived by the glue (sensor height × viewport pixel height) and is never hand-authored in
@@ -1185,8 +1187,9 @@ consults.
 **`DofMaxCoc` and `DofRingCount` still apply in every camera mode** — they are quality knobs, not
 lens properties, and a physical camera does not drive them. Both are **hard-clamped where they are
 pushed** (`ClampDofMaxCoc` → `DofCocCeiling`, `ClampDofRingCount` → `MaxDofRings`, `Renderer/DofTile.h`)
-because `LevelRenderSettings` routes authored values in from a cooked level and **an archive is
-untrusted input**; the ring count is a GPU loop bound, and the gather shader ceilings it a second
+because `RenderLook` routes authored values in from a cooked level or prefab and **an archive is
+untrusted input** (and `CopyLookKnobs` clamps them again, since a host's look resolver may write
+them); the ring count is a GPU loop bound, and the gather shader ceilings it a second
 time against a compile-time `MaxRings` so no missed CPU clamp can ever produce an unbounded loop.
 
 #### Translucency defocuses by the geometry behind it
@@ -1880,12 +1883,26 @@ barrier).
   still owns a region (for resize + picking); the role only decides whether the **engine** places
   it.
 - **Push the per-frame source.** The owner sets a `ViewState` each frame (the `Scene` to render,
-  the resolved `CameraView`, `Delta`, and the tone/bloom knobs — the input subset of the
+  the resolved `CameraView`, `Delta`, and the knobs a look does not own — the input subset of the
   renderer's internal `SceneView`); the viewport never reaches into the scene for a camera. A null
   `World` renders nothing (a closed document is a no-op, not a null deref). The viewport retains
-  the camera for screen-to-world mapping.
+  the camera for screen-to-world mapping, and the whole view (`GetViewState`).
+- **The viewport resolves the scene's look itself.** In `Render`, before the `SceneView` is built,
+  it reads the presented scene's `RenderLook` (`Veng/Scene/Components.h`; the first walked wins,
+  with a warning once if there are several). When the look differs from the last one resolved
+  (`RenderLook` has `operator==`) or the owner called `InvalidateLook`, it runs its **look resolver**
+  (`SetLookResolver`; a `ViewportCompositor` hands its own to every viewport it registers, and an
+  unset one is `ApplyRenderLook` alone) from the current settings and `Configure`s the result, which
+  no-ops an unchanged topology; then, every frame, it writes the resolved per-frame fields over the
+  pushed view (`CopyLookKnobs`). So a per-frame look field (exposure, a bloom knob, the ambient
+  floor) is live on the next frame with no rebuild, a topology field (bloom, shadows, SSR) costs one
+  rebuild — the same frame-boundary recompile a `Sky` source change takes — and an unchanged look
+  costs a comparison. A scene with no look renders the pushed values on the topology last
+  configured: an editor's prefab preview, or a consumer driving `SetViewState` itself. Because a
+  look edit can `Configure` inside `Render`, an owner sampling the output re-fetches it on a
+  `GetOutputGeneration` change rather than only after its own `Configure`.
 - **`Render(cmd)` does Execute + the Sample barrier.** It applies any pending region resize,
-  builds the internal `SceneView` from the bound `ViewState`, calls `SceneRenderer::Execute`, then
+  resolves the look as above, builds the internal `SceneView` from the bound `ViewState`, calls `SceneRenderer::Execute`, then
   `PrepareForAccess(Sample)` — so the output is sampleable when the frame's later consumers read
   it. Its product is a sampleable `Ref<ImageView>` (`GetOutput()`) and a bindless `TextureHandle`
   (`GetOutputHandle()`) for the compositor, `ImGuiLayer::CreateTexture`, or

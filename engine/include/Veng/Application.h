@@ -918,8 +918,8 @@ namespace Veng
         /// before the first presented frame. That one boot Load() is what WasLoadedFromFile()
         /// reports for the rest of the run, so a consumer tells a first run from a returning one
         /// without loading again. Applying is the consumer's: the engine calls
-        /// ApplyGraphicsSettings() only when asked — though each viewport it configures from a
-        /// level's authored look resolves that look through OnResolveGraphics against this store.
+        /// ApplyGraphicsSettings() only when asked — though every viewport registered on the
+        /// compositor resolves its scene's RenderLook through OnResolveGraphics against this store.
         /// @pre Run() has reached the settings boot — every hook from OnInitialize on qualifies, a
         ///      subclass constructor does not.
         [[nodiscard]] GraphicsSettings& GetGraphicsSettings()
@@ -931,29 +931,24 @@ namespace Veng
             return *m_GraphicsSettings;
         }
 
-        /// @brief Resolves the current graphics settings and applies them to every managed viewport.
+        /// @brief Applies the current graphics settings to every viewport, at a frame-safe point.
         ///
-        /// Closes the loop between the chosen values and the renderer: it builds the authored baseline
-        /// for the active world (the presented world's LevelRenderSettings, or a default-constructed one
-        /// when none is active), invokes OnResolveGraphics once so the game composes the user's chosen
-        /// quality with that look, then applies the resolved SceneRendererSettings to every managed
-        /// viewport — calling Viewport::Configure only when a topology field actually changed (a
-        /// dirty-compare that avoids a needless recompile) — pushes the resolved per-frame view knobs,
-        /// and applies the dynamic-resolution choice. It is the single writer of the applied
-        /// OutputBrightness/OutputGamma display-calibration knobs, filled from the built-in display
-        /// selections after the resolver runs.
+        /// Closes the loop between the chosen values and the renderer without reloading any world.
+        /// The scene-shaped half is per viewport: every viewport registered on the compositor runs
+        /// OnResolveGraphics over its own scene's RenderLook when that look changes, and this call
+        /// has each of them run it once more at its next render (ViewportCompositor::InvalidateLooks)
+        /// — configuring only when a topology field actually moved — so two viewports presenting
+        /// two looks each compose the choices with their own. The machine-shaped half is applied
+        /// here: the built-in display group, the output calibration (OutputBrightness /
+        /// OutputGamma, filled from the built-in display selections and carried on every managed
+        /// and overlay push — the single writer of those two knobs), and, for each managed
+        /// viewport, the render scale and the dynamic-resolution choice resolved against its
+        /// scene's look, with the Global facet taken from the primary's.
         ///
-        /// Settings are machine-global, so every managed viewport receives the same resolved settings
-        /// (split-screen included). Each LevelOverlay viewport is then re-resolved against its own
-        /// level's authored look (ManagedViewportSet::ReresolveBoundLevelLooks), so this one call
-        /// reaches every live viewport configured from a level, managed or overlay. It no-ops cleanly
-        /// on an empty managed set with no overlay (the editor) and is safe to call on a live,
-        /// presented viewport at a frame-safe point — this is the "no world reload" property — so the
-        /// menu calls it on Apply and the boot path calls it after loading the store. A later world
-        /// seed, rebind or overlay open needs no re-apply: each resolves its own look through
-        /// OnResolveGraphics as it configures.
-        /// The built-in display selections (resolution, window, present mode) are applied by the display
-        /// group, which extends this same entry point; this call applies the renderer surfaces.
+        /// A viewport presenting a scene with no RenderLook resolves nothing: its topology is its
+        /// owner's. It no-ops cleanly on an empty managed set (the editor) beyond the display group,
+        /// so the menu calls it on Apply and the boot path calls it after loading the store; a later
+        /// world, rebind or overlay needs no re-apply, since its viewport resolves its look itself.
         void ApplyGraphicsSettings();
 
         /// @brief Returns the per-machine audio-settings store, or null when the domain is absent.
@@ -1493,20 +1488,11 @@ namespace Veng
 
         /// @brief Returns the level a world was bootstrapped from, or an empty handle.
         ///
-        /// Valid only for the engine-managed world; a game reads the level's render settings or
-        /// game-mode config from it (e.g. to seed its own editable render-settings copy).
+        /// Valid only for the engine-managed world; a game reads the level's authored data from it
+        /// (its game-mode config, the render block its scene's RenderLook was seeded from).
         /// @param world  The world whose source level handle is read.
         /// @return The world's level handle.
         [[nodiscard]] const AssetHandle<Level>& GetWorldLevel(WorldInstanceId world) const;
-
-        /// @brief Returns the per-frame view knobs the managed world pushes into its viewport.
-        ///
-        /// Seeded from the level's render settings at bootstrap; a game edits it in place (the
-        /// tone/bloom/environment knobs a render-settings UI mutates) and the engine fills in the
-        /// scene/camera/delta each frame before pushing. Serves the engine-managed world.
-        /// @param world  The world whose view knobs are read.
-        /// @return The mutable managed-world ViewState.
-        [[nodiscard]] Renderer::ViewState& GetWorldViewState(WorldInstanceId world);
 
         /// @brief Sets a world's explicit pause toggle.
         ///
@@ -1555,10 +1541,10 @@ namespace Veng
 
         /// @brief Called once after the managed world is loaded, before its simulation starts.
         ///
-        /// Only fires when ApplicationInfo::World is set. The Scene is spawned and the renderer is
-        /// seeded from the level by this point, but the simulation has not started — a game seeds
-        /// its own editable render-settings copy, captures input focus, or waits on @p pending
-        /// before a deterministic capture here. Default is a no-op (the minimal game needs none).
+        /// Only fires when ApplicationInfo::World is set. The Scene is spawned (its RenderLook
+        /// seeded from the level) by this point, but the simulation has not started — a game
+        /// adjusts the scene's look, captures input focus, or waits on @p pending before a
+        /// deterministic capture here. Default is a no-op (the minimal game needs none).
         /// @param world    The managed world's handle, for resolving it back through the runner.
         /// @param scene    The managed world's Scene (its SceneSimulation attached but not started).
         /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
@@ -1635,14 +1621,14 @@ namespace Veng
         /// its own quality options onto the renderer surfaces here, reaching global knobs and per-object
         /// features the engine cannot tier generically.
         ///
-        /// It is also the resolver of every viewport the engine configures from a level's authored
-        /// look — the bootstrap world seed, a client-join world start, each managed rebind, a
-        /// LevelOverlay's open, and the overlay re-resolve ApplyGraphicsSettings runs — with
-        /// input.AuthoredLook that level's look. There the engine applies output.Settings in the one
-        /// Configure that applies the look and carries output.View into that viewport's pushes, so the
-        /// user's choices are never reverted by a presentation change; the dynamic-resolution choice
-        /// and the Global facet are applied by ApplyGraphicsSettings alone. A resolver is therefore
-        /// called more than once per apply and must be a pure function of its input.
+        /// It is also the look resolver of every viewport registered on the compositor (managed,
+        /// overlay or the consumer's own): a viewport runs it over the RenderLook of the scene it
+        /// presents whenever that look changes and once after each ApplyGraphicsSettings, with
+        /// input.AuthoredLook that look, configures output.Settings and writes the look-owned fields
+        /// of output.View over every view pushed to it — so the user's choices are never reverted
+        /// by a presentation change or a look edit; the dynamic-resolution choice and the Global
+        /// facet are applied by ApplyGraphicsSettings alone. A resolver is therefore called many
+        /// times per apply and must be a pure function of its input.
         ///
         /// @p output arrives pre-filled with the authored baseline (the authored look mapped onto the
         /// two renderer surfaces plus the viewport's current dynamic-resolution choice), so the default
@@ -1650,7 +1636,8 @@ namespace Veng
         /// schema is byte-identical to one that never resolved. A resolver must be total on the input,
         /// including the default-constructed authored look the no-world case supplies. It must not set
         /// output.View.OutputBrightness/OutputGamma — those are engine-owned display calibration the
-        /// apply path writes from the built-in display selections.
+        /// apply path writes from the built-in display selections, and a viewport carries none of
+        /// output.View's fields a look does not own (CopyLookKnobs).
         /// @param input   The chosen values and the authoring context to compose with.
         /// @param output  The renderer state to apply, pre-filled with the authored baseline.
         virtual void OnResolveGraphics(const GraphicsResolveInput& input,
@@ -1689,20 +1676,6 @@ namespace Veng
         /// @param store   The audio store supplying the resolve input's chosen values.
         void ApplyAudioSettings(Audio::AudioEngine& engine,
                                 const SettingsStore<SettingsChoices>& store);
-
-        /// @brief Resolves a level's authored look against a graphics store, for a viewport configuring from it.
-        ///
-        /// The resolver the engine installs on its ManagedViewportSet (with the app's own store), so
-        /// every level-configured viewport takes it: maps @p authored onto @p settings and @p view,
-        /// invokes OnResolveGraphics over that baseline, and writes the result back. The display
-        /// calibration (OutputBrightness / OutputGamma) is carried from the world view's applied value,
-        /// never the resolver's. Separated so the composition is exercisable against a specific store.
-        /// @param store     The graphics store supplying the chosen values.
-        /// @param authored  The level's authored render settings.
-        /// @param settings  The topology to update, pre-filled with the viewport's current settings.
-        /// @param view      The per-frame view knobs to update, pre-filled with the current knobs.
-        void ResolveLevelLook(const GraphicsSettings& store, const LevelRenderSettings& authored,
-                              Renderer::SceneRendererSettings& settings, Renderer::ViewState& view);
 
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
@@ -1831,40 +1804,24 @@ namespace Veng
         /// @param project  The cooked project MountProjectPacks parsed, naming the startup level.
         void BootstrapWorld(const CookedProject& project);
 
-        /// @brief Seeds the managed viewport + view knobs from a started world scene's render settings.
-        ///
-        /// The shared tail of bringing a world online: resolves the scene's LevelRenderSettings
-        /// through the level-look funnel (OnResolveGraphics composes over it) onto the primary
-        /// viewport's topology and the per-frame view, in one Configure. Used by the server/standalone
-        /// bootstrap and by the client when its join-loaded scene starts.
-        /// @param world  The world scene to seed the viewport from.
-        void SeedViewportFromWorld(Scene& world);
-
-        /// @brief Returns the authored look ApplyGraphicsSettings resolves against.
-        ///
-        /// The LevelRenderSettings of the world managed viewport 0 presents, or a default-constructed
-        /// value when no world is active or the presented world authors none — the total-on-the-default
-        /// input the resolve seam promises.
-        /// @return The active world's authored render settings, or a default-constructed value.
-        [[nodiscard]] LevelRenderSettings ResolveActiveAuthoredLook() const;
-
-        /// @brief Runs OnResolveGraphics over a level look composed onto the given surfaces.
+        /// @brief Runs OnResolveGraphics over a render look composed onto the given surfaces.
         ///
         /// Builds the authored baseline (@p authored mapped onto @p settings and @p view, plus the
         /// primary viewport's current dynamic-resolution choice), invokes OnResolveGraphics once
         /// with @p store's chosen values, and returns the output unapplied. The shared front half of
-        /// ApplyGraphicsSettings and ResolveLevelLook.
+        /// ApplyGraphicsSettings and the look resolver the compositor hands every viewport.
         /// @param store     The graphics store supplying the chosen values.
         /// @param authored  The authored look to compose with.
         /// @param settings  The topology the baseline starts from.
         /// @param view      The per-frame view knobs the baseline starts from.
         /// @return The resolved renderer state.
         [[nodiscard]] GraphicsResolveOutput
-        ResolveGraphicsOutput(const GraphicsSettings& store, const LevelRenderSettings& authored,
+        ResolveGraphicsOutput(const GraphicsSettings& store, const RenderLook& authored,
                               const Renderer::SceneRendererSettings& settings,
                               const Renderer::ViewState& view);
 
-        /// @brief The managed half of ApplyGraphicsSettings: resolve against the active look, apply to every managed viewport.
+        /// @brief The managed half of ApplyGraphicsSettings: each managed viewport's render scale and
+        ///        dynamic resolution, resolved against its scene's look, and the primary's Global facet.
         /// @param display  The built-in display selections the apply writes the calibration from.
         /// @pre The managed set is non-empty and the graphics store exists.
         void ApplyGraphicsToManagedViewports(const BuiltinDisplayChoices& display);
@@ -2529,9 +2486,6 @@ namespace Veng
         /// the drive as the stream binds the own seat, the sweep as the marker follows it — so this
         /// keeps OnClientPossession firing once per transition. Bounded by the frame's marker moves.
         vector<std::pair<const Scene*, Entity>> m_PossessionNotices;
-
-        /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
-        Renderer::ViewState m_WorldView;
 
         /// @brief The built-in display selections last applied, or nullopt before the first apply.
         ///

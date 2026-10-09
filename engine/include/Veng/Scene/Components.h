@@ -1576,21 +1576,24 @@ namespace Veng
         bool Enabled = true;
     };
 
-    /// @brief Level-scoped post/pipeline render knobs.
+    /// @brief A scene's render look: the view-wide post and pipeline knobs it is presented with.
     ///
-    /// Carried on a Level and seeded into the renderer the app drives — a reflected,
-    /// tolerantly-serialized struct, not a renderer type, so the renderer stays untouched
-    /// and a new field does not invalidate existing level blobs. The sky/environment knobs
-    /// are not here: they are the author-opt-in Sky and TimeOfDay scene components, resolved by
-    /// the renderer itself. This struct carries the view-wide post and pipeline toggles the app maps
-    /// onto its SceneRendererSettings (Bloom / Shadows / AO) and its per-frame SceneView
-    /// (Exposure, BloomThreshold, BloomIntensity, BloomRadius).
-    struct LevelRenderSettings
+    /// One per scene: every viewport presenting the scene reads it each frame
+    /// (Renderer::Viewport) and resolves it — on change only — into the topology it configures
+    /// (Bloom / Shadows / AO / SSR / …) and the per-frame knobs it writes over each pushed view
+    /// (Exposure, BloomThreshold, BloomIntensity, AmbientFloor, …), so a system writing a field here
+    /// changes the next frame's render, and a prefab carrying one brings its look into the scene.
+    /// With several, the first in pool order wins and a presenting viewport warns once. A level's authored
+    /// "render" block seeds one onto its settings entity (SeedLevel). A reflected,
+    /// tolerantly-serialized struct, not a renderer type, so a new field does not invalidate
+    /// existing level or prefab blobs. The sky/environment knobs are not here: they are the
+    /// author-opt-in Sky and TimeOfDay scene components, resolved by the renderer itself.
+    struct RenderLook
     {
         /// @brief Tonemap exposure fed into the per-frame SceneView.
         f32 Exposure = 1.0f;
         /// @brief The tone curve the terminal tonemap pass maps the exposed HDR through, fed into
-        ///        the per-frame SceneView. Serialized by name in the level "render" block.
+        ///        the per-frame SceneView. Serialized by name (in a level's "render" block too).
         Renderer::Tonemapper Tonemapper = Renderer::Tonemapper::ACES;
         /// @brief Whether auto-exposure adapts the tonemap exposure to the scene's luminance.
         ///
@@ -1604,13 +1607,13 @@ namespace Veng
         /// clamp because the two are one statement — the luminance range the metering spans, which
         /// is also the range the histogram's bins are laid over — and a scene that has to raise one
         /// end almost always has to lower the other. The default matches the renderer's own
-        /// ViewState default, so a level authoring none is unchanged.
+        /// ViewState default, so a look leaving it unset is unchanged.
         f32 AutoExposureMinLuminance = 0.002f;
         /// @brief Auto-exposure upper clamp on the adapted average luminance.
         ///
         /// Bounds how dark the metering lets a bright scene drive the exposure; a large value suits a
         /// high-dynamic-range scene (a bright sky, a starfield). The default matches the renderer's
-        /// own ViewState default, so a level authoring none is unchanged.
+        /// own ViewState default, so a look leaving it unset is unchanged.
         f32 AutoExposureMaxLuminance = 8.0f;
         /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
         ///
@@ -1652,7 +1655,7 @@ namespace Veng
         ///
         /// The ambient a surface receives in a scene with no lit sky (no environment, no SH/IBL sky
         /// tier). Mapped into the per-frame view and pushed into the lighting pass; the default is
-        /// the engine's flat ambient, so a level authoring none renders unchanged.
+        /// the engine's flat ambient, so a look leaving it unset renders unchanged.
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
@@ -1665,14 +1668,14 @@ namespace Veng
         ///
         /// Enables the grab a Translucent-domain material samples the scene behind its fragment
         /// through (SampleSceneColor); without it those samples read black. Off matches the
-        /// renderer's own default — a level whose translucents refract or distort the scene
+        /// renderer's own default — a scene whose translucents refract or distort the scene
         /// authors it on.
         bool Refraction = false;
         /// @brief Whether the scene-color copy carries a mip chain a material can read blurred.
         ///
         /// Requires Refraction. Enables SampleSceneColorBlurred — frosted glass, a backdrop blur —
         /// by giving the grab a halving chain down to roughly an 8-pixel level. Off matches the
-        /// renderer's own default; a level whose translucents only *distort* their samples wants it
+        /// renderer's own default; a scene whose translucents only *distort* their samples wants it
         /// off, since the levels are generated whether or not anything reads them.
         bool RefractionBlur = false;
         /// @brief Whether the depth-of-field battery runs.
@@ -1693,7 +1696,7 @@ namespace Veng
         /// @brief Depth-of-field blur radius ceiling in half-resolution pixels.
         ///
         /// A quality knob rather than a lens value, so it applies in every camera mode. Clamped to
-        /// DofCocCeiling on the way in — a cooked level is untrusted input.
+        /// DofCocCeiling on the way in — a cooked level or prefab is untrusted input.
         f32 DofMaxCoc = 16.0f;
         /// @brief Depth-of-field gather ring count.
         ///
@@ -1701,6 +1704,9 @@ namespace Veng
         /// MaxDofRings on the way in: it is a GPU loop bound, and an unclamped authored value
         /// reaching the shader is a device hang rather than a recoverable error.
         u32 DofRingCount = 4;
+
+        /// @brief Whether two looks are identical field for field.
+        friend bool operator==(const RenderLook&, const RenderLook&) = default;
     };
 }
 
@@ -2194,7 +2200,7 @@ VE_FIELD(Order, .DisplayName = "Order", .Tooltip = "Effects run in ascending ord
 VE_FIELD(Enabled, .DisplayName = "Enabled")
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
+VE_REFLECT(::Veng::RenderLook, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Tonemapper, .DisplayName = "Tonemapper")
 VE_FIELD(AutoExposure, .DisplayName = "Auto Exposure")

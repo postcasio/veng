@@ -71,7 +71,7 @@ TEST_CASE("ResolveSkySource: the atmosphere sets both intensities identically")
 TEST_CASE("AmbientFloor: no authored floor resolves the engine default into the view block")
 {
     // The engine default is the historical flat ambient, so a consumer authoring nothing — a fresh
-    // view, and an unauthored LevelRenderSettings — is byte-for-byte unchanged.
+    // view, and an unauthored RenderLook — is byte-for-byte unchanged.
     const vec3 engineDefault{0.12f, 0.13f, 0.16f};
 
     TypeRegistry types;
@@ -79,7 +79,7 @@ TEST_CASE("AmbientFloor: no authored floor resolves the engine default into the 
     const CameraView camera;
     const Renderer::SceneView view{.World = *scene, .Camera = camera};
     CHECK(view.AmbientFloor == engineDefault);
-    CHECK(LevelRenderSettings{}.AmbientFloor == engineDefault);
+    CHECK(RenderLook{}.AmbientFloor == engineDefault);
 
     // The floor's rgb rides the view block's AmbientFloor vec4 at a std140/std430 16-byte boundary,
     // so the shader's float4 read lands on it.

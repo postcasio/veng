@@ -231,7 +231,7 @@ playing document's viewport to its play world as below.
 
 **A viewport the engine did not build presents a world by registering as its presentation.**
 `ManagedViewportSet::RegisterBoundViewport(viewport, BoundViewportInfo)` binds a caller-owned
-viewport of **any role** to a world — `{ World, Viewer, Knobs, Look, PullsCamera }` — and from then
+viewport of **any role** to a world — `{ World, Viewer, PullsCamera }` — and from then
 on that world is presented exactly as a managed viewport's is: `CollectPresentingSeats` returns its
 `Viewer` so `SyncLocalControl`
 stamps `LocalControl` on that seat's pawn, and the context factory resolves the world's
@@ -263,10 +263,9 @@ runtime host survives, only what the engine attached is touched, hand-attached d
 **re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
 there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `InputRouter` association
 and — when the departed association owned it — **moving the cursor seat with the focus it holds**
-(`InputRouter::MoveCursorSeat`), and resetting `Info.Viewer`, and
-**re-seeds the viewport's render settings and per-frame view knobs** from the destination's authored
-`LevelRenderSettings` (the same seed the bootstrap world takes, resolved through the same
-level-look funnel — see below; a destination authoring none keeps the viewport's current settings). The carried focus is the user's, not the departed world's: a
+(`InputRouter::MoveCursorSeat`), and resetting `Info.Viewer`. The destination's look needs no
+re-seed: the viewport resolves the destination scene's `RenderLook` itself the first frame it
+renders it (see below; a destination authoring none keeps the viewport's current settings). The carried focus is the user's, not the departed world's: a
 captured cursor stays captured across the swap rather than releasing until the destination
 re-requests it, and a UI layer above it comes along too. Beyond that carry, input focus is left to
 the game. `GetManagedViewportWorld(index)` returns the applied binding and
@@ -343,9 +342,9 @@ config table, a boot UI atlas) during initialization; then, at the end of `Initi
 `OnInitialize`), it reuses that same parsed project to open the startup level
 as **world #0** through `WorldRunner::OpenWorld` — a first-class `World` bundling
 `{ WorldInstanceId, Unique<Scene> (+ its SceneSimulation, which holds the pause), a per-world clock }`. The
-open seeds the managed viewport's topology + per-frame view from the spawned scene (the level's
-`LevelRenderSettings` post knobs via `ApplyLevelRenderSettings`, plus the scene's author-opt-in
-`Sky` and `TimeOfDay`, resolved by the renderer itself each `Execute`), fires the
+open spawns the level (its render block seeded as the scene's `RenderLook`, which the presenting
+viewport resolves itself — below — beside the scene's author-opt-in `Sky` and `TimeOfDay`, resolved
+by the renderer each `Execute`), fires the
 `OnWorldLoaded(WorldInstanceId, Scene&, ResidencyBatch&)` hook, then starts the simulation, and
 binds world #0 to managed viewport #0 (`SetViewportWorld`). Each `Frame` the runner ticks every
 world and `ManagedViewportSet::PushViews` pulls each viewport's camera and pushes it.
@@ -362,22 +361,34 @@ the run — and acts on them before the first presented frame, with no first-upd
 app with no settings opinion is unchanged; audio is the single exception the engine applies for it,
 once after `OnInitialize`, when the authored bus graph has been adopted.
 
-**Every viewport configured from a level's authored look resolves it through `OnResolveGraphics`.**
-The bootstrap world seed, a client-join world start, each managed rebind and a `LevelOverlay`'s open
-all pass the level's `LevelRenderSettings` through one funnel —
-`ManagedViewportSet::ResolveLevelLook`, whose resolver `Application` installs as its protected
-`ResolveLevelLook(store, authored, settings, view)` — before the single `Configure` that applies it.
-So a consumer's resolve composes over each look as it lands, and the player's choices are never
-reverted by a presentation change; the default `OnResolveGraphics` is the identity, so a consumer
-with no resolver sees the authored look exactly. It reuses the existing resolve virtual rather than
-adding a second one, because a level look *is* the authored input that seam already takes
-(`GraphicsResolveInput::AuthoredLook`) — one composition rule, run wherever a look is applied. Only
-the viewport-shaped topology and the view knobs are applied there; the dynamic-resolution choice and
-the `Global` facet stay `ApplyGraphicsSettings`'. When the choices change, **`ApplyGraphicsSettings`
-reaches every live level-configured viewport**: the managed set as before, then each overlay against
-its own level's look (`ManagedViewportSet::ReresolveBoundLevelLooks`, over the look a bound
-viewport records at `RegisterBoundViewport`). The editor's authoring previews map a level look
-directly (`ApplyLevelRenderSettings`) — they show what the author wrote, not a player's quality.
+**A scene's render look is a component, and every viewport resolves the look of the scene it
+presents.** `RenderLook` (`Veng/Scene/Components.h`; one per scene, the first walked winning with a
+warning, the `Sky` rule) carries the view-wide post and pipeline knobs — exposure and the tone curve,
+auto-exposure, bloom, shadows, AO, SSR, refraction, depth of field, the ambient floor. A level's
+`render` block seeds it (`SeedLevel`), a prefab may carry one, and a system may write it. Each
+`Renderer::Viewport` reads its presented scene's `RenderLook` in `Render`, before the `SceneView` is
+built: when the look differs from the last one it resolved (or `InvalidateLook` was called) it runs
+its **look resolver** (`Viewport::SetLookResolver`) from its current settings and `Configure`s the
+result — a no-op for an unchanged topology — and every frame it writes the resolved per-frame knobs
+over the view it was pushed (`CopyLookKnobs`). So a look edit is live on the next frame (a per-frame
+field with no rebuild, a topology field with exactly one), two worlds presented at once keep two
+looks, and a prefab bringing a look into a scene that had none applies it. A scene with no look keeps
+the pushed values. A view push therefore carries only the scene, camera, delta and alpha — plus the
+output calibration below — and `Application` holds no view knobs of its own.
+
+**The player's quality composes per viewport, through `OnResolveGraphics`.** `Application` hands its
+compositor a look resolver (`ViewportCompositor::SetLookResolver`), which the compositor gives every
+viewport it registers — managed, overlay, a consumer's own: it maps the look (`ApplyRenderLook`) and
+runs `OnResolveGraphics` over it with `GraphicsResolveInput::AuthoredLook` that look — one composition
+rule, run per viewport and per look change rather than per presentation path. It reuses the existing
+resolve virtual rather than adding a second one, because a look *is* the authored input that seam
+already takes. **`ApplyGraphicsSettings`** applies the machine-shaped half itself — the display group,
+the output calibration (`OutputBrightness`/`OutputGamma`, carried on every managed and overlay push
+through `ManagedViewportSet::SetOutputCalibration`), each managed viewport's render scale and
+dynamic-resolution choice, and the primary's `Global` facet — and has every registered viewport
+re-run its resolver once at its next render (`ViewportCompositor::InvalidateLooks`). The default
+`OnResolveGraphics` is the identity, so a consumer with no resolver — and the editor, whose authoring
+previews show what the author wrote — sees each look exactly as authored.
 
 **The boot session restore is opt-out, and the restore is consumer-triggerable.**
 `GameWorldInfo::RestoreLocalSessionOnBoot` (default `true`) has the bootstrap resume the local
@@ -408,8 +419,8 @@ no engine code path special-cases world #0 — it is privileged only in that boo
 first. Every world API is handle-keyed: `GetWorldRunner()` reaches the runner (a game opens further
 worlds at runtime with `OpenWorld`, closes them with `CloseWorld`), `GetManagedWorldId()` returns
 world #0's handle, `ResolveWorld(id)->GetScene()` resolves a world's scene, and
-`GetWorldViewState(id)` / `GetWorldLevel(id)` / `SetWorldPaused(id, …)` key the managed world's
-knobs by handle. The sim domain has **no back-reference out**: a `World` holds no viewport, no seat,
+`GetWorldLevel(id)` / `SetWorldPaused(id, …)` key the managed world's
+state by handle. The sim domain has **no back-reference out**: a `World` holds no viewport, no seat,
 and no `NetRole` — it does not know it is presented or replicated. Presentation points *inward* by
 handle (a viewport names its world; `ManagedViewportSet` asks `WorldRunner::ResolveCameraView`, a
 pure query), and the runner holds no pointer back. The **minimal game writes no lifecycle or
@@ -624,8 +635,8 @@ start). **There is no `LevelOverlay::Update`:** the runner ticks the overlay's s
 engine pushes its camera each frame, so there is no per-frame game call and no hidden second
 scheduler. **Input focus and simulation pause are separate knobs:** taking the overlay's seat
 always suspends the covered seat's *input*, but a world simulates unless a `CoveredWorld` pause is
-held. An overlay's `GetViewState()` knobs are resolved from its level at open and again on every
-`ApplyGraphicsSettings` — not an in-place per-frame edit. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
+held. An overlay's look is its level's `RenderLook`, resolved by its viewport each frame like any
+scene's, so a system in the overlay (or the opener, through `GetScene()`) edits it live. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
 every router / cursor-seat / pause value to the state it captured at open, and closing the world
 (skipped when the world has already closed — an application-held overlay outlives its world at
 shutdown);
@@ -668,7 +679,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 86** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 87** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

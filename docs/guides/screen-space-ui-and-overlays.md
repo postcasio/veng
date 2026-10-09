@@ -251,6 +251,8 @@ is special-cased. The template's overlay level authors, in its prefab:
 - an **`Interactive` `GuiOverlay` HUD** with an `onClick` button (its HUD comes free — the
   overlay's own viewport drives it, exactly as any scene's overlay);
 - ordinary content (a spinning cube on a `ConstantMotion`, a camera, a light);
+- its look, in the level's `render` block — the scene's `RenderLook`, which the overlay's viewport
+  resolves itself, exactly as any presented scene's;
 
 and names, in its `systems`, the builtin **`DeviceAssignmentSystem`** + **`InputMappingSystem`**
 plus its own driving system. "Create a viewport, load a level with its systems, its seat, and

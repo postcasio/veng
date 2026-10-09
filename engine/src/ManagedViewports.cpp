@@ -216,8 +216,7 @@ namespace Veng
         m_PendingReconfigure = vector<ManagedViewportInfo>(infos.begin(), infos.end());
     }
 
-    void ManagedViewportSet::ApplyPendingReconfigure(WorldRunner& runner, const f32 delta,
-                                                     Renderer::ViewState& knobs)
+    void ManagedViewportSet::ApplyPendingReconfigure(WorldRunner& runner, const f32 delta)
     {
         if (m_PendingReconfigure)
         {
@@ -230,7 +229,7 @@ namespace Veng
         // complete rebind: detach the departed world's overlays and re-resolve the seat.
         for (const PendingRebind& rebind : m_PendingRebinds)
         {
-            ApplyCompleteRebind(rebind.Index, rebind.World, runner, knobs);
+            ApplyCompleteRebind(rebind.Index, rebind.World, runner);
         }
         m_PendingRebinds.clear();
 
@@ -262,7 +261,7 @@ namespace Veng
                                           PrepareWorldOverlays(destination->GetScene(), m_Assets);
             if (overlaysPrepared && IsWorldPresentable(runner, it->World, m_PresentReadyGate))
             {
-                ApplyCompleteRebind(it->Index, it->World, runner, knobs);
+                ApplyCompleteRebind(it->Index, it->World, runner);
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
@@ -358,7 +357,7 @@ namespace Veng
     }
 
     void ManagedViewportSet::ApplyCompleteRebind(const usize index, const WorldInstanceId world,
-                                                 WorldRunner& runner, Renderer::ViewState& knobs)
+                                                 WorldRunner& runner)
     {
         if (index >= m_Viewports.size())
         {
@@ -392,21 +391,6 @@ namespace Veng
         if (const World* destination = runner.ResolveWorld(world); destination != nullptr)
         {
             resolvedSeat = ResolvePresentationSeat(destination->GetScene(), departedViewer);
-
-            // The presented world's authored render settings govern the viewport that presents it —
-            // the same seed the bootstrap world takes, re-applied here so a travel does not leave a
-            // destination rendering under the departed level's toggles. The look goes through the
-            // installed resolver before the one Configure, so what the host layers over it survives
-            // the travel instead of being reverted by it. A destination authoring no
-            // LevelRenderSettings keeps the viewport's current settings (the editor and
-            // engine-agnostic postures).
-            if (const LevelRenderSettings* render =
-                    destination->GetScene().TryGetFirst<LevelRenderSettings>())
-            {
-                Renderer::SceneRendererSettings settings = managed.Viewport->GetSettings();
-                ResolveLevelLook(*render, settings, knobs);
-                managed.Viewport->Configure(settings);
-            }
         }
 
         AdoptViewportSeat(managed, resolvedSeat);
@@ -579,8 +563,7 @@ namespace Veng
     }
 
     void ManagedViewportSet::PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world,
-                                              Entity viewer, WorldRunner& runner,
-                                              const Renderer::ViewState& knobs, f32 delta,
+                                              Entity viewer, WorldRunner& runner, f32 delta,
                                               f32 alpha) const
     {
         // An invalid World is a game-driven viewport: the engine pushes nothing, so the game's own
@@ -589,6 +572,11 @@ namespace Veng
         {
             return;
         }
+
+        // The look's knobs are the viewport's to write as it renders; a push carries the display's.
+        Renderer::ViewState knobs;
+        knobs.OutputBrightness = m_OutputBrightness;
+        knobs.OutputGamma = m_OutputGamma;
 
         // A world closed at runtime resolves to nothing: push a null-scene ViewState so the viewport
         // drops its retained scene pointer and renders a cleared target (inert, never a dangling read).
@@ -629,14 +617,13 @@ namespace Veng
         viewport.SetViewState(state);
     }
 
-    void ManagedViewportSet::PushViews(WorldRunner& runner, const Renderer::ViewState& knobs,
-                                       f32 delta, f32 alpha)
+    void ManagedViewportSet::PushViews(WorldRunner& runner, f32 delta, f32 alpha)
     {
         for (usize index = 0; index < m_Viewports.size(); ++index)
         {
             const ManagedViewport& managed = m_Viewports[index];
             PushViewportView(*managed.Viewport, managed.Info.World, managed.Info.Viewer, runner,
-                             knobs, delta, alpha);
+                             delta, alpha);
 
             // A rebind's destination drives its captures for the whole wait, through the viewport
             // about to present it, so the frame that swaps presents maps already rendered.
@@ -654,15 +641,15 @@ namespace Veng
             managed.Viewport->SetPendingScene(pending, pendingAlpha);
         }
 
-        // Bound viewports (overlays) carry their own knobs and present a world other than the one
-        // driving the frame's alpha, so each reads its world's own interpolation fraction.
+        // Bound viewports (overlays) present a world other than the one driving the frame's alpha,
+        // so each reads its world's own interpolation fraction.
         for (const BoundViewport& bound : m_Bound)
         {
             if (!bound.PullsCamera)
             {
                 continue;
             }
-            PushViewportView(*bound.Viewport, bound.World, bound.Viewer, runner, bound.Knobs, delta,
+            PushViewportView(*bound.Viewport, bound.World, bound.Viewer, runner, delta,
                              runner.ResolveAlpha(bound.World));
         }
     }
@@ -682,8 +669,6 @@ namespace Veng
         m_Bound.push_back({.Viewport = &viewport,
                            .World = info.World,
                            .Viewer = info.Viewer,
-                           .Knobs = info.Knobs,
-                           .Look = info.Look,
                            .PullsCamera = info.PullsCamera});
     }
 
@@ -701,48 +686,10 @@ namespace Veng
         viewport.SetLocalization(nullptr);
     }
 
-    void ManagedViewportSet::SetLevelLookResolver(LevelLookResolver resolver)
+    void ManagedViewportSet::SetOutputCalibration(const f32 brightness, const f32 gamma)
     {
-        m_LevelLookResolver = std::move(resolver);
-    }
-
-    void ManagedViewportSet::ResolveLevelLook(const LevelRenderSettings& authored,
-                                              Renderer::SceneRendererSettings& settings,
-                                              Renderer::ViewState& view) const
-    {
-        if (m_LevelLookResolver)
-        {
-            m_LevelLookResolver(authored, settings, view);
-            return;
-        }
-        ApplyLevelRenderSettings(authored, settings, view);
-    }
-
-    void ManagedViewportSet::ReresolveBoundLevelLooks()
-    {
-        for (BoundViewport& bound : m_Bound)
-        {
-            if (!bound.Look.has_value())
-            {
-                continue;
-            }
-            Renderer::SceneRendererSettings settings = bound.Viewport->GetSettings();
-            ResolveLevelLook(*bound.Look, settings, bound.Knobs);
-            bound.Viewport->Configure(settings);
-        }
-    }
-
-    const Renderer::ViewState*
-    ManagedViewportSet::FindBoundViewState(const Renderer::Viewport& viewport) const
-    {
-        for (const BoundViewport& bound : m_Bound)
-        {
-            if (bound.Viewport == &viewport)
-            {
-                return &bound.Knobs;
-            }
-        }
-        return nullptr;
+        m_OutputBrightness = brightness;
+        m_OutputGamma = gamma;
     }
 
     void ManagedViewportSet::SetRenderScaleHold(const bool held)

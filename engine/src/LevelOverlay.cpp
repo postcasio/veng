@@ -95,19 +95,7 @@ namespace Veng
         }
         Scene& scene = world.GetScene();
 
-        // Resolve the level's render settings onto the renderer topology and the per-frame view knobs
-        // carried into the engine's camera push, through the same level-look funnel the managed
-        // viewports take, so the host's graphics resolve composes over this look too. A level
-        // authoring none resolves the default look.
         ManagedViewportSet& managed = app.GetManagedViewports();
-        LevelRenderSettings look;
-        if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
-        {
-            look = *render;
-        }
-        Renderer::SceneRendererSettings settings;
-        Renderer::ViewState knobs;
-        managed.ResolveLevelLook(look, settings, knobs);
 
         // 2. Create a Presented viewport for the region and register it last, so it composites over
         //    the covered world. A zero-extent region tracks the window (carries a Layout the
@@ -123,7 +111,6 @@ namespace Veng
             .Context = context,
             .Assets = assets,
             .Region = region,
-            .Settings = settings,
             .Role = Renderer::ViewportRole::Presented,
             // Screen-space Gui documents lay out in logical points; feed the window content scale so
             // the overlay's HUD renders at logical size on a HiDPI display (the compositor re-stamps
@@ -137,14 +124,13 @@ namespace Veng
         app.RegisterViewport(*overlay.m_Viewport);
 
         // Bind the viewport to the overlay world through its seat, so the presentation path pulls that
-        // seat's camera each frame with no game call and marks the seat locally controlled. The look
-        // is recorded so a settings apply re-resolves this viewport too.
+        // seat's camera each frame with no game call and marks the seat locally controlled. The
+        // viewport resolves the level's RenderLook itself, through the resolver the compositor
+        // handed it at registration.
         const InputSeat seat = ResolveInputSeat(&scene, overlay.m_World);
-        managed.RegisterBoundViewport(*overlay.m_Viewport,
-                                      BoundViewportInfo{.World = overlay.m_World,
-                                                        .Viewer = seat.GetRef().Viewer,
-                                                        .Knobs = knobs,
-                                                        .Look = look});
+        managed.RegisterBoundViewport(
+            *overlay.m_Viewport,
+            BoundViewportInfo{.World = overlay.m_World, .Viewer = seat.GetRef().Viewer});
 
         // 3. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
@@ -269,14 +255,5 @@ namespace Veng
     {
         VE_ASSERT(m_Viewport != nullptr, "LevelOverlay::GetViewport on a closed overlay");
         return *m_Viewport;
-    }
-
-    const Renderer::ViewState& LevelOverlay::GetViewState() const
-    {
-        VE_ASSERT(m_App != nullptr, "LevelOverlay::GetViewState on a closed overlay");
-        const Renderer::ViewState* knobs =
-            m_App->GetManagedViewports().FindBoundViewState(*m_Viewport);
-        VE_ASSERT(knobs != nullptr, "LevelOverlay::GetViewState: the viewport is not bound");
-        return *knobs;
     }
 }

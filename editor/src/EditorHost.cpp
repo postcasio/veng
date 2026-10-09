@@ -1054,11 +1054,10 @@ namespace VengEditor
                 entry ? ReadJsonObject(entry->Source) : std::nullopt;
             if (level && level->contains("render") && (*level)["render"].is_object())
             {
-                LevelRenderSettings render;
+                RenderLook render;
                 const TypeRegistry& types = GetTypeRegistry();
-                const VoidResult read =
-                    JsonReadFields(&render, types.Info(TypeIdOf<LevelRenderSettings>()),
-                                   (*level)["render"], types, {}, true);
+                const VoidResult read = JsonReadFields(&render, types.Info(TypeIdOf<RenderLook>()),
+                                                       (*level)["render"], types, {}, true);
                 if (read)
                 {
                     look.Render = render;
