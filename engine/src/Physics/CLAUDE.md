@@ -15,13 +15,41 @@ importer that writes it in [../../../cooker/CLAUDE.md](../../../cooker/CLAUDE.md
 ## The world is optional, per-`Scene`, and has its own frame
 
 A `Scene` optionally owns a `PhysicsWorld` exactly the way it optionally owns a `SceneSimulation`
-— `Scene::SetPhysicsWorld` / `GetPhysicsWorld`, `Clone()` copies neither. **It owns none by
-default**, so a scene with no physics instantiates nothing, allocates nothing, and steps nothing:
-the minimal template and the editor's preview scenes are untouched. The world is created from a
-**`PhysicsWorldInfo`** carrying gravity, the collision matrix, and the body budget — and **no step
-rate**, because a world steps in the Sim phase at that phase's fixed `SimTickRate`. A second
-independent rate would need an accumulator and a substep policy while giving up the determinism,
-replay and transform interpolation the Sim phase already supplies.
+— `Scene::SetPhysicsWorld` / `GetPhysicsWorld`, `Clone()` copies neither. **A scene owns one only
+when its system set runs `PhysicsSystem`**, so a scene with no physics instantiates nothing,
+allocates nothing, and steps nothing: the minimal template and the editor's preview scenes are
+untouched. The world is created from a **`PhysicsWorldInfo`** carrying gravity, the collision
+matrix, and the body budget — and **no step rate**, because a world steps in the Sim phase at that
+phase's fixed `SimTickRate`. A second independent rate would need an accumulator and a substep
+policy while giving up the determinism, replay and transform interpolation the Sim phase already
+supplies.
+
+**The system that steps the world creates it, from authored settings.** `PhysicsSystem::OnStart`
+calls **`EnsurePhysicsWorld(scene)`** (`Veng/Physics/PhysicsSystem.h`), which returns the installed
+world or creates one from the scene's **`PhysicsSettings`** — world-scoped config found by
+`Scene::TryGetFirst`, the defaults when the scene carries none — through
+**`ToPhysicsWorldInfo`**. So a level that names `PhysicsSystem` simulates wherever it runs — its own
+application's managed world, a second world the application opens, the editor's Play — with no
+application code. The component carries the uniform `Gravity`, the three budgets, a `DebugDraw`
+switch, and `Collisions`: `PhysicsCollisionRule { A; B; Collide; }` overrides applied in order over
+`DefaultCollisionMatrix()`, **each setting its pair in both directions**, so an authored table is
+symmetric by construction and the asymmetric-matrix assert cannot be reached from data. A zero
+budget is logged and replaced by the default rather than asserted on, since authored data must not
+abort an editor session. The settings are read once, at creation; editing them on a running world
+does nothing.
+
+- **An installed world wins.** A world set before start — from `OnWorldLoaded`, from a system started
+  earlier, from anything — is used as it is and the settings are not read, so a consumer whose world
+  needs an input the component cannot express (a frame or a budget computed at run time) keeps
+  installing its own. No builtin system reads the world in its own `OnStart`; a consumer system that
+  does is ordered after `PhysicsSystem` or calls `EnsurePhysicsWorld` itself, as anything stepping a
+  scene before its simulation starts must.
+- **Author it on a `Tier::Local` entity.** A joining client spawns the world prefab without its
+  server-authoritative entities, and an entity with no `Authority` is server-tier, so settings authored
+  there are absent on the client, which then builds the defaults. A level's settings entity in the
+  world prefab is `Local` for exactly this reason. The settings live in the world prefab rather than in
+  the `Level`'s own blocks because they are world data a prefab may carry, read by the system that
+  uses them, as every other world-scoped component is.
 
 **The world's frame is a property of the world, not of any viewer.** Every pose crossing the API —
 `PhysicsPose`, a velocity, a debug-draw vertex — is in the one frame the world was created in, and
@@ -239,7 +267,8 @@ sensor in one tick is therefore reported on the *next* tick, once the step begin
 `RegisterBuiltinSystems` makes it *resolvable*, not ordered — so **a level that wants physics names
 `PhysicsSystem` in its own `systems` array**, placed after the systems that produce motion, so a
 kinematic body's target pose for the tick is already written. A level that does not name it runs no
-solver, which is what keeps the "absent by default costs nothing" claim honest. Its `OnStop` clears
+solver and owns no world, which is what keeps the "absent by default costs nothing" claim honest. Its
+`OnStart` creates the world (above); its `OnStop` clears
 the world (`PhysicsWorld::DestroyAllBodies`) through the solver's batched calls — one constraint
 removal, one body removal and one destruction for the whole set — so a closing world's stop costs
 three calls, not three per body. Destroying the `PhysicsWorld` itself removes nothing body by body:
@@ -353,7 +382,7 @@ characters. A level names it before `PhysicsSystem`.
 stateful in ways nothing restored before the replay — dynamic velocities, the contact cache, sleep
 state — so a replayed step would advance the physics clock (`GetStepCount`) against state that was
 never rewound and drift it from the sim tick permanently. For such a scene a mispredict of N ticks
-advances the world by **exactly one** step, as before.
+advances the world by **exactly one** step.
 
 **A scene predicting a character does roll back, and the step runs during replay.** The rolled-back
 set is declared by the **`Predicted`** marker (`Veng/Physics/Components.h`), and it is deliberately

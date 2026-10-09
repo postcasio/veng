@@ -5193,6 +5193,108 @@
           "Loop": true
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Physics Settings"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::PhysicsSettings": {
+          "Gravity": [
+            0.0,
+            -9.81,
+            0.0
+          ],
+          "Collisions": [],
+          "MaxBodies": 4096,
+          "MaxBodyPairs": 16384,
+          "MaxContactConstraints": 8192,
+          "DebugDraw": false
+        },
+        "::Veng::Authority": {
+          "Tier": "Local",
+          "Owner": 0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Gravity Field"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            -6.0,
+            6.5
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::GravitySource": {
+          "Kind": "Radial",
+          "Direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "Magnitude": 9.81,
+          "InnerRadius": 0.0,
+          "OuterRadius": 0.0,
+          "Bounds": {
+            "Shape": "Sphere",
+            "Center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "Orientation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "HalfExtents": [
+              20.0,
+              20.0,
+              20.0
+            ]
+          },
+          "Priority": 0,
+          "BlendWidth": 0.0
+        },
+        "::Veng::Authority": {
+          "Tier": "Local",
+          "Owner": 0
+        }
+      }
     }
   ]
 }

@@ -1,6 +1,6 @@
 // Physics: the rigid-body module's world/body model, the layer table, the fixed step's
-// component reconciliation, the PhysicsPose/SyncTransform seam, the replay gate, and the
-// StateRecorder round-trip. Pure CPU — a headless Scene with no Context and no GPU.
+// component reconciliation, the PhysicsPose/SyncTransform seam, the replay gate, the
+// StateRecorder round-trip, and the world PhysicsSystem creates from authored PhysicsSettings. Pure CPU — a headless Scene with no Context and no GPU.
 
 #include <doctest/doctest.h>
 
@@ -10,10 +10,13 @@
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Physics/Queries.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
 #include "support/TestServices.h"
 
 using namespace Veng;
@@ -363,4 +366,143 @@ TEST_CASE("stopping a world's physics with many bodies and constraints leaves no
     fixture.Step(1);
     CHECK(fixture.Physics().GetBodyCount() == BoxCount + 1);
     CHECK(fixture.Physics().GetConstraintCount() == BoxCount / 2);
+}
+
+namespace
+{
+    // A scene with the builtin types and no physics world, ready to run PhysicsSystem alone.
+    struct AuthoredFixture
+    {
+        TypeRegistry Types;
+        SystemRegistry Systems;
+        TestSupport::TestServices Services;
+        Unique<Scene> World;
+
+        AuthoredFixture()
+        {
+            RegisterBuiltinTypes(Types);
+            RegisterBuiltinSystems(Systems);
+            World = Scene::Create(Types);
+        }
+
+        // Attaches a simulation running PhysicsSystem only, and starts it.
+        void Start()
+        {
+            World->SetSimulation(CreateUnique<SceneSimulation>(
+                Systems, vector<SystemId>{SystemIdOf<PhysicsSystem>()}));
+            World->StartSimulation(Services.Make());
+        }
+    };
+}
+
+TEST_CASE("a level running PhysicsSystem simulates with no physics world installed by code")
+{
+    AuthoredFixture fixture;
+    Scene& scene = *fixture.World;
+
+    const Entity ground = scene.CreateEntity();
+    scene.Add<Transform>(ground, Transform{.Position = vec3(0.0f, -1.0f, 0.0f)});
+    scene.Add<RigidBody>(ground,
+                         RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Static});
+    scene.Add<Collider>(ground, Collider{.Extents = vec3(20.0f, 1.0f, 20.0f)});
+    const Entity box = scene.CreateEntity();
+    scene.Add<Transform>(box, Transform{.Position = vec3(0.0f, 4.0f, 0.0f)});
+    scene.Add<RigidBody>(box);
+    scene.Add<Collider>(box);
+
+    fixture.Start();
+    REQUIRE(scene.GetPhysicsWorld() != nullptr);
+
+    const SystemContext context = fixture.Services.Make();
+    for (u32 i = 0; i < 10; ++i)
+    {
+        scene.TickSimulation(FixedStep, context);
+    }
+    REQUIRE(scene.Has<PhysicsPose>(box));
+    CHECK(scene.Get<PhysicsPose>(box).Position.y < 4.0);
+}
+
+TEST_CASE("authored PhysicsSettings reach the world PhysicsSystem creates")
+{
+    AuthoredFixture fixture;
+    const Entity settings = fixture.World->CreateEntity();
+    fixture.World->Add<PhysicsSettings>(
+        settings, PhysicsSettings{
+                      .Gravity = vec3(0.0f, -1.5f, 0.0f),
+                      .Collisions = {PhysicsCollisionRule{
+                          .A = PhysicsLayer::Moving, .B = PhysicsLayer::Moving, .Collide = false}},
+                      .MaxBodies = 7,
+                      .DebugDraw = true,
+                  });
+    fixture.Start();
+
+    const PhysicsWorld* world = fixture.World->GetPhysicsWorld();
+    REQUIRE(world != nullptr);
+    const PhysicsWorldInfo& info = world->GetInfo();
+    CHECK(info.MaxBodies == 7);
+    CHECK(info.Gravity.y == doctest::Approx(-1.5f));
+    CHECK(world->IsDebugDrawEnabled());
+    CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Moving, PhysicsLayer::Moving));
+
+    // Every row the rule leaves alone, and the rest of the Moving row, match the default.
+    const CollisionMatrix defaults = DefaultCollisionMatrix();
+    const u32 movingBit = PhysicsLayerBit(PhysicsLayer::Moving);
+    u32 differing = 0;
+    for (u32 row = 0; row < PhysicsLayerCount; ++row)
+    {
+        differing |= (info.Matrix.Rows[row] ^ defaults.Rows[row]) &
+                     (row == static_cast<u32>(PhysicsLayer::Moving) ? ~movingBit : ~0U);
+    }
+    CHECK(differing == 0);
+}
+
+TEST_CASE("a collision rule sets its pair in both directions")
+{
+    const PhysicsWorldInfo info = ToPhysicsWorldInfo(PhysicsSettings{
+        .Collisions =
+            {
+                PhysicsCollisionRule{
+                    .A = PhysicsLayer::Character, .B = PhysicsLayer::Trigger, .Collide = false},
+                PhysicsCollisionRule{
+                    .A = PhysicsLayer::Query, .B = PhysicsLayer::Static, .Collide = true},
+                PhysicsCollisionRule{
+                    .A = PhysicsLayer::Moving, .B = PhysicsLayer::Character, .Collide = false},
+            },
+    });
+
+    CHECK(IsSymmetric(info.Matrix));
+    CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Character, PhysicsLayer::Trigger));
+    CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Trigger, PhysicsLayer::Character));
+    CHECK(LayersCollide(info.Matrix, PhysicsLayer::Static, PhysicsLayer::Query));
+    CHECK(LayersCollide(info.Matrix, PhysicsLayer::Query, PhysicsLayer::Static));
+    CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Character, PhysicsLayer::Moving));
+}
+
+TEST_CASE("a world installed before start is the one the scene keeps")
+{
+    AuthoredFixture fixture;
+    fixture.World->Add<PhysicsSettings>(fixture.World->CreateEntity(),
+                                        PhysicsSettings{.MaxBodies = 7});
+    fixture.World->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{.MaxBodies = 32}));
+    const PhysicsWorld* installed = fixture.World->GetPhysicsWorld();
+
+    fixture.Start();
+
+    CHECK(fixture.World->GetPhysicsWorld() == installed);
+    CHECK(installed->GetInfo().MaxBodies == 32);
+    CHECK(&EnsurePhysicsWorld(*fixture.World) == installed);
+}
+
+TEST_CASE("a zero budget in authored settings falls back to the default")
+{
+    AuthoredFixture fixture;
+    fixture.World->Add<PhysicsSettings>(
+        fixture.World->CreateEntity(),
+        PhysicsSettings{.MaxBodies = 0, .MaxBodyPairs = 0, .MaxContactConstraints = 0});
+
+    const PhysicsWorldInfo defaults;
+    const PhysicsWorldInfo& info = EnsurePhysicsWorld(*fixture.World).GetInfo();
+    CHECK(info.MaxBodies == defaults.MaxBodies);
+    CHECK(info.MaxBodyPairs == defaults.MaxBodyPairs);
+    CHECK(info.MaxContactConstraints == defaults.MaxContactConstraints);
 }

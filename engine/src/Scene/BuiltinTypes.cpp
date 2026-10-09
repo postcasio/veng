@@ -116,6 +116,9 @@ namespace Veng
         registry.Register<FixedConstraint>();
         registry.Register<PointConstraint>();
         registry.Register<HingeConstraint>();
+        // The world-scoped settings PhysicsSystem creates the scene's world from;
+        // PhysicsCollisionRule registers transitively as its array-element type.
+        registry.Register<PhysicsSettings>();
 
         // Gravity as a field of sources, evaluated per body per step rather than a world constant.
         // GravityKind, RegionShape and the Region struct register transitively through the

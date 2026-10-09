@@ -887,9 +887,10 @@ is game vocabulary. (The word "session" means something else entirely: the per-a
 reads the `GameModeConfig` (and every presenting viewport reads the `RenderLook`) through
 **`Scene::TryGetFirst<T>()`** — the first component of a type, or `nullptr`. So world/level config
 lives on *some* settings entity without any consumer naming a well-known one: a `Level` seeds
-level-scoped config onto one (see **Levels**), and genuinely world-scoped config (a hypothetical
-`PhysicsSettings` holding gravity, say) is just authored as a component on an entity in the world
-prefab. One such component is the expected case; with several the first wins and the rest are
+level-scoped config onto one (see **Levels**), and genuinely world-scoped config — the
+`PhysicsSettings` `PhysicsSystem` creates the scene's physics world from (gravity, the collision
+table, the body budgets; see [../Physics/CLAUDE.md](../Physics/CLAUDE.md)) — is just authored as a
+component on an entity in the world prefab. One such component is the expected case; with several the first wins and the rest are
 ignored — a loose convention, deliberately **not** an enforced singleton or a side-channel
 resource store (the data stays ordinary component data, riding the one
 cook/serialize/inspector/replication pipeline). Absent → the consumer falls back to a default, the

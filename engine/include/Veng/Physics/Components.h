@@ -217,6 +217,53 @@ namespace Veng
         vec3 Axis = vec3(0.0f, 1.0f, 0.0f);
     };
 
+    /// @brief One authored override of a layer pair in a PhysicsSettings collision table.
+    ///
+    /// A rule sets the pair in both directions, so a table built from rules is symmetric by
+    /// construction and the asymmetric-matrix assert in PhysicsWorld::Create cannot be reached from
+    /// authored data. Naming a layer against itself sets that one entry.
+    struct PhysicsCollisionRule
+    {
+        /// @brief One layer of the pair.
+        PhysicsLayer A = PhysicsLayer::Moving;
+        /// @brief The other layer of the pair.
+        PhysicsLayer B = PhysicsLayer::Moving;
+        /// @brief Whether bodies on the two layers produce contacts.
+        bool Collide = true;
+    };
+
+    /// @brief The authored settings a scene's PhysicsWorld is created from.
+    ///
+    /// World-scoped config, found by `Scene::TryGetFirst<PhysicsSettings>()`: one is expected per
+    /// scene, and with several the first wins. PhysicsSystem creates the scene's world from it at
+    /// start when no world is installed yet (EnsurePhysicsWorld), and a scene carrying none gets a
+    /// default world, so a level that names PhysicsSystem simulates with no code at all. The fields
+    /// are read once, when the world is created; editing them on a running world changes nothing.
+    ///
+    /// @warning A joining client spawns the world prefab without its server-authoritative entities,
+    /// so a PhysicsSettings on a Server-tier entity (the tier an entity without an Authority has) is
+    /// absent on the client, which then builds a default world. Author it on a `Tier::Local` entity
+    /// so every peer creates the same world.
+    struct PhysicsSettings
+    {
+        /// @brief Uniform gravity in metres per second squared, in force while the scene carries no
+        ///        GravitySource.
+        vec3 Gravity = vec3(0.0f, -9.81f, 0.0f);
+        /// @brief Overrides applied in order over DefaultCollisionMatrix(); a later rule naming the
+        ///        same pair wins.
+        vector<PhysicsCollisionRule> Collisions;
+        /// @brief Hard ceiling on simultaneously live bodies; zero falls back to the default.
+        u32 MaxBodies = 4096;
+        /// @brief Hard ceiling on broad-phase body pairs tracked in one step; zero falls back to
+        ///        the default.
+        u32 MaxBodyPairs = 16384;
+        /// @brief Hard ceiling on contact constraints solved in one step; zero falls back to the
+        ///        default.
+        u32 MaxContactConstraints = 8192;
+        /// @brief Whether the created world starts with its debug draw enabled.
+        bool DebugDraw = false;
+    };
+
     /// @brief The authoritative world-space pose of an entity's physics body.
     ///
     /// The engine keeps one on every entity that has a body, adding it at body creation. It is the
@@ -295,6 +342,26 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::PointConstraint, 0x23223F4E1DFEA693ULL)
 VE_FIELD(Target, .DisplayName = "Target", .Tooltip = "The other body this one is pinned to")
 VE_FIELD(Point, .DisplayName = "Point", .Tooltip = "Shared pivot, in the physics world's frame")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PhysicsCollisionRule, 0x1DF51D45AEF4B94DULL)
+VE_FIELD(A, .DisplayName = "Layer A")
+VE_FIELD(B, .DisplayName = "Layer B")
+VE_FIELD(Collide, .DisplayName = "Collide", .Tooltip = "Whether the pair produces contacts")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PhysicsSettings, 0x140F01E7127BE541ULL)
+VE_FIELD(Gravity, .DisplayName = "Gravity",
+         .Tooltip = "Uniform gravity in m/s^2, in force while no GravitySource is authored")
+VE_ARRAY_FIELD(Collisions, .DisplayName = "Collisions",
+               .Tooltip = "Layer-pair overrides over the default matrix, each set both ways")
+VE_FIELD(MaxBodies, .DisplayName = "Max Bodies", .Tooltip = "Live body ceiling; 0 uses the default")
+VE_FIELD(MaxBodyPairs, .DisplayName = "Max Body Pairs",
+         .Tooltip = "Broad-phase pair ceiling per step; 0 uses the default")
+VE_FIELD(MaxContactConstraints, .DisplayName = "Max Contact Constraints",
+         .Tooltip = "Contact constraint ceiling per step; 0 uses the default")
+VE_FIELD(DebugDraw, .DisplayName = "Debug Draw",
+         .Tooltip = "Start the world with its debug visualization on")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::HingeConstraint, 0x9AB6756E19FC0BCAULL)

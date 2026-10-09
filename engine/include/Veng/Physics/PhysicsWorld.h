@@ -41,6 +41,16 @@ namespace Veng
         u32 MaxContactConstraints = 8192;
     };
 
+    /// @brief Builds the PhysicsWorldInfo an authored PhysicsSettings describes.
+    ///
+    /// Each collision rule is applied in order over DefaultCollisionMatrix(), in both directions,
+    /// so the result is always symmetric. A zero budget is logged and replaced by
+    /// PhysicsWorldInfo's default rather than reaching the assert in PhysicsWorld::Create, since
+    /// authored data must not abort the process that loads it.
+    /// @param settings  The authored settings.
+    /// @return The descriptor to create the world from.
+    [[nodiscard]] VE_API PhysicsWorldInfo ToPhysicsWorldInfo(const PhysicsSettings& settings);
+
     /// @brief Which constraint a ConstraintSettings describes.
     enum class ConstraintKind : u32
     {

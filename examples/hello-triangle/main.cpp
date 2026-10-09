@@ -44,10 +44,8 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
 #include <Veng/Physics/Components.h>
-#include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
-#include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
@@ -251,8 +249,8 @@ Intent MapInputToIntent(const PlayerInput& input)
     // CharacterMovementSystem integrates about the character's own up. Negated so moving the mouse
     // right turns the view right, and scaled to radians per raw mouse count — comparable to the
     // pitch scale below, since both turn the view by the same rate per mouse delta. When that up is
-    // non-vertical (the character stands in the Radial gravity well authored in OnWorldLoaded) the
-    // horizon banks as you turn — that is the field model, not a bug; see the note on that source.
+    // non-vertical (the character stands in the Radial gravity well the world prefab authors) the
+    // horizon banks as you turn — that is the field model, not a bug; see the note in OnWorldLoaded.
     constexpr f32 YawSensitivity = 0.005f;
     const vec2 move = input.GetValue(Actions::Move);
     const vec2 look = input.GetValue(Actions::Look);
@@ -851,12 +849,11 @@ protected:
     // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
     void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) override
     {
-        // A scene owns no PhysicsWorld by default, so a physics-free level costs nothing; the
-        // sample opts in, and the level names PhysicsSystem so the world is stepped each Sim tick.
-        // The level's authored stack of dynamic cubes falls onto the static ground body.
-        scene.SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
-
-        // Gravity is a field of sources, not a world constant. The sample authors one Radial source
+        // The level names PhysicsSystem, which creates the scene's PhysicsWorld from the world
+        // prefab's PhysicsSettings at start, so the authored stack of dynamic cubes falls onto the
+        // static ground body here, in the picture-in-picture world and in the editor's Play alike.
+        //
+        // Gravity is a field of sources, not a world constant: the prefab authors one Radial source
         // whose origin sits below the falling stack, so the cubes are drawn toward a point — down
         // and inward — rather than straight down, the visible proof that "down" is evaluated per
         // body from the field. Its region covers the cubes; a body outside every source would feel
@@ -869,20 +866,16 @@ protected:
         // working — a character on a planet or a spinning ring turns about its own up — not a camera
         // bug. For a level, non-banking first-person feel, give the player a Uniform (world-down)
         // source instead.
-        const Entity gravityField = scene.CreateEntity();
-        scene.Add<Transform>(gravityField, Transform{.Position = vec3(0.0f, -6.0f, 6.5f)});
-        scene.Add<GravitySource>(gravityField, GravitySource{
-                                                   .Kind = GravityKind::Radial,
-                                                   .Magnitude = 9.81f,
-                                                   .Bounds = Region{.Shape = RegionShape::Sphere,
-                                                                    .HalfExtents = vec3(20.0f)},
-                                               });
-
+        //
         // HT_PHYSICS_DEBUG draws the solver's shapes, body states and contacts into the scene's
-        // debug-draw sink each tick — the visualization the module is verified through.
+        // debug-draw sink each tick — the visualization the module is verified through. Set before
+        // the simulation starts, so the world is created with it.
         if (std::getenv("HT_PHYSICS_DEBUG") != nullptr)
         {
-            scene.GetPhysicsWorld()->SetDebugDrawEnabled(true);
+            if (auto* physics = scene.TryGetFirst<PhysicsSettings>())
+            {
+                physics->DebugDraw = true;
+            }
         }
 
         // The sample's look — exposure, the lifted bloom knee that makes the weak lights bloom, SSR
@@ -912,7 +905,9 @@ protected:
             // The world is paused, so the solver would never run and the cubes would be captured
             // mid-air at their authored heights. Settle them here instead: a fixed number of steps
             // at the fixed tick, so the pose depends on neither wall clock nor frame count and the
-            // capture stays byte-identical run to run.
+            // capture stays byte-identical run to run. Nothing has started PhysicsSystem yet, so
+            // the settle creates the world it steps; the system adopts it at start.
+            EnsurePhysicsWorld(scene);
             for (u32 step = 0; step < SmokePhysicsSteps; ++step)
             {
                 StepPhysics(scene, SmokePhysicsStep);

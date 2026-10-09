@@ -372,10 +372,14 @@ extern "C"
 /// and its open overlays, and ManagedViewportSet grows CollectWorldViewports. A module derives
 /// Application and spawns prefabs carrying builtins, so a stale one dispatches through a short
 /// vtable and lays the application out short.
+/// Version 89 lets a scene author its physics world: the builtin PhysicsSettings and
+/// PhysicsCollisionRule register, and PhysicsSystem creates the scene's world at start. A module's
+/// prefabs and the registry it fills are read against the builtin set, so a stale module's cooked
+/// data and type table disagree with the host's.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 88u
+#define VENG_MODULE_ABI_VERSION 89u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

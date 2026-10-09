@@ -524,6 +524,55 @@ namespace Veng
         ReleaseSolverRegistration();
     }
 
+    PhysicsWorldInfo ToPhysicsWorldInfo(const PhysicsSettings& settings)
+    {
+        const PhysicsWorldInfo defaults;
+        PhysicsWorldInfo info{
+            .Gravity = settings.Gravity,
+            .Matrix = DefaultCollisionMatrix(),
+            .MaxBodies = settings.MaxBodies,
+            .MaxBodyPairs = settings.MaxBodyPairs,
+            .MaxContactConstraints = settings.MaxContactConstraints,
+        };
+
+        for (const PhysicsCollisionRule& rule : settings.Collisions)
+        {
+            const auto a = static_cast<usize>(rule.A);
+            const auto b = static_cast<usize>(rule.B);
+            if (a >= PhysicsLayerCount || b >= PhysicsLayerCount)
+            {
+                Log::Warn("PhysicsSettings: a collision rule names an unknown layer ({}, {}); "
+                          "ignored",
+                          a, b);
+                continue;
+            }
+            if (rule.Collide)
+            {
+                info.Matrix.Rows[a] |= PhysicsLayerBit(rule.B);
+                info.Matrix.Rows[b] |= PhysicsLayerBit(rule.A);
+            }
+            else
+            {
+                info.Matrix.Rows[a] &= ~PhysicsLayerBit(rule.B);
+                info.Matrix.Rows[b] &= ~PhysicsLayerBit(rule.A);
+            }
+        }
+
+        const auto fallBack = [](u32& budget, const u32 fallback, const char* name)
+        {
+            if (budget == 0)
+            {
+                Log::Warn("PhysicsSettings::{} is zero; using the default {}", name, fallback);
+                budget = fallback;
+            }
+        };
+        fallBack(info.MaxBodies, defaults.MaxBodies, "MaxBodies");
+        fallBack(info.MaxBodyPairs, defaults.MaxBodyPairs, "MaxBodyPairs");
+        fallBack(info.MaxContactConstraints, defaults.MaxContactConstraints,
+                 "MaxContactConstraints");
+        return info;
+    }
+
     Unique<PhysicsWorld> PhysicsWorld::Create(const PhysicsWorldInfo& info)
     {
         VE_ASSERT(IsSymmetric(info.Matrix),

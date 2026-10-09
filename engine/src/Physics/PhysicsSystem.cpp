@@ -165,6 +165,21 @@ namespace Veng
         }
     }
 
+    PhysicsWorld& EnsurePhysicsWorld(Scene& scene)
+    {
+        if (PhysicsWorld* installed = scene.GetPhysicsWorld())
+        {
+            return *installed;
+        }
+        const auto* authored = scene.TryGetFirst<PhysicsSettings>();
+        const PhysicsSettings settings = authored != nullptr ? *authored : PhysicsSettings{};
+        Unique<PhysicsWorld> world = PhysicsWorld::Create(ToPhysicsWorldInfo(settings));
+        world->SetDebugDrawEnabled(settings.DebugDraw);
+        PhysicsWorld& created = *world;
+        scene.SetPhysicsWorld(std::move(world));
+        return created;
+    }
+
     void GatherGravitySources(const Scene& scene, vector<GravitySourceInstance>& out)
     {
         out.clear();
@@ -314,13 +329,18 @@ namespace Veng
         PublishSensorOverlaps(scene, *world, simulated);
     }
 
+    void PhysicsSystem::OnStart(Scene& scene, const SystemContext&)
+    {
+        EnsurePhysicsWorld(scene);
+    }
+
     void PhysicsSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
         // A reconciliation replay re-runs the whole Sim phase. A scene with no predicted body does
         // not participate in rollback: the solver's own state — dynamic velocities, the contact
         // cache, sleep — is not restored, so stepping here would advance the physics clock against
         // state that was never rewound and drift it from the sim tick permanently. Such a scene is
-        // gated out, exactly as before.
+        // gated out.
         //
         // A scene predicting a character *does* roll back. The character's capsule state is restored
         // from the per-tick save and its Transform from the authoritative record (the mover re-seats
