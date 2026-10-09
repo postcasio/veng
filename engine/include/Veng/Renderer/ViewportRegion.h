@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Reflection/Reflect.h>
 
 namespace Veng::Renderer
 {
@@ -34,3 +35,10 @@ namespace Veng::Renderer
         vec2 Extent = {1.0f, 1.0f};
     };
 }
+
+/// @cond DOXYGEN_EXCLUDE
+VE_REFLECT(::Veng::Renderer::ViewportLayout, 0x5B5B943363FD5036ULL)
+VE_FIELD(Offset, .DisplayName = "Offset", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(Extent, .DisplayName = "Extent", .Display = {.Min = 0.0, .Max = 1.0})
+VE_REFLECT_END();
+/// @endcond

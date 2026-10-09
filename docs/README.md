@@ -55,9 +55,9 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   the three engine-driven scene components authored as data: presenting a HUD with a
   `GuiOverlay` (the screen-space sibling of `GuiSurface`, its C++ state-component +
   binding-system interface, and seat-based multi-viewport claiming); opening a whole level
-  as a secondary, simulated overlay with `LevelOverlay` (the lifecycle, the populate hook's
-  contract-versus-guidance, input-suspend versus the opt-in `CoveredWorld` pause, stacking, and
-  reading results back); and authoring a mirror or probe with a `CaptureSurface` (the
+  as a secondary, simulated overlay with a `LevelOverlay` component (when it opens and closes, the
+  seed and the load hook, input-suspend versus the opt-in `PauseOpener`, stacking, and an overlay
+  ending itself); and authoring a mirror or probe with a `CaptureSurface` (the
   same-entity material binding and the `everyFrame`/`onDemand` refresh policy).
 - **[Authoring a data table](guides/authoring-data-tables.md)** — the
   `TableSchema` / `DataTable` pair: declaring columns as reflected types (and the

@@ -1,36 +1,31 @@
-// LevelOverlay: opening a whole Level as a secondary, simulated overlay over a running Application.
+// LevelOverlay: a whole Level opened over a running world because a component asked for it.
 //
-// LevelOverlay is a thin preset over WorldRunner::OpenWorld: opening one opens an owned world (the
-// runner ticks it and the engine pushes its camera each frame, so there is no per-frame game call)
-// and applies an overlay policy — a Presented viewport on top, a cursor-seat and focus handoff, and
-// an optional refcounted pause on a caller-named covered world. Drives a real headless Application
-// (its own Context, no window, no ImGui) through Run(), opening and dropping LevelOverlay handles
-// from OnUpdate. The overlay creates a Presented viewport, so the suite is GPU-band (it needs a
-// Context, though the assertions are router/scene state, not pixels); the gpu/main.cpp harness skips
-// the whole band with no ICD.
+// Drives a real headless Application (its own Context, no window, no ImGui) through Run(), adding
+// and removing LevelOverlay components on entities of an opener world from OnUpdate; the engine
+// opens and closes the overlay worlds at the next frame-top reconcile. Each overlay creates a
+// Presented viewport, so the suite is GPU-band (it needs a Context, though most assertions are
+// router, world and scene state, not pixels); the gpu/main.cpp harness skips the band with no ICD.
 //
-// It pins: the open/close lifecycle leaving the router (cursor seat + pointer associations)
-// byte-restored (including a drop while the focus scope is live, and asserting the pointer
-// association was cleared); the populate hook running before StartSimulation; a stacked overlay (B
-// over A) suspending the layer beneath's input and restoring it LIFO; a structural change to the
-// lower overlay's scene while a higher one is open, then a clean close (the InputSeat re-resolve
-// guard); the covered-world pause refcount (stacked overlays hold it until the last closes, and an
-// explicit game pause composes without being clobbered); the full-window region resolving to the
-// framebuffer extent while a fixed region is placed as given; an overlay rendering its scene through
-// the drive-list with no per-frame game call; and a clean teardown with an overlay world still open.
+// It pins: a request opening an overlay (publishing LevelOverlayState) and its removal closing it
+// with the cursor seat and the opener's pause restored; an overlay following its opener's world
+// closed; an overlay ending itself through its own ExitRequest, its request taken away; the seed
+// and the application's load hook landing before the overlay starts; Opaque covering the viewports
+// presenting the opener's world; stacked overlays suspending each other and unwinding in reverse
+// open order, or handing on when the lower one goes first; the overlay seat's pawn marked locally
+// controlled; the layout resolving to pixels; an overlay rendering with no per-frame game call; and
+// a clean teardown with an overlay still open.
 
 #include <doctest/doctest.h>
-
-#include <optional>
 
 #include <Veng/Application.h>
 #include <Veng/Input.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 #include <Veng/LevelOverlay.h>
+#include <Veng/ManagedViewports.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Audio/AudioDevice.h>
-#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Asset/Prefab.h>
@@ -40,11 +35,10 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
-#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 
@@ -58,20 +52,31 @@ namespace
     constexpr ActionId Move{0xA1};
     constexpr u32 KeyW = u32(Key::W);
 
-    // Records, from its OnStart, whether the populate hook's entity was already present — the proof
-    // that Populate runs before StartSimulation.
-    int g_StartSawPopulate = 0;
+    // What the overlay's OnStart saw: the seed's copied Name and Possesses, and the load hook's mark.
+    struct StartSeen
+    {
+        int Starts = 0;
+        bool Seeded = false;
+        bool SeedReferenceCleared = false;
+        bool Loaded = false;
+    };
+    StartSeen g_Seen;
 
-    struct PopulateProbe final : SceneSystem
+    struct StartProbe final : SceneSystem
     {
         void OnStart(Scene& scene, const SystemContext&) override
         {
+            ++g_Seen.Starts;
             for (auto [entity, name] : scene.View<Name>())
             {
-                if (name.Value == "populated")
+                if (name.Value == "seeded")
                 {
-                    ++g_StartSawPopulate;
+                    g_Seen.Seeded = true;
+                    const auto* possesses = std::as_const(scene).TryGet<Possesses>(entity);
+                    g_Seen.SeedReferenceCleared =
+                        possesses != nullptr && possesses->Pawn == Entity::Null;
                 }
+                g_Seen.Loaded |= name.Value == "loaded";
             }
         }
         void OnUpdate(Scene&, f32, const SystemContext&) override {}
@@ -81,17 +86,16 @@ namespace
 namespace Veng
 {
     template <>
-    struct VengSystem<PopulateProbe>
+    struct VengSystem<StartProbe>
     {
         static constexpr SystemId Id = 0x0AE12A0000000001ULL;
-        static string Name() { return "PopulateProbe"; }
+        static string Name() { return "StartProbe"; }
     };
 }
 
 namespace
 {
-    // A resident W -> Move.y context (an ordinary Adopt handle; InputMappingSystem gates on
-    // IsLoaded(), not on the id, so an adopted resource resolves).
+    // A resident W -> Move.y context.
     AssetHandle<InputMappingContext> MakeMoveContext(const AssetManager& assets)
     {
         Ref<InputMappingContext> resource = InputMappingContext::Create(
@@ -103,7 +107,7 @@ namespace
         return assets.Adopt<InputMappingContext>(std::move(resource));
     }
 
-    // Serializes one default-or-given component into a prefab record.
+    // Serializes one component into a prefab record.
     template <typename T>
     Prefab::Component Comp(const T& value, const TypeRegistry& types)
     {
@@ -113,10 +117,8 @@ namespace
         return component;
     }
 
-    // A level over a one-seat world prefab: an authored input seat (Viewer / InputContextStack /
-    // PlayerInput / SeatInput) plus a Transform, resident and ready for LoadInto. `leadingDummies`
-    // pads the prefab with that many Name-only entities before the seat, so two levels built here
-    // resolve to distinct seat entities (the nesting checks need the two overlays' seats to differ).
+    // A level over a one-seat world prefab: an authored input seat plus a Transform. `leadingDummies`
+    // pads the prefab before the seat, so two levels built here resolve to distinct seat entities.
     AssetHandle<Level> BuildSeatLevel(const AssetManager& assets, const TypeRegistry& types,
                                       vector<SystemId> systems, int leadingDummies = 0)
     {
@@ -139,33 +141,65 @@ namespace
             Level::Create(world, std::move(systems), GameModeConfig{}, RenderLook{}));
     }
 
-    // A headless application driven by two closures: InitFn (from OnInitialize, engine ready) and
-    // StepFn (each OnUpdate, with the frame index). Overlays live on the app so any still open at
-    // teardown are dropped from ~OverlayApp, while the router/assets/context are still alive.
+    // A headless application driven by two closures, holding one opener world the cases put their
+    // requests in. Its OnOverlayLoaded runs LoadedFn when set.
     class OverlayApp final : public Application
     {
     public:
         using Application::Application;
 
-        // Runs before ~Application, while the router/assets/context are alive. B is the later overlay,
-        // dropped first (overlays unwind LIFO).
-        ~OverlayApp() override
-        {
-            B.reset();
-            A.reset();
-        }
-
         function<void(OverlayApp&)> InitFn;
         function<void(OverlayApp&, int)> StepFn;
+        function<void(Scene&)> LoadedFn;
         int Frames = 6;
         int Current = 0;
+        WorldInstanceId Opener;
 
-        std::optional<LevelOverlay> A;
-        std::optional<LevelOverlay> B;
+        Scene& OpenerScene() { return GetWorldRunner().ResolveWorld(Opener)->GetScene(); }
+
+        // Adds a request on a fresh entity of the opener world.
+        Entity Request(const LevelOverlay& request)
+        {
+            Scene& scene = OpenerScene();
+            const Entity entity = scene.CreateEntity();
+            scene.Add<LevelOverlay>(entity, request);
+            return entity;
+        }
+
+        const LevelOverlayState* StateOf(Entity entity)
+        {
+            return std::as_const(OpenerScene()).TryGet<LevelOverlayState>(entity);
+        }
+
+        bool HasRequest(Entity entity)
+        {
+            return std::as_const(OpenerScene()).TryGet<LevelOverlay>(entity) != nullptr;
+        }
+
+        // The open overlay's scene; the request must have opened.
+        Scene& OverlayScene(Entity entity)
+        {
+            const LevelOverlayState* state = StateOf(entity);
+            REQUIRE(state != nullptr);
+            return GetWorldRunner().ResolveWorld(state->World)->GetScene();
+        }
+
+        // The open overlay's viewport, disabled so a case pinning state renders nothing.
+        Renderer::Viewport& Quiet(Entity entity)
+        {
+            const LevelOverlayState* state = StateOf(entity);
+            REQUIRE(state != nullptr);
+            Renderer::Viewport* viewport = FindOverlayViewport(state->World);
+            REQUIRE(viewport != nullptr);
+            viewport->SetEnabled(false);
+            return *viewport;
+        }
 
     protected:
         void OnInitialize() override
         {
+            // The opener: an empty world with a simulation, so it can be paused.
+            Opener = GetWorldRunner().OpenWorld(WorldOpenInfo{.Systems = vector<SystemId>{}});
             if (InitFn)
             {
                 InitFn(*this);
@@ -183,6 +217,14 @@ namespace
                 RequestExit();
             }
         }
+
+        void OnOverlayLoaded(WorldInstanceId, Entity, WorldInstanceId, Scene& scene) override
+        {
+            if (LoadedFn)
+            {
+                LoadedFn(scene);
+            }
+        }
     };
 
     ApplicationInfo HeadlessInfo()
@@ -191,11 +233,12 @@ namespace
         info.Name = "veng-level-overlay-test";
         info.Headless = true;
         info.ImGui = std::nullopt;
+        info.HeadlessExtent = {320, 240};
         return info;
     }
 
-    // Resolves a seat's Move.y from a scene under a held-W snapshot: 1 when the seat's context
-    // resolves the binding, 0 when it is suspended (its contexts swapped to the empty context).
+    // A seat's Move.y under a held-W snapshot: 1 when its context resolves the binding, 0 when it
+    // is suspended (its contexts swapped to the empty context).
     f32 ResolveMoveY(AssetManager& assets, Scene& scene)
     {
         Input input(nullptr);
@@ -209,14 +252,9 @@ namespace
         const InputSeat seat = ResolveInputSeat(&scene, {});
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;
     }
-
-    SeatRef SeatOf(const LevelOverlay& overlay)
-    {
-        return overlay.GetSeat();
-    }
 }
 
-TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame game call")
+TEST_CASE("A LevelOverlay opens an overlay, and removing it closes it and restores the opener")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -224,64 +262,15 @@ TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame
 
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
-
+    Entity request = Entity::Null;
     SeatRef priorCursor;
-    SeatRef overlaySeat;
-
-    app.InitFn = [&](OverlayApp& a)
-    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        const InputRouter& router = a.GetInputRouter();
-        if (frame == 0)
-        {
-            // Pre-open router state.
-            priorCursor = router.GetCursorSeat();
-            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
-                  Entity::Null);
-
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
-            a.A->GetViewport().SetEnabled(false); // this suite pins router/scene state, not pixels
-            overlaySeat = SeatOf(*a.A);
-
-            // While open: the overlay owns the cursor seat and a free pointer over its region.
-            CHECK_FALSE(overlaySeat.IsImplicit());
-            CHECK(router.GetCursorSeat() == overlaySeat);
-            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
-                  overlaySeat.Viewer);
-        }
-        else if (frame == 1)
-        {
-            // No per-frame Update call: the runner ticked the overlay world and the engine pushed its
-            // camera on its own. The overlay still owns the cursor seat.
-            CHECK(router.GetCursorSeat() == overlaySeat);
-        }
-        else if (frame == 2)
-        {
-            // Drop while the focus scope is live — the teardown-order guard.
-            a.A.reset();
-
-            // Byte-restored: cursor seat and pointer association back to pre-open.
-            CHECK(router.GetCursorSeat() == priorCursor);
-            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
-                  Entity::Null); // ClearViewportSeat ran
-        }
-    };
-
-    app.Frames = 4;
-    app.Run({});
-}
-
-TEST_CASE("An overlay whose world closed under it drops cleanly and restores the cursor seat")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> level;
-    SeatRef priorCursor;
+    WorldInstanceId overlay;
+    bool openedAfterOneFrame = false;
+    bool closedWorld = false;
+    bool cursorRestored = false;
+    bool pausedWhileOpen = false;
+    bool resumedOnClose = false;
+    bool stateCleared = false;
 
     app.InitFn = [&](OverlayApp& a)
     { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
@@ -292,28 +281,358 @@ TEST_CASE("An overlay whose world closed under it drops cleanly and restores the
         if (frame == 0)
         {
             priorCursor = router.GetCursorSeat();
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
-            a.A->GetViewport().SetEnabled(false);
-            REQUIRE(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
-                    SeatOf(*a.A).Viewer);
+            request = a.Request(LevelOverlay{.Source = level, .PauseOpener = true});
         }
         else if (frame == 1)
         {
-            // The shutdown shape: the world goes first, the application-held handle after it. The
-            // close itself forgets the overlay seat's pointer association.
-            a.GetWorldRunner().CloseWorld(a.A->GetWorld());
-            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
-                  Entity::Null);
+            const LevelOverlayState* state = a.StateOf(request);
+            openedAfterOneFrame = state != nullptr && state->World.IsValid() &&
+                                  a.GetWorldRunner().ResolveWorld(state->World) != nullptr &&
+                                  router.GetCursorSeat() == state->Seat &&
+                                  !state->Seat.IsImplicit();
+            overlay = state != nullptr ? state->World : WorldInstanceId{};
+            a.Quiet(request);
+            pausedWhileOpen = a.IsWorldPaused(a.Opener);
+            (void)a.OpenerScene().Remove<LevelOverlay>(request);
         }
         else if (frame == 2)
         {
-            a.A.reset();
-            CHECK(router.GetCursorSeat() == priorCursor);
+            closedWorld = a.GetWorldRunner().ResolveWorld(overlay) == nullptr &&
+                          a.FindOverlayViewport(overlay) == nullptr;
+            cursorRestored = router.GetCursorSeat() == priorCursor;
+            resumedOnClose = !a.IsWorldPaused(a.Opener);
+            stateCleared = a.StateOf(request) == nullptr;
         }
     };
 
     app.Frames = 4;
     app.Run({});
+
+    CHECK(openedAfterOneFrame);
+    CHECK(pausedWhileOpen);
+    CHECK(closedWorld);
+    CHECK(cursorRestored);
+    CHECK(resumedOnClose);
+    CHECK(stateCleared);
+}
+
+TEST_CASE("An overlay closes with its opener's world, leaving no viewport, focus or cursor behind")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+    Entity request = Entity::Null;
+    SeatRef priorCursor;
+    bool closedSameFrame = false;
+    bool viewportGone = false;
+    bool cursorRestored = false;
+    bool pointerFreed = false;
+
+    app.InitFn = [&](OverlayApp& a)
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        const InputRouter& router = a.GetInputRouter();
+        if (frame == 0)
+        {
+            priorCursor = router.GetCursorSeat();
+            request = a.Request(LevelOverlay{.Source = level, .PauseOpener = true});
+        }
+        else if (frame == 1)
+        {
+            const WorldInstanceId overlay = a.StateOf(request)->World;
+            const Renderer::ViewportId viewport = a.Quiet(request).GetId();
+            a.GetWorldRunner().CloseWorld(a.Opener);
+
+            closedSameFrame = a.GetWorldRunner().ResolveWorld(overlay) == nullptr &&
+                              a.FindOverlayViewport(overlay) == nullptr;
+            viewportGone = a.GetRenderContext().GetViewportRegistry().Resolve(viewport) == nullptr;
+            cursorRestored = router.GetCursorSeat() == priorCursor;
+            pointerFreed =
+                router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner == Entity::Null;
+        }
+    };
+
+    app.Frames = 3;
+    app.Run({});
+
+    CHECK(closedSameFrame);
+    CHECK(viewportGone);
+    CHECK(cursorRestored);
+    CHECK(pointerFreed);
+}
+
+TEST_CASE("An overlay's ExitRequest closes it and takes its request away, not the application")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+    Entity request = Entity::Null;
+    WorldInstanceId overlay;
+    bool closed = false;
+    bool requestRemoved = false;
+    bool stillClosed = false;
+
+    app.InitFn = [&](OverlayApp& a)
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        if (frame == 0)
+        {
+            request = a.Request(LevelOverlay{.Source = level});
+        }
+        else if (frame == 1)
+        {
+            overlay = a.StateOf(request)->World;
+            a.Quiet(request);
+            Scene& scene = a.OverlayScene(request);
+            scene.Add<ExitRequest>(scene.CreateEntity());
+        }
+        else if (frame == 2)
+        {
+            closed = a.GetWorldRunner().ResolveWorld(overlay) == nullptr &&
+                     a.StateOf(request) == nullptr;
+            requestRemoved = !a.HasRequest(request);
+        }
+        else if (frame == 3)
+        {
+            // Nothing reopened it.
+            stillClosed =
+                a.StateOf(request) == nullptr && a.GetWorldRunner().GetWorlds().size() == 1;
+        }
+    };
+
+    app.Frames = 5;
+    app.Run({});
+
+    CHECK(closed);
+    CHECK(requestRemoved);
+    CHECK(stillClosed);
+    CHECK(app.Current == app.Frames); // the application ran on to its own exit
+}
+
+TEST_CASE("The seed and the load hook land in the overlay scene before it starts")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    systems.Register<StartProbe>();
+    g_Seen = {};
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+    Entity request = Entity::Null;
+    bool requestNotCopied = false;
+
+    app.InitFn = [&](OverlayApp& a)
+    {
+        level =
+            BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {SystemIdOf<StartProbe>()});
+    };
+    app.LoadedFn = [](Scene& scene) { scene.Add<Name>(scene.CreateEntity(), Name{"loaded"}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        if (frame == 0)
+        {
+            // The request is its own seed; its Possesses names an opener entity, which the copy clears.
+            Scene& opener = a.OpenerScene();
+            request = opener.CreateEntity();
+            opener.Add<Name>(request, Name{"seeded"});
+            opener.Add<Possesses>(request).Pawn = opener.CreateEntity();
+            opener.Add<LevelOverlay>(request, LevelOverlay{.Source = level, .Seed = request});
+        }
+        else if (frame == 1)
+        {
+            a.Quiet(request);
+            requestNotCopied = a.OverlayScene(request).TryGetFirst<LevelOverlay>() == nullptr;
+        }
+    };
+
+    app.Frames = 3;
+    app.Run({});
+
+    CHECK(g_Seen.Starts == 1);
+    CHECK(g_Seen.Seeded);
+    CHECK(g_Seen.SeedReferenceCleared);
+    CHECK(g_Seen.Loaded);
+    CHECK(requestNotCopied);
+}
+
+TEST_CASE("An opaque overlay disables the viewports presenting its opener's world while open")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    ApplicationInfo info = HeadlessInfo();
+    info.ManagedViewport = ManagedViewportInfo{};
+    OverlayApp app(info, types, systems);
+    AssetHandle<Level> level;
+    Entity request = Entity::Null;
+    bool enabledBefore = false;
+    bool disabledWhileOpen = false;
+    bool overlayEnabled = false;
+    bool enabledAfter = false;
+
+    app.InitFn = [&](OverlayApp& a)
+    {
+        level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
+        a.GetManagedViewports().SetViewportWorld(0, a.Opener);
+    };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        const Renderer::Viewport& beneath = *a.GetManagedViewports().Get(0);
+        if (frame == 0)
+        {
+            enabledBefore = beneath.IsEnabled();
+            request = a.Request(LevelOverlay{.Source = level, .Opaque = true});
+        }
+        else if (frame == 1)
+        {
+            disabledWhileOpen = !beneath.IsEnabled();
+            overlayEnabled = a.FindOverlayViewport(a.StateOf(request)->World)->IsEnabled();
+            a.Quiet(request);
+            (void)a.OpenerScene().Remove<LevelOverlay>(request);
+        }
+        else if (frame == 2)
+        {
+            enabledAfter = beneath.IsEnabled();
+        }
+    };
+
+    app.Frames = 4;
+    app.Run({});
+
+    CHECK(enabledBefore);
+    CHECK(disabledWhileOpen);
+    CHECK(overlayEnabled);
+    CHECK(enabledAfter);
+}
+
+TEST_CASE("Stacked overlays suspend the one beneath and unwind in reverse open order")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> levelA;
+    AssetHandle<Level> levelB;
+    AssetHandle<InputMappingContext> moveContext;
+    Entity lower = Entity::Null;
+    Entity upper = Entity::Null;
+    SeatRef priorCursor;
+    SeatRef seatB;
+
+    f32 lowerMove = -1.0f;
+    f32 upperMove = -1.0f;
+    bool cursorOnUpper = false;
+    bool distinctSeats = false;
+    bool bothClosed = false;
+    bool restoredToOriginal = false;
+    bool pausedUnderBoth = false;
+    bool resumed = false;
+
+    // Out of order: the lower one closes first, and the upper keeps the cursor and its suspension.
+    bool upperKeepsCursor = false;
+    bool restoredAfterUpper = false;
+
+    app.InitFn = [&](OverlayApp& self)
+    {
+        levelA = BuildSeatLevel(self.GetAssetManager(), self.GetTypeRegistry(), {}, 0);
+        levelB = BuildSeatLevel(self.GetAssetManager(), self.GetTypeRegistry(), {}, 1);
+        moveContext = MakeMoveContext(self.GetAssetManager());
+    };
+
+    app.StepFn = [&](OverlayApp& self, int frame)
+    {
+        const InputRouter& router = self.GetInputRouter();
+        AssetManager& assets = self.GetAssetManager();
+        const auto giveMove = [&](Entity request)
+        {
+            Scene& scene = self.OverlayScene(request);
+            const LevelOverlayState* state = self.StateOf(request);
+            scene.Get<InputContextStack>(state->Seat.Viewer).Active = {moveContext};
+        };
+
+        if (frame == 0)
+        {
+            priorCursor = router.GetCursorSeat();
+            lower = self.Request(LevelOverlay{.Source = levelA, .PauseOpener = true});
+        }
+        else if (frame == 1)
+        {
+            self.Quiet(lower);
+            giveMove(lower);
+            upper = self.Request(LevelOverlay{.Source = levelB, .PauseOpener = true});
+        }
+        else if (frame == 2)
+        {
+            self.Quiet(upper);
+            giveMove(upper);
+            seatB = self.StateOf(upper)->Seat;
+            distinctSeats = !(self.StateOf(lower)->Seat == seatB);
+            cursorOnUpper = router.GetCursorSeat() == seatB;
+            lowerMove = ResolveMoveY(assets, self.OverlayScene(lower));
+            upperMove = ResolveMoveY(assets, self.OverlayScene(upper));
+            pausedUnderBoth = self.IsWorldPaused(self.Opener);
+
+            (void)self.OpenerScene().Remove<LevelOverlay>(lower);
+            (void)self.OpenerScene().Remove<LevelOverlay>(upper);
+        }
+        else if (frame == 3)
+        {
+            bothClosed = self.StateOf(lower) == nullptr && self.StateOf(upper) == nullptr;
+            restoredToOriginal = router.GetCursorSeat() == priorCursor;
+            resumed = !self.IsWorldPaused(self.Opener);
+
+            lower = self.Request(LevelOverlay{.Source = levelA});
+        }
+        else if (frame == 4)
+        {
+            self.Quiet(lower);
+            upper = self.Request(LevelOverlay{.Source = levelB});
+        }
+        else if (frame == 5)
+        {
+            self.Quiet(upper);
+            seatB = self.StateOf(upper)->Seat;
+            (void)self.OpenerScene().Remove<LevelOverlay>(lower);
+        }
+        else if (frame == 6)
+        {
+            upperKeepsCursor = self.StateOf(lower) == nullptr && router.GetCursorSeat() == seatB;
+            (void)self.OpenerScene().Remove<LevelOverlay>(upper);
+        }
+        else if (frame == 7)
+        {
+            restoredAfterUpper = router.GetCursorSeat() == priorCursor;
+        }
+    };
+
+    app.Frames = 9;
+    app.Run({});
+
+    CHECK(distinctSeats);
+    CHECK(cursorOnUpper);
+    CHECK(lowerMove == doctest::Approx(0.0f));
+    CHECK(upperMove == doctest::Approx(1.0f));
+    CHECK(pausedUnderBoth);
+    CHECK(bothClosed);
+    CHECK(restoredToOriginal);
+    CHECK(resumed);
+    CHECK(upperKeepsCursor);
+    CHECK(restoredAfterUpper);
 }
 
 TEST_CASE("An overlay's seat marks the pawn it possesses locally controlled")
@@ -324,217 +643,46 @@ TEST_CASE("An overlay's seat marks the pawn it possesses locally controlled")
 
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
+    Entity request = Entity::Null;
     Entity pawn = Entity::Null;
+    bool marked = false;
 
     app.InitFn = [&](OverlayApp& a)
     { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
+    app.LoadedFn = [&pawn](Scene& scene)
     {
-        if (frame == 0)
+        pawn = scene.CreateEntity();
+        for (auto [seat, viewer] : scene.View<Viewer>())
         {
-            a.A = LevelOverlay::Open(
-                a, LevelOverlayInfo{.Source = level,
-                                    .Populate = [&pawn](Scene& scene)
-                                    {
-                                        pawn = scene.CreateEntity();
-                                        for (auto [seat, viewer] : scene.View<Viewer>())
-                                        {
-                                            scene.Add<Possesses>(seat).Pawn = pawn;
-                                            break;
-                                        }
-                                    }});
-            a.A->GetViewport().SetEnabled(false); // this case pins scene state, not pixels
+            scene.Add<Possesses>(seat).Pawn = pawn;
+            break;
         }
-        else if (frame == 1)
-        {
-            const auto* control = a.A->GetScene().TryGet<LocalControl>(pawn);
-            REQUIRE(control != nullptr);
-            CHECK(control->Seat == SeatOf(*a.A).Viewer);
-            a.A.reset();
-        }
-    };
-
-    app.Frames = 3;
-    app.Run({});
-}
-
-TEST_CASE("LevelOverlay runs the populate hook before StartSimulation")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-    systems.Register<PopulateProbe>();
-    g_StartSawPopulate = 0;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> level;
-
-    app.InitFn = [&](OverlayApp& a)
-    {
-        level =
-            BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {SystemIdOf<PopulateProbe>()});
     };
 
     app.StepFn = [&](OverlayApp& a, int frame)
     {
         if (frame == 0)
         {
-            a.A = LevelOverlay::Open(a,
-                                     LevelOverlayInfo{
-                                         .Source = level,
-                                         .Populate =
-                                             [](Scene& scene)
-                                         {
-                                             const Entity e = scene.CreateEntity();
-                                             scene.Add<Name>(e, Name{"populated"});
-                                         },
-                                     });
-            a.A->GetViewport().SetEnabled(false);
+            request = a.Request(LevelOverlay{.Source = level});
         }
         else if (frame == 1)
         {
-            a.A.reset();
-        }
-    };
-
-    app.Frames = 3;
-    app.Run({});
-
-    // OnStart saw the populate hook's entity exactly once — the hook ran before the sim started.
-    CHECK(g_StartSawPopulate == 1);
-}
-
-TEST_CASE("A stacked overlay suspends the layer beneath's input and restores it LIFO")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> levelA;
-    AssetHandle<Level> levelB;
-    AssetHandle<InputMappingContext> moveContext;
-
-    SeatRef seatA;
-    SeatRef seatB;
-    SeatRef priorCursor;
-
-    app.InitFn = [&](OverlayApp& a)
-    {
-        levelA = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}, 0);
-        levelB = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}, 1);
-        moveContext = MakeMoveContext(a.GetAssetManager());
-    };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        const InputRouter& router = a.GetInputRouter();
-        AssetManager& assets = a.GetAssetManager();
-        if (frame == 0)
-        {
-            priorCursor = router.GetCursorSeat();
-
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelA});
-            a.A->GetViewport().SetEnabled(false);
-            seatA = SeatOf(*a.A);
-            // Give A's seat a gameplay context so its suspension is observable.
-            a.A->GetScene().Get<InputContextStack>(seatA.Viewer).Active = {moveContext};
-            CHECK(router.GetCursorSeat() == seatA);
-            CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(1.0f));
-        }
-        else if (frame == 1)
-        {
-            a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelB});
-            a.B->GetViewport().SetEnabled(false);
-            seatB = SeatOf(*a.B);
-            a.B->GetScene().Get<InputContextStack>(seatB.Viewer).Active = {moveContext};
-
-            CHECK(seatB != seatA); // the two overlays resolve distinct seats
-            CHECK(router.GetCursorSeat() == seatB);
-
-            // A is suspended (its contexts swapped to the empty context); B resolves.
-            CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(0.0f));
-            CHECK(ResolveMoveY(assets, a.B->GetScene()) == doctest::Approx(1.0f));
+            a.Quiet(request);
         }
         else if (frame == 2)
         {
-            a.B.reset();
-            // Closing B returns focus/cursor to A (not the base) and restores A's input.
-            CHECK(router.GetCursorSeat() == seatA);
-            CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(1.0f));
-        }
-        else if (frame == 3)
-        {
-            a.A.reset();
-            // Closing A returns to the pre-open cursor seat; the association is gone.
-            CHECK(router.GetCursorSeat() == priorCursor);
-            CHECK(router.ResolvePointer(ivec2(50, 50), false, Entity::Null).Owner == Entity::Null);
-        }
-    };
-
-    app.Frames = 5;
-    app.Run({});
-}
-
-TEST_CASE("A structural change to the lower overlay's scene then a clean close (re-resolve guard)")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> levelA;
-    AssetHandle<Level> levelB;
-    AssetHandle<InputMappingContext> moveContext;
-    SeatRef seatA;
-
-    app.InitFn = [&](OverlayApp& a)
-    {
-        levelA = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}, 0);
-        levelB = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}, 1);
-        moveContext = MakeMoveContext(a.GetAssetManager());
-    };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        AssetManager& assets = a.GetAssetManager();
-        if (frame == 0)
-        {
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelA});
-            a.A->GetViewport().SetEnabled(false);
-            seatA = SeatOf(*a.A);
-            a.A->GetScene().Get<InputContextStack>(seatA.Viewer).Active = {moveContext};
-
-            a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelB});
-            a.B->GetViewport().SetEnabled(false);
-            // A is suspended by B.
-            CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(0.0f));
-        }
-        else if (frame == 1)
-        {
-            // Structural change to the suspended (lower) scene: grow its InputContextStack pool so
-            // a cached borrowed pointer would dangle.
-            Scene& lower = a.A->GetScene();
-            for (int i = 0; i < 64; ++i)
-            {
-                lower.Add<InputContextStack>(lower.CreateEntity());
-            }
-        }
-        else if (frame == 2)
-        {
-            // Closing B restores A's contexts through a fresh resolve into the moved pool.
-            a.B.reset();
-            CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(1.0f));
-            a.A.reset();
+            const auto* control = std::as_const(a.OverlayScene(request)).TryGet<LocalControl>(pawn);
+            marked = control != nullptr && control->Seat == a.StateOf(request)->Seat.Viewer;
         }
     };
 
     app.Frames = 4;
     app.Run({});
+
+    CHECK(marked);
 }
 
-TEST_CASE("The covered-world pause is a refcount that stacks and composes with an explicit toggle")
+TEST_CASE("An overlay's layout resolves to its pixel region, and it renders with no game call")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -542,73 +690,52 @@ TEST_CASE("The covered-world pause is a refcount that stacks and composes with a
 
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
-
-    // The world the overlays cover — an ordinary runner-owned world named as CoveredWorld. Its pause
-    // lives on its simulation, so it carries one running no systems.
-    WorldInstanceId baseWorld;
+    Entity full = Entity::Null;
+    Entity corner = Entity::Null;
+    uvec2 fullExtent{};
+    Renderer::ViewportRegion cornerRegion;
+    bool tracks = false;
+    bool rendered = false;
 
     app.InitFn = [&](OverlayApp& a)
-    {
-        level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
-        baseWorld = a.GetWorldRunner().OpenWorld(
-            WorldOpenInfo{.StartSimulation = false, .Systems = vector<SystemId>{}});
-    };
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
 
     app.StepFn = [&](OverlayApp& a, int frame)
     {
-        const auto open = [&](std::optional<LevelOverlay>& slot, WorldInstanceId covered)
-        {
-            slot =
-                LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .CoveredWorld = covered});
-            slot->GetViewport().SetEnabled(false);
-        };
-
         if (frame == 0)
         {
-            CHECK_FALSE(a.IsWorldPaused(baseWorld));
-            open(a.A, WorldInstanceId{}); // a default overlay covers nothing
-            CHECK_FALSE(a.IsWorldPaused(baseWorld));
-            open(a.B, baseWorld); // covering it holds a pause scope
-            CHECK(a.IsWorldPaused(baseWorld));
+            full = a.Request(LevelOverlay{.Source = level});
+            corner = a.Request(LevelOverlay{
+                .Source = level,
+                .Layout = {.Offset = {0.5f, 0.5f}, .Extent = {0.25f, 0.5f}},
+            });
         }
         else if (frame == 1)
         {
-            a.B.reset();
-            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // A covered nothing, so the base resumes
-            a.A.reset();
-
-            // Stacked pause: both cover the base; closing the inner leaves it paused under the outer
-            // (the refcount, not a boolean).
-            open(a.A, baseWorld);
-            CHECK(a.IsWorldPaused(baseWorld));
-            open(a.B, baseWorld);
-            CHECK(a.IsWorldPaused(baseWorld));
-        }
-        else if (frame == 2)
-        {
-            a.B.reset();
-            CHECK(a.IsWorldPaused(baseWorld)); // stays paused under A's scope
-            a.A.reset();
-            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // the last scope dropped, so it resumes
-
-            // A base the game paused itself composes with an overlay's scope without clobbering.
-            a.SetWorldPaused(baseWorld, true);
-            open(a.A, baseWorld);
+            a.Quiet(corner);
+            const Renderer::Viewport& viewport = *a.FindOverlayViewport(a.StateOf(full)->World);
+            fullExtent = viewport.GetRegion().Extent;
+            cornerRegion = a.FindOverlayViewport(a.StateOf(corner)->World)->GetRegion();
+            tracks = viewport.GetLayout().has_value();
         }
         else if (frame == 3)
         {
-            a.A.reset();
-            CHECK(a.IsWorldPaused(baseWorld)); // the explicit toggle still holds it
-            a.SetWorldPaused(baseWorld, false);
-            CHECK_FALSE(a.IsWorldPaused(baseWorld));
+            const Renderer::Viewport& viewport = *a.FindOverlayViewport(a.StateOf(full)->World);
+            rendered = viewport.GetOutput() != nullptr && viewport.GetOutputHandle().IsValid();
         }
     };
 
     app.Frames = 5;
     app.Run({});
+
+    CHECK(fullExtent == uvec2(320, 240));
+    CHECK(cornerRegion.Offset == ivec2(160, 120));
+    CHECK(cornerRegion.Extent == uvec2(80, 120));
+    CHECK(tracks);
+    CHECK(rendered);
 }
 
-TEST_CASE("A full-window overlay resolves to the framebuffer extent; a fixed region does not")
+TEST_CASE("An overlay still open at exit closes with the worlds and tears down cleanly")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -619,163 +746,17 @@ TEST_CASE("A full-window overlay resolves to the framebuffer extent; a fixed reg
 
     app.InitFn = [&](OverlayApp& a)
     { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        const uvec2 extent = a.GetRenderContext().GetRenderExtent();
-        if (frame == 0)
-        {
-            // Full window (zero-extent region) resolves to the framebuffer extent and carries a
-            // Layout so the compositor re-fits it on resize.
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
-            a.A->GetViewport().SetEnabled(false);
-            CHECK(a.A->GetViewport().GetRegion().Extent == extent);
-            CHECK(a.A->GetViewport().GetLayout().has_value());
-
-            // Fixed sub-region (PiP) placed as given, with no tracking Layout.
-            const Renderer::ViewportRegion pip{.Offset = {40, 30}, .Extent = {200, 150}};
-            a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .Region = pip});
-            a.B->GetViewport().SetEnabled(false);
-            CHECK(a.B->GetViewport().GetRegion().Offset == pip.Offset);
-            CHECK(a.B->GetViewport().GetRegion().Extent == pip.Extent);
-            CHECK_FALSE(a.B->GetViewport().GetLayout().has_value());
-        }
-        else if (frame == 1)
-        {
-            // The regions are unchanged frame to frame with no window resize (headless).
-            CHECK(a.A->GetViewport().GetRegion().Extent == extent);
-            CHECK(a.B->GetViewport().GetRegion().Extent == uvec2(200, 150));
-        }
-        else if (frame == 2)
-        {
-            a.B.reset();
-            a.A.reset();
-        }
-    };
-
-    app.Frames = 4;
-    app.Run({});
-}
-
-TEST_CASE("An overlay renders its scene through the engine drive-list with no per-frame game call")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> level;
-
-    app.InitFn = [&](OverlayApp& a)
-    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
-
     app.StepFn = [&](OverlayApp& a, int frame)
     {
         if (frame == 0)
         {
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
-        }
-        else if (frame == 3)
-        {
-            // The overlay rendered through the drive-list each frame — the engine pushed its camera
-            // and the compositor rendered it, with no LevelOverlay::Update call: its output is live.
-            CHECK(a.A->GetViewport().GetOutput() != nullptr);
-            CHECK(a.A->GetViewport().GetOutputHandle().IsValid());
-            a.A.reset();
-        }
-    };
-
-    app.Frames = 5;
-    app.Run({});
-}
-
-TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
-{
-    // The render-path assertion the committed PiP golden stands in for: a managed primary viewport
-    // renders its own scene every frame while a fixed sub-region overlay renders its scene over it,
-    // both live Presented outputs in the same frame composited by the managed gather. A byte-exact
-    // reference PNG is deliberately not committed — the display-mode brightness path is not stable
-    // enough across platforms for a golden — so this pins the structure the golden would.
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    ApplicationInfo info;
-    info.Name = "veng-level-overlay-pip";
-    info.Headless = true;
-    info.ImGui = std::nullopt;
-    info.HeadlessExtent = {320, 240};
-    info.ManagedViewport = ManagedViewportInfo{};
-
-    OverlayApp app(info, types, systems);
-    AssetHandle<Level> level;
-    Unique<Scene> primary;
-    const Renderer::ViewportRegion pip{.Offset = {40, 30}, .Extent = {120, 90}};
-
-    app.InitFn = [&](OverlayApp& a)
-    {
-        level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
-        primary = Scene::Create(a.GetTypeRegistry());
-    };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        // Keep the managed primary live each frame — a cleared scene still renders through the full
-        // deferred path, so the primary output is a real composited frame the overlay draws over.
-        a.GetManagedViewports().Get(0)->SetViewState({.World = primary.get(), .Delta = 0.016f});
-
-        if (frame == 0)
-        {
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .Region = pip});
-        }
-        else if (frame == 3)
-        {
-            // The primary and the PiP overlay both produced live outputs this frame, the overlay
-            // placed at its fixed sub-region over the full-window primary — PiP over a live primary.
-            CHECK(a.GetManagedViewports().Get(0)->GetOutput() != nullptr);
-            CHECK(a.GetManagedViewports().Get(0)->GetOutputHandle().IsValid());
-            CHECK(a.A->GetViewport().GetOutput() != nullptr);
-            CHECK(a.A->GetViewport().GetOutputHandle().IsValid());
-            CHECK(a.A->GetViewport().GetRegion().Offset == pip.Offset);
-            CHECK(a.A->GetViewport().GetRegion().Extent == pip.Extent);
-            a.A.reset();
-        }
-    };
-
-    app.Frames = 5;
-    app.Run({});
-}
-
-TEST_CASE("Tearing down the Context with an overlay world still open retires cleanly")
-{
-    // The two-hop WorldRunner -> World -> overlay-viewport ownership chain at teardown: the overlay
-    // is opened and never explicitly closed mid-run, so it is still open when ~OverlayApp drops it
-    // (before ~Application tears the base down, the runner and managed set destructing before the
-    // Context). Its viewport must retire against the still-live viewport registry and its world drop
-    // cleanly.
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    OverlayApp app(HeadlessInfo(), types, systems);
-    AssetHandle<Level> level;
-
-    app.InitFn = [&](OverlayApp& a)
-    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
-
-    app.StepFn = [&](OverlayApp& a, int frame)
-    {
-        if (frame == 0)
-        {
-            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
-            CHECK(a.A->GetWorld().IsValid());
-            // Left open deliberately: ~OverlayApp (not this step) closes it during teardown.
+            a.Request(LevelOverlay{.Source = level});
         }
     };
 
     app.Frames = 3;
     app.Run({});
 
-    // Reaching here (ASan-clean) is the assertion: the open overlay tore down in teardown order.
-    CHECK(true);
+    // Reaching here (ASan-clean) is the assertion: the open overlay unwound in the shutdown sweep.
+    CHECK(app.GetWorldRunner().GetWorlds().empty());
 }

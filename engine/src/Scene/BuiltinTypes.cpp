@@ -9,6 +9,7 @@
 #include <Veng/Gui/Surface.h>
 #include <Veng/Haptics/RumbleClip.h>
 #include <Veng/Haptics/RumbleSource.h>
+#include <Veng/LevelOverlay.h>
 #include <Veng/Localization/LocKey.h>
 #include <Veng/Net/InputFeed.h>
 #include <Veng/Net/LagCompensation.h>
@@ -229,6 +230,12 @@ namespace Veng
         registry.Register<ExitRequest>();
         registry.Register<FocusRequest>();
         registry.Register<PauseRequest>();
+
+        // A level opened over this world as a local-only overlay, and the open overlay the engine
+        // publishes beside it (runtime-only). Renderer::ViewportLayout registers through the
+        // request's Layout.
+        registry.Register<LevelOverlay>();
+        registry.Register<LevelOverlayState>();
 
         // The scene's render look, which a Level's render block seeds and every presenting viewport
         // resolves.

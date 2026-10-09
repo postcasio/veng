@@ -114,7 +114,7 @@ member is still alive; then members are destroyed.** The close comes after rathe
 two because both read live worlds (a shutdown checkpoint captures each open world's state). The
 consequences for a consumer: a service `OnShutdown` stops is already gone when the `OnStop`s run, an
 `OnStop` wanting its effect durable flushes it itself, and an application-held handle onto a world —
-a `LevelOverlay`, a `SeatFocusScope` — routinely outlives its world and must tolerate it (both
+a `SeatFocusScope`, a `WorldPauseScope` — routinely outlives its world and must tolerate it (both
 do).
 
 **The engine writes nothing relative to the working directory, and does not move it.** A shipped
@@ -623,26 +623,36 @@ See
 [src/Scene/CLAUDE.md](src/Scene/CLAUDE.md) for the request idiom and
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for `Travel`.
 
-**A second level can be opened over the running one as a `LevelOverlay`.** `LevelOverlay`
-(`Veng/LevelOverlay.h`) is a thin **preset over `WorldRunner::OpenWorld`**: opening an overlay
-opens an owned world (its own scene, systems, and HUD, ticked by the runner like any world) and
-applies an **overlay policy** — register a `Presented` viewport on top (composited over the covered
-world, bound to the overlay's seat so its camera is pulled through that seat and the seat's pawn is
-marked `LocalControl`, its region re-fit on resize by the compositor), hand the cursor seat and the covered seat's focus off to the overlay's own seat
-(a `SeatFocusScope`), and hold a refcounted `WorldRunner::PauseScope` on the caller-named
-`CoveredWorld`. The one cross-scene seam is `LevelOverlayInfo::Populate` (run after load, before
-start). **There is no `LevelOverlay::Update`:** the runner ticks the overlay's simulation and the
-engine pushes its camera each frame, so there is no per-frame game call and no hidden second
-scheduler. **Input focus and simulation pause are separate knobs:** taking the overlay's seat
-always suspends the covered seat's *input*, but a world simulates unless a `CoveredWorld` pause is
-held. An overlay's look is its level's `RenderLook`, resolved by its viewport each frame like any
-scene's, so a system in the overlay (or the opener, through `GetScene()`) edits it live. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
-every router / cursor-seat / pause value to the state it captured at open, and closing the world
-(skipped when the world has already closed — an application-held overlay outlives its world at
-shutdown);
-overlays **stack** (a dialog over a modal) and the handles drop LIFO. Results flow back through a
-game-owned channel (a component the opener drains, a callback) — no overlay system reaches into the
-covered scene.
+**A second level is opened over the running one by a `LevelOverlay` component.** `LevelOverlay`
+(`Veng/LevelOverlay.h`; local-only, never replicated) on an entity asks the engine to open its
+`Source` level as a world of its own — its own scene, systems and HUD, ticked by the runner like any
+world — and present it over the entity's world. `Application` keeps the open overlays (the internal
+`OverlayWorld`s, `src/OverlayWorld.h`, keyed by opener world and entity) and **reconciles them once
+per frame, right after the request drain and before the tick**: it closes the ones whose request
+went (newest first, so one frame's closes unwind in reverse open order), then opens each new request
+whose level is resident (starting the load and retrying otherwise, or blocking on it and the spawn
+for `WaitForResidency`). An open runs the **overlay policy**: open the world unstarted, copy the
+`Seed` entity's reflected components into one new overlay entity (references cleared), fire
+**`Application::OnOverlayLoaded(opener, entity, overlay, scene)`** for state with no reflected form,
+register a `Presented` viewport placed by `Layout` and re-fit on resize, bind it to the overlay world
+through its seat (`RegisterBoundViewport`, so that seat's camera is pulled and its pawn marked
+`LocalControl`) and to that seat for role dispatch (`Viewport::SetSeat`), hand the cursor seat to the
+overlay's seat and suspend `SuspendSeat` (or the prior cursor seat) beneath a `SeatFocusScope`, hold
+a pause on the opener's world for `PauseOpener`, disable every viewport presenting the opener's world
+for `Opaque`, give the overlay world a request policy whose `OnExit` closes it, publish
+**`LevelOverlayState`** (`World`, `Seat`) beside the request, and start it. `OnWorldLoaded` does not
+fire for an overlay world. **An overlay never outlives what it covers:** it closes when the request
+is removed or its entity destroyed, when its opener's world closes or has its scene replaced (the
+world-closed hook closes it that frame), or when the overlay world closes — by its own `ExitRequest`
+or anything else — in which case the opener's `LevelOverlay` is removed too, so it does not reopen.
+Closing unwinds the policy in reverse, restoring the cursor seat; overlays **stack** (a dialog over a
+modal), and one closed out of order hands its cursor-seat restore and its suspension to the overlay
+above it. The fields are read once, at open: an edit to a live request does nothing until it is
+removed and re-added. A world under a `Sandboxed` request policy opens none. Systems reach an open
+overlay through `LevelOverlayState` and the overlay's own scene; presentation code reaches its
+viewport through `Application::FindOverlayViewport(world)`. **Input focus and simulation pause are
+separate knobs:** the overlay always suspends the input beneath it, but its opener simulates unless
+`PauseOpener` holds it.
 
 **The engine render phase** runs between `BeginFrame()` and `EndFrame()`, uniform for every app
 and not overridable: render every registered viewport in registration order (each does its own
@@ -679,7 +689,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 87** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 88** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

@@ -1980,9 +1980,10 @@ if (VENG_BUILD_TESTS)
             # once hold the sum of their pools. It needs a Context for the registry, so it rides the
             # gpu band though it pins no pixels.
             tests/gpu/world_slot_budget.cpp
-            # level_overlay.cpp drives a headless Application through Run(), opening/closing
-            # LevelOverlay handles from OnUpdate and asserting the router/scene/pause state (it needs
-            # a Context for the overlay's viewport, so it rides the gpu band though it pins no pixels).
+            # level_overlay.cpp drives a headless Application through Run(), adding and removing
+            # LevelOverlay components from OnUpdate and asserting the router/world/scene/pause state
+            # (it needs a Context for the overlays' viewports, so it rides the gpu band though it
+            # pins almost no pixels).
             tests/gpu/level_overlay.cpp
             # input_router_association.cpp proves the router's id-keyed viewport associations resolve
             # live against Context::GetViewportRegistry(): a destroyed viewport routes nothing, a

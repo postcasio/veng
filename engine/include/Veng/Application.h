@@ -64,6 +64,7 @@ namespace Veng
     class ClientHost;
     class GamepadBackend;
     class GuiDriverRegistry;
+    class OverlayWorlds;
     class RoleResolver;
     struct CookedProject;
     namespace Gui
@@ -1522,6 +1523,15 @@ namespace Veng
         /// @param policy  The mode and exit handler its requests drain under.
         void SetWorldRequestPolicy(WorldInstanceId world, WorldRequestPolicy policy);
 
+        /// @brief Returns the viewport an open overlay renders into, or null when @p overlay is not one.
+        ///
+        /// For presentation code — a host reading the overlay's ViewState, or projecting a point
+        /// into it. A system reaches the overlay through its opener's LevelOverlayState and the
+        /// overlay's own scene, never through its viewport. Valid until the overlay closes.
+        /// @param overlay  The overlay's world (LevelOverlayState::World).
+        /// @return The overlay's Presented viewport, or nullptr.
+        [[nodiscard]] Renderer::Viewport* FindOverlayViewport(WorldInstanceId overlay) const;
+
         /// @brief Returns the engine-managed world's current fixed simulation tick number.
         ///
         /// Monotonic, advanced by the managed world's own clock. Zero before the first tick runs, while
@@ -1531,8 +1541,8 @@ namespace Veng
         /// @brief Returns this frame's interpolation fraction into the managed world's next Sim tick, in [0, 1).
         ///
         /// The residual accumulator the render gather and View systems blend the last two ticks by.
-        /// A game driving its own viewport (or a LevelOverlay) pushes this into its ViewState so its
-        /// scene interpolates in phase with the managed world.
+        /// A game driving its own viewport pushes this into its ViewState so its scene interpolates
+        /// in phase with the managed world.
         [[nodiscard]] f32 GetSimAlpha() const { return m_SimAlpha; }
 
     protected:
@@ -1544,11 +1554,28 @@ namespace Veng
         /// Only fires when ApplicationInfo::World is set. The Scene is spawned (its RenderLook
         /// seeded from the level) by this point, but the simulation has not started — a game
         /// adjusts the scene's look, captures input focus, or waits on @p pending before a
-        /// deterministic capture here. Default is a no-op (the minimal game needs none).
+        /// deterministic capture here. It does not fire for an overlay world (OnOverlayLoaded
+        /// does). Default is a no-op (the minimal game needs none).
         /// @param world    The managed world's handle, for resolving it back through the runner.
         /// @param scene    The managed world's Scene (its SceneSimulation attached but not started).
         /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
         virtual void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) {}
+
+        /// @brief Called once per overlay a LevelOverlay opens, after its level loads and its seed lands, before it starts.
+        ///
+        /// The seam for what a Seed cannot carry — state with no reflected form, such as a shared
+        /// immutable resource or a cache — so a system's OnStart in the overlay sees it. The
+        /// overlay's world is open but unstarted and not yet presented. OnWorldLoaded does not fire
+        /// for an overlay world, so an application's world setup never runs against one. Default
+        /// is a no-op.
+        /// @param opener   The world whose LevelOverlay requested the overlay.
+        /// @param entity   The entity carrying the LevelOverlay.
+        /// @param overlay  The overlay's world.
+        /// @param scene    The overlay's scene, its simulation attached but not started.
+        virtual void OnOverlayLoaded(WorldInstanceId opener, Entity entity, WorldInstanceId overlay,
+                                     Scene& scene)
+        {
+        }
 
         /// @brief Called when a presenting travel's rebind lands on its destination world.
         ///
@@ -2439,6 +2466,12 @@ namespace Veng
         ///
         /// A world absent here drains as Full; an entry is dropped by the world's close.
         unordered_map<u64, WorldRequestPolicy> m_RequestPolicies;
+
+        /// @brief The overlays the scenes' LevelOverlay components opened, reconciled each frame.
+        ///
+        /// Declared after the runner, the router, the compositor and the managed set, so it is
+        /// destroyed while each service an unwind touches still lives.
+        Unique<OverlayWorlds> m_Overlays;
 
         /// @brief A presenting travel awaiting its rebind, so OnWorldArrival can fire when it lands.
         ///

@@ -505,6 +505,30 @@ namespace Veng
         }
     }
 
+    void ManagedViewportSet::CollectWorldViewports(const WorldInstanceId world,
+                                                   vector<Renderer::Viewport*>& viewports) const
+    {
+        viewports.clear();
+        if (!world.IsValid())
+        {
+            return;
+        }
+        for (const ManagedViewport& managed : m_Viewports)
+        {
+            if (managed.Info.World == world)
+            {
+                viewports.push_back(managed.Viewport.get());
+            }
+        }
+        for (const BoundViewport& bound : m_Bound)
+        {
+            if (bound.World == world)
+            {
+                viewports.push_back(bound.Viewport);
+            }
+        }
+    }
+
     Renderer::Viewport* ManagedViewportSet::FindPresentingViewport(const WorldInstanceId world,
                                                                    const Scene& scene) const
     {

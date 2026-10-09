@@ -53,4 +53,21 @@ namespace Veng
                                          const TypeRegistry& registry, const EntityRemap& remap,
                                          const AssetHandleFixup& assetHandle,
                                          const EntityReferenceDiagnostic& diagnose = {});
+
+    /// @brief Copies a component's reflected fields from one instance into another of the same type.
+    ///
+    /// The per-component step Scene::Clone takes, for a caller copying components between two
+    /// scenes: the reflected fields round-trip through the binary serializer, Entity references are
+    /// rewritten through @p remap, and AssetHandle fields are copied whole (id and cache entry), so a
+    /// handle to a resident asset stays resident — including a runtime-adopted one, which carries no
+    /// id. Fields with no reflected form keep whatever @p target holds.
+    /// @param source    The component copied from.
+    /// @param target    The component copied into; constructed, of the same type.
+    /// @param type      The component's TypeInfo.
+    /// @param registry  The registry resolving nested field types.
+    /// @param remap     Maps each source-space Entity reference to the target's space.
+    /// @param scratch   Reused serialization scratch; its contents on entry are discarded.
+    VE_API void CopyComponentFields(const void* source, void* target, const TypeInfo& type,
+                                    const TypeRegistry& registry, const EntityRemap& remap,
+                                    vector<u8>& scratch);
 }

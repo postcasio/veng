@@ -56,6 +56,7 @@
 #include "Scene/FocusRequestReconcile.h"
 #include "Scene/PauseRequestReconcile.h"
 #include "Input/RoleResolver.h"
+#include "OverlayWorld.h"
 #include "Scene/RequestDrain.h"
 
 #include <fmt/format.h>
@@ -352,6 +353,12 @@ namespace Veng
         m_WorldRunner->SetWorldClosedHook(
             [this](const WorldInstanceId world)
             {
+                // First, while the closed world's focus entries stand: the overlays it opened unwind
+                // their scopes over its seats in order.
+                if (m_Overlays)
+                {
+                    m_Overlays->OnWorldClosed(world);
+                }
                 ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world);
                 ForgetWorldPause(m_PauseRequestScopes, world);
                 m_RequestPolicies.erase(world.Value);
@@ -423,6 +430,27 @@ namespace Veng
         m_ManagedViewports = CreateUnique<ManagedViewportSet>(
             m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry,
             m_GuiTranslator.get());
+
+        // The overlays the scenes request through LevelOverlay components.
+        m_Overlays = CreateUnique<OverlayWorlds>(OverlayServices{
+            .Assets = *m_AssetManager,
+            .Tasks = *m_TaskSystem,
+            .Runner = *m_WorldRunner,
+            .Router = *m_InputRouter,
+            .Managed = *m_ManagedViewports,
+            .Context = m_RenderContext,
+            .Compositor = m_Compositor,
+            .Policy = [this](const WorldInstanceId world) -> const WorldRequestPolicy*
+            {
+                const auto it = m_RequestPolicies.find(world.Value);
+                return it != m_RequestPolicies.end() ? &it->second : nullptr;
+            },
+            .SetPolicy = [this](const WorldInstanceId world, WorldRequestPolicy policy)
+            { SetWorldRequestPolicy(world, std::move(policy)); },
+            .Loaded = [this](const WorldInstanceId opener, const Entity entity,
+                             const WorldInstanceId overlay, Scene& scene)
+            { OnOverlayLoaded(opener, entity, overlay, scene); },
+        });
 
         // Every viewport on the compositor resolves its scene's RenderLook through the graphics
         // resolve seam, so a consumer's OnResolveGraphics composes over each look as the viewport
@@ -2017,6 +2045,11 @@ namespace Veng
         m_RequestPolicies.insert_or_assign(world.Value, std::move(policy));
     }
 
+    Renderer::Viewport* Application::FindOverlayViewport(const WorldInstanceId overlay) const
+    {
+        return m_Overlays ? m_Overlays->FindViewport(overlay) : nullptr;
+    }
+
     WorldInstanceId Application::NextJoinTargetWorld()
     {
         // The reply installs into the world queued for this join (FIFO in reply order). A join with no
@@ -2820,6 +2853,14 @@ namespace Veng
             {
                 VE_PROFILE_SCOPE("Frame/DrainRequests");
                 DrainRequestComponents();
+            }
+
+            // Then the overlays the scenes request: after the drain, so an overlay world's own
+            // ExitRequest has closed it and taken its request away, and before the tick, so a world
+            // opened here ticks this frame.
+            {
+                VE_PROFILE_SCOPE("Frame/Overlays");
+                m_Overlays->Reconcile();
             }
 
             // Deliver queued inbound game messages at the same frame-safe point: the hosts' pumps only

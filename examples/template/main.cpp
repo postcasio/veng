@@ -21,6 +21,7 @@
 #include <Veng/Log.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -31,7 +32,6 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
-#include <optional>
 
 #include "MarkerSet.h"
 
@@ -50,11 +50,10 @@ VE_FIELD(Caption)
 VE_FIELD(Level)
 VE_REFLECT_END();
 
-// A snapshot of primary-world state copied into the overlay scene by the overlay's populate hook,
-// then read by the overlay's own system to drive its HUD. It is an ordinary reflected component: the
-// engine calls the hook once with the fresh overlay scene, the hook attaches this, and no overlay
-// system ever reaches back into the primary scene. A copy gives a frozen overlay — the value the
-// primary held at open, held for the modal's lifetime even as the primary keeps ticking beneath it.
+// A snapshot of primary-world state the overlay's HUD shows. It sits on the entity requesting the
+// overlay, which names itself as the request's Seed, so the engine copies it into the fresh overlay
+// scene before that scene starts and no overlay code ever reaches back into the primary scene. A copy
+// gives a frozen overlay — the value the primary held at open, held for the modal's lifetime.
 struct OverlaySnapshot
 {
     string Caption = "(none)";
@@ -66,36 +65,18 @@ VE_FIELD(Caption)
 VE_FIELD(Level)
 VE_REFLECT_END();
 
-// The dismiss channel back to the opener: the overlay HUD's `onClick` handler raises Requested, and
-// the app draining this component each frame closes the overlay. Authored on the HUD entity so it
-// exists before the first tick; results cross the overlay boundary only through an explicit
-// game-owned channel like this, never by an overlay system touching the primary scene.
-struct OverlayControl
-{
-    bool Requested = false;
-};
-
-VE_REFLECT(::OverlayControl, 0xD865A8B4DB6DEA5CULL)
-VE_FIELD(Requested)
-VE_REFLECT_END();
-// The dismiss channel is a view/presentation output: the overlay's driver (a presentation binding)
-// writes it and the opener reads it. Tagging it ViewOutput marks it as within the driver boundary —
-// a driver may write it, but never a replicated or Sim-input component.
-VE_VIEW_OUTPUT(::OverlayControl);
-
 // Drives the overlay level's own HUD as a per-instance presentation driver — named on the overlay
 // HUD's GuiOverlay, instantiated by the engine with the document. On instantiate it seeds a
-// view-model from the populate-hook snapshot and binds it plus a "Dismiss" handler to the document;
-// each frame it mirrors the button's press into the OverlayControl the opener drains. It reads its
-// snapshot and drives its HUD entirely within the overlay scene, stamping only the ViewOutput dismiss
-// channel — the "modal live scene" runs its own simulation, its HUD bound by its own driver instance.
+// view-model from the seeded snapshot and binds it plus a "Dismiss" handler to the document; a press
+// stamps an ExitRequest in the overlay's own scene, which ends the overlay rather than the
+// application. Everything it touches is in the overlay scene.
 class TemplateOverlayDriver final : public GuiDriver
 {
 public:
     void OnInstantiate(const GuiDriverContext& context) override
     {
-        // Seed the model from the populate-hook snapshot, then bind it plus the dismiss handler to
-        // the freshly instantiated document (re-run on any re-instantiate, so the binding survives).
+        // Seed the model from the seeded snapshot, then bind it plus the dismiss handler to the
+        // freshly instantiated document (re-run on any re-instantiate, so the binding survives).
         if (const OverlaySnapshot* snapshot = context.Scene.TryGetFirst<OverlaySnapshot>())
         {
             m_Model = *snapshot;
@@ -107,11 +88,11 @@ public:
 
     void OnUpdate(const GuiDriverFrame& frame) override
     {
-        // Publish the button's press into the drained channel; the opener reads it and closes.
-        if (auto* control = frame.Scene.TryGetFirst<OverlayControl>())
+        if (m_DismissRequested && frame.Scene.TryGetFirst<ExitRequest>() == nullptr)
         {
-            control->Requested = m_DismissRequested;
+            frame.Scene.Add<ExitRequest>(frame.Owner);
         }
+        m_DismissRequested = false;
     }
 
 private:
@@ -173,7 +154,7 @@ VE_GUI_DRIVER(EmblemDriver, 0xC8CA6B412AB63897ULL, "Emblem");
 
 // The cooked overlay level the Tab key opens as a secondary, simulated overlay. Its own prefab
 // authors an input seat, a spinning cube, and an interactive GuiOverlay HUD; its `systems` name the
-// builtin input systems plus TemplateOverlaySystem.
+// builtin input systems and the builtin constant-motion system that spins the cube.
 constexpr AssetId OverlayLevelId{0x88B360A2DD16632EULL};
 
 // The cooked tuning table and the row this app reads out of it. Structured configuration lives in
@@ -334,8 +315,8 @@ private:
 // The smallest veng game that also authors a HUD and opens a live sub-scene: the bare managed-world
 // app (a rotating cube driven entirely by cooked data) grows a minimal Application subclass. Its
 // jobs are the primary HUD's data binding (the one thing the engine cannot do from data alone) and
-// the lifecycle of a secondary overlay level opened on a key. The primary HUD is authored on an
-// entity in the world prefab as a GuiOverlay, so the Viewport owns its load / instantiate / attach.
+// toggling a secondary overlay level on a key. The primary HUD is authored on an entity in the world
+// prefab as a GuiOverlay, so the Viewport owns its load / instantiate / attach.
 class TemplateApp final : public Application
 {
 public:
@@ -351,9 +332,9 @@ public:
 
 private:
     // The world is loaded here; find the prefab-authored primary GuiOverlay and bind it the
-    // view-model, and load the overlay level's handle so a later Open finds it. The bind is deferred
-    // — the overlay applies it when the Viewport instantiates the document — so this runs before the
-    // first render with no ordering hole.
+    // view-model, and load the overlay level's handle so a later request finds it resident. The bind
+    // is deferred — the overlay applies it when the Viewport instantiates the document — so this runs
+    // before the first render with no ordering hole.
     void OnWorldLoaded(WorldInstanceId, Scene& world, ResidencyBatch&) override
     {
         m_Context.SetData(m_Model);
@@ -364,12 +345,16 @@ private:
 
         LoadTuning();
 
-        // Hold the overlay level asset resident so opening it is a spawn, not a load. Open still
+        // Hold the overlay level asset resident so opening it is a spawn, not a load. The open still
         // waits on the spawn's residency (WaitForResidency), accepting the first-open hitch.
         if (const auto level = GetAssetManager().LoadSync<Level>(OverlayLevelId))
         {
             m_OverlayLevel = *level;
         }
+
+        // The entity the Tab key's overlay request goes on.
+        m_OverlayOpener = world.CreateEntity();
+        world.Add<Name>(m_OverlayOpener).Value = "Overlay Opener";
 
         // The custom-asset seam's end-to-end proof: a type the engine does not define, cooked by
         // the game's own importer, resolves through the engine's own typed load path.
@@ -426,9 +411,9 @@ private:
                   found);
     }
 
-    // Feed the primary HUD's bound fields, toggle the overlay on Tab, and — while it is open — tick it
-    // and drain its dismiss channel. The Viewport's per-frame overlay drive re-resolves the primary
-    // bindings and composites the HUD, so the game writes no layout or attach code.
+    // Feed the primary HUD's bound fields and toggle the overlay on Tab. The Viewport's per-frame
+    // overlay drive re-resolves the primary bindings and composites the HUD, so the game writes no
+    // layout or attach code.
     void OnUpdate(const f32 delta) override
     {
         if (m_Smoke && ++m_Frame >= SmokeFrames)
@@ -450,28 +435,7 @@ private:
 
         if (GetInput().WasKeyPressed(Key::Tab))
         {
-            if (m_Overlay)
-            {
-                m_Overlay.reset();
-            }
-            else
-            {
-                OpenOverlay();
-            }
-        }
-
-        if (m_Overlay)
-        {
-            // The engine ticks the overlay's simulation and pushes its camera each frame (it opens an
-            // owned world on Open), so the opener writes no per-frame overlay code — only the dismiss
-            // drain. The overlay system published the HUD button's click into OverlayControl, which
-            // the opener owns and drains here. (Tab, above, is the other dismissal.)
-            const OverlayControl* const control =
-                m_Overlay->GetScene().TryGetFirst<OverlayControl>();
-            if (control != nullptr && control->Requested)
-            {
-                m_Overlay.reset();
-            }
+            ToggleOverlay();
         }
     }
 
@@ -509,31 +473,37 @@ private:
                   m_TuningLabel, spinSpeed[*row], icon[*row].Value);
     }
 
-    // Opens the overlay level over the running frame: a fresh owned world simulated concurrently, its
-    // own seat taking input while the managed world's is suspended, and — naming the managed world as
-    // the covered world — that world's simulation frozen for the modal's lifetime. The populate hook
-    // copies a snapshot of the primary HUD's state into the overlay scene before it starts.
-    void OpenOverlay()
+    // Requests the overlay level over the managed world, or withdraws the request. The engine opens
+    // it at the next frame: a fresh world simulated concurrently, its own seat taking input while the
+    // managed world's is suspended, and the managed world paused for the modal's lifetime. The
+    // request's entity carries a snapshot of the primary HUD's state and seeds the overlay with it.
+    // The overlay's own Dismiss button ends it the same way the key does, removing the request.
+    void ToggleOverlay()
     {
-        if (!m_OverlayLevel.Id().IsValid())
+        World* const world = GetWorldRunner().ResolveWorld(GetManagedWorldId());
+        if (world == nullptr || m_OverlayOpener.IsNull() || !m_OverlayLevel.Id().IsValid())
         {
             return;
         }
-
-        m_Overlay = LevelOverlay::Open(
-            *this,
-            LevelOverlayInfo{
-                .Source = m_OverlayLevel,
-                .CoveredWorld = GetManagedWorldId(),
-                .WaitForResidency = true,
-                .Populate =
-                    [this](Scene& scene)
-                {
-                    const Entity entity = scene.CreateEntity();
-                    scene.Add<OverlaySnapshot>(entity, OverlaySnapshot{.Caption = m_Model.Caption,
-                                                                       .Level = m_Model.Level});
-                },
-            });
+        Scene& scene = world->GetScene();
+        if (std::as_const(scene).TryGet<LevelOverlay>(m_OverlayOpener) != nullptr)
+        {
+            (void)scene.Remove<LevelOverlay>(m_OverlayOpener);
+            return;
+        }
+        const OverlaySnapshot snapshot{.Caption = m_Model.Caption, .Level = m_Model.Level};
+        if (auto* const held = scene.TryGet<OverlaySnapshot>(m_OverlayOpener))
+        {
+            *held = snapshot;
+        }
+        else
+        {
+            scene.Add<OverlaySnapshot>(m_OverlayOpener, snapshot);
+        }
+        scene.Add<LevelOverlay>(m_OverlayOpener, LevelOverlay{.Source = m_OverlayLevel,
+                                                              .PauseOpener = true,
+                                                              .WaitForResidency = true,
+                                                              .Seed = m_OverlayOpener});
     }
 
     TemplateHud m_Model;
@@ -542,9 +512,10 @@ private:
     // The label read out of the tuning table at startup, shown alongside the frame rate.
     string m_TuningLabel = "untuned";
 
-    // The overlay level asset, held resident from OnWorldLoaded, and the live handle while it is open.
+    // The overlay level asset, held resident from OnWorldLoaded, and the managed-world entity its
+    // request goes on.
     AssetHandle<Level> m_OverlayLevel;
-    std::optional<LevelOverlay> m_Overlay;
+    Entity m_OverlayOpener = Entity::Null;
 
     // The game-defined asset, held resident for the app's lifetime.
     AssetHandle<Template::MarkerSet> m_Markers;
@@ -567,7 +538,6 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
 {
     host->Types.Register<TemplateHud>();
     host->Types.Register<OverlaySnapshot>();
-    host->Types.Register<OverlayControl>();
     host->Types.Register<EmblemModel>();
     // Registered like any other component; its AssetHandle field needs no special treatment
     // beyond the type's own HandleFieldType registration below.

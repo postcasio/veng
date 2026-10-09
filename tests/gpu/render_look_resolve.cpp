@@ -67,19 +67,18 @@ namespace
         return look;
     }
 
-    // A headless application driven by closures, with a swappable resolve seam and an overlay slot
-    // dropped before the engine tears down.
+    // A headless application driven by closures, with a swappable resolve seam and one overlay
+    // request.
     class LookApp final : public Application
     {
     public:
         using Application::Application;
 
-        ~LookApp() override { Overlay.reset(); }
-
         function<void(LookApp&)> InitFn;
         function<void(LookApp&, int)> StepFn;
         function<void(const GraphicsResolveInput&, GraphicsResolveOutput&)> Resolver;
-        std::optional<LevelOverlay> Overlay;
+        WorldInstanceId OverlayOpener;
+        Entity OverlayRequest = Entity::Null;
         int Frames = 5;
         int Current = 0;
         int ResolveCalls = 0;
@@ -99,6 +98,26 @@ namespace
                 scene.Add<RenderLook>(scene.CreateEntity(), *look);
             }
             return world;
+        }
+
+        // Requests `level` as an overlay over `opener`; it opens at the next frame-top reconcile.
+        void RequestOverlay(WorldInstanceId opener, const AssetHandle<Level>& level)
+        {
+            Scene& scene = GetWorldRunner().ResolveWorld(opener)->GetScene();
+            OverlayOpener = opener;
+            OverlayRequest = scene.CreateEntity();
+            scene.Add<LevelOverlay>(OverlayRequest, LevelOverlay{.Source = level});
+        }
+
+        // The requested overlay's viewport; the overlay must be open.
+        Renderer::Viewport& OverlayViewport()
+        {
+            const Scene& scene = GetWorldRunner().ResolveWorld(OverlayOpener)->GetScene();
+            const auto* state = scene.TryGet<LevelOverlayState>(OverlayRequest);
+            REQUIRE(state != nullptr);
+            Renderer::Viewport* viewport = FindOverlayViewport(state->World);
+            REQUIRE(viewport != nullptr);
+            return *viewport;
         }
 
         // The look a world's scene carries; the world must author one.
@@ -254,19 +273,21 @@ TEST_CASE("A look edit is live: per-frame fields rebuild nothing, a topology fie
     app.StepFn = [&](LookApp& app, int frame)
     {
         const Renderer::Viewport& viewport = *app.GetManagedViewports().Get(0);
-        if (frame == 1)
+        if (frame == 0)
+        {
+            app.RequestOverlay(world,
+                               BuildOverlayLevel(app.GetAssetManager(), types, AuthoredLook()));
+        }
+        else if (frame == 1)
         {
             settled = viewport.GetOutputGeneration();
             app.LookOf(world).Exposure = 2.75f;
-            app.Overlay = LevelOverlay::Open(
-                app, LevelOverlayInfo{.Source = BuildOverlayLevel(app.GetAssetManager(), types,
-                                                                  AuthoredLook())});
         }
         else if (frame == 2)
         {
             editedExposure = viewport.GetViewState().Exposure;
             afterExposure = viewport.GetOutputGeneration();
-            overlay = Rendered(app.Overlay->GetViewport());
+            overlay = Rendered(app.OverlayViewport());
             app.LookOf(world).Bloom = false;
         }
         else if (frame == 3)
@@ -341,15 +362,13 @@ TEST_CASE("Viewports compose a resolver over their own looks, re-run only on a c
     {
         return vector<const Renderer::Viewport*>{app.GetManagedViewports().Get(0),
                                                  app.GetManagedViewports().Get(1),
-                                                 &app.Overlay->GetViewport()};
+                                                 &app.OverlayViewport()};
     };
     app.StepFn = [&](LookApp& app, int frame)
     {
-        if (frame == 1)
+        if (frame == 0)
         {
-            app.Overlay = LevelOverlay::Open(
-                app, LevelOverlayInfo{
-                         .Source = BuildOverlayLevel(app.GetAssetManager(), types, lookOverlay)});
+            app.RequestOverlay(a, BuildOverlayLevel(app.GetAssetManager(), types, lookOverlay));
         }
         else if (frame == 2)
         {

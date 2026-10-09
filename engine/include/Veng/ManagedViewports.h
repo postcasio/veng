@@ -335,6 +335,17 @@ namespace Veng
         /// @param seats  The buffer filled with the presenting seats; cleared on entry.
         void CollectPresentingSeats(WorldInstanceId world, vector<Entity>& seats) const;
 
+        /// @brief Collects every viewport bound to a world: the managed ones naming it, then the bound ones.
+        ///
+        /// The binding alone decides, whatever the viewport has been pushed or is showing, so the
+        /// result is every viewport whose render shows the world — what a caller covering the world
+        /// (an opaque overlay disabling the render beneath it) acts on. Managed viewports come first,
+        /// in index order, then bound ones in registration order. Clears @p viewports first.
+        /// @param world      The world whose viewports to collect.
+        /// @param viewports  The buffer filled with the bound viewports; cleared on entry.
+        void CollectWorldViewports(WorldInstanceId world,
+                                   vector<Renderer::Viewport*>& viewports) const;
+
         /// @brief Returns the first viewport presenting a world's live scene, or null when none does.
         ///
         /// What a world's systems resolve their View and Debug from: managed viewports in index order,

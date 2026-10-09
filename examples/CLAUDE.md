@@ -109,20 +109,22 @@ code. On top of that, `main.cpp` layers a
 - it plays its composed `DemoSynth` generator from an `AudioSource` on an entity it adds to the
   world in `OnWorldLoaded` (a generator is runtime-only, so it is attached in code, not authored),
   driving the synth's cutoff from `OnUpdate` through the reference it keeps, and
-- it opens a **secondary overlay level** on a key through `LevelOverlay` — a preset over
-  `WorldRunner::OpenWorld` that opens an owned, runner-ticked world plus the overlay policy. The
-  overlay is a live sub-scene with its own input seat, its own `systems` (the builtin
-  `DeviceAssignmentSystem` / `InputMappingSystem` plus its one driving system), and an `Interactive`
-  `GuiOverlay` HUD with an `onClick` button that dismisses it, populated at open through
-  `LevelOverlayInfo::Populate` with a snapshot of the primary scene's state (dismissable by the key
-  or the button, the covered world named by `CoveredWorld` frozen by a refcounted
-  `WorldRunner::PauseScope` for the overlay's lifetime). The runner ticks the overlay world and the
-  engine pushes its camera, so the opener writes no per-frame overlay code — only the dismiss drain.
+- it toggles a **secondary overlay level** on a key by adding or removing a **`LevelOverlay`**
+  component on an entity of the managed world; the engine opens the level as a world of its own and
+  presents it over the managed one at the next frame. The overlay is a live sub-scene with its own
+  input seat, its own `systems` (the builtin `DeviceAssignmentSystem` / `InputMappingSystem` and
+  `ConstantMotionSystem`), and an `Interactive` `GuiOverlay` HUD whose driver stamps an
+  `ExitRequest` in the overlay's scene from an `onClick` button — which ends the overlay, not the
+  app, and takes the request away. The requesting entity carries a snapshot of the primary scene's
+  state and names itself as the request's `Seed`, so the snapshot is copied into the overlay before
+  it starts; `PauseOpener` holds the managed world paused for the overlay's lifetime. The runner
+  ticks the overlay world and the engine pushes its camera, so the opener writes no per-frame
+  overlay code at all.
 
-So the module registers a HUD view-model type, two small overlay components, and one
-overlay-driving `SceneSystem` — the least game code that still exercises `GuiOverlay` binding and
-`LevelOverlay` end to end. Its pack carries the prefabs + levels, so the cook reflects
-`libtemplate` via `MODULE template` (its overlay components + system beside the engine builtins).
+So the module registers its HUD and emblem view-model types, the overlay's snapshot component, the
+marker-beacon component, and two Gui drivers — the least game code that still exercises `GuiOverlay` binding and `LevelOverlay` end to
+end. Its pack carries the prefabs + levels, so the cook reflects `libtemplate` via
+`MODULE template` (its components beside the engine builtins).
 
 ## Graph-sourced sample shaders
 

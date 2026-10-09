@@ -366,10 +366,16 @@ extern "C"
 /// LevelOverlay::GetViewState and Application's world view knobs go, and ManagedViewportSet's
 /// push no longer takes knobs. A module derives Application and builds bound viewports, so a
 /// stale one lays out and calls through the old shapes.
+/// Version 88 makes an overlay level a component: the LevelOverlay handle class and its
+/// LevelOverlayInfo give way to the builtin LevelOverlay and LevelOverlayState components (and
+/// ViewportLayout's reflection), Application grows the OnOverlayLoaded virtual, FindOverlayViewport
+/// and its open overlays, and ManagedViewportSet grows CollectWorldViewports. A module derives
+/// Application and spawns prefabs carrying builtins, so a stale one dispatches through a short
+/// vtable and lays the application out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 87u
+#define VENG_MODULE_ABI_VERSION 88u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

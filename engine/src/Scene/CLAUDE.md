@@ -843,6 +843,14 @@ that could read one never runs paused. Gameplay pauses its own world by stamping
 **`PauseRequest`** (`Veng/Scene/Requests.h`), drained like its siblings; the resume comes from outside
 the paused world.
 
+**A world ends itself with an `ExitRequest`, and its request policy says what ending means.** With no
+policy the request exits the application; a world that is one part of the application has an
+`OnExit` that takes it instead. An **overlay world** (`Veng/LevelOverlay.h`) is one: its
+`ExitRequest` closes the overlay and removes the opener's `LevelOverlay`, so it does not reopen —
+which is how an overlay's own content dismisses it. The editor's Play is another, its `OnExit`
+stopping Play. Opening an overlay is component-shaped too: a system adds a `LevelOverlay` to an
+entity of its world, and the engine opens it at the next frame-top reconcile.
+
 **A `SystemContext` is built, never assembled by hand.** Every service on it is a required reference
 with no default, so an omission is a compile error; the defaulted fields (`Pointer`, `View`, `Debug`,
 `Tick`, `Alpha`, `Role`, `World`, `GameplayFocused`, the step edges, `IsReplay`) are per-call data. At

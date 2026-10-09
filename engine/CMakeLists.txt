@@ -152,7 +152,6 @@ add_library(veng SHARED
         src/Input/SeatFocusScope.cpp
         src/Input/SimInputFrame.cpp
         src/InputRouter.cpp
-        src/LevelOverlay.cpp
         src/LaunchArguments.cpp
         src/Localization/LocaleCatalog.cpp
         src/Localization/LocaleIndex.cpp
@@ -188,6 +187,7 @@ add_library(veng SHARED
         src/Net/Session.cpp
         src/Net/Social.cpp
         src/Net/UdpTransport.cpp
+        src/OverlayWorld.cpp
         # Persistence/ — the durable-state subsystem, listed as one contiguous block so the
         # subsystem's sources stay together rather than scattered through the list. Further
         # persistence sources are appended here, in this block.

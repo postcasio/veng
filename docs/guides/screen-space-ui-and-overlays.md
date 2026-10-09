@@ -162,8 +162,7 @@ component sits on, and the render gather's interpolation fraction). Both carry t
 services a driver may reach, so a driver needs no back-channel to find the application. The
 template's `TemplateOverlayDriver` in
 [`main.cpp`](../../examples/template/main.cpp) is the live reference — it seeds its model from the
-populate-hook snapshot, binds the dismiss handler, and publishes the button press to a drained
-channel:
+snapshot seeded into its scene, binds the dismiss handler, and stamps a request on a press:
 
 ```cpp
 class TemplateOverlayDriver final : public GuiDriver
@@ -176,7 +175,7 @@ public:
         m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
         context.Document.BindContext(&m_Context);  // the document supplies its own registry
     }
-    void OnUpdate(const GuiDriverFrame& frame) override { /* publish state into a drained channel */ }
+    void OnUpdate(const GuiDriverFrame& frame) override { /* stamp a request on a press */ }
     // ... per-instance view-model in members ...
 };
 
@@ -234,12 +233,14 @@ is [Authoring a UI document](authoring-ui-documents.md), step 6.
 
 ## 2. Opening a level as an overlay — `LevelOverlay`
 
-The `WorldRunner` ticks every open world, and `LevelOverlay` is the preset that opens one. To run
-a **second, live scene over the running one** — a menu that is a real 3D scene, a picture-in-picture
-camera, a full-screen modal — open a `Level` through the **`LevelOverlay`** RAII handle
-(`Veng/LevelOverlay.h`). It is a thin preset over `WorldRunner::OpenWorld`, composing the owned-world
-open with the overlay policy (register a viewport on top, hand off focus + the cursor seat, pause the
-covered world) into one call.
+The `WorldRunner` ticks every open world, and `LevelOverlay` is the component that opens one over
+another. To run a **second, live scene over the running one** — a menu that is a real 3D scene, a
+picture-in-picture camera, a full-screen modal — put a **`LevelOverlay`** component
+(`Veng/LevelOverlay.h`) on an entity of the world it should cover. The engine opens the level as a
+world of its own and applies the overlay policy (a viewport on top, the cursor seat and the input
+beneath handed to the overlay's seat, optionally a pause on the opener's world); remove the
+component and the overlay closes. Because it is state in the scene, a **system can open one** as
+readily as application code, and the overlay's lifetime follows the world that asked for it.
 
 ### The overlay is a first-class level
 
@@ -247,7 +248,8 @@ Because the overlay is an ordinary `Level`, it composes its own systems, seat, a
 is special-cased. The template's overlay level authors, in its prefab:
 
 - an **input seat** (`Viewer` / `InputContextStack` / `PlayerInput` / `SeatInput`), so its
-  interaction reads input from its **own** scene;
+  interaction reads input from its **own** scene — and its overlay viewport is bound to that seat,
+  so its documents navigate from that seat's contexts and a pawn it possesses is `LocalControl`;
 - an **`Interactive` `GuiOverlay` HUD** with an `onClick` button (its HUD comes free — the
   overlay's own viewport drives it, exactly as any scene's overlay);
 - ordinary content (a spinning cube on a `ConstantMotion`, a camera, a light);
@@ -255,79 +257,97 @@ is special-cased. The template's overlay level authors, in its prefab:
   resolves itself, exactly as any presented scene's;
 
 and names, in its `systems`, the builtin **`DeviceAssignmentSystem`** + **`InputMappingSystem`**
-plus its own driving system. "Create a viewport, load a level with its systems, its seat, and
-its HUD, and simulate it" is one `LevelOverlay::Open`.
+and the builtin `ConstantMotionSystem` spinning the cube.
 
-### Opening and driving it
+### Requesting it
 
 ```cpp
-m_Overlay = LevelOverlay::Open(*this, LevelOverlayInfo{
-    .Source          = m_OverlayLevel,        // a resident AssetHandle<Level>
-    .CoveredWorld    = GetManagedWorldId(),   // pause this world for the overlay's lifetime (invalid pauses none)
-    .WaitForResidency = true,                 // block Open until the spawn is resident
-    .Populate = [this](Scene& scene) {        // fill the overlay scene from host state, before it starts
-        const Entity e = scene.CreateEntity();
-        scene.Add<OverlaySnapshot>(e, OverlaySnapshot{ .Caption = m_Model.Caption });
-    },
+scene.Add<LevelOverlay>(entity, LevelOverlay{
+    .Source           = m_OverlayLevel,  // the level; a handle not yet resident is loaded first
+    .PauseOpener      = true,            // pause this entity's world while the overlay is open
+    .WaitForResidency = true,            // block the open until the spawn is resident
+    .Seed             = entity,          // copy this entity's components into the overlay scene
 });
 ```
 
-There is **no per-frame drive** — the `WorldRunner` ticks the overlay's world and the engine pushes
-its camera each frame, exactly like any world, so the opener writes no `Update` call (there is no
-`LevelOverlay::Update`). It only decides when to close.
+The engine reconciles the components **once per frame, at the frame-top request drain**: a request
+added this frame opens at the top of the next, and the engine adds a **`LevelOverlayState`**
+(`World`, `Seat`) beside it while it is open. There is **no per-frame drive** — the `WorldRunner`
+ticks the overlay's world and the engine pushes its camera each frame, exactly like any world.
 
-Dropping the handle (`m_Overlay.reset()`, or `Close`) tears the overlay down and restores every
-router / cursor-seat / world-pause value to the state captured at open, then closes the world.
-Overlays **stack** — a second opened over the first (a dialog over a modal) nests through the
-cursor-seat handoff and the focus stack — and the handles must drop in reverse open order (LIFO).
+The other fields: **`Layout`** places the overlay's viewport as fractions of the window (the whole
+window by default; re-fit on every resize); **`SuspendSeat`** names the seat in this world whose
+input it suspends (null takes the cursor seat); **`Opaque`** says the overlay covers everything
+beneath it, so every viewport presenting this world is disabled while it is open — the render
+beneath a full-window modal is invisible work. The fields are read **once, at open**: editing a live
+request does nothing until it is removed and added again. A world draining its requests under a
+`Sandboxed` policy (the editor's Play) opens none.
 
-### The populate hook: contract versus guidance
+### When it closes
 
-The one seam through which host state enters the overlay is the **populate hook** — a
-`std::function<void(Scene&)>` the engine runs **once**, after `LoadInto` and **before**
-`StartSimulation`. That is the whole enforceable **contract**: the engine calls it with the
-fresh scene and does not inspect what it attaches.
+The overlay closes, unwinding everything its open applied and restoring the cursor seat, when
+**any** of these happens:
 
-The **guidance** (not enforced): attach a thin **source component** — ideally an existing
-component the covered world's systems already read, not an invented bridge type — and let a
-**system named in the overlay's `systems`** build the rest by reading it **by component type**.
-The template's hook copies a small `OverlaySnapshot` in; the overlay's own system reads it and
-drives the HUD. What crosses the boundary, in either direction, is the game's decision — **no
-overlay system reaches into the primary scene**.
+- the `LevelOverlay` is removed, or its entity destroyed;
+- the world it lives in closes (or has its scene replaced) — an overlay never outlives what it covers;
+- the **overlay world closes** — and in particular when something in it stamps an **`ExitRequest`**,
+  which in an overlay world ends the overlay rather than the application. The engine then removes
+  the opener's `LevelOverlay` too, so it does not reopen.
 
-**Freshness follows what the source holds.** A **copy** gives a frozen overlay (the value at
-open, held for the modal's life). A **live** view is safe only when the shared thing is
-immutable and shared by reference (a component holding a `Ref`/`shared_ptr`) or is refreshed
-each frame by the opener's own code. A retained raw pointer into the primary scene's component
-storage is **not** safe — a structural change there dangles it.
+Overlays **stack** — a request in a world while another overlay is open suspends that overlay's
+seat, and a request inside an overlay's own scene opens an overlay over it. The closes of one frame
+unwind in reverse open order, and a lower overlay closing first hands what it held on to the one
+above, so nothing beneath surfaces while an upper one is still open.
+
+### Getting state in: the seed and the load hook
+
+Data crosses into the overlay **before its simulation starts**, so its systems' `OnStart` see it:
+
+- **`Seed`** names an entity in the opener's world whose components with reflected fields are copied
+  into one fresh entity of the overlay scene. Entity references are cleared — they name the opener's
+  scene — and the hierarchy and the request itself stay behind. The template's requesting entity
+  carries an `OverlaySnapshot` and names itself as its own seed.
+- **`Application::OnOverlayLoaded(opener, entity, overlay, scene)`** fires once per open, after the
+  load and the seed, for what has no reflected form — a shared immutable resource, a cache.
+  `OnWorldLoaded` does not fire for an overlay world.
+
+The **guidance** (not enforced): seed a thin **source component** — ideally one the overlay's
+systems already read — and let a **system named in the overlay's `systems`** build the rest by
+reading it **by component type**. **Freshness follows what the source holds.** A **copy** gives a
+frozen overlay (the value at open, held for the modal's life). To keep it live, the opener mirrors
+into the overlay scene each frame through `LevelOverlayState::World` and the runner; a retained raw
+pointer into the opener's component storage is **not** safe — a structural change there dangles it.
 
 ### Input suspend versus simulation pause — two separate knobs
 
-Taking the overlay's seat **always suspends the covered world's input** (its seat's contexts
-swap to an empty context beneath the focus scope). Freezing the covered world's **simulation**
-is a **separate, opt-in** knob — name it as `CoveredWorld`, and the overlay holds a refcounted
-`WorldRunner::PauseScope` on it for its lifetime. So a live picture-in-picture view keeps its world
-ticking beneath it (leave `CoveredWorld` invalid), while a modal that should stop the world names
-it. The template's modal names `GetManagedWorldId()`; a picture-in-picture overview whose scene must
-keep resolving beneath the overlay leaves it invalid. Because the pause is a refcount, stacked
-overlays over one world nest correctly and an explicit game pause is not clobbered.
+Taking the overlay's seat **always suspends the input beneath it** (the suspended seat's contexts
+swap to an empty context beneath a focus scope). Freezing the opener's world's **simulation** is a
+**separate, opt-in** knob, **`PauseOpener`**: the overlay holds one more holder of that world's pause
+refcount for its lifetime. So a live picture-in-picture view keeps its world ticking beneath it,
+while a modal that should stop the world sets it. Because the pause is a refcount, stacked overlays
+over one world nest correctly and an explicit game pause is not clobbered.
 
-### Reading results back
+### Reading results back, and ending itself
 
-Results flow back through an **explicit game-owned channel**, never an overlay system reaching
-across. The template's dismiss button raises a flag in an `OverlayControl` component the overlay
-system writes and the **opener drains** each frame:
+Results flow back through an **explicit channel**, never an overlay system reaching across: the
+opener reads the overlay scene through its `LevelOverlayState` while it is open, or the overlay
+stamps a request the opener's world understands. The template's dismiss button is the simplest
+case — its driver stamps an `ExitRequest` in the overlay's own scene, and the overlay is gone with
+its request the next frame, no opener code involved:
 
 ```cpp
-const OverlayControl* control = m_Overlay->GetScene().TryGetFirst<OverlayControl>();
-if (control != nullptr && control->Requested)
+void OnUpdate(const GuiDriverFrame& frame) override
 {
-    m_Overlay.reset();   // the button closed the overlay
+    if (m_DismissRequested && frame.Scene.TryGetFirst<ExitRequest>() == nullptr)
+    {
+        frame.Scene.Add<ExitRequest>(frame.Owner);
+    }
+    m_DismissRequested = false;
 }
 ```
 
-A callback, or the opener's glue writing the host directly, are equally valid channels — pick
-one; the engine enforces none.
+Presentation code that needs the overlay's viewport — to read its `ViewState` or project a point
+into it — asks `Application::FindOverlayViewport(state.World)`; systems never need it.
 
 ---
 
@@ -461,7 +481,8 @@ The engine drives all three components automatically, so there is nothing to cal
 the authored HUD, the mirror, or the overlay level's own HUD. Build and run the
 [template](../../examples/template/): its primary HUD renders over the scene, its mirror reflects
 the cube, and **Tab** opens the secondary overlay level — its interactive HUD dismissable by the
-Tab key **or** by its `Resume` button. In the editor, each component is inspectable like any
+Tab key **or** by its `Resume` button, which ends the overlay through an `ExitRequest` in its own
+scene. In the editor, each component is inspectable like any
 other — its `Document` / `Layer` / `Interactive` / `TargetSeat` (or `Shape` / `Resolution` /
 `Refresh`) show in the reflection inspector, the referenced document opens in the
 `UIDocumentEditorPanel`, and entering **Play** renders the entity's `GuiOverlay` over the scene.

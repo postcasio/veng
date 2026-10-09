@@ -408,6 +408,32 @@ namespace Veng
         }
     }
 
+    void CopyComponentFields(const void* source, void* target, const TypeInfo& type,
+                             const TypeRegistry& registry, const EntityRemap& remap,
+                             vector<u8>& scratch)
+    {
+        scratch.clear();
+        WriteFields(scratch, source, type, registry);
+        ReadFields(scratch, target, type, registry).value();
+
+        // A serialized AssetHandle keeps only its AssetId, so a runtime-adopted (id-less) handle
+        // would round-trip to empty: copy the live cache entry straight across from the matching
+        // field of the identically-laid-out source instead.
+        const AssetHandleFixup copyHandle = [&](void* targetField)
+        {
+            const usize offset = static_cast<u8*>(targetField) - static_cast<u8*>(target);
+            const auto* sourceField = static_cast<const u8*>(source) + offset;
+
+            AssetId id{};
+            std::memcpy(&id, sourceField, sizeof(id));
+            const auto* sourceEntry = reinterpret_cast<const Ref<Detail::AssetCacheEntry>*>(
+                sourceField + Detail::AssetHandleEntryOffset);
+            Detail::RehydrateHandleField(targetField, id, *sourceEntry);
+        };
+
+        RemapComponentReferences(target, type, registry, remap, copyHandle);
+    }
+
     Unique<Scene> Scene::Clone() const
     {
         const TypeRegistry& registry = *m_Registry;
@@ -431,12 +457,7 @@ namespace Veng
             return it != remap.end() ? it->second : Entity::Null;
         };
 
-        // 2. Copy every component. WriteFields/ReadFields round-trips the value
-        //    bytes; the post-pass remaps Reference fields to the cloned handles and
-        //    deep-copies AssetHandle fields directly. A serialized AssetHandle keeps
-        //    only the AssetId, so a runtime-adopted (id-less) handle would round-trip
-        //    to empty — copy the live cache-entry Ref straight across instead, so a
-        //    cloned scene still renders its already-resident meshes.
+        // 2. Copy every component, references remapped to the cloned handles.
         vector<u8> record;
         for (const Unique<ComponentPool>& pool : m_Pools)
         {
@@ -457,33 +478,10 @@ namespace Veng
 
             for (usize i = 0; i < count; ++i)
             {
-                const Entity source = dense[i];
-                const Entity target = remap.at(source);
-                const void* sourceComponent = pool->SlotData(static_cast<u32>(i));
-
-                record.clear();
-                WriteFields(record, sourceComponent, typeInfo, registry);
-
-                void* targetComponent = clone->AddComponent(target, typeId);
-                ReadFields(record, targetComponent, typeInfo, registry).value();
-
-                const AssetHandleFixup copyHandle = [&](void* targetField)
-                {
-                    // The matching source field sits at the same offset within the
-                    // identically-laid-out source component; copy the whole handle
-                    // (AssetId + cache-entry Ref) so a resident handle survives.
-                    const usize offset =
-                        static_cast<u8*>(targetField) - static_cast<u8*>(targetComponent);
-                    const auto* sourceField = static_cast<const u8*>(sourceComponent) + offset;
-
-                    AssetId id{};
-                    std::memcpy(&id, sourceField, sizeof(id));
-                    const auto* sourceEntry = reinterpret_cast<const Ref<Detail::AssetCacheEntry>*>(
-                        sourceField + Detail::AssetHandleEntryOffset);
-                    Detail::RehydrateHandleField(targetField, id, *sourceEntry);
-                };
-
-                RemapComponentReferences(targetComponent, typeInfo, registry, remapFn, copyHandle);
+                const Entity target = remap.at(dense[i]);
+                CopyComponentFields(pool->SlotData(static_cast<u32>(i)),
+                                    clone->AddComponent(target, typeId), typeInfo, registry,
+                                    remapFn, record);
             }
         }
 
