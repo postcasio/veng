@@ -5,7 +5,9 @@
 #include "SkySourceResolve.h"
 
 #include <Veng/Renderer/BakedSkyCube.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/SceneCapture.h>
 
 #include <algorithm>
 #include <span>
@@ -53,6 +55,38 @@ namespace Veng::Renderer
                    a.PlanetRadius == b.PlanetRadius && a.AtmosphereRadius == b.AtmosphereRadius &&
                    a.SunAngularRadius == b.SunAngularRadius && a.SunIrradiance == b.SunIrradiance;
         }
+
+        /// @brief The scene's lighting capture, and how many enabled lighting surfaces it has.
+        struct LightingCapture
+        {
+            /// @brief The first enabled lighting surface's capture with a completed sweep, or null.
+            const SceneCapture* Capture = nullptr;
+            /// @brief Enabled SceneLighting surfaces walked, swept or not.
+            u32 EnabledCount = 0;
+        };
+
+        /// @brief Finds the first enabled SceneLighting surface whose capture has completed a sweep.
+        LightingCapture FindLightingCapture(const Scene& world)
+        {
+            LightingCapture found;
+            for (auto [entity, surface] : world.View<CaptureSurface>())
+            {
+                if (!surface.Enabled || surface.Output != CaptureOutput::SceneLighting)
+                {
+                    continue;
+                }
+                ++found.EnabledCount;
+                // A capture with no completed sweep holds a cube still filling (or, from the pool,
+                // another owner's): it lights nothing until a whole sweep of this scene lands.
+                const SceneCapture* const capture = surface.GetCapture();
+                if (found.Capture == nullptr && capture != nullptr &&
+                    capture->GetCubeView() != nullptr && capture->GetCubeRevision() > 0)
+                {
+                    found.Capture = capture;
+                }
+            }
+            return found;
+        }
     }
 
     Unique<SkyResolver> SkyResolver::Create(Context& context, AssetManager& assets)
@@ -97,15 +131,26 @@ namespace Veng::Renderer
 
     Ref<ImageView> SkyResolver::GetLightingDebugCube() const
     {
-        // The lighting source cube wins — it is what a Sky::LightingSource fed the IBL, and it is
-        // held even when the displayed sky is something else (a probe lighting a star-field view).
+        // A lighting cube wins over the sky's own, in the precedence the derive applies — it is held
+        // even when the displayed sky is something else (a probe lighting a star-field view).
         // Otherwise the resolved baked cube is what the IBL convolved from; null when neither backs
         // the lighting.
+        if (m_LightingCaptureCube != nullptr)
+        {
+            return m_LightingCaptureCube;
+        }
         if (m_LightingSourceCube != nullptr)
         {
             return m_LightingSourceCube;
         }
         return m_ResolvedCube != nullptr ? m_ResolvedCube->GetCubeView() : nullptr;
+    }
+
+    bool SkyResolver::IsIblSourceResident(const SceneView& view) const
+    {
+        return m_ResolvedLightingCube || view.Environment.IsLoaded() ||
+               view.SkyMaterial.IsLoaded() ||
+               (m_ResolvedCube != nullptr && m_ResolvedCube->IsBaked());
     }
 
     void SkyResolver::Resolve(SceneView& view)
@@ -158,17 +203,44 @@ namespace Veng::Renderer
         const SkyLighting lighting = resolved.Lighting;
         const bool baked = resolved.Baked;
 
-        // The source × mode × tier resolution table, now in its final unified shape: every source is
-        // a radiance-cube producer, so a lighting tier is active exactly when the source fills a
-        // cube. An environment always does (its own radiance cube); a material or atmosphere does in
-        // Baked mode (the bake cube), and does not in Direct mode (it composites per pixel, no cube
-        // to light from). A direct source with a lighting tier therefore degrades to background-only
-        // — bake to light — logged once. None is always display-only.
+        // The scene-lighting capture. A capture face ignores every one: its sweep is lit by the Sky,
+        // so no sweep is lit by the one before it.
+        const LightingCapture capture =
+            view.CaptureFace ? LightingCapture{} : FindLightingCapture(view.World);
+        if (capture.EnabledCount > 1 && !m_MultipleLightingCapturesWarned)
+        {
+            Log::Warn(
+                "SceneRenderer: {} enabled scene-lighting captures in the scene; lighting from "
+                "the first, ignoring the rest.",
+                capture.EnabledCount);
+            m_MultipleLightingCapturesWarned = true;
+        }
+        m_LightingCaptureCube =
+            capture.Capture != nullptr ? capture.Capture->GetCubeView() : nullptr;
+        m_LightingCaptureFaceSize =
+            capture.Capture != nullptr ? capture.Capture->GetCubeFaceSize() : 0;
+        m_LightingCaptureRevision =
+            capture.Capture != nullptr ? capture.Capture->GetCubeRevision() : 0;
+        const bool captureActive = m_LightingCaptureCube != nullptr;
+
+        // The optional lighting source: a probe cube-view the IBL arm derives from instead of the
+        // sky's own (the skybox always draws Source). Pointing lighting at a probe the tier already
+        // lights from changes only which cube the IBL convolution reads (in RecordPreBeginView).
+        m_LightingSourceCube = sky != nullptr ? sky->LightingSource.Cube : nullptr;
+        m_LightingSourceFaceSize = sky != nullptr ? sky->LightingSource.FaceSize : 0;
+        const bool lightingSource = lighting == SkyLighting::IBL && m_LightingSourceCube != nullptr;
+
+        // The source × mode × tier resolution table: every source is a radiance-cube producer, so a
+        // lighting tier is active when the source fills a cube, or when a lighting source stands in
+        // for it. An environment always does (its own radiance cube); a material or atmosphere does
+        // in Baked mode (the bake cube), and does not in Direct mode (it composites per pixel, no
+        // cube to light from). A direct source with a lighting tier therefore degrades to
+        // background-only — bake to light — logged once. None is always display-only.
         const bool cubeBacked =
             kind == SkySourceKind::Environment || kind == SkySourceKind::Cube ||
             ((kind == SkySourceKind::Material || kind == SkySourceKind::Atmosphere) && baked);
-        const bool tierActive = lighting == SkyLighting::None || cubeBacked;
-        if (!tierActive && !m_UnsupportedTierWarned)
+        const bool tierActive = lighting == SkyLighting::None || cubeBacked || lightingSource;
+        if (!tierActive && !captureActive && !m_UnsupportedTierWarned)
         {
             Log::Warn("SceneRenderer: a direct sky cannot light the scene; displaying the sky "
                       "without lighting it — bake the sky (SkyMode::Baked) to light.");
@@ -177,10 +249,15 @@ namespace Veng::Renderer
 
         // A degraded tier resolves to no lighting (display-only); the source still shows. The
         // lighting pass's iblAllowed/skylight flags — set from the resolved tier in Rebuild — gate
-        // whether the scene is actually lit.
-        const SkyLighting resolvedLighting = tierActive ? lighting : SkyLighting::None;
+        // whether the scene is actually lit. An active lighting capture lights through IBL, the one
+        // tier taking its full directional content, whatever the sky authors or whether there is one.
+        const SkyLighting resolvedLighting = captureActive ? SkyLighting::IBL
+                                             : tierActive  ? lighting
+                                                           : SkyLighting::None;
+        const bool lightingCube = captureActive || lightingSource;
 
-        // Signal the internal recompile on a resolved source-kind, tier, or bake-mode change — the
+        // Signal the internal recompile on a resolved source-kind, tier, bake-mode or lighting-cube
+        // change — the
         // frame boundary the pass set flips at, reusing the imported output (identity preserved). A
         // direct↔baked flip is a resolved-source change: the same recompile a kind change drives.
         // The renderer consults NeedsRecompile() and does the Rebuild itself.
@@ -194,19 +271,13 @@ namespace Veng::Renderer
                                                      : nullptr;
 
         m_NeedsRecompile = kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting ||
-                           baked != m_ResolvedSkyBaked || m_ResolvedCube != m_LastResolvedCube;
+                           baked != m_ResolvedSkyBaked || m_ResolvedCube != m_LastResolvedCube ||
+                           lightingCube != m_ResolvedLightingCube;
         m_ResolvedSkyKind = kind;
         m_ResolvedSkyLighting = resolvedLighting;
         m_ResolvedSkyBaked = baked;
         m_LastResolvedCube = m_ResolvedCube;
-
-        // The optional lighting source: a probe cube-view the IBL arm derives from instead of the
-        // displayed Source cube (the skybox always draws Source). Null (the default) leaves the
-        // cube-derive reading the Source cube — today's behaviour. It does not touch the topology:
-        // the tier is already IBL and the skybox binds Source, so pointing lighting at a probe
-        // recompiles nothing — only which cube the IBL convolution reads (in RecordPreBeginView).
-        m_LightingSourceCube = sky != nullptr ? sky->LightingSource.Cube : nullptr;
-        m_LightingSourceFaceSize = sky != nullptr ? sky->LightingSource.FaceSize : 0;
+        m_ResolvedLightingCube = lightingCube;
     }
 
     void SkyResolver::RecordPreBeginView(CommandBuffer& cmd, const SceneView& view,
@@ -295,6 +366,9 @@ namespace Veng::Renderer
             m_BakedAtmosphereValid = false;
         }
 
+        // The resolved cube's own upkeep: land a completed bake, notice a content change, and read
+        // it back for the SH tier.
+        bool cubeChanged = false;
         if (m_ResolvedCube != nullptr)
         {
             // Drive the amortized copy of a completed bake into the displayed cube. Idempotent — for a
@@ -302,11 +376,11 @@ namespace Veng::Renderer
             // the rest no-op — and a landed copy advances the cube's revision.
             m_ResolvedCube->RecordAmortized(cmd);
 
-            // Re-derive the lighting tiers off the cube when its content changed — the revision moved
-            // (a fresh bake landed, this resolver's own or, for a shared cube, another renderer's) or
-            // this resolver switched to a different cube — and only once the cube holds a real bake.
-            const bool cubeChanged = m_ResolvedCube != m_LastDerivedCube ||
-                                     m_ResolvedCube->GetRevision() != m_LastSeenCubeRevision;
+            // The cube's content changed when its revision moved (a fresh bake landed, this
+            // resolver's own or, for a shared cube, another renderer's) or this resolver switched to
+            // a different cube.
+            cubeChanged = m_ResolvedCube != m_LastDerivedCube ||
+                          m_ResolvedCube->GetRevision() != m_LastSeenCubeRevision;
             m_LastDerivedCube = m_ResolvedCube;
             m_LastSeenCubeRevision = m_ResolvedCube->GetRevision();
 
@@ -314,54 +388,80 @@ namespace Veng::Renderer
             // projection deferred a frame or two — so a static or occasionally re-baked SH sky costs
             // one bake, and the SH ambient arrives a few frames after the first bake lands.
             if (m_ResolvedCube->IsBaked() && m_ResolvedSkyLighting == SkyLighting::SH &&
-                cubeChanged)
+                (cubeChanged || !m_SkyShDerived))
             {
                 BeginDeferredShReadback(cmd);
+                m_SkyShDerived = true;
             }
+        }
+        if (m_ResolvedCube == nullptr || m_ResolvedSkyLighting != SkyLighting::SH)
+        {
+            m_SkyShDerived = false;
+        }
 
-            // IBL convolves a cube into the split-sum maps. A lighting source overrides which cube:
-            // when one is set, the IBL arm reads the probe cube-view instead of the displayed Source
-            // cube — a one-shot derive (convolved once when first pointed at it, then static, since
-            // the probe is baked once by its driver and held), so neither the frame nor the Source
-            // cube's revision re-convolves it. Absent, the Source cube drives the derive as before
-            // (its content change or first tier entry with a real bake — a static sky pays it once).
-            // The displayed skybox samples the Source cube throughout; only the lighting input moves.
-            if (m_ResolvedSkyLighting == SkyLighting::IBL && m_LightingSourceCube != nullptr)
+        // IBL convolves one cube into the split-sum maps, chosen in precedence order: an active
+        // scene-lighting capture, then a Sky::LightingSource, then the sky's own baked cube. Every
+        // source kind reaches the first two — an environment, a direct sky, no sky at all. The
+        // displayed skybox samples the sky's own source throughout; only the lighting input moves.
+        const bool iblTier = m_ResolvedSkyLighting == SkyLighting::IBL;
+        if (iblTier && m_LightingCaptureCube != nullptr)
+        {
+            // Re-derived once per completed six-face sweep, never per frame: the capture's cube
+            // revision moves only when a sweep lands, so an on-demand probe re-lights the scene when
+            // its next sweep completes and an every-frame one re-convolves once per six frames.
+            if (m_LastDerivedCaptureCube.lock() != m_LightingCaptureCube ||
+                m_LightingCaptureRevision != m_LastDerivedCaptureRevision)
             {
-                if (m_LightingSourceCube.get() != m_LastDerivedLightingSource)
-                {
-                    m_Ibl->EnsureInitialized(cmd);
-                    m_Ibl->GenerateFromCube(cmd, m_LightingSourceCube, m_LightingSourceFaceSize);
-                    m_LastDerivedLightingSource = m_LightingSourceCube.get();
-                    ++m_LightingSourceDeriveCount;
-                }
-                // The Source-cube derive is inert while a lighting source drives the arm; reset its
-                // gate so a return to Source re-convolves it.
-                m_SkyCubeConvolved = false;
+                m_Ibl->EnsureInitialized(cmd);
+                m_Ibl->GenerateFromCube(cmd, m_LightingCaptureCube, m_LightingCaptureFaceSize);
+                m_LastDerivedCaptureCube = m_LightingCaptureCube;
+                m_LastDerivedCaptureRevision = m_LightingCaptureRevision;
+                ++m_LightingSourceDeriveCount;
             }
-            else
+            m_LastDerivedLightingSource = nullptr;
+            m_SkyCubeConvolved = false;
+            m_IblHoldsLightingCube = true;
+        }
+        else if (iblTier && m_LightingSourceCube != nullptr)
+        {
+            // A lighting source has no revision, so its derive is one-shot: convolved once when the
+            // resolver is first pointed at it, then static — the probe is baked once by its driver.
+            if (m_LightingSourceCube.get() != m_LastDerivedLightingSource)
             {
-                m_LastDerivedLightingSource = nullptr;
-                if (m_ResolvedSkyLighting == SkyLighting::IBL)
-                {
-                    if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
-                    {
-                        m_Ibl->EnsureInitialized(cmd);
-                        m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
-                                                m_ResolvedCube->GetFaceSize());
-                        m_SkyCubeConvolved = true;
-                    }
-                }
-                else
-                {
-                    m_SkyCubeConvolved = false;
-                }
+                m_Ibl->EnsureInitialized(cmd);
+                m_Ibl->GenerateFromCube(cmd, m_LightingSourceCube, m_LightingSourceFaceSize);
+                m_LastDerivedLightingSource = m_LightingSourceCube.get();
+                ++m_LightingSourceDeriveCount;
             }
+            m_LastDerivedCaptureCube.reset();
+            m_LastDerivedCaptureRevision = 0;
+            m_SkyCubeConvolved = false;
+            m_IblHoldsLightingCube = true;
         }
         else
         {
-            m_SkyCubeConvolved = false;
+            // No lighting cube: forget the last ones, so pointing lighting back at one re-derives.
+            m_LastDerivedCaptureCube.reset();
+            m_LastDerivedCaptureRevision = 0;
             m_LastDerivedLightingSource = nullptr;
+
+            // The sky's own cube derives on its content change or first tier entry with a real bake,
+            // which a lighting cube's tenure resets — a static sky pays it once per entry.
+            if (iblTier && m_ResolvedCube != nullptr)
+            {
+                if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
+                {
+                    m_Ibl->EnsureInitialized(cmd);
+                    m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
+                                            m_ResolvedCube->GetFaceSize());
+                    m_SkyCubeConvolved = true;
+                    m_IblHoldsLightingCube = false;
+                }
+            }
+            else
+            {
+                m_SkyCubeConvolved = false;
+            }
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the
@@ -448,9 +548,23 @@ namespace Veng::Renderer
         m_Ibl->EnsureInitialized(cmd);
         const EnvironmentMap* environment =
             view.Environment.IsLoaded() ? view.Environment.Get() : nullptr;
-        if (environment != nullptr && environment != m_LastEnvironment)
+        if (environment != nullptr)
         {
-            m_Ibl->Generate(cmd, *environment);
+            if (m_ResolvedLightingCube)
+            {
+                // A lighting cube owns the convolved maps; the radiance cube the skybox shows still
+                // follows the environment.
+                if (environment != m_LastEnvironment)
+                {
+                    m_Ibl->GenerateRadiance(cmd, *environment);
+                }
+            }
+            else if (environment != m_LastEnvironment || m_IblHoldsLightingCube)
+            {
+                // Convolved afresh, too, once a lighting cube that overwrote the maps lets go.
+                m_Ibl->Generate(cmd, *environment);
+                m_IblHoldsLightingCube = false;
+            }
         }
         m_LastEnvironment = environment;
     }

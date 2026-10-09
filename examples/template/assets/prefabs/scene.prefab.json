@@ -240,6 +240,36 @@
     {
       "components": {
         "::Veng::Name": {
+          "Value": "Lighting Probe"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            1.0,
+            1.5
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Renderer::CaptureSurface": {
+          "Output": "SceneLighting",
+          "Resolution": 64,
+          "Refresh": "OnDemand"
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
           "Value": "Beacon"
         },
         "MarkerBeacon": {

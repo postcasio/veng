@@ -1267,6 +1267,43 @@ sharing one cube drive it and the first with a landed bake does the copy. There 
 registry or content-key dedup: sharing is the caller owning one cube and pointing several `CubeSky`
 sources at it — a consumer that wants one sky per some content key owns the cube and the key.
 
+**A capture of the scene can light it in place of the sky — the lights model again.** A
+`CaptureSurface` whose `Output` is `CaptureOutput::SceneLighting` is an environment probe: it renders
+a radiance cube (`SceneCaptureInfo::Cube`) and binds no material. Each `Resolve`, the resolver takes
+the scene's **first enabled such surface whose capture has completed a six-face sweep**
+(`GetCubeRevision() > 0`; several enabled warns once, the `Sky` rule). Until that first sweep lands
+the scene keeps the `Sky`'s lighting, so a cold probe never lights the scene black. While one is
+active:
+
+- **It is the IBL input whatever the sky is.** The displayed sky is always the `Sky`'s source and the
+  skybox pass is untouched, but the effective tier is IBL — the one tier taking the capture's full
+  directional content — whatever tier the `Sky` authors, under every source kind (an environment, a
+  baked or direct sky) and with no `Sky` at all. The topology input carries it as
+  `SkyTopologyInput::LightingCube`, so `IblAllowed` no longer needs a cube-backed sky; a change of it
+  recompiles at the frame boundary like any tier change.
+- **It re-derives once per completed sweep, never per frame.** The derive gate is the capture's cube
+  identity *or* its revision: an on-demand probe re-lights when the sweep its `MarkDirty` started
+  completes, an every-frame one re-convolves once per six frames. A pooled capture reads revision 0
+  again after `ResetForReuse` until its new owner's first sweep, which publishes a revision past any
+  its cube published before, so neither a stale cube nor a reused one is mistaken for current.
+- **It overwrites the convolved maps, not the radiance cube.** `GenerateFromCube` writes only the
+  irradiance and prefiltered maps, so an environment sky keeps its displayed radiance; while a
+  lighting cube owns the maps an environment change regenerates the radiance cube alone
+  (`EnvironmentIbl::GenerateRadiance`). When the capture goes inactive — disabled, destroyed, not yet
+  swept — the `Sky`'s authored source and tier resume and the maps it overwrote are convolved again:
+  a baked cube re-derives on tier entry, an environment through `Generate`.
+- **It never lights its own faces.** `SceneCapture` marks every face view `SceneView::CaptureFace`,
+  and the resolver ignores lighting captures there, so each sweep is lit by the `Sky` rather than by
+  the sweep before it — a feedback loop that would compound the scene's light into its lighting.
+
+`Sky::LightingSource` is the second way to feed the same arm: a caller-owned cube-view with no
+revision, derived one-shot, honoured on the IBL tier under any source kind, and outranked by an active
+lighting capture. `SkyResolver::GetLightingSourceDeriveCount` (and `SceneRenderer`'s) counts both
+kinds of derive. The ambient arm takes IBL once its source is resident
+(`SkyResolver::IsIblSourceResident`): a lighting cube, a loaded environment or sky material, or a
+baked cube a bake has landed in. **Cost** is authored, as the tiers are: one convolution per
+presenting renderer per completed sweep, plus the capture's own face renders.
+
 ### A sky reconstructs its ray without the camera's translation
 
 `SkyViewDirection` (`Veng/sky.slang`) reads **`InvViewRotProj`** — the inverse of
@@ -2127,6 +2164,14 @@ atlases' first clears, its LTC tables' upload, a baked sky cube's first clear �
 flight: it records into the frame's own command buffer at the point of construction (or into the
 open `ImmediateCommands` buffer, or, outside any recording, at the head of the next one), ordered
 before every later use of what it initializes.
+
+**A capture can light its scene instead of feeding a material.** `CaptureSurface::Output =
+SceneLighting` builds the capture with its radiance cube on (which `IsConfiguredFor` already tells
+apart, so pooling needs nothing more), binds no material — every slot field is ignored and the clone
+is never installed — and renders world-aligned, an `Entity` alignment warning once, because
+image-based lighting is sampled by world direction. It is driven, budgeted, pooled, re-armed and
+released exactly as a material capture is, and excludes its own entity the same way; the renderer
+resolves it as the scene's IBL input (see [IBL and the sky](#ibl-and-the-sky)).
 
 **A capture never draws the mesh it feeds — a surface is not part of its own environment.**
 `CaptureView::Exclude` names one entity the face renders skip, and `CaptureSurface` sets it to the

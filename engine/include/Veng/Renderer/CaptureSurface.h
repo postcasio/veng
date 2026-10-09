@@ -72,6 +72,30 @@ namespace Veng::Renderer
         Entity,
     };
 
+    /// @brief What a capture's output feeds.
+    ///
+    /// A capture renders the scene around its entity either way; this selects where that render goes.
+    enum class CaptureOutput : u8
+    {
+        /// @brief Bind the octahedral map onto the sibling mesh's material (a mirror, a probe, a monitor).
+        Material,
+        /// @brief Light the scene: the capture's radiance cube becomes the scene's image-based lighting.
+        ///
+        /// The capture renders a radiance cube (SceneCaptureInfo::Cube) and binds no material, so
+        /// every slot field is ignored and the entity needs no MeshRenderer. Each renderer drawing
+        /// the scene finds the first enabled such surface whose capture has completed a six-face
+        /// sweep and convolves its cube into the split-sum IBL maps — once per completed sweep —
+        /// in place of the Sky's own lighting, whatever the Sky's source kind and authored tier, and
+        /// with no Sky at all. The Sky still draws the background. Until the first sweep lands, and
+        /// again once the surface is disabled or gone, the Sky's own lighting applies. A capture's
+        /// own face renders are lit by the Sky, never by a lighting capture, so a sweep is never lit
+        /// by the one before it.
+        ///
+        /// Image-based lighting is sampled by world direction, so a lighting capture always renders
+        /// world-aligned: an Entity Alignment is ignored, with a warning logged once.
+        SceneLighting,
+    };
+
     /// @brief A scene entity's declaration of a render-to-texture capture the engine discovers and drives.
     ///
     /// A reflected scene component, the render-to-texture sibling of GuiSurface: where GuiSurface maps a
@@ -85,6 +109,11 @@ namespace Veng::Renderer
     /// away. So a reflective or refractive surface, a mirror, or a monitor is authored data on the
     /// entity — no app-side RegisterCapture, no per-frame game code — and works in any viewport that
     /// shows it, an editor's included. A scene no viewport renders drives none of its captures.
+    ///
+    /// A capture can light its scene instead of feeding a material: Output SceneLighting turns the
+    /// surface into an environment probe whose radiance cube the renderer convolves into the scene's
+    /// image-based lighting (see CaptureOutput). It is driven, budgeted, pooled, re-armed and
+    /// released exactly as a material capture is; the material paragraphs below do not apply to it.
     ///
     /// The capture renders the scene *around* the entity, never the entity itself: the mesh the capture
     /// feeds is excluded from its own capture (CaptureView::Exclude), in every domain the capture draws.
@@ -143,6 +172,14 @@ namespace Veng::Renderer
         /// near or inside what it captures), so its owner toggles one flag rather than storing the
         /// settings and re-creating the component.
         bool Enabled = true;
+
+        /// @brief What the capture's output feeds: the sibling material, or the scene's lighting.
+        ///
+        /// Material (the default) binds the octahedral map onto the sibling mesh's material through
+        /// the slot fields below. SceneLighting binds nothing and lights the scene from the capture's
+        /// radiance cube (see CaptureOutput). Read when the runtime materializes, since it decides
+        /// whether the capture builds a cube.
+        CaptureOutput Output = CaptureOutput::Material;
 
         /// @brief The surface's sampling model, read by the entity's material (see CaptureShape).
         CaptureShape Shape = CaptureShape::EnvironmentProbe;
@@ -326,7 +363,9 @@ namespace Veng::Renderer
         ///
         /// What Drive builds on first use and what Materialize expects to be handed: the authored
         /// Resolution, Shadows, DepthTextureSlot and DepthResolution mapped onto a lean capture
-        /// renderer. Read on each call, so it reflects the authored fields as they stand.
+        /// renderer, with the radiance cube on for a SceneLighting Output (whose distance map is off,
+        /// DepthTextureSlot being a slot field it ignores). Read on each call, so it reflects the
+        /// authored fields as they stand.
         /// @param context  The render context the capture would allocate on.
         /// @param assets   The asset manager its face renderer would load shaders through.
         /// @return The capture configuration.
@@ -360,7 +399,8 @@ namespace Veng::Renderer
         /// pushed), beside the sampler, — when CenterSlot names one — @p position with its validity
         /// flag, — when OrientationSlot names one — @p faceBasis as a quaternion, and — when
         /// DepthTextureSlot names one — the octahedral distance map and its point sampler. Only slots
-        /// the material declares at the matching field kind are written.
+        /// the material declares at the matching field kind are written. A SceneLighting surface binds
+        /// nothing, whatever @p material is, and renders along the world axes whatever @p faceBasis is.
         ///
         /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
         /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
@@ -404,7 +444,8 @@ namespace Veng::Renderer
         /// material, on the first drive cloning the mesh asset's into the entity's
         /// MeshRenderer::InstanceMaterials so no other entity drawing the mesh samples this capture;
         /// then drives as the pose overload does. A sibling with no resident mesh or material binds
-        /// nothing.
+        /// nothing. A SceneLighting surface resolves no material and installs no clone, and an
+        /// Entity-aligned one warns once and renders world-aligned (see CaptureOutput).
         /// @param context  The render context the capture allocates on.
         /// @param assets   The asset manager the face renderer loads through and the clone is adopted by.
         /// @param world    The scene the entity lives in, taken mutably for the one clone install.
@@ -461,8 +502,14 @@ VE_ENUMERATOR(World)
 VE_ENUMERATOR(Entity)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::Renderer::CaptureOutput, 0xFDB832C5AD445274ULL)
+VE_ENUMERATOR(Material)
+VE_ENUMERATOR(SceneLighting)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::Renderer::CaptureSurface, 0x59B48CAC6127A406ULL)
 VE_FIELD(Enabled, .DisplayName = "Enabled")
+VE_FIELD(Output, .DisplayName = "Output")
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")

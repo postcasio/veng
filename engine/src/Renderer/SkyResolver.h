@@ -72,8 +72,15 @@ namespace Veng::Renderer
         /// first directional light — the toward-sun direction), and updates the resolved
         /// source-kind/tier/bake-mode. An absent or empty Sky resolves to None and clears the fields
         /// (the flat fallback). A direct source with a lighting tier degrades to background-only,
-        /// warned once. Records whether the resolved trio changed for NeedsRecompile() to report; the
-        /// recompile itself is the renderer's.
+        /// warned once.
+        ///
+        /// Then resolves the lighting cube: the scene's first enabled CaptureOutput::SceneLighting
+        /// surface whose capture has completed a sweep (warning once if several are enabled), unless
+        /// @p view renders a capture face (SceneView::CaptureFace), which is lit by the Sky alone.
+        /// An active lighting capture makes the effective tier IBL whatever the Sky authors, and
+        /// with no Sky at all; Sky::LightingSource is the lighting cube otherwise, on the IBL tier.
+        /// Records whether the resolved kind, tier, bake mode or lighting cube changed for
+        /// NeedsRecompile() to report; the recompile itself is the renderer's.
         /// @param view The internal SceneView whose sky fields this fills in place.
         void Resolve(SceneView& view);
 
@@ -104,9 +111,11 @@ namespace Veng::Renderer
         /// @brief Records the environment-sky IBL generation immediately before graph replay.
         ///
         /// Initializes the BRDF LUT and leaves the maps in a sampled layout once, then regenerates
-        /// the radiance/irradiance/prefilter maps when the bound environment changes — recorded into
-        /// @p cmd after the import bindings are built, before the graph the lighting pass samples them
-        /// through.
+        /// the radiance/irradiance/prefilter maps when the bound environment changes, or when a
+        /// lighting cube that overwrote them has stopped lighting the scene — recorded into @p cmd
+        /// after the import bindings are built, before the graph the lighting pass samples them
+        /// through. While a lighting cube lights the scene only the radiance cube the skybox shows is
+        /// regenerated.
         /// @param cmd  The frame command buffer the generation records into.
         /// @param view The resolved SceneView whose Environment gates regeneration.
         void RecordPreReplay(CommandBuffer& cmd, const SceneView& view);
@@ -125,6 +134,20 @@ namespace Veng::Renderer
 
         /// @brief Whether the resolved sky bakes to a radiance cube the skybox path samples.
         [[nodiscard]] bool IsResolvedBaked() const { return m_ResolvedSkyBaked; }
+
+        /// @brief Whether a lighting cube other than the sky's own feeds the IBL tier this resolve.
+        ///
+        /// True for an active scene-lighting capture, or for a Sky::LightingSource on the IBL tier.
+        /// The frame topology wires image-based lighting from it whatever the sky's source kind.
+        [[nodiscard]] bool IsLightingCubeResolved() const { return m_ResolvedLightingCube; }
+
+        /// @brief Whether the IBL maps hold a real convolution the lighting pass may sample.
+        ///
+        /// True while a lighting cube feeds them, for a loaded environment or sky material, and for a
+        /// resolved baked cube once a bake has landed in it.
+        /// @param view The resolved SceneView (its environment and sky-material handles).
+        /// @return Whether the image-based-lighting arm has a resident source this frame.
+        [[nodiscard]] bool IsIblSourceResident(const SceneView& view) const;
 
         /// @brief Records whether the last Rebuild wired the SH skylight ambient arm.
         ///
@@ -147,9 +170,9 @@ namespace Veng::Renderer
 
         /// @brief The cube the IBL convolved its lighting from this resolve, for the debug view.
         ///
-        /// The Sky::LightingSource cube when one is set (the probe capture that lights the scene),
-        /// else the resolved sky's own baked cube, else null when nothing backs the lighting — the
-        /// pre-convolution input, as opposed to GetIbl().GetPrefilterCubeView()'s convolved output.
+        /// The active scene-lighting capture's cube, else the Sky::LightingSource cube when one is
+        /// set, else the resolved sky's own baked cube, else null when nothing backs the lighting —
+        /// the pre-convolution input, as opposed to GetIbl().GetPrefilterCubeView()'s convolved output.
         [[nodiscard]] Ref<ImageView> GetLightingDebugCube() const;
 
         /// @brief The consumer set the skybox pass binds for the resolved baked cube (owned or borrowed).
@@ -159,12 +182,13 @@ namespace Veng::Renderer
         /// pipeline at Rebuild, so a change to which cube is resolved trips NeedsRecompile.
         [[nodiscard]] const Ref<DescriptorSet>& GetSkyConsumerSet() const;
 
-        /// @brief How many times a lighting-source cube has been convolved into the IBL maps.
+        /// @brief How many times a lighting cube other than the sky's own has been convolved into the IBL maps.
         ///
-        /// Advances once per one-shot derive from a Sky::LightingSource — once when the resolver is
+        /// Advances once per derive from a scene-lighting capture — when it first lights the scene,
+        /// and again each time a further six-face sweep of it completes, never per frame — and once
+        /// per derive from a Sky::LightingSource, which has no revision: once when the resolver is
         /// first pointed at a given probe cube, and not again while that cube stays the lighting
-        /// source. Exposed so a test can assert the derive is one-shot (the count does not move
-        /// across subsequent frames holding the same static cube) rather than per-frame.
+        /// source. Exposed so a test can assert the cadence of the derive rather than its output.
         [[nodiscard]] u64 GetLightingSourceDeriveCount() const
         {
             return m_LightingSourceDeriveCount;
@@ -278,11 +302,10 @@ namespace Veng::Renderer
 
         /// @brief The Sky's optional lighting-source cube-view resolved this Execute; null for none.
         ///
-        /// Filled each Resolve from Sky::LightingSource. When set (and the resolved tier is IBL and
-        /// the source is a cube), the IBL arm convolves this probe cube-view instead of the
-        /// displayed Source cube — the displayed skybox is untouched. Shared ownership so it
-        /// outlives the object that filled it; the derive is one-shot, so it need only survive that
-        /// single convolution.
+        /// Filled each Resolve from Sky::LightingSource. When set, the resolved tier is IBL and no
+        /// lighting capture is active, the IBL arm convolves this probe cube-view instead of the
+        /// sky's own — the displayed skybox is untouched. Shared ownership so it outlives the object
+        /// that filled it; the derive is one-shot, so it need only survive that single convolution.
         Ref<ImageView> m_LightingSourceCube;
 
         /// @brief The lighting-source cube-view's face edge length in texels (the prefilter input).
@@ -296,8 +319,47 @@ namespace Veng::Renderer
         /// source drives the IBL arm, so re-pointing at a probe re-derives.
         const ImageView* m_LastDerivedLightingSource = nullptr;
 
-        /// @brief Count of one-shot lighting-source derives recorded. See GetLightingSourceDeriveCount.
+        /// @brief Count of lighting-cube derives recorded. See GetLightingSourceDeriveCount.
         u64 m_LightingSourceDeriveCount = 0;
+
+        /// @brief The active scene-lighting capture's radiance cube this resolve; null when none is.
+        ///
+        /// Held for the frame so the convolution reads a live view even if the surface releases its
+        /// capture before the pre-graph work records.
+        Ref<ImageView> m_LightingCaptureCube;
+
+        /// @brief The active lighting capture's face edge length in texels (the prefilter input).
+        u32 m_LightingCaptureFaceSize = 0;
+
+        /// @brief The active lighting capture's cube revision this resolve.
+        u64 m_LightingCaptureRevision = 0;
+
+        /// @brief The lighting capture cube last convolved; with the revision below, gates the derive.
+        ///
+        /// Weak, so the cube a resolver last derived from is not kept alive by it, and an expired one
+        /// can never compare equal to a newer cube allocated where it lived.
+        std::weak_ptr<ImageView> m_LastDerivedCaptureCube;
+
+        /// @brief The lighting capture's revision at its last derive; a new completed sweep re-derives.
+        u64 m_LastDerivedCaptureRevision = 0;
+
+        /// @brief Whether a lighting cube feeds the IBL tier this resolve; a change recompiles.
+        bool m_ResolvedLightingCube = false;
+
+        /// @brief Whether the IBL maps hold a lighting cube's convolution rather than the sky's own.
+        ///
+        /// Set by a lighting-cube derive and cleared when the sky's own cube or environment is
+        /// convolved again, so the sky's lighting is restored once the lighting cube stops feeding it.
+        bool m_IblHoldsLightingCube = false;
+
+        /// @brief Whether the SH readback was taken off the resolved cube since the SH tier was entered.
+        ///
+        /// The tier leaves SH whenever a lighting capture lights the scene, so a return to it reads
+        /// the cube back again rather than keeping coefficients from before a bake that landed meanwhile.
+        bool m_SkyShDerived = false;
+
+        /// @brief Whether the "several enabled lighting captures" warning has already logged.
+        bool m_MultipleLightingCapturesWarned = false;
 
         /// @brief The atmosphere params the baked atmosphere cube was last baked from; gates the re-bake.
         ///

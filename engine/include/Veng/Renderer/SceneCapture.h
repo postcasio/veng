@@ -223,6 +223,9 @@ namespace Veng::Renderer
         /// must ride that array and a cube view cannot.
         [[nodiscard]] const Ref<ImageView>& GetCubeView() const { return m_CubeView; }
 
+        /// @brief Returns the renderer the six faces are rendered through, for diagnostics.
+        [[nodiscard]] const SceneRenderer& GetFaceRenderer() const { return *m_Renderer; }
+
         /// @brief Returns the radiance cube's face edge length in texels (the face resolution).
         [[nodiscard]] u32 GetCubeFaceSize() const { return m_FaceResolution; }
 
@@ -233,7 +236,12 @@ namespace Veng::Renderer
         /// convolves from the cube (its IBL split-sum maps) when this moves — the same completion
         /// contract BakedSkyCube::GetRevision applies to a shared cube. Because a capture is
         /// push-to-render, it does not advance while the capture is idle.
-        [[nodiscard]] u64 GetCubeRevision() const { return m_CubeRevision; }
+        ///
+        /// ResetForReuse returns it to zero until the next owner's first sweep lands, since the cube
+        /// still holds the previous owner's environment; that sweep then reads one past the last
+        /// value published before the reset, so a consumer comparing revisions of this cube never
+        /// mistakes the new owner's first sweep for content it already derived.
+        [[nodiscard]] u64 GetCubeRevision() const { return m_CubeSwept ? m_CubeRevision : 0; }
 
         /// @brief Attaches this capture to the Application capture drive-list.
         ///
@@ -261,7 +269,8 @@ namespace Veng::Renderer
         /// @brief Returns the capture to the state Create leaves it in, ready for another owner.
         ///
         /// Drops the pushed view and the scene the face renderer last gathered, restarts the
-        /// round-robin at the first face, and re-arms the first-render atlas clears — so the next
+        /// round-robin at the first face, reads the cube unswept (GetCubeRevision zero) until the next
+        /// sweep lands, and re-arms the first-render atlas clears — so the next
         /// owner's first Render builds its map from black rather than resuming from what the
         /// previous owner's environment left in it. Its images, pipelines and bindless slots are
         /// kept, which is the point of reusing it.
@@ -313,8 +322,10 @@ namespace Veng::Renderer
         ///        without the cube path.
         Ref<GraphicsPipeline> m_CubeFacePipeline;
         Ref<PipelineLayout> m_CubeFaceLayout;
-        /// @brief Advances each time a full six-face sweep completes. See GetCubeRevision.
+        /// @brief Advances each time a full six-face sweep completes, across resets. See GetCubeRevision.
         u64 m_CubeRevision = 0;
+        /// @brief Whether a sweep has completed since creation or the last ResetForReuse.
+        bool m_CubeSwept = false;
 
         /// @brief Whether the distance path (depth atlas, distance map, its pipelines) was built.
         bool m_CaptureDistance = false;

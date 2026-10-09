@@ -66,6 +66,16 @@ namespace Veng::Renderer
         /// @pre EnsureInitialized has run (or runs in the same Execute before this).
         void Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment);
 
+        /// @brief Records only the radiance cube from `environment`, leaving the convolved maps as they are.
+        ///
+        /// The entry stage of Generate alone: the skybox an environment sky displays reads the
+        /// radiance cube, so it stays current while another cube owns the irradiance and prefilter
+        /// maps (a scene-lighting capture). Generate later convolves the radiance cube in full.
+        /// @param cmd         The command buffer the panorama-to-cube pass is recorded into.
+        /// @param environment The source panorama; its bindless handle samples the equirect.
+        /// @pre EnsureInitialized has run (or runs in the same Execute before this).
+        void GenerateRadiance(CommandBuffer& cmd, const Veng::EnvironmentMap& environment);
+
         /// @brief Records the irradiance + prefilter convolution from a supplied radiance cube.
         ///
         /// The source-agnostic convolution arm: point the irradiance and prefilter passes at

@@ -1182,7 +1182,10 @@ namespace Veng
     /// split-sum image-based lighting. A tier is a request — the renderer activates it per source:
     /// a cube-backed source (an environment map, or a material sky in SkyMode::Baked) drives both
     /// SH and IBL; a per-pixel source (a direct material sky) cannot light and degrades either to
-    /// background-only (bake to light).
+    /// background-only (bake to light). A lighting cube stands in for the source: a LightingSource
+    /// on the IBL tier lights whatever the source, and an active scene-lighting capture
+    /// (Renderer::CaptureOutput::SceneLighting) makes the effective tier IBL whatever is authored
+    /// here, resuming this tier when it goes inactive.
     ///
     /// Cost is explicit and authored. None is free; SH pays a one-time projection of the sky's
     /// radiance cube on the sky's dirty signal (the cheap tier — a faint, low-frequency glow); IBL
@@ -1203,18 +1206,21 @@ namespace Veng
 
     /// @brief An optional radiance cube-view the IBL lighting derives from, distinct from Source.
     ///
-    /// A probe of the scene's own surroundings — a captured radiance cube — supplied as the
-    /// lighting input, so a scene can be *lit* by a local capture without that capture being *drawn*
-    /// as its background. When set, the renderer derives image-based lighting from this cube-view
-    /// while the displayed skybox keeps sampling the Sky's own Source. It holds shared ownership of
-    /// the GPU cube-view — a Ref, exactly as CubeSky::Cube holds a Ref<BakedSkyCube> — so the cube
-    /// survives even if the object that filled it is torn down; because the derive is one-shot
-    /// (convolved once into the resolver's own maps, then static), the Ref need only outlive that
-    /// single convolution. A null Cube (the default) leaves lighting derived from Source — the
-    /// pre-existing behaviour. It feeds the IBL tier only, and only where the Source is itself a
-    /// cube (the cube-derive path); a non-cube source keeps its own derive. Runtime-only: the Ref is
-    /// never reflected, cooked, or serialized (no VE_FIELD), so a lighting source is only ever set
-    /// at runtime.
+    /// A radiance cube a caller owns and fills, supplied as the lighting input, so a scene can be
+    /// *lit* by it without it being *drawn* as the background. When set, the renderer derives
+    /// image-based lighting from this cube-view while the displayed skybox keeps sampling the Sky's
+    /// own Source. It holds shared ownership of the GPU cube-view — a Ref, exactly as CubeSky::Cube
+    /// holds a Ref<BakedSkyCube> — so the cube survives even if the object that filled it is torn
+    /// down; because the derive is one-shot (convolved once into the resolver's own maps, then
+    /// static), the Ref need only outlive that single convolution. A null Cube (the default) leaves
+    /// lighting derived from Source. It feeds the IBL tier only, under any source kind.
+    ///
+    /// A capture of the scene's own surroundings is authored instead as a CaptureSurface with
+    /// Renderer::CaptureOutput::SceneLighting, which the engine drives, re-derives per completed
+    /// sweep, and releases with the scene; an active one takes precedence over this field, which
+    /// remains the input for a cube that is not such a capture. Runtime-only: the Ref is never
+    /// reflected, cooked, or serialized (no VE_FIELD), so a lighting source is only ever set at
+    /// runtime.
     struct SkyLightingSource
     {
         /// @brief The probe's radiance cube-view the IBL tier convolves; null derives from Source.
@@ -1231,8 +1237,10 @@ namespace Veng
     /// parameters; an empty Source is no sky (the flat fallback). Intensity scales the background
     /// and any ambient radiance the tier casts. Lighting requests how the sky lights the scene.
     /// LightingSource optionally points the IBL tier at a probe cube distinct from Source (unset by
-    /// default, leaving lighting derived from Source). If several Sky components exist the first
-    /// walked wins and a warning logs once. No transform is read — the sky is scene-global.
+    /// default, leaving lighting derived from Source); an active scene-lighting capture overrides
+    /// both the lighting input and the tier while it lights the scene. If several Sky components
+    /// exist the first walked wins and a warning logs once. No transform is read — the sky is
+    /// scene-global.
     struct Sky
     {
         /// @brief The active sky source, or empty for no sky.

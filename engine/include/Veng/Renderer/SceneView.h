@@ -138,6 +138,14 @@ namespace Veng::Renderer
         /// the one caller that narrows it (see CaptureView::VisibleLayers).
         u32 VisibleLayers = AllRenderLayers;
 
+        /// @brief Whether this view renders a face of a SceneCapture.
+        ///
+        /// A capture face is lit by the Sky alone: the renderer ignores every scene-lighting capture
+        /// (CaptureOutput::SceneLighting) for it, so a lighting capture's sweep is never lit by the
+        /// sweep before it — a feedback loop that would compound the scene's own light into its
+        /// lighting. SceneCapture sets it on every face it renders; an ordinary view leaves it false.
+        bool CaptureFace = false;
+
         /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
         ///
         /// The gather blends each candidate's world transform between the scene's last two Sim-tick

@@ -358,10 +358,13 @@ extern "C"
 /// the pending scene, CaptureSurface grows the scene drive, and Scene grows its instance serial. A
 /// module constructs runner infos, subclasses Application, registers viewports and is handed scenes,
 /// so a stale module lays all four out at the old layouts.
+/// Version 86 lets a capture light its scene: CaptureSurface grows Output and SceneView grows
+/// CaptureFace. A module spawns prefabs carrying the component and builds views for its own
+/// renderers, so a stale module lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 85u
+#define VENG_MODULE_ABI_VERSION 86u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

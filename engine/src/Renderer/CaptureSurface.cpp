@@ -4,6 +4,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneCapture.h>
@@ -46,6 +47,8 @@ namespace Veng::Renderer
         u32 PendingFaces = SceneCapture::FaceCount;
         /// @brief Context frame serial of the last drive; 0 before the first.
         u64 LastDrivenSerial = 0;
+        /// @brief Whether the Entity-aligned SceneLighting warning has logged for this surface.
+        bool AlignmentWarned = false;
 
         /// @brief The material the last drive bound onto, held resident so the unbind can reach it.
         AssetHandle<MaterialInstance> BoundMaterial;
@@ -303,8 +306,10 @@ namespace Veng::Renderer
             .Settings = CaptureSettings(Shadows),
             // The distance map is opt-in: an empty DepthTextureSlot builds none, so the depth
             // atlas, the distance map, and their pipelines and slots do not exist.
-            .CaptureDistance = !DepthTextureSlot.empty(),
+            .CaptureDistance = Output == CaptureOutput::Material && !DepthTextureSlot.empty(),
             .DistanceResolution = DepthResolution,
+            // Only a lighting capture is convolved, and only the cube is what gets convolved.
+            .Cube = Output == CaptureOutput::SceneLighting,
         };
     }
 
@@ -335,7 +340,7 @@ namespace Veng::Renderer
                                         .AddressModeW = AddressMode::ClampToEdge,
                                     })
                                     .Handle;
-        if (!DepthTextureSlot.empty())
+        if (Output == CaptureOutput::Material && !DepthTextureSlot.empty())
         {
             // A point sampler for the distance map — a bilinear tap across a depth discontinuity
             // yields a distance at which nothing is.
@@ -382,6 +387,10 @@ namespace Veng::Renderer
             Materialize(context, SceneCapture::Create(GetCaptureInfo(context, assets)), {});
         }
 
+        // A lighting capture is sampled by world direction, so its faces stay on the world axes.
+        const bool lighting = Output == CaptureOutput::SceneLighting;
+        const mat3 basis = lighting ? mat3(1.0f) : faceBasis;
+
         // Push this frame's capture source when the refresh policy calls for it. EveryFrame always
         // pushes; OnDemand pushes only while faces are still owed, then idles — SceneCapture records
         // nothing on a frame with no fresh SetView, so a settled OnDemand capture costs nothing.
@@ -392,7 +401,7 @@ namespace Veng::Renderer
         {
             runtime.Capture->SetView({.World = &world,
                                       .Position = position,
-                                      .FaceBasis = faceBasis,
+                                      .FaceBasis = basis,
                                       .Exclude = entity,
                                       .Alpha = alpha});
             if (runtime.PendingFaces > 0)
@@ -410,7 +419,8 @@ namespace Veng::Renderer
         // shared block is correct for all of them. This is the view-independent case
         // BindlessRegistry::MaterialArenaBytes describes; a per-view value would need a per-view
         // instance instead.
-        if (MaterialInstance* const target = material.Get(); target != nullptr)
+        MaterialInstance* const target = lighting ? nullptr : material.Get();
+        if (target != nullptr)
         {
             // The slot names are authored data and the target material can change under the drive,
             // so each name resolves to a field handle once and is reused until either moves.
@@ -504,6 +514,23 @@ namespace Veng::Renderer
         // carrier agree at every alpha instead of sitting a fraction of a tick apart.
         const mat4 drawTransform = world.GetInterpolatedWorldTransform(entity, alpha);
         const vec3 position = vec3(drawTransform[3]);
+
+        if (Output == CaptureOutput::SceneLighting)
+        {
+            if (!Runtime)
+            {
+                Runtime = CreateUnique<CaptureSurfaceRuntime>();
+            }
+            if (Alignment == CaptureAlignment::Entity && !Runtime->AlignmentWarned)
+            {
+                Log::Warn(
+                    "CaptureSurface: a SceneLighting capture renders world-aligned; its Entity "
+                    "Alignment is ignored.");
+                Runtime->AlignmentWarned = true;
+            }
+            // A lighting capture binds no material, so the sibling's material is never cloned.
+            return Drive(context, assets, world, entity, position, alpha, mat3(1.0f), {});
+        }
 
         // An Entity-aligned capture orients its faces in the carrier's frame: the draw rotation with
         // any scale divided out.

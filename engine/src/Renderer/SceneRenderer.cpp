@@ -358,7 +358,8 @@ namespace Veng::Renderer
         const FrameTopology next = ResolveFrameTopology(
             m_Settings, SkyTopologyInput{.Kind = m_SkyResolver->GetResolvedKind(),
                                          .Lighting = m_SkyResolver->GetResolvedLighting(),
-                                         .IsBaked = m_SkyResolver->IsResolvedBaked()});
+                                         .IsBaked = m_SkyResolver->IsResolvedBaked(),
+                                         .LightingCube = m_SkyResolver->IsLightingCubeResolved()});
 
         // The auto-exposure enable edge is measured against the previous topology, so it has to be
         // taken before the new one lands: the reset re-snaps the adaptation so the image opens
@@ -2418,12 +2419,12 @@ namespace Veng::Renderer
             // the world origin. Jittered with renderProj, so it agrees with what was rasterized.
             const mat4 renderViewRotProj = renderProj * mat4(mat3(view.Camera.View()));
             // The ambient arm every lit surface of this view takes, deferred and forward alike. IBL
-            // needs its cube-backed source resident — an environment map, or a baked material sky
-            // whose material is loaded; a display-only source shows its sky but lights nothing.
-            const AmbientArm ambientArm = ResolveAmbientArm(m_Topology->IblAllowed,
-                                                            resolvedView.Environment.IsLoaded() ||
-                                                                resolvedView.SkyMaterial.IsLoaded(),
-                                                            m_Topology->SkylightWanted);
+            // needs its source resident — a lighting cube, an environment map, a baked material sky
+            // whose material is loaded, or a baked cube a bake has landed in; a display-only source
+            // shows its sky but lights nothing.
+            const AmbientArm ambientArm = ResolveAmbientArm(
+                m_Topology->IblAllowed, m_SkyResolver->IsIblSourceResident(resolvedView),
+                m_Topology->SkylightWanted);
             ViewConstantsBlock viewConstants{
                 .InvViewProj = glm::inverse(renderViewProj),
                 .InvViewRotProj = glm::inverse(renderViewRotProj),
@@ -3231,6 +3232,10 @@ namespace Veng::Renderer
     bool SceneRenderer::DidRegenerateAtmosphereLastFrame() const
     {
         return m_SkyResolver->DidRegenerateAtmosphereLastFrame();
+    }
+    u64 SceneRenderer::GetLightingSourceDeriveCount() const
+    {
+        return m_SkyResolver->GetLightingSourceDeriveCount();
     }
     u32 SceneRenderer::GetBroadphaseNodeCount() const
     {

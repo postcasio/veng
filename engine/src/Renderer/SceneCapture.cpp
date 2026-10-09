@@ -141,7 +141,7 @@ namespace Veng::Renderer
                               })
                               .Handle;
 
-        auto loadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto loadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result =
                 info.Assets.LoadSync<Veng::Shader>(id);
@@ -397,6 +397,10 @@ namespace Veng::Renderer
         m_View = {};
         m_ViewFresh = false;
         m_NextFace = 0;
+        // The cube still holds the previous owner's environment, so it reads unswept until this
+        // owner's first sweep lands; the revision itself keeps counting, so that sweep publishes a
+        // value no consumer has derived from before.
+        m_CubeSwept = false;
         m_AtlasCleared = false;
         m_DepthAtlasCleared = false;
         m_Renderer->ReleaseScene();
@@ -435,6 +439,7 @@ namespace Veng::Renderer
                                            .Delta = 0.0f,
                                            .Exclude = m_View.Exclude,
                                            .VisibleLayers = m_View.VisibleLayers,
+                                           .CaptureFace = true,
                                            .Alpha = m_View.Alpha});
         cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::SampleGraphics);
 
@@ -528,6 +533,7 @@ namespace Veng::Renderer
             if (face == FaceCount - 1)
             {
                 ++m_CubeRevision;
+                m_CubeSwept = true;
             }
         }
 

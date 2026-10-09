@@ -103,8 +103,11 @@ namespace Veng::Renderer
         // from its bake cube). Either fills the IBL consumer set the lighting pass binds; a
         // display-only source (any other tier) shows its sky without lighting from it. The
         // IblContribution debug arm reads the same maps without compositing the sky.
+        // A lighting cube lights whatever the source kind, so it needs no cube-backed sky.
         topology.IblAllowed =
-            (topology.CubeBacked || debugIblCube) && sky.Lighting == SkyLighting::IBL;
+            (topology.CubeBacked || debugIblCube ||
+             (sky.LightingCube && (topology.SceneComposited || topology.DebugIblContribution))) &&
+            sky.Lighting == SkyLighting::IBL;
 
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.

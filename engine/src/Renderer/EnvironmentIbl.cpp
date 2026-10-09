@@ -398,6 +398,12 @@ namespace Veng::Renderer
         GenerateFromCube(cmd, m_RadianceCubeView, RadianceCubeSize);
     }
 
+    void EnvironmentIbl::GenerateRadiance(CommandBuffer& cmd,
+                                          const Veng::EnvironmentMap& environment)
+    {
+        RecordEquirectToCube(cmd, environment);
+    }
+
     Sh9 EnvironmentIbl::ProjectEnvironmentToIrradianceSh(const Veng::EnvironmentMap& environment)
     {
         const usize faceBytes = static_cast<usize>(RadianceCubeSize) * RadianceCubeSize * 8;

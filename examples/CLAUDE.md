@@ -96,10 +96,12 @@ require the marker line it logs once its prefab-authored game-defined asset reso
 The engine bootstraps everything from cooked data — it reads the cooked project, mounts the packs
 it names, loads the **startup level** (a world `Prefab`: a `Camera`, a directional `Light`, a
 cube whose mesh is an inline `CubeShape` recipe and which carries a `ConstantMotion` to spin, a
-**`GuiSurface`** diegetic panel, a **`CaptureSurface`** mirror, and a screen-space **`GuiOverlay`**
-HUD), owns the running scene + simulation, ticks the level's system set (the engine
-`ConstantMotionSystem`), and pushes the resolved camera each frame — the cube, panel, mirror, and
-HUD are authored data driven by the engine, not built in code. On top of that, `main.cpp` layers a
+**`GuiSurface`** diegetic panel, a **`CaptureSurface`** mirror, a second, on-demand
+`CaptureSurface` whose `Output` is `SceneLighting` — an environment probe lighting the scene, which
+authors no `Sky` — and a screen-space **`GuiOverlay`** HUD), owns the running scene + simulation,
+ticks the level's system set (the engine `ConstantMotionSystem`), and pushes the resolved camera each
+frame — the cube, panel, mirror, probe, and HUD are authored data driven by the engine, not built in
+code. On top of that, `main.cpp` layers a
 **thin `Application` subclass** doing the three things data cannot:
 
 - it binds the primary `GuiOverlay` HUD its view-model (the one thing the engine cannot do from

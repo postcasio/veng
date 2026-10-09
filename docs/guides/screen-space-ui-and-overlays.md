@@ -383,6 +383,12 @@ face cameras' near plane is 0.05 units and cannot be relied on to clip a surface
 on). Everything *else* in the scene is captured normally, including other capture-consuming
 surfaces, which read a one-frame-old map.
 
+- **`Output`** is what the capture feeds: **`Material`** (the default, everything below) or
+  **`SceneLighting`** — an environment probe whose radiance cube lights the scene through image-based
+  lighting in place of the `Sky`'s, once its first six-face sweep lands and again after each sweep
+  completes. A lighting capture binds no material (the slot fields are ignored and no `MeshRenderer`
+  is needed) and always renders world-aligned. Pair it with `"Refresh": "OnDemand"` and call
+  `MarkDirty` when the lit surroundings change.
 - **`Shape`** records how the material samples the capture — a reflective/refractive object by
   direction (`EnvironmentProbe`), a flat mirror or monitor by its surface parameterization
   (`PlanarReflection`). It is authored data for the material, not a switch on the engine's

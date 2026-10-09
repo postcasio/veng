@@ -1144,7 +1144,10 @@ the counterpart of `Viewport::RenderSurfaces` — (built on first sight, fed to 
 drive-list against its lifetime, self-unregistering when the component/entity/scene goes), rebinding
 the capture's output onto the sibling `MeshRenderer`'s material each frame so a mirror / probe /
 monitor is authored data, in any viewport showing it. Its `Refresh` is `EveryFrame` or `OnDemand`
-(render once, then idle until `MarkDirty`, or until its viewport skips a frame).
+(render once, then idle until `MarkDirty`, or until its viewport skips a frame). Its `Output` may
+instead be `SceneLighting`: the capture binds no material and its radiance cube becomes the scene's
+image-based lighting, in place of the `Sky`'s — an environment probe as authored data (see
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "IBL and the sky").
 
 **The locality is per entity.** The drive binds into a per-entity clone of the sibling
 `MeshRenderer`'s first material, installed as that entity's `InstanceMaterials` override on its

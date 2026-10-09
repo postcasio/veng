@@ -2165,6 +2165,11 @@ if (VENG_BUILD_TESTS)
             # the per-direction analytic radiance, in-place re-bake, and the baked cube
             # round-tripping the skybox display path (baked ≈ direct through the renderer).
             tests/gpu/sky_bake.cpp
+            # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
+            # the Sky lights until the first sweep lands, the capture then re-lights once per
+            # completed sweep under a baked, direct, environment or absent Sky, disabling it
+            # restores the Sky's lighting, and the capture's own faces never light from it.
+            tests/gpu/scene_lighting_capture.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE

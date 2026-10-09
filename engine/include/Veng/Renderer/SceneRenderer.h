@@ -345,6 +345,14 @@ namespace Veng::Renderer
         /// atmosphere sky was active) — the once-per-change contract. Diagnostic only.
         [[nodiscard]] bool DidRegenerateAtmosphereLastFrame() const;
 
+        /// @brief How many times a lighting cube other than the sky's own has lit this renderer.
+        ///
+        /// Counts the convolutions of a scene-lighting capture's cube (one per completed six-face
+        /// sweep) or a Sky::LightingSource into this renderer's image-based-lighting maps. A capture's
+        /// own face renderer never takes its lighting from a lighting capture, so its count stays 0.
+        /// Diagnostic only.
+        [[nodiscard]] u64 GetLightingSourceDeriveCount() const;
+
         /// @brief Returns the number of nodes in the broadphase BVH (internal + leaf).
         ///
         /// Diagnostic only. Zero before the first Execute or with no resident candidates.

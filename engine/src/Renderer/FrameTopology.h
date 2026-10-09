@@ -72,6 +72,11 @@ namespace Veng::Renderer
         SkyLighting Lighting = SkyLighting::None;
         /// @brief Whether the resolved material/atmosphere source bakes to a radiance cube.
         bool IsBaked = false;
+        /// @brief Whether a lighting cube other than the sky's own feeds the IBL tier.
+        ///
+        /// A scene-lighting capture or a Sky::LightingSource: image-based lighting is then wired
+        /// whatever the source kind, with no sky source at all included.
+        bool LightingCube = false;
     };
 
     /// @brief Which passes a frame's render graph wires, decided from the settings plus the sky.

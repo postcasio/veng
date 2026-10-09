@@ -264,6 +264,49 @@ TEST_CASE("frame topology: every sky source selects exactly one display path")
     }
 }
 
+TEST_CASE("frame topology: a lighting cube lights the scene under any sky, and displays nothing")
+{
+    constexpr std::array kinds{SkySourceKind::None, SkySourceKind::Environment,
+                               SkySourceKind::Atmosphere, SkySourceKind::Material,
+                               SkySourceKind::Cube};
+    const SceneRendererSettings settings;
+    for (const SkySourceKind kind : kinds)
+    {
+        for (const bool baked : {false, true})
+        {
+            CAPTURE(static_cast<int>(kind));
+            CAPTURE(baked);
+            const SkyTopologyInput sky{
+                .Kind = kind, .Lighting = SkyLighting::IBL, .IsBaked = baked};
+            SkyTopologyInput lit = sky;
+            lit.LightingCube = true;
+            const FrameTopology without = ResolveFrameTopology(settings, sky);
+            const FrameTopology with = ResolveFrameTopology(settings, lit);
+
+            // The lighting cube wires image-based lighting whatever backs the display...
+            CHECK(with.IblAllowed);
+            CHECK_FALSE(with.SkylightWanted);
+            // ...and leaves the display path exactly as the sky alone chose it.
+            CHECK(with.SkyboxWanted == without.SkyboxWanted);
+            CHECK(with.AtmosphereWanted == without.AtmosphereWanted);
+            CHECK(with.SkyMaterialWanted == without.SkyMaterialWanted);
+        }
+    }
+
+    // Under a debug arm that composites nothing it lights nothing, except the IBL-contribution
+    // arm, which reads the maps it fills.
+    SceneRendererSettings albedo;
+    albedo.Mode = DebugView::Albedo;
+    CHECK_FALSE(ResolveFrameTopology(
+                    albedo, SkyTopologyInput{.Lighting = SkyLighting::IBL, .LightingCube = true})
+                    .IblAllowed);
+    SceneRendererSettings contribution;
+    contribution.Mode = DebugView::IblContribution;
+    CHECK(ResolveFrameTopology(contribution,
+                               SkyTopologyInput{.Lighting = SkyLighting::IBL, .LightingCube = true})
+              .IblAllowed);
+}
+
 TEST_CASE("frame topology: a debug arm wires no sky pass at all")
 {
     for (usize arm = 1; arm < ArmCount; ++arm)

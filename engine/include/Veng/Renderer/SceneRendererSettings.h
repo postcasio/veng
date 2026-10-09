@@ -42,7 +42,8 @@ namespace Veng::Renderer
     /// written by the surface pass every frame) — the authored emissive contribution alone,
     /// independent of lighting. EnvironmentIrradiance and EnvironmentSource fill the whole frame with
     /// a cube along each view ray — the diffuse irradiance cube the lighting's diffuse IBL reads, and
-    /// the raw cube it convolved from (a Sky::LightingSource probe, else the sky's own cube) — so the
+    /// the raw cube it convolved from (a scene-lighting capture, else a Sky::LightingSource probe,
+    /// else the sky's own cube) — so the
     /// environment lighting the scene is inspectable whatever geometry is in front of it.
     /// IblContribution runs the full lighting pass and shows the IBL ambient term alone per pixel
     /// (diffuse + specular IBL × ambient occlusion), force-wiring the IBL path so the contribution is
@@ -83,7 +84,7 @@ namespace Veng::Renderer
         CoC,
         /// @brief The diffuse irradiance cube (cosine-convolved), sampled fullscreen along the view ray.
         EnvironmentIrradiance,
-        /// @brief The raw cube the IBL convolved from (a Sky::LightingSource, else the sky cube).
+        /// @brief The raw cube the IBL convolved from (a lighting capture or source, else the sky cube).
         EnvironmentSource,
         /// @brief The scene's per-pixel IBL ambient contribution alone (diffuse + specular IBL * AO).
         IblContribution,
