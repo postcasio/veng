@@ -385,8 +385,9 @@ namespace Veng::Renderer
         /// (see Veng/translucent.slang) — the grab pass a refractive or distorting material
         /// (glass, water, heat haze, a lens) samples the scene behind itself through. The copy
         /// predates the translucent pass, so one translucent surface never refracts another. Off
-        /// by default: the copy costs a full-resolution pass per frame whether or not any material
-        /// samples it.
+        /// by default, since it holds a full-resolution target; the copy records only on a frame a
+        /// drawn material declares "readsSceneColor". The opaque-depth copy beside it needs no
+        /// setting: a material declaring "readsSceneDepth" reads it with this off.
         bool Refraction = false;
 
         /// @brief Whether the scene-color grab carries a mip chain a material can read blurred.

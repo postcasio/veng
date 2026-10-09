@@ -409,3 +409,62 @@ TEST_CASE("frame topology: the light-tile cull runs exactly where lighting shade
     lean.Path = RenderPath::GeometryDepthNormal;
     CHECK_FALSE(Resolve(lean).LightTileCullActive);
 }
+
+TEST_CASE("frame topology: the depth copy is wired wherever translucents composite, without "
+          "Refraction")
+{
+    for (usize arm = 0; arm < ArmCount; ++arm)
+    {
+        const SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
+        const FrameTopology topology = Resolve(settings);
+        CAPTURE(DebugViewNames[arm]);
+        CHECK(topology.SceneDepthCopyActive == topology.SceneComposited);
+        CHECK(topology.SceneComposited == ResolveSceneComposited(settings));
+        CHECK_FALSE(topology.RefractionActive);
+    }
+
+    SceneRendererSettings lean = ModeOnly(DebugView::Final);
+    lean.Path = RenderPath::GeometryDepthNormal;
+    CHECK_FALSE(Resolve(lean).SceneDepthCopyActive);
+    CHECK_FALSE(ResolveSceneComposited(lean));
+}
+
+TEST_CASE("frame topology: a frame records the grab copies its draws read")
+{
+    constexpr SceneGrabReads none{};
+    constexpr SceneGrabReads depthOnly{.Depth = true};
+    constexpr SceneGrabReads colorOnly{.Color = true};
+
+    SceneRendererSettings settings = ModeOnly(DebugView::Final);
+    settings.RefractionBlur = true;
+
+    // A depth-only reader records the depth copy and nothing of the colour grab, whatever
+    // Refraction says.
+    for (const bool refraction : {false, true})
+    {
+        CAPTURE(refraction);
+        settings.Refraction = refraction;
+        const FrameTopology topology = Resolve(settings);
+        CHECK(ResolveSceneGrabRecording(topology, depthOnly) ==
+              SceneGrabRecording{.DepthCopy = true, .ColorCopy = false, .BlurChain = false});
+        CHECK(ResolveSceneGrabRecording(topology, none) == SceneGrabRecording{});
+    }
+
+    // A colour reader under Refraction records all three; without it, the depth copy alone.
+    settings.Refraction = true;
+    CHECK(ResolveSceneGrabRecording(Resolve(settings), colorOnly) ==
+          SceneGrabRecording{.DepthCopy = true, .ColorCopy = true, .BlurChain = true});
+    settings.RefractionBlur = false;
+    CHECK(ResolveSceneGrabRecording(Resolve(settings), colorOnly) ==
+          SceneGrabRecording{.DepthCopy = true, .ColorCopy = true, .BlurChain = false});
+    settings.Refraction = false;
+    CHECK(ResolveSceneGrabRecording(Resolve(settings), colorOnly) ==
+          SceneGrabRecording{.DepthCopy = true, .ColorCopy = false, .BlurChain = false});
+
+    // A view that composites no translucents records none of it.
+    settings.Refraction = true;
+    settings.Mode = DebugView::AO;
+    CHECK(ResolveSceneGrabRecording(Resolve(settings),
+                                    SceneGrabReads{.Color = true, .Depth = true}) ==
+          SceneGrabRecording{});
+}

@@ -1,0 +1,16 @@
+{
+  "defaultInstance": "0x50725C155AE71B3F",
+  "domain": "Translucent",
+  "readsSceneDepth": true,
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x78F0DFDF665EAB83"
+  },
+  "fields": [
+    {
+      "name": "Select",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    }
+  ]
+}

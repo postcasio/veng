@@ -59,18 +59,29 @@ struct ViewConstants
 
     // The pre-translucent scene grab: x the bindless texture index of the lit opaque scene
     // color (lighting + sky + emissive, copied ahead of the translucent pass), y its sampler
-    // index, z 1 when the copy ran this frame (the renderer's Refraction setting is on and a
-    // drawn material declares "readsSceneColor") and 0 otherwise — a shader must gate on z before sampling x or w — and w the copied opaque
-    // depth (raw [0,1], reverse-Z so larger is nearer), so a refracting material can reject a distorted
-    // sample whose geometry is in front of it. This is what lets a Translucent material
-    // refract or distort the scene behind it; see Veng/translucent.slang for the helpers.
+    // index, z 1 when the colour copy ran this frame (the renderer's Refraction setting is on and a
+    // drawn material declares "readsSceneColor") and 0 otherwise — a shader must gate on z before
+    // sampling x — and w the copied opaque depth (raw [0,1], reverse-Z so larger is nearer), gated
+    // on SceneDepthCopied, so a material can reject a distorted sample whose geometry is in front
+    // of it or fade against the surface behind it. This is what lets a Translucent material refract
+    // or distort the scene behind it; see Veng/translucent.slang for the helpers.
     uint4 SceneColor;
 
-    // The grab's mip chain: x is how many levels it carries — 1 when the renderer's RefractionBlur
+    // How many levels the grab's colour chain carries — 1 when the renderer's RefractionBlur
     // setting is off, which is the value that makes a blurred sample degrade to the sharp one
-    // instead of reading a level that was never generated. yzw unused. See
-    // Veng/translucent.slang's SampleSceneColorBlurred.
-    uint4 SceneColorChain;
+    // instead of reading a level that was never generated. See Veng/translucent.slang's
+    // SampleSceneColorBlurred.
+    uint SceneColorMipCount;
+    // 1 when the opaque-depth copy (SceneColor.w) ran this frame: a drawn material declares
+    // "readsSceneDepth" or "readsSceneColor". No renderer setting gates it.
+    uint SceneDepthCopied;
+    // The view's executed-frame count, wrapped at 2^32. Each view counts its own frames, so two
+    // viewports do not share it. A material that jitters its sampling rotates the pattern by it.
+    uint FrameIndex;
+    // 1 when the view's anti-aliasing resolves temporally (TAA or TAAU), so a per-frame rotation of
+    // a jitter is integrated into a smooth result; 0 otherwise, where a rotating jitter reads as
+    // crawl and a material holds its pattern still instead.
+    uint TemporalResolveActive;
 
     // The view's light state — everything the shared lighting core needs beyond the surface, so the
     // deferred pass and a forward-lit translucent fragment run the same loop over the same lights.

@@ -96,8 +96,5 @@ namespace Veng::Renderer
 
         /// @brief Per-field dedicated sets, keyed by field pointer, pruned when a field goes.
         std::unordered_map<const VolumeField*, Ref<DescriptorSet>> m_FieldSets;
-
-        /// @brief Monotonic frame counter feeding the shader's temporal jitter rotation.
-        u32 m_FrameIndex = 0;
     };
 }

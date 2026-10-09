@@ -135,7 +135,7 @@ namespace Veng
             // A Surface push block is declared in both stages; without merging, two ranges
             // cover the same bytes and CommandBuffer::PushConstants asserts ambiguity.
             vector<Renderer::PushConstantRange> mergedRanges;
-            auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
+            const auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
             {
                 for (auto& existing : mergedRanges)
                 {
@@ -480,7 +480,7 @@ namespace Veng
         }
 
         // ── 6. Construct the unregistered Material on the main thread ────────
-        auto parts = CreateRef<MaterialParts>(MaterialParts{
+        const auto parts = CreateRef<MaterialParts>(MaterialParts{
             .Block = std::move(block),
             .Fields = std::move(fields),
         });
@@ -488,9 +488,10 @@ namespace Veng
         const bool bloomMask = header.BloomMask != 0;
         const bool halfResolution = header.HalfResolution != 0;
         const bool readsSceneColor = header.ReadsSceneColor != 0;
+        const bool readsSceneDepth = header.ReadsSceneDepth != 0;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask,
-                           halfResolution,
-                           readsSceneColor](AssetManager& manager,
+                           halfResolution, readsSceneColor,
+                           readsSceneDepth](AssetManager& manager,
                                             std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
@@ -517,6 +518,7 @@ namespace Veng
                 .HalfResolution = halfResolution,
                 .Blend = blend,
                 .ReadsSceneColor = readsSceneColor,
+                .ReadsSceneDepth = readsSceneDepth,
                 .Pipeline = nullptr,
                 .VertexShader = vsHandle,
                 .FragmentShader = fsHandle,

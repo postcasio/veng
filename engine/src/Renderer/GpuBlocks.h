@@ -33,14 +33,21 @@ namespace Veng::Renderer
         std::array<vec4, ShCoefficientCount> SkyShCoeffs;
         vec4 TimeParams;   // x seconds since engine start (frame-locked), y frame delta
         vec4 ExtentParams; // xy valid (sub-rect) extent px, zw allocation extent px
-        // x refraction scene-color texture handle, y sampler handle, z 1 when the copy
+        // x refraction scene-color texture handle, y sampler handle, z 1 when the colour copy
         // pass runs this frame (Settings.Refraction, and a drawn material reads it), w the
         // opaque-depth copy's texture handle.
         uvec4 SceneColor;
-        // x the number of mip levels the scene-color grab carries — 1 when Settings.RefractionBlur
+        // The number of mip levels the scene-color grab carries — 1 when Settings.RefractionBlur
         // is off, so a blurred sample degrades to the sharp one rather than reading a level that
-        // does not exist. yzw unused.
-        uvec4 SceneColorChain;
+        // does not exist.
+        u32 SceneColorMipCount;
+        // 1 when the opaque-depth copy (SceneColor.w) ran this frame: a drawn material reads the
+        // scene's depth or its colour. No setting gates it.
+        u32 SceneDepthCopied;
+        // The view's executed-frame count, wrapped to 32 bits; each SceneRenderer counts its own.
+        u32 FrameIndex;
+        // 1 when the view resolves temporally (TAA or TAAU), so per-frame jitter is integrated.
+        u32 TemporalResolveActive;
         // x the view's light-buffer base, y the live light count, z the view's area-vertex base,
         // w the AmbientArm the lighting core takes.
         uvec4 LightState;

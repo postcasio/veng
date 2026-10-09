@@ -30,8 +30,10 @@ namespace Veng::Renderer
     {
         // The fullscreen vertex stage shared by the copy pipeline.
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
-        // The refraction scene-color copy fragment shader.
+        // The grab's scene-color copy fragment shader.
         constexpr AssetId SceneColorCopyFragId{0xBE7002B7B8E9BE5AULL};
+        // The grab's opaque-depth copy fragment shader.
+        constexpr AssetId SceneDepthCopyFragId{0x0BC0737A4D1B42F7ULL};
         // The chain's halving fragment shader.
         constexpr AssetId SceneColorDownsampleFragId{0xBB7BE54192883F09ULL};
         // The chain's coarse-tail compute shader.
@@ -75,7 +77,7 @@ namespace Veng::Renderer
 
     RefractionGrab::RefractionGrab(Context& context, AssetManager& assets) : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "RefractionGrab: {} shader load failed: {}", what,
@@ -86,6 +88,8 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
         const AssetHandle<Veng::Shader> sceneColorCopyFs =
             LoadShader(SceneColorCopyFragId, "scene-color copy fragment");
+        const AssetHandle<Veng::Shader> sceneDepthCopyFs =
+            LoadShader(SceneDepthCopyFragId, "scene-depth copy fragment");
 
         m_CopyLayout = PipelineLayout::Create(
             m_Context, {
@@ -93,17 +97,28 @@ namespace Veng::Renderer
                            .PushConstantRanges = {PushConstantRange::Of<SceneColorCopyPush>(
                                ShaderStage::Fragment)},
                        });
-        // Two attachments (the scene-color grab + the depth copy).
         m_CopyPipeline = GraphicsPipeline::Create(
             m_Context,
             {
                 .Name = "SceneRenderer Scene Color Copy Pipeline",
-                .ColorAttachments = {{.Format = HdrFormat}, {.Format = Format::R32Sfloat}},
+                .ColorAttachments = {{.Format = HdrFormat}},
                 .PipelineLayout = m_CopyLayout,
                 .ShaderStages =
                     {
                         {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
                         {.Stage = ShaderStage::Fragment, .Module = sceneColorCopyFs.Get()->Module},
+                    },
+            });
+        m_DepthCopyPipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Scene Depth Copy Pipeline",
+                .ColorAttachments = {{.Format = Format::R32Sfloat}},
+                .PipelineLayout = m_CopyLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = sceneDepthCopyFs.Get()->Module},
                     },
             });
 
@@ -197,7 +212,8 @@ namespace Veng::Renderer
         }
     }
 
-    void RefractionGrab::Recreate(const SceneRendererSettings& settings, const uvec2 extent)
+    void RefractionGrab::Recreate(const SceneRendererSettings& settings, const bool depthCopy,
+                                  const uvec2 extent)
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_SceneHandle);
@@ -213,19 +229,37 @@ namespace Veng::Renderer
         m_TailSet.reset();
         m_TailFirst = 0;
 
+        // The opaque depth stands apart from the colour: a material may read it with no Refraction
+        // setting, and the colour copy reads nothing of it.
+        if (depthCopy)
+        {
+            m_DepthImage = Image::Create(m_Context, {
+                                                        .Name = "SceneRenderer Refraction Depth",
+                                                        .Extent = {extent.x, extent.y, 1},
+                                                        .Format = Format::R32Sfloat,
+                                                        .Usage = HdrUsage,
+                                                    });
+            m_DepthView = ImageView::Create(
+                m_Context, {.Name = "SceneRenderer Refraction Depth View", .Image = m_DepthImage});
+            m_DepthHandle = bindless.Register(m_DepthView);
+        }
+        else
+        {
+            m_DepthImage.reset();
+            m_DepthView.reset();
+        }
+
         if (!settings.Refraction)
         {
             m_SceneImage.reset();
             m_SceneView.reset();
-            m_DepthImage.reset();
-            m_DepthView.reset();
             return;
         }
 
-        // The pre-translucent scene color and opaque depth the copy pass fills each frame;
-        // translucent materials sample them through the view block's SceneColor handles. With the
-        // blur on, the scene color carries a halving chain the copy's own level is the base of, so a
-        // material can read the scene behind it at a level rather than only sharp.
+        // The pre-translucent scene color the copy pass fills each frame; translucent materials
+        // sample it through the view block's SceneColor handles. With the blur on, it carries a
+        // halving chain the copy's own level is the base of, so a material can read the scene behind
+        // it at a level rather than only sharp.
         const u32 levels = settings.RefractionBlur ? BlurLevelsFor(extent) : 1u;
         // The chain's coarse tail is written by a compute dispatch, which the image must allow.
         const u32 tailFirst = MipTailFirstLevel(extent, levels, 1, TailTexelCapacity);
@@ -280,28 +314,49 @@ namespace Veng::Renderer
                                  m_SceneMipViews[std::min(tailFirst + slot, levels - 1)]);
             }
         }
-
-        m_DepthImage = Image::Create(m_Context, {
-                                                    .Name = "SceneRenderer Refraction Depth",
-                                                    .Extent = {extent.x, extent.y, 1},
-                                                    .Format = Format::R32Sfloat,
-                                                    .Usage = HdrUsage,
-                                                });
-        m_DepthView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Refraction Depth View", .Image = m_DepthImage});
-        m_DepthHandle = bindless.Register(m_DepthView);
     }
 
-    void RefractionGrab::Declare(vector<Unique<ScenePass>>& passes, const ResourceId sourceId,
-                                 const TextureHandle sourceHandle, const ResourceId depthId,
-                                 const TextureHandle depthHandle, const ResourceId copyId,
-                                 const ResourceId depthCopyId, const SamplerHandle sampler,
-                                 const uvec2 extent, const std::span<const ResourceId> mipIds,
-                                 const bool* sampled) const
+    void RefractionGrab::DeclareDepthCopy(vector<Unique<ScenePass>>& passes,
+                                          const ResourceId depthId, const TextureHandle depthHandle,
+                                          const ResourceId depthCopyId, const SamplerHandle sampler,
+                                          const uvec2 extent, const bool* sampled) const
     {
         passes.push_back(CreateUnique<SceneColorCopyScenePass>(
-            m_Context, m_CopyPipeline, sourceId, sourceHandle, depthId, depthHandle, copyId,
-            depthCopyId, sampler, extent, sampled));
+            m_Context,
+            SceneColorCopyPassInfo{
+                .Name = "Scene Depth Copy",
+                .Pipeline = m_DepthCopyPipeline,
+                .SourceId = depthId,
+                .SourceHandle = depthHandle,
+                .TargetId = depthCopyId,
+                // Reverse-Z: the far plane, so a texel outside the copied sub-rect reads as
+                // background rather than as an occluder.
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                .Sampler = sampler,
+                .Extent = extent,
+                .Sampled = sampled,
+            }));
+    }
+
+    void RefractionGrab::DeclareColorCopy(vector<Unique<ScenePass>>& passes,
+                                          const ResourceId sourceId,
+                                          const TextureHandle sourceHandle, const ResourceId copyId,
+                                          const SamplerHandle sampler, const uvec2 extent,
+                                          const std::span<const ResourceId> mipIds,
+                                          const bool* sampled) const
+    {
+        passes.push_back(CreateUnique<SceneColorCopyScenePass>(
+            m_Context, SceneColorCopyPassInfo{
+                           .Name = "Scene Color Copy",
+                           .Pipeline = m_CopyPipeline,
+                           .SourceId = sourceId,
+                           .SourceHandle = sourceHandle,
+                           .TargetId = copyId,
+                           .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                           .Sampler = sampler,
+                           .Extent = extent,
+                           .Sampled = sampled,
+                       }));
 
         // One halving per level below the base, in order — each reads the level the pass before it
         // wrote, which is what the graph's Sample declaration is there to order — down to the coarse

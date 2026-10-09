@@ -353,7 +353,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 13u;
+    inline constexpr u32 CookedMaterialVersion = 14u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -433,11 +433,25 @@ namespace Veng
         /// declares this, and on any other frame the grab reads as unavailable. Translucent domain
         /// only, enforced at cook.
         u32 ReadsSceneColor = 0;
+        /// @brief Whether the fragment stage samples the pre-translucent opaque-depth copy alone (the
+        ///        "readsSceneDepth" key; default 0).
+        ///
+        /// The renderer records the depth copy, without the colour copy or its blur chain, on a frame
+        /// some drawn material declares this or ReadsSceneColor. Translucent domain only, enforced at
+        /// cook.
+        u32 ReadsSceneDepth = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.
         u32 BlockBytes = 0;
+        /// @brief The tail gap to the header's 8-byte alignment, named so it is written zero.
+        ///
+        /// The cook memcpys the header into the blob, and an unnamed gap would put uninitialized
+        /// bytes on disk (see CookedMaterialField::Padding).
+        u32 Padding = 0;
     };
+    static_assert(sizeof(CookedMaterialHeader) == 64,
+                  "CookedMaterialHeader carries no unnamed padding");
 
     /// @brief One reflected material field within the single parameter block.
     ///

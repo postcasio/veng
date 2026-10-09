@@ -89,7 +89,7 @@ namespace
 
     // Builds a cube scene with a MeshRenderer and returns the owning mesh so the
     // caller keeps it resident for the renderer's lifetime.
-    Ref<Mesh> PopulateCubeScene(Context& context, AssetManager& assets, Scene& scene)
+    Ref<Mesh> PopulateCubeScene(Context& context, const AssetManager& assets, Scene& scene)
     {
         const Ref<Mesh> cube = Mesh::BuildSync(context, Primitives::Cube(1.0f), "Test Cube");
 
@@ -338,7 +338,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The g-buffer images allocate at the renderer's extent with the fixed
     // contracted formats and usages.
-    auto CheckGBuffer =
+    const auto CheckGBuffer =
         [](const Ref<ImageView>& view, uvec2 extent, Format format, ImageUsage usage)
     {
         REQUIRE(view != nullptr);
@@ -473,7 +473,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(normalPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
     REQUIRE(depthPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
 
-    auto decodeVec3 = [](const vector<u8>& hdr, uvec2 dims, u32 x, u32 y)
+    const auto decodeVec3 = [](const vector<u8>& hdr, uvec2 dims, u32 x, u32 y)
     {
         const auto* halves = reinterpret_cast<const u16*>(hdr.data());
         const usize base = (static_cast<usize>(y) * dims.x + x) * 4;
@@ -607,7 +607,7 @@ namespace
     // no material, so the g-buffer pass records no DrawIndexed for it but still
     // counts it as "drawn" (it passes the cull and material-readiness skips) — the
     // counters this test reads.
-    Entity AddCubeAt(Scene& scene, AssetManager& assets, const Ref<Mesh>& cube, vec3 position)
+    Entity AddCubeAt(Scene& scene, const AssetManager& assets, const Ref<Mesh>& cube, vec3 position)
     {
         const Entity entity = scene.CreateEntity();
         scene.Add<Transform>(entity).Position = position;
@@ -679,7 +679,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Albedo},
     });
 
-    auto Render = [&](const Scene& scene)
+    const auto Render = [&](const Scene& scene)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -969,7 +969,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Albedo, .FrustumCull = true},
     });
 
-    auto Render = [&](const CameraView& camera)
+    const auto Render = [&](const CameraView& camera)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -1057,7 +1057,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
 
     Renderer::Atmosphere atmosphere;
-    auto Render = [&](const Renderer::Atmosphere& atm, vec3 sunDir)
+    const auto Render = [&](const Renderer::Atmosphere& atm, vec3 sunDir)
     {
         // Author this frame's atmosphere onto the Sky source and the sun onto the directional
         // light (the renderer derives the toward-sun direction from its negated travel direction).
@@ -1307,7 +1307,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
 
     // Render the scene once and return the downloaded RGBA16F output.
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -1320,7 +1320,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return pixels;
     };
 
-    auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
+    const auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
     {
         f64 sum = 0.0;
         for (u32 y = 0; y < extent.y; ++y)
@@ -1423,7 +1423,7 @@ namespace
     }
 
     // Renders a renderer once over the scene/camera and downloads its RGBA16F output.
-    vector<u8> RenderOutput(Context& context, SceneRenderer& renderer, const Scene& scene,
+    vector<u8> RenderOutput(const Context& context, SceneRenderer& renderer, const Scene& scene,
                             const CameraView& camera)
     {
         context.ImmediateCommands(
@@ -1677,7 +1677,7 @@ TEST_CASE_FIXTURE(
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
-    auto Center = [&]() -> vec3
+    const auto Center = [&]() -> vec3
     {
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
@@ -1702,7 +1702,7 @@ TEST_CASE_FIXTURE(
     CHECK(depthCenter.g == doctest::Approx(depthCenter.b).epsilon(0.02f));
 
     // Each mode produces a distinct center — the recompile re-wired the pass set.
-    auto Differs = [](const vec3 a, const vec3 b) -> bool
+    const auto Differs = [](const vec3 a, const vec3 b) -> bool
     {
         return std::fabs(a.r - b.r) > 0.02f || std::fabs(a.g - b.g) > 0.02f ||
                std::fabs(a.b - b.b) > 0.02f;
@@ -1874,7 +1874,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final},
     });
 
-    auto CenterLuma = [&](f32 exposure) -> f32
+    const auto CenterLuma = [&](f32 exposure) -> f32
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -1948,7 +1948,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
-    auto CenterLuma = [&]() -> f32
+    const auto CenterLuma = [&]() -> f32
     {
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
         const vec3 c = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
@@ -2016,7 +2016,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final},
     });
 
-    auto CenterLuma = [&]() -> f32
+    const auto CenterLuma = [&]() -> f32
     {
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
@@ -2346,7 +2346,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const PackedSceneLights packed =
         PackSceneLights(*scene, true, 1024, AABB::Empty(), &frustum, &cameraPosition);
     REQUIRE(packed.LightCount == 9);
-    auto bitAt = [&](const vec3& position) -> u32
+    const auto bitAt = [&](const vec3& position) -> u32
     {
         for (u32 i = 0; i < packed.LightCount; ++i)
         {
@@ -2403,7 +2403,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The tile holding a world point on the face, through the same uv = ndc * 0.5 + 0.5 mapping the
     // lighting pass reconstructs with.
-    auto maskAt = [&](const vec3& world) -> u32
+    const auto maskAt = [&](const vec3& world) -> u32
     {
         const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
         const vec2 pixel = (vec2(clip) / clip.w * 0.5f + 0.5f) * vec2(extent);
@@ -2526,10 +2526,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The near halo (the old fixture's 8–24 px core ring) and the far halo (≥12 px,
     // beyond a single 9-tap separable blur's ±4-texel reach — the multi-octave spread
     // only the mip pyramid produces).
-    auto HaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 8, 24); };
-    auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 12, 40); };
+    const auto HaloLuma = [&](const vector<u8>& pixels) -> f64
+    { return AnnulusLuma(pixels, 8, 24); };
+    const auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64
+    { return AnnulusLuma(pixels, 12, 40); };
 
-    auto Render = [&](f32 threshold, f32 intensity, f32 radius) -> vector<u8>
+    const auto Render = [&](f32 threshold, f32 intensity, f32 radius) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2673,10 +2675,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return count == 0 ? 0.0 : sum / count;
     };
 
-    auto HaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 8, 24); };
-    auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 12, 40); };
+    const auto HaloLuma = [&](const vector<u8>& pixels) -> f64
+    { return AnnulusLuma(pixels, 8, 24); };
+    const auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64
+    { return AnnulusLuma(pixels, 12, 40); };
 
-    auto Render = [&](f32 renderScale = 1.0f) -> vector<u8>
+    const auto Render = [&](f32 renderScale = 1.0f) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2767,7 +2771,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
 
     // A threshold far above anything the scene holds, so the bright pass passes nothing.
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2877,7 +2881,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
     });
 
-    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    const auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
     {
         const vec3 c = DecodeTexel(pixels, extent.x, x, y);
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
@@ -2976,7 +2980,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
     });
 
-    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    const auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
     {
         const vec3 c = DecodeTexel(pixels, extent.x, x, y);
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
@@ -3031,7 +3035,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Entity planeEntity = scene->CreateEntity();
     scene->Add<Transform>(planeEntity);
     scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
-    auto AddCaster = [&](const vec3 position)
+    const auto AddCaster = [&](const vec3 position)
     {
         const Entity entity = scene->CreateEntity();
         scene->Add<Transform>(entity).Position = position;
@@ -3078,7 +3082,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return draws;
     };
     // Each configuration is measured on its second frame, past any first-frame setup work.
-    auto ShadowPassDraws = [&]() -> u32
+    const auto ShadowPassDraws = [&]() -> u32
     {
         renderer->Configure(shadowsOn);
         RenderCountingDraws();
@@ -3167,7 +3171,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
     });
 
-    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    const auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
     {
         const vec3 c = DecodeTexel(pixels, extent.x, x, y);
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
@@ -3286,7 +3290,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The mean luminance over the lower-center band, where the sphere meets the
     // plane — the region the contact occlusion darkens.
-    auto ContactLuma = [&](const vector<u8>& pixels) -> f64
+    const auto ContactLuma = [&](const vector<u8>& pixels) -> f64
     {
         const u32 x0 = extent.x / 2 - 40;
         const u32 x1 = extent.x / 2 + 40;
@@ -3397,7 +3401,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec3 lightLeft{-1.4f, -1.5f, 0.0f};
     const vec3 lightRight{1.4f, -1.5f, 0.0f};
 
-    auto RenderFrame = [&](vec3 lightDir) -> vector<u8>
+    const auto RenderFrame = [&](vec3 lightDir) -> vector<u8>
     {
         scene->Get<Light>(lightEntity).Direction = lightDir;
 
@@ -3422,7 +3426,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // the center). Scan each light's frame for the darkest plane texel on its side
     // of the column — that is its cast shadow.
     const u32 shadowRow = extent.y * 9 / 16;
-    auto DarkestColumnOnSide = [&](const vector<u8>& pixels, bool leftHalf) -> u32
+    const auto DarkestColumnOnSide = [&](const vector<u8>& pixels, bool leftHalf) -> u32
     {
         const u32 x0 = leftHalf ? 8u : extent.x / 2 + 12;
         const u32 x1 = leftHalf ? extent.x / 2 - 12 : extent.x - 8;
@@ -3584,7 +3588,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The dominant (most common) cascade bucket across a horizontal band of rows —
     // robust to a few stray texels at silhouette/edge.
-    auto DominantCascadeInBand = [&](u32 y0, u32 y1) -> int
+    const auto DominantCascadeInBand = [&](u32 y0, u32 y1) -> int
     {
         int counts[4] = {0, 0, 0, 0};
         for (u32 y = y0; y < y1; ++y)
@@ -3690,7 +3694,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The fraction of blit texels that read non-black (reverse-Z: shade = depth > 0): a
     // cleared atlas (all depth 0) blits to all-black, so any meaningful fraction of
     // lit texels means a caster wrote real depth into a tile.
-    auto LitFraction = [&](const vector<u8>& pixels) -> f64
+    const auto LitFraction = [&](const vector<u8>& pixels) -> f64
     {
         u32 lit = 0;
         for (u32 y = 0; y < extent.y; ++y)
@@ -3795,7 +3799,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 2.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    auto MakeScene = [&]() -> Unique<Scene>
+    const auto MakeScene = [&]() -> Unique<Scene>
     {
         Unique<Scene> scene = Scene::Create(Types);
         // A caster near the light and a far cube well outside any light's range —
@@ -3843,7 +3847,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // so a byte-identical blit output proves a byte-identical atlas. With culling on
         // then off, the cull drops only the out-of-frustum far cube — a non-caster for
         // this view — so the depth (and thus the blit) must be identical.
-        auto RenderBlit = [&](bool cull) -> vector<u8>
+        const auto RenderBlit = [&](bool cull) -> vector<u8>
         {
             renderer->Configure({.Mode = DebugView::PunctualShadows,
                                  .Bloom = false,
@@ -3954,7 +3958,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                          .AO = false},
         });
 
-        auto Render = [&]()
+        const auto Render = [&]()
         {
             Context.ImmediateCommands(
                 [&](CommandBuffer& cmd)
@@ -4070,7 +4074,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // (rather than absolute luma) targets the shadow term itself, not the BRDF gradient
     // or the lit occluder silhouette.
     const u32 row = extent.y / 2;
-    auto DarkenDelta = [&](u32 x) -> f32
+    const auto DarkenDelta = [&](u32 x) -> f32
     { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
     u32 shadowX = extent.x * 9 / 16;
     f32 maxDarken = DarkenDelta(shadowX);
@@ -4191,7 +4195,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // the darkening delta (rather than absolute luma) targets the shadow term itself,
     // not the point's falloff gradient or the occluder silhouette.
     const u32 row = extent.y / 2;
-    auto DarkenDelta = [&](u32 x) -> f32
+    const auto DarkenDelta = [&](u32 x) -> f32
     { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
     u32 shadowX = extent.x * 9 / 16;
     f32 maxDarken = DarkenDelta(shadowX);
@@ -4308,7 +4312,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .AO = false},
     });
 
-    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    const auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
     {
         const vec3 c = DecodeTexel(pixels, extent.x, x, y);
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
@@ -4465,7 +4469,7 @@ TEST_CASE_FIXTURE(
 
     // The center texel reads the source color unchanged (within 8-bit quantization).
     const usize center = (static_cast<usize>(extent.y / 2) * extent.x + extent.x / 2) * 4;
-    auto Approx8 = [](u8 actual, f32 expected)
+    const auto Approx8 = [](u8 actual, f32 expected)
     { return std::fabs(static_cast<f32>(actual) / 255.0f - expected) < 0.02f; };
     CHECK(Approx8(pixels[center + 0], sourceColor.R));
     CHECK(Approx8(pixels[center + 1], sourceColor.G));
@@ -4512,7 +4516,8 @@ TEST_CASE_FIXTURE(
 
     constexpr uvec2 extent{128, 128};
 
-    auto RenderGpu = [&](SceneRenderer& renderer, const Scene& scene, const CameraView& camera)
+    const auto RenderGpu =
+        [&](SceneRenderer& renderer, const Scene& scene, const CameraView& camera)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -4686,7 +4691,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Extent = extent,
         .Settings = settings,
     });
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -4800,24 +4805,48 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     vector<Case> cases;
-    cases.push_back(
-        {"Cube", Primitives::Cube(2.2f, *material), identity, frontCamera, frontHeadlight});
-    cases.push_back({"Plane", Primitives::Plane(vec2(3.0f), uvec2(1), *material), identity,
-                     topCamera, topHeadlight});
-    cases.push_back({"Sphere", Primitives::Sphere(1.2f, 16, 24, *material), identity, frontCamera,
-                     frontHeadlight});
-    cases.push_back({"Icosphere", Primitives::Icosphere(1.2f, 2, *material), identity, frontCamera,
-                     frontHeadlight});
-    cases.push_back({"Cylinder", Primitives::Cylinder(1.0f, 2.2f, 24, *material), identity,
-                     frontCamera, frontHeadlight});
-    cases.push_back({"Cone", Primitives::Cone(1.0f, 2.2f, 24, *material), identity, frontCamera,
-                     frontHeadlight});
-    cases.push_back({"Torus", Primitives::Torus(1.0f, 0.4f, 24, 12, *material), tipForward,
-                     frontCamera, frontHeadlight});
-    cases.push_back({"Capsule", Primitives::Capsule(0.9f, 1.2f, 24, 8, *material), identity,
-                     frontCamera, frontHeadlight});
+    cases.push_back({.Name = "Cube",
+                     .Data = Primitives::Cube(2.2f, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Plane",
+                     .Data = Primitives::Plane(vec2(3.0f), uvec2(1), *material),
+                     .Orient = identity,
+                     .Camera = topCamera,
+                     .Headlight = topHeadlight});
+    cases.push_back({.Name = "Sphere",
+                     .Data = Primitives::Sphere(1.2f, 16, 24, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Icosphere",
+                     .Data = Primitives::Icosphere(1.2f, 2, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Cylinder",
+                     .Data = Primitives::Cylinder(1.0f, 2.2f, 24, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Cone",
+                     .Data = Primitives::Cone(1.0f, 2.2f, 24, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Torus",
+                     .Data = Primitives::Torus(1.0f, 0.4f, 24, 12, *material),
+                     .Orient = tipForward,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
+    cases.push_back({.Name = "Capsule",
+                     .Data = Primitives::Capsule(0.9f, 1.2f, 24, 8, *material),
+                     .Orient = identity,
+                     .Camera = frontCamera,
+                     .Headlight = frontHeadlight});
 
-    auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
+    const auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
     {
         f64 sum = 0.0;
         for (u32 y = 0; y < extent.y; ++y)
@@ -4943,7 +4972,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(renderer->GetVelocityView()->GetImage()->GetFormat() ==
           Renderer::GBuffer::VelocityFormat);
 
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5056,7 +5085,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // resolution), so the scene rasterizes into a half-extent sub-rect and the resolve reconstructs
     // the full-extent output. This is the engine core of TAAU — the viewport decides whether the
     // scale is a static factor or dynamic-resolution, but the reconstruction is this path.
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5159,7 +5188,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .AO = false},
     });
 
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5171,7 +5200,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Each mode's resolve runs clean (the validation gate runs this binary) and the output carries
     // the scene edge to edge at the right size.
-    auto CheckOutputHasContent = [&]()
+    const auto CheckOutputHasContent = [&]()
     {
         const vector<u8> output = renderer->GetOutput()->GetImage()->Download();
         REQUIRE(output.size() == static_cast<size_t>(extent.x) * extent.y * 8);
@@ -5298,7 +5327,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // gating: it lands within frames-in-flight + 1 Executes of the request — the Execute after the
     // one whose BeginFrame waited the staging frame — a bound asserted here to lock that latency
     // contract (a regression that stalled the readback an extra frame would trip it).
-    auto PickId = [&](uvec2 texel) -> u32
+    const auto PickId = [&](uvec2 texel) -> u32
     {
         renderer->RequestPick(texel);
         for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 4; ++i)
@@ -5446,7 +5475,7 @@ TEST_CASE_FIXTURE(
             });
     };
 
-    auto PickId = [&](uvec2 texel) -> u32
+    const auto PickId = [&](uvec2 texel) -> u32
     {
         renderer->RequestPick(texel);
         for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 4; ++i)
@@ -5554,7 +5583,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
     });
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5665,7 +5694,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = refractionOn,
     });
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5770,7 +5799,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = blurOn,
     });
 
-    auto Render = [&](const f32 blur) -> vector<u8>
+    const auto Render = [&](const f32 blur) -> vector<u8>
     {
         refractive->Get()->SetParam("UVOffset", vec4(0.0f, 0.0f, blur, 0.0f));
         Context.ImmediateCommands(
@@ -5791,7 +5820,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         f32 Mean = 0.0f;
         f32 Corner = 0.0f;
     };
-    auto Measure = [&](const vector<u8>& pixels) -> Frame
+    const auto Measure = [&](const vector<u8>& pixels) -> Frame
     {
         Frame frame;
         f32 total = 0.0f;
@@ -5909,7 +5938,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .RefractionBlur = true,
                      .AO = false},
     });
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5919,7 +5948,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             });
     };
     // The copy and the first halving pass stand for the chain: every level skips on one flag.
-    auto GrabRecorded = [&]
+    const auto GrabRecorded = [&]
     {
         return renderer->DidRecordPassLastFrame("Scene Color Copy") ||
                renderer->DidRecordPassLastFrame("Scene Color Downsample 1");
@@ -5939,6 +5968,173 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->DestroyEntity(refractiveEntity);
     Render();
     CHECK_FALSE(GrabRecorded());
+
+    std::filesystem::remove(outArchive);
+}
+
+// A material declaring only "readsSceneDepth" reads the opaque depth behind it with the Refraction
+// setting off: the frame records the depth copy and none of the colour grab, and the fixture's
+// fragment turns white exactly where an opaque surface stands behind it.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a depth-only translucent reads the opaque depth without "
+                  "the colour grab")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_scene_depth_read.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The scene-depth reader's default instance.
+    const AssetResult<AssetHandle<MaterialInstance>> reader =
+        assets.LoadSync<MaterialInstance>(AssetId{0x50725C155AE71B3FULL});
+    REQUIRE(reader.has_value());
+    CHECK(reader->Get()->GetParent()->IsSceneDepthReader());
+    CHECK_FALSE(reader->Get()->GetParent()->IsSceneColorReader());
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+
+    // A small opaque cube at the centre, behind a translucent cube that fills the view.
+    const Ref<Mesh> opaqueCube =
+        Mesh::BuildSync(Context, Primitives::Cube(0.6f, *brick), "Scene Depth Opaque Cube");
+    const Ref<Mesh> readerCube =
+        Mesh::BuildSync(Context, Primitives::Cube(4.0f, *reader), "Scene Depth Reader Cube");
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity opaqueEntity = scene->CreateEntity();
+    scene->Add<Transform>(opaqueEntity).Position = vec3(0.0f, 0.0f, -0.5f);
+    scene->Add<MeshRenderer>(opaqueEntity).Mesh = assets.Adopt(opaqueCube);
+    const Entity readerEntity = scene->CreateEntity();
+    scene->Add<Transform>(readerEntity);
+    scene->Add<MeshRenderer>(readerEntity).Mesh = assets.Adopt(readerCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    constexpr uvec2 extent{64, 64};
+    SceneRendererSettings settings;
+    settings.Mode = DebugView::Final;
+    settings.Bloom = false;
+    settings.Shadows = false;
+    settings.AO = false;
+    settings.AutoExposure = false;
+    settings.Refraction = false;
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = settings,
+    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
+    const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+
+    CHECK(renderer->DidRecordPassLastFrame("Scene Depth Copy"));
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("Scene Color Copy"));
+    const vec3 centre = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    const vec3 corner = DecodeTexel(pixels, extent.x, 2, 2);
+    CHECK(centre.g > 0.3f);
+    CHECK(corner.g < 0.05f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The view block's frame index counts one view's executed frames, each renderer its own, and its
+// temporal flag follows the view's anti-aliasing mode — read back through a material.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the view block counts each view's frames and names its "
+                  "temporal resolve")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_view_frame_index.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> reader =
+        assets.LoadSync<MaterialInstance>(AssetId{0x50725C155AE71B3FULL});
+    REQUIRE(reader.has_value());
+    reader->Get()->SetParam("Select", vec4(1.0f, 0.0f, 0.0f, 0.0f));
+
+    const Ref<Mesh> readerCube =
+        Mesh::BuildSync(Context, Primitives::Cube(4.0f, *reader), "Frame Index Reader Cube");
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity readerEntity = scene->CreateEntity();
+    scene->Add<Transform>(readerEntity);
+    scene->Add<MeshRenderer>(readerEntity).Mesh = assets.Adopt(readerCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    constexpr uvec2 extent{32, 32};
+    SceneRendererSettings settings;
+    settings.Mode = DebugView::Final;
+    settings.Bloom = false;
+    settings.Shadows = false;
+    settings.AO = false;
+    settings.AutoExposure = false;
+    const auto MakeRenderer = [&]
+    {
+        return SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = settings,
+        });
+    };
+    const Unique<SceneRenderer> first = MakeRenderer();
+    const Unique<SceneRenderer> second = MakeRenderer();
+    const auto Render = [&](SceneRenderer& renderer) -> vec3
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return DecodeTexel(renderer.GetOutput()->GetImage()->Download(), extent.x, extent.x / 2,
+                           extent.y / 2);
+    };
+
+    // The second view's first frame lands between the first view's second and third.
+    const vec3 firstAt0 = Render(*first);
+    const vec3 firstAt1 = Render(*first);
+    const vec3 secondAt0 = Render(*second);
+    const vec3 firstAt2 = Render(*first);
+    CHECK(firstAt1.r > firstAt0.r + 0.02f);
+    CHECK(firstAt2.r > firstAt1.r + 0.02f);
+    CHECK(secondAt0.r == doctest::Approx(firstAt0.r).epsilon(0.01));
+    CHECK(firstAt2.g < 0.05f);
+
+    SceneRendererSettings temporal = settings;
+    temporal.AntiAliasing = AntiAliasingMode::TAA;
+    second->Configure(temporal);
+    CHECK(Render(*second).g > 0.3f);
 
     std::filesystem::remove(outArchive);
 }
@@ -5987,7 +6183,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Extent = uvec2{64, 64},
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
     });
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -5998,7 +6194,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
     constexpr std::array<const char*, 3> LayerPasses{
         "Half-Res Depth Reduce", "Scene Translucent Half", "Half-Res Translucent Composite"};
-    auto LayerPassesRecorded = [&]
+    const auto LayerPassesRecorded = [&]
     {
         u32 recorded = 0;
         for (const char* name : LayerPasses)
@@ -6100,7 +6296,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = ssrOn,
     });
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -6114,7 +6310,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     // Mean luminance over a floor band below the cube — where the cube's reflection lands.
-    auto FloorBandLuma = [&](const vector<u8>& pixels) -> f64
+    const auto FloorBandLuma = [&](const vector<u8>& pixels) -> f64
     {
         f64 sum = 0.0;
         u32 count = 0;
@@ -6201,7 +6397,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
     });
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -6215,7 +6411,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     // Mean luminance over the frame's central block — the region the cluster covers.
-    auto CenterLuma = [&](const vector<u8>& pixels) -> f64
+    const auto CenterLuma = [&](const vector<u8>& pixels) -> f64
     {
         f64 sum = 0.0;
         u32 count = 0;
@@ -6334,7 +6530,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(0.5f, *brick), "Run Cube");
     const AssetHandle<Mesh> cubeHandle = assets.Adopt(cube);
     const Unique<Scene> scene = Scene::Create(Types);
-    auto AddCube = [&](const vec3 position)
+    const auto AddCube = [&](const vec3 position)
     {
         const Entity entity = scene->CreateEntity();
         scene->Add<Transform>(entity).Position = position;
@@ -6342,7 +6538,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     // The draw commands one Execute records, read off the command buffer's counter.
-    auto RenderCountingDraws = [&]() -> u32
+    const auto RenderCountingDraws = [&]() -> u32
     {
         u32 draws = 0;
         Context.ImmediateCommands(
@@ -6582,7 +6778,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
 
     // Each configuration is measured on its second frame, past any first-frame setup work.
-    auto RenderCountingDraws = [&]() -> u32
+    const auto RenderCountingDraws = [&]() -> u32
     {
         u32 draws = 0;
         for (int frame = 0; frame < 2; ++frame)
@@ -6598,14 +6794,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         }
         return draws;
     };
-    auto PixelAt = [&](const vector<u8>& pixels, const vec3& world) -> vec3
+    const auto PixelAt = [&](const vector<u8>& pixels, const vec3& world) -> vec3
     {
         const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
         const uvec2 pixel = uvec2((vec2(clip) / clip.w * 0.5f + 0.5f) * vec2(extent));
         return DecodeTexel(pixels, extent.x, pixel.x, pixel.y);
     };
-    auto MaxOf = [](const vec3& v) { return std::max({v.x, v.y, v.z}); };
-    auto MinOf = [](const vec3& v) { return std::min({v.x, v.y, v.z}); };
+    const auto MaxOf = [](const vec3& v) { return std::max({v.x, v.y, v.z}); };
+    const auto MinOf = [](const vec3& v) { return std::min({v.x, v.y, v.z}); };
     const vec3 cubeFace{-0.6f, 0.2f, 0.175f};
     const vec3 triangleInterior{0.3f, 0.3f, 0.0f};
 
@@ -6719,7 +6915,7 @@ TEST_CASE_FIXTURE(
                      .AO = false},
     });
 
-    auto Render = [&](const f32 renderScale)
+    const auto Render = [&](const f32 renderScale)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -6734,7 +6930,7 @@ TEST_CASE_FIXTURE(
     // The mean over the whole allocation. A tail left running at the sub-rect would leave most of
     // the output at whatever the tonemap upscale put there rather than what the tail wrote, so the
     // two frames' means are compared as an energy bound rather than per-texel.
-    auto OutputMean = [&]()
+    const auto OutputMean = [&]()
     {
         const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
@@ -6847,7 +7043,7 @@ TEST_CASE_FIXTURE(
                      .AO = false},
     });
 
-    auto Render = [&]()
+    const auto Render = [&]()
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -6857,7 +7053,7 @@ TEST_CASE_FIXTURE(
             });
     };
 
-    auto CheckSceneSide = [&](const uvec2 expected)
+    const auto CheckSceneSide = [&](const uvec2 expected)
     {
         CHECK(renderer->GetRenderAllocationExtent() == expected);
         CHECK(renderer->GetAlbedoView()->GetImage()->GetWidth() == expected.x);
@@ -6866,7 +7062,7 @@ TEST_CASE_FIXTURE(
         CHECK(renderer->GetDepthView()->GetImage()->GetHeight() == expected.y);
     };
 
-    auto CheckTailNative = [&]()
+    const auto CheckTailNative = [&]()
     {
         CHECK(renderer->GetPostResolveExtent() == extent);
         CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
@@ -6965,7 +7161,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                .OutputFormat = Context.GetOutputFormat(),
                                .Extent = extent,
                                .Settings = settings});
-    auto frame = [&]() -> vector<u8>
+    const auto frame = [&]() -> vector<u8>
     {
         CommandBuffer& cmd = Context.BeginFrame();
         renderer->Execute(

@@ -190,9 +190,10 @@ namespace Veng::Renderer
         // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
         // whole under the full-resolution draws).
         TranslucentDrawPlan HalfResTranslucentPlan;
-        // Whether a draw this frame samples the refraction grab: set by PrepareDraws, and read by
-        // the grab's passes, which skip every frame it is clear.
-        bool SceneColorSampled = false;
+        // Which of the grab's passes record this frame: set by PrepareDraws from what the drawn
+        // materials read, and read by those passes, each of which skips every frame its flag is
+        // clear.
+        SceneGrabRecording GrabRecording;
         // PrepareDraws' reused scratch: the static survivors' sort keys and the survivors the
         // static phase triages to the skinned and translucent phases. Held across frames so a
         // steady-state gather allocates nothing.
@@ -554,10 +555,13 @@ namespace Veng::Renderer
         m_RefractionSceneId = ResourceId{};
         m_RefractionDepthId = ResourceId{};
         m_RefractionMipIds.clear();
+        if (m_Topology->SceneDepthCopyActive)
+        {
+            m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
+        }
         if (m_Topology->RefractionActive)
         {
             m_RefractionSceneId = graph.Import("SceneRenderer Refraction Scene");
-            m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
             // The chain's levels are separate graph resources: each is written by its own halving
             // pass and read by the next, so the barriers between them are the graph's to place.
             // Level 0 *is* the scene grab, so it is that id rather than a second import of it.
@@ -569,6 +573,24 @@ namespace Veng::Renderer
                     graph.Import(fmt::format("SceneRenderer Refraction Scene Level {}", level)));
             }
         }
+        // The grab's two copies at the position an arm composites its translucents: the depth copy
+        // wherever it does, the colour copy and its chain only under Refraction.
+        const auto DeclareSceneGrab = [&](const ResourceId litId, const TextureHandle litHandle,
+                                          const ResourceId depthSourceId, const uvec2 extent)
+        {
+            if (m_Topology->SceneDepthCopyActive)
+            {
+                m_Refraction->DeclareDepthCopy(m_Passes, depthSourceId, m_DepthHandle,
+                                               m_RefractionDepthId, m_SamplerHandle, extent,
+                                               &m_Internal->GrabRecording.DepthCopy);
+            }
+            if (m_Topology->RefractionActive)
+            {
+                m_Refraction->DeclareColorCopy(m_Passes, litId, litHandle, m_RefractionSceneId,
+                                               m_SamplerHandle, extent, m_RefractionMipIds,
+                                               &m_Internal->GrabRecording.ColorCopy);
+            }
+        };
         // The half-res translucent layer's two targets, imported only while content drives the
         // layer (the volume-field model): the reduced-resolution color the routed draws fill and
         // the reduced opaque depth they test against.
@@ -828,15 +850,10 @@ namespace Veng::Renderer
             // composite and before the TAA/bloom/tonemap tail, so translucents resolve,
             // bloom, and tonemap with the scene. Depth-tested against the opaque depth, depth-write
             // off, sorted back-to-front. Additive to the pipeline: no toggle — a scene with no
-            // translucent submesh records an empty pass. With Refraction on, the copy pass grabs
-            // the lit scene color first so a translucent fragment can sample the scene behind it.
-            if (m_Topology->RefractionActive)
-            {
-                m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
-                                      m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, renderExtent, m_RefractionMipIds,
-                                      &m_Internal->SceneColorSampled);
-            }
+            // translucent submesh records an empty pass. The grab copies the opaque depth, and
+            // with Refraction on the lit scene color, first so a translucent fragment can sample
+            // the scene behind it.
+            DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
             // translucent draw (a cockpit pane over an atmosphere shell).
@@ -1169,13 +1186,7 @@ namespace Veng::Renderer
             }
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
-            if (m_Topology->RefractionActive)
-            {
-                m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
-                                      m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, renderExtent, m_RefractionMipIds,
-                                      &m_Internal->SceneColorSampled);
-            }
+            DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
             // translucent draw (a cockpit pane over an atmosphere shell).
@@ -1987,13 +1998,19 @@ namespace Veng::Renderer
             Rebuild();
         }
 
-        // The grab and its blur chain are read only by a translucent draw whose material samples
-        // them, so a frame with none — most frames of most scenes — runs neither.
-        const auto samplesGrab = [](const TranslucentDraw& draw)
+        // The grab's copies are read only by a translucent draw whose material samples them, so a
+        // frame with none — most frames of most scenes — runs neither.
+        const auto readsColor = [](const TranslucentDraw& draw)
         { return draw.Material->GetParent()->IsSceneColorReader(); };
-        m_Internal->SceneColorSampled = m_Topology->RefractionActive &&
-                                        (std::ranges::any_of(translucentPlan.Draws, samplesGrab) ||
-                                         std::ranges::any_of(halfResPlan.Draws, samplesGrab));
+        const auto readsDepth = [](const TranslucentDraw& draw)
+        { return draw.Material->GetParent()->IsSceneDepthReader(); };
+        m_Internal->GrabRecording = ResolveSceneGrabRecording(
+            *m_Topology, SceneGrabReads{
+                             .Color = std::ranges::any_of(translucentPlan.Draws, readsColor) ||
+                                      std::ranges::any_of(halfResPlan.Draws, readsColor),
+                             .Depth = std::ranges::any_of(translucentPlan.Draws, readsDepth) ||
+                                      std::ranges::any_of(halfResPlan.Draws, readsDepth),
+                         });
 
         m_DrawBudgetStats = budget.GetStats();
         ReportDrawBudgetDrops();
@@ -2099,7 +2116,7 @@ namespace Veng::Renderer
                         m_Bloom->GetDownUpSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
-        m_Refraction->Recreate(m_Settings, m_RenderAllocExtent);
+        m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);
         m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_RenderAllocExtent);
         m_Picking->Recreate(m_Settings, m_RenderAllocExtent);
         // The mask grid covers the render allocation the lighting pass shades.
@@ -2442,10 +2459,15 @@ namespace Veng::Renderer
                 // The chain's own sampler rather than the shared g-buffer one: that carries the
                 // default MaxLod of 1, which would pin every blurred sample to the top two levels with
                 // nothing anywhere reporting it. At level 0 the two behave identically.
+                // Both availability flags claim what is wired; the gather confirms them below.
                 .SceneColor = uvec4(
                     m_Refraction->GetSceneHandle().Index, m_Refraction->GetSamplerHandle().Index,
                     m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
-                .SceneColorChain = uvec4(m_Refraction->GetSceneMipCount(), 0, 0, 0),
+                .SceneColorMipCount = m_Refraction->GetSceneMipCount(),
+                .SceneDepthCopied = m_Topology->SceneDepthCopyActive ? 1u : 0u,
+                // Wraps at 2^32: a consumer rotates a pattern by it, never measures time with it.
+                .FrameIndex = static_cast<u32>(m_FrameIndex),
+                .TemporalResolveActive = m_Topology->TaaActive ? 1u : 0u,
                 // The light and area-vertex bases (x, z) are the claimed region's, filled once the
                 // region is claimed below.
                 .LightState = uvec4(0u, packed.LightCount, 0u, static_cast<u32>(ambientArm)),
@@ -2553,21 +2575,28 @@ namespace Veng::Renderer
         // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
         PrepareDraws(resolvedView, viewConstantsIndex, halfResViewConstantsIndex, halfResViewReady);
 
-        // The view block went out claiming the grab, which only the gather can confirm: a frame
-        // whose draws do not sample it skips it, so the block reads it as unavailable instead —
-        // a fragment that samples it without declaring so then reads black, never a stale grab.
-        if (m_Topology->RefractionActive && !m_Internal->SceneColorSampled)
+        // The view block went out claiming each wired copy, which only the gather can confirm: a
+        // frame whose draws do not sample one skips it, so the block reads it as unavailable instead
+        // — a fragment that samples it without declaring so then reads black or the far plane,
+        // never a stale grab.
+        const auto ClearAvailable = [&](const u32 offset)
         {
-            constexpr u32 available = 0;
-            constexpr u32 availableOffset =
-                offsetof(ViewConstantsBlock, SceneColor) + 2 * sizeof(u32);
-            registry.PatchViewConstants(viewConstantsIndex, availableOffset,
-                                        std::as_bytes(std::span(&available, 1)));
+            constexpr u32 unavailable = 0;
+            registry.PatchViewConstants(viewConstantsIndex, offset,
+                                        std::as_bytes(std::span(&unavailable, 1)));
             if (halfResViewConstantsIndex != viewConstantsIndex)
             {
-                registry.PatchViewConstants(halfResViewConstantsIndex, availableOffset,
-                                            std::as_bytes(std::span(&available, 1)));
+                registry.PatchViewConstants(halfResViewConstantsIndex, offset,
+                                            std::as_bytes(std::span(&unavailable, 1)));
             }
+        };
+        if (m_Topology->RefractionActive && !m_Internal->GrabRecording.ColorCopy)
+        {
+            ClearAvailable(offsetof(ViewConstantsBlock, SceneColor) + 2 * sizeof(u32));
+        }
+        if (m_Topology->SceneDepthCopyActive && !m_Internal->GrabRecording.DepthCopy)
+        {
+            ClearAvailable(offsetof(ViewConstantsBlock, SceneDepthCopied));
         }
 
         // Build each skinned draw's surface skinned g-buffer pipeline on the first frame its
@@ -3007,6 +3036,9 @@ namespace Veng::Renderer
             {
                 bindings.push_back({.Id = m_RefractionMipIds[level], .View = mipViews[level]});
             }
+        }
+        if (m_Topology->SceneDepthCopyActive)
+        {
             bindings.push_back({.Id = m_RefractionDepthId, .View = m_Refraction->GetDepthView()});
         }
         if (m_HalfResTranslucentActive)

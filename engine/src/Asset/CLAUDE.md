@@ -628,6 +628,14 @@ compose with it for free and a material can never widen or replace the shape.
 `Material::GetTranslucentBlend()` — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Additive
 translucent materials".
 
+**A Translucent material declares what it reads of the pre-translucent grab**, so the renderer
+records only what some drawn material samples: `"readsSceneColor": true` for the scene-colour copy
+(and the depth beside it; `Material::IsSceneColorReader`), `"readsSceneDepth": true` for the
+opaque-depth copy alone (`Material::IsSceneDepthReader`). Both default false and are located cook
+errors on any other domain. Neither is policed against the shader: a depth-only material that calls
+the colour helpers reads black. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The refraction
+grab, and reading it blurred".
+
 The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
 index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);
 PostProcess and Sky push it at 0; GuiFill pushes it at **`GuiFillSelectorPushOffset` (20)**,

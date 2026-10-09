@@ -49,7 +49,7 @@ namespace Veng::Renderer
         // tail, so both fold in the same contributors (shadows, SSAO, sky — plus the g-buffer
         // emissive channel the lighting pass adds) — the Bloom pyramid then blooms the same HDR the
         // Final view would.
-        topology.SceneComposited = settings.Mode == DebugView::Final || topology.DebugBloom;
+        topology.SceneComposited = ResolveSceneComposited(settings);
 
         topology.ShadowActive = (topology.SceneComposited && settings.Shadows) ||
                                 topology.DebugShadow || topology.DebugCascades;
@@ -127,9 +127,12 @@ namespace Veng::Renderer
             topology.Dof = DofStages::Full;
         }
 
-        // The scene-color copy runs wherever the translucent composite does (the Final view and
-        // the Bloom debug arm), so a refractive material behaves identically in both.
+        // The grab runs wherever the translucent composite does (the Final view and the Bloom debug
+        // arm), so a translucent material behaves identically in both. The depth copy is not a look
+        // setting's: what records is the frame's draws' call (ResolveSceneGrabRecording).
+        topology.SceneDepthCopyActive = topology.SceneComposited;
         topology.RefractionActive = topology.SceneComposited && settings.Refraction;
+        topology.RefractionBlurActive = topology.RefractionActive && settings.RefractionBlur;
 
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
 
@@ -142,6 +145,22 @@ namespace Veng::Renderer
                                           settings.Mode == DebugView::CoC);
 
         return topology;
+    }
+
+    SceneGrabRecording ResolveSceneGrabRecording(const FrameTopology& topology,
+                                                 const SceneGrabReads reads)
+    {
+        SceneGrabRecording recording;
+        recording.DepthCopy = topology.SceneDepthCopyActive && (reads.Color || reads.Depth);
+        recording.ColorCopy = topology.RefractionActive && reads.Color;
+        recording.BlurChain = recording.ColorCopy && topology.RefractionBlurActive;
+        return recording;
+    }
+
+    bool ResolveSceneComposited(const SceneRendererSettings& settings)
+    {
+        return settings.Path != RenderPath::GeometryDepthNormal &&
+               (settings.Mode == DebugView::Final || settings.Mode == DebugView::Bloom);
     }
 
     bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings)

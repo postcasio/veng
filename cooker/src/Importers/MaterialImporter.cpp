@@ -301,6 +301,29 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1i. Parse the optional scene-depth read (default false) ---
+
+        // Set by a Translucent material whose fragment samples the pre-translucent opaque-depth
+        // copy (SampleSceneDepth) and not the colour grab; the renderer then records the depth
+        // copy alone. A Translucent-only key for the same reason as readsSceneColor.
+        bool readsSceneDepth = false;
+        if (vmat.contains("readsSceneDepth"))
+        {
+            if (!vmat["readsSceneDepth"].is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'readsSceneDepth' must be a boolean",
+                                vmatPath.string()));
+            }
+            readsSceneDepth = vmat["readsSceneDepth"].get<bool>();
+            if (readsSceneDepth && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'readsSceneDepth' requires the Translucent domain",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -914,7 +937,7 @@ namespace Veng::Cook
                 {
                     // Look up the referenced texture-or-volume field by name among declared
                     // fields — a sampler pairs with a 2D texture or a 3D volume alike.
-                    auto texDeclIt = declaredByName.find(decl.SamplerTextureName);
+                    const auto texDeclIt = declaredByName.find(decl.SamplerTextureName);
                     const bool refIsSampled =
                         texDeclIt != declaredByName.end() &&
                         (declaredFields[texDeclIt->second].Type == "texture" ||
@@ -1002,6 +1025,7 @@ namespace Veng::Cook
         header.HalfResolution = halfResolution ? 1u : 0u;
         header.Blend = blend;
         header.ReadsSceneColor = readsSceneColor ? 1u : 0u;
+        header.ReadsSceneDepth = readsSceneDepth ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

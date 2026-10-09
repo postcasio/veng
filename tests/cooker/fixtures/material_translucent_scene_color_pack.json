@@ -20,6 +20,11 @@
       "id": "0xBDE000E5CDD09F9C",
       "type": "Material",
       "source": "materials/translucent_scene_color.vmat.json"
+    },
+    {
+      "id": "0x6C2791F4711B984A",
+      "type": "Material",
+      "source": "materials/translucent_scene_depth.vmat.json"
     }
   ]
 }

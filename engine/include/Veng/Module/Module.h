@@ -406,10 +406,13 @@ extern "C"
 /// out short.
 /// Version 95 lets a trail's owner supply its emitter's velocity: Trail grows EmitterVelocity and
 /// HasEmitterVelocity. A module spawns and writes trails, so a stale module lays Trail out short.
+/// Version 96 lets a translucent material read the opaque scene depth without the colour grab:
+/// Material and MaterialInfo grow ReadsSceneDepth. A module builds a MaterialInfo for a runtime
+/// material, so a stale module lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 95u
+#define VENG_MODULE_ABI_VERSION 96u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

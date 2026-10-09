@@ -26,16 +26,17 @@ namespace Veng::Renderer
     class ScenePass;
     struct SceneRendererSettings;
 
-    /// @brief Owns the pre-translucent refraction grab — the scene-color/depth copy and its pipeline.
+    /// @brief Owns the pre-translucent grab — the scene-color and opaque-depth copies and their
+    ///        pipelines.
     ///
-    /// The scene-color copy vertical the renderer wires ahead of the translucent pass: the
-    /// full-extent HdrFormat scene-color intermediate and the R32Sfloat opaque-depth intermediate a
-    /// refractive material samples through the view block's SceneColor handles, plus the two-attachment
-    /// copy pipeline that fills them. Recreate allocates the pair (and registers their bindless slots)
-    /// only when Settings.Refraction is set, releasing them otherwise; Declare contributes the copy
-    /// pass into the renderer's pass list at the position the renderer grabs the lit scene color, each
-    /// of its passes skipping a frame no drawn material samples the grab. The copy pipeline is built unconditionally in the constructor — it is refraction-only and stays
-    /// created regardless of the toggle.
+    /// The copy vertical the renderer wires ahead of the translucent pass: the full-extent
+    /// HdrFormat scene-color intermediate (with its blur chain) and the R32Sfloat opaque-depth
+    /// intermediate a translucent material samples through the view block's SceneColor handles,
+    /// plus the single-attachment copy pipeline that fills each. The two are independent: the depth
+    /// copy exists wherever the renderer composites translucents, the colour copy only under
+    /// Settings.Refraction, and each of their passes skips a frame no drawn material samples it.
+    /// The pipelines are built unconditionally in the constructor and stay created regardless of
+    /// either.
     class RefractionGrab
     {
     public:
@@ -53,37 +54,53 @@ namespace Veng::Renderer
 
         /// @brief Recreates the scene-color and depth intermediates at the current extent.
         ///
-        /// Allocates the full-extent HdrFormat scene-color target and R32Sfloat depth target and
-        /// registers their bindless slots when Settings.Refraction is set; otherwise releases any
-        /// previously-created pair. Called from the renderer's Create and every Resize/Configure.
-        /// @param settings The active renderer settings (Refraction gates allocation).
-        /// @param extent   The allocation extent the intermediates are sized to.
-        void Recreate(const SceneRendererSettings& settings, uvec2 extent);
+        /// Allocates the R32Sfloat depth target when @p depthCopy is set, and the full-extent
+        /// HdrFormat scene-color target (with its chain) when Settings.Refraction is set, registering
+        /// their bindless slots and releasing whichever is not wanted. Called from the renderer's
+        /// Create and every Resize/Configure.
+        /// @param settings  The active renderer settings (Refraction and RefractionBlur shape the
+        ///                  colour target).
+        /// @param depthCopy Whether the renderer composites translucents, and so wires the depth copy.
+        /// @param extent    The allocation extent the intermediates are sized to.
+        void Recreate(const SceneRendererSettings& settings, bool depthCopy, uvec2 extent);
 
-        /// @brief Contributes the pre-translucent scene-color copy pass into the pass list.
+        /// @brief Contributes the pre-translucent opaque-depth copy pass into the pass list.
         ///
-        /// Appends a SceneColorCopyScenePass (over the owned copy pipeline) that grabs the lit scene
-        /// color and opaque depth into the intermediates the translucent pass then samples. The
-        /// renderer calls this at both Rebuild arms that composite the scene, ahead of the translucent
-        /// pass, when refraction is active.
+        /// The renderer calls this at both Rebuild arms that composite the scene, ahead of the
+        /// translucent pass, whatever Settings.Refraction says.
+        /// @param passes      The renderer's pass list to append into.
+        /// @param depthId     Opaque depth source id.
+        /// @param depthHandle Bindless slot for the opaque depth.
+        /// @param depthCopyId The depth-copy target this pass writes (the renderer's import).
+        /// @param sampler     Shared sampler bindless slot.
+        /// @param extent      The current render extent.
+        /// @param sampled     The renderer's per-frame flag, set when a draw this frame samples the
+        ///                    depth copy (a scene-depth or scene-colour reader); the pass skips the
+        ///                    frames it is clear.
+        void DeclareDepthCopy(vector<Unique<ScenePass>>& passes, ResourceId depthId,
+                              TextureHandle depthHandle, ResourceId depthCopyId,
+                              SamplerHandle sampler, uvec2 extent, const bool* sampled) const;
+
+        /// @brief Contributes the pre-translucent scene-color copy pass and its blur chain into the
+        ///        pass list.
+        ///
+        /// The renderer calls this at both Rebuild arms that composite the scene, ahead of the
+        /// translucent pass, when refraction is active.
         /// @param passes       The renderer's pass list to append into.
         /// @param sourceId     Lit scene-color source id (whichever intermediate the TAA/SSR routing picked).
         /// @param sourceHandle Bindless slot for the lit source.
-        /// @param depthId      Opaque depth source id.
-        /// @param depthHandle  Bindless slot for the opaque depth.
         /// @param copyId       The scene-color grab target this pass writes (the renderer's import).
-        /// @param depthCopyId  The depth-copy target this pass writes (the renderer's import).
         /// @param sampler      Shared sampler bindless slot.
         /// @param extent       The current render extent.
         /// @param mipIds       One id per chain level; index 0 is `copyId`, the rest are the
         ///                     halving levels. Empty or single-entry when the blur is off.
         /// @param sampled      The renderer's per-frame flag, set when a draw this frame samples
-        ///                     the grab (a material that IsSceneColorReader); every pass this
-        ///                     declares skips the frames it is clear.
-        void Declare(vector<Unique<ScenePass>>& passes, ResourceId sourceId,
-                     TextureHandle sourceHandle, ResourceId depthId, TextureHandle depthHandle,
-                     ResourceId copyId, ResourceId depthCopyId, SamplerHandle sampler, uvec2 extent,
-                     std::span<const ResourceId> mipIds, const bool* sampled) const;
+        ///                     the colour grab (a material that IsSceneColorReader); every pass
+        ///                     this declares skips the frames it is clear.
+        void DeclareColorCopy(vector<Unique<ScenePass>>& passes, ResourceId sourceId,
+                              TextureHandle sourceHandle, ResourceId copyId, SamplerHandle sampler,
+                              uvec2 extent, std::span<const ResourceId> mipIds,
+                              const bool* sampled) const;
 
         /// @brief The scene-color intermediate view (bound to its import when refraction is active).
         ///
@@ -109,7 +126,7 @@ namespace Veng::Renderer
         /// of 1, which silently pins every blurred sample to the top two levels.
         [[nodiscard]] SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
 
-        /// @brief The scene-depth intermediate view (bound to its import when refraction is active).
+        /// @brief The scene-depth intermediate view (bound to its import while the depth copy is wired).
         [[nodiscard]] const Ref<ImageView>& GetDepthView() const { return m_DepthView; }
 
         /// @brief Bindless slot for the scene-color intermediate (written into the view-constants block).
@@ -123,9 +140,11 @@ namespace Veng::Renderer
 
         Context& m_Context;
 
-        /// @brief Scene-color copy pipeline (sub-rect-mapped passthrough, two attachments), writing HdrFormat + R32Sfloat.
+        /// @brief Scene-color copy pipeline (sub-rect-mapped passthrough), writing HdrFormat.
         Ref<GraphicsPipeline> m_CopyPipeline;
-        /// @brief Layout for m_CopyPipeline: a texture + sampler + sub-rect push block.
+        /// @brief Opaque-depth copy pipeline (sub-rect-mapped passthrough), writing R32Sfloat.
+        Ref<GraphicsPipeline> m_DepthCopyPipeline;
+        /// @brief Layout for both copy pipelines: a texture + sampler + sub-rect push block.
         Ref<PipelineLayout> m_CopyLayout;
 
         /// @brief Refraction scene-color intermediate a translucent material samples.
@@ -158,7 +177,7 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_TailSet;
         /// @brief The tail's first level (MipTailFirstLevel), meaningful while m_TailSet is set.
         u32 m_TailFirst = 0;
-        /// @brief Refraction scene-depth intermediate: the opaque depth copied beside the scene color.
+        /// @brief Scene-depth intermediate: the opaque depth copied ahead of the translucent pass.
         Ref<Image> m_DepthImage;
         /// @brief View over m_DepthImage.
         Ref<ImageView> m_DepthView;

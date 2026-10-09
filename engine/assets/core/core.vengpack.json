@@ -272,6 +272,11 @@
       "source": "shaders/scene_color_copy.frag.shader.json"
     },
     {
+      "id": "0x0BC0737A4D1B42F7",
+      "type": "Shader",
+      "source": "shaders/scene_depth_copy.frag.shader.json"
+    },
+    {
       "id": "0xBB7BE54192883F09",
       "type": "Shader",
       "source": "shaders/scene_color_downsample.frag.shader.json"

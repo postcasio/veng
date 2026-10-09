@@ -139,8 +139,15 @@ namespace Veng::Renderer
         bool SsaoActive = false;
         /// @brief The SSR trace, blur, and composite are wired.
         bool SsrActive = false;
+        /// @brief The pre-translucent opaque-depth copy is wired.
+        ///
+        /// Wherever the translucent composite runs, independent of Settings.Refraction: a material
+        /// reading only the depth needs none of the colour grab.
+        bool SceneDepthCopyActive = false;
         /// @brief The pre-translucent scene-color copy is wired.
         bool RefractionActive = false;
+        /// @brief The scene-color copy carries its halving blur chain.
+        bool RefractionBlurActive = false;
         /// @brief The per-tile light cull runs ahead of the lighting pass, which then visits only
         ///        each tile's lights.
         ///
@@ -192,6 +199,50 @@ namespace Veng::Renderer
         /// @return True when FXAA or CMAA2 is wired.
         [[nodiscard]] bool PostTonemapAa() const { return FxaaActive || Cmaa2Active; }
     };
+
+    /// @brief What a frame's drawn translucent materials read of the pre-translucent grab.
+    struct SceneGrabReads
+    {
+        /// @brief Some drawn material samples the scene-colour copy (Material::IsSceneColorReader).
+        bool Color = false;
+        /// @brief Some drawn material samples the opaque-depth copy alone
+        ///        (Material::IsSceneDepthReader).
+        bool Depth = false;
+    };
+
+    /// @brief Which of the grab's wired passes record on one frame.
+    struct SceneGrabRecording
+    {
+        /// @brief The opaque-depth copy records.
+        bool DepthCopy = false;
+        /// @brief The scene-colour copy records.
+        bool ColorCopy = false;
+        /// @brief The colour copy's halving chain and coarse tail record.
+        bool BlurChain = false;
+
+        /// @brief Compares every decided field.
+        /// @return True when both record the same passes.
+        [[nodiscard]] bool operator==(const SceneGrabRecording&) const = default;
+    };
+
+    /// @brief Decides which of the grab's passes a frame records from what its draws read.
+    ///
+    /// A colour reader reads the depth copy too, so either declaration records it; the colour copy
+    /// and its chain record only for a colour reader, and only where Refraction wired them. A frame
+    /// reading nothing records none of them.
+    /// @param topology The frame's wired passes.
+    /// @param reads    What the frame's drawn translucent materials declare they sample.
+    /// @return The passes that record.
+    [[nodiscard]] SceneGrabRecording ResolveSceneGrabRecording(const FrameTopology& topology,
+                                                               SceneGrabReads reads);
+
+    /// @brief Whether the frame composites the full lit scene, translucents included.
+    ///
+    /// A function of the settings alone, so the renderer can size the grab's depth copy before the
+    /// frame topology is resolved.
+    /// @param settings The topology and sizing knobs the frame renders under.
+    /// @return True for the Final view and the Bloom debug arm on the deferred path.
+    [[nodiscard]] bool ResolveSceneComposited(const SceneRendererSettings& settings);
 
     /// @brief Decides which passes a frame wires from the topology settings and the resolved sky.
     ///

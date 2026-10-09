@@ -7,8 +7,8 @@
 //
 // The g-buffer depth is sampled through set-0 bindless; the field's 3D texture + sampler ride a
 // dedicated per-pass set (set 3) — a Texture3D in set 0's Metal argument buffer is a MoltenVK risk
-// the engine refuses. Bounds, the Opacity-folded scales, the step count, and the frame index for
-// the jitter rotation ride the push.
+// the engine refuses. Bounds, the Opacity-folded scales and the step count ride the push; the
+// jitter rotation reads the view's frame index from the view constants.
 #include "../view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -26,10 +26,6 @@ struct PushConstants
     uint Sampler;            // shared sampler bindless index
     uint ViewConstantsIndex; // current frame-in-flight's view-constants region
     uint Steps;              // fixed march step count
-    uint FrameIndex;         // monotonic frame counter for the temporal jitter rotation
-    uint Pad0;
-    uint Pad1;
-    uint Pad2;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
@@ -105,7 +101,7 @@ float4 fsMain(VSOutput input) : SV_Target
     float dt = segment / float(steps);
 
     // Per-pixel start jitter over one step, temporally rotated so TAA integrates it.
-    float jitter = InterleavedGradientNoise(input.sv_position.xy, g_PC.FrameIndex);
+    float jitter = InterleavedGradientNoise(input.sv_position.xy, vc.FrameIndex);
 
     float emissionFactor = g_PC.Scales.x;
     float extinctionFactor = g_PC.Scales.y;

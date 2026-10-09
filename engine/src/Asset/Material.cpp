@@ -24,7 +24,8 @@ namespace Veng
         : m_Context(*info.Context), m_Name(info.Name), m_Id(info.Id), m_Domain(info.Domain),
           m_CullMode(info.CullMode), m_SortPriority(info.SortPriority),
           m_WritesBloomMask(info.WritesBloomMask), m_HalfResolution(info.HalfResolution),
-          m_Blend(info.Blend), m_ReadsSceneColor(info.ReadsSceneColor), m_Pipeline(info.Pipeline),
+          m_Blend(info.Blend), m_ReadsSceneColor(info.ReadsSceneColor),
+          m_ReadsSceneDepth(info.ReadsSceneDepth), m_Pipeline(info.Pipeline),
           m_VertexShader(info.VertexShader), m_FragmentShader(info.FragmentShader),
           m_Textures(info.Textures), m_Block(info.Block), m_Fields(info.Fields),
           m_SelectorOffset(info.SelectorOffset)

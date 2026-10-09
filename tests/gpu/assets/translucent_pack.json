@@ -52,6 +52,16 @@
       "source": "materials/refractive.vmat.json"
     },
     {
+      "id": "0x78F0DFDF665EAB83",
+      "type": "Shader",
+      "source": "shaders/scene_depth_reader.frag.shader.json"
+    },
+    {
+      "id": "0xBEC3A07208ED39D3",
+      "type": "Material",
+      "source": "materials/scene_depth_reader.vmat.json"
+    },
+    {
       "id": "0xC66F784A6194F7B8",
       "type": "Material",
       "source": "materials/translucent_half.vmat.json"

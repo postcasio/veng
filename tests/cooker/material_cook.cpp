@@ -715,6 +715,32 @@ TEST_CASE("Cooker: a scene-colour-reading translucent material cooks with the fl
           string::npos);
 }
 
+TEST_CASE("Cooker: a scene-depth-reading translucent material cooks with the flag set; other "
+          "domains refuse it")
+{
+    const Result<ArchiveReader> reader = CookMaterialPack(
+        FixtureDir / "material_translucent_scene_color_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_scene_depth.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x6C2791F4711B984AULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.ReadsSceneDepth == 1u);
+    // The depth read is its own declaration, not a colour read.
+    CHECK(header.ReadsSceneColor == 0u);
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const VoidResult surface = cooker.CookPack(
+        FixtureDir / "material_surface_scene_depth_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_surface_scene_depth.vengpack");
+    REQUIRE_FALSE(surface.has_value());
+    CHECK(surface.error().find("'readsSceneDepth' requires the Translucent domain") !=
+          string::npos);
+}
+
 TEST_CASE("Cooker: an unknown cull mode is a located cook error")
 {
     // Cull modes are serialized by enumerator name ("Back"/"Front"/"None"); a

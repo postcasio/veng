@@ -757,21 +757,41 @@ spot frustums + `6N` cube faces per frame, on top of the camera and cascade quer
 
 ### The refraction grab, and reading it blurred
 
-**`Settings.Refraction` copies the lit scene ahead of the translucent pass**, into a full-extent
-`HdrFormat` colour target and an `R32Sfloat` opaque-depth target beside it, and publishes both in the
-view block's `SceneColor` slot. A Translucent fragment reaches them through
-`Veng/translucent.slang` — `SampleSceneColor` for what is behind it, `SampleSceneDepth` to reject a
-distorted sample whose geometry stands in *front* of the refractor. The copy predates the translucent
-pass, so one translucent surface never refracts another.
+**The grab copies the lit scene and its opaque depth ahead of the translucent pass**, into a
+full-extent `HdrFormat` colour target and an `R32Sfloat` depth target, and publishes both in the
+view block's `SceneColor` slot. A Translucent fragment reaches them through `Veng/translucent.slang`
+— `SampleSceneColor` for what is behind it, `SampleSceneDepth` to reject a distorted sample whose
+geometry stands in *front* of the refractor, or to find the surface a medium or a soft edge meets.
+The copies predate the translucent pass, so one translucent surface never refracts another.
 
-**The grab runs only on a frame something samples it.** A material whose fragment reads it declares
-`"readsSceneColor": true` in its `.vmat.json` (Translucent domain only, a cook error elsewhere;
-`Material::IsSceneColorReader`), and the gather sets a per-frame flag when any draw in the
-translucent or half-resolution plan comes from such a material. The copy, every halving pass and the
-coarse-tail dispatch skip every other frame (`SkipWhenUnread`, below), and the view block's
-`SceneColor.z` is patched to 0 after the gather, so `SceneColorAvailable` is false that frame and a
-fragment that samples without declaring reads black — never a stale grab, nor a level left in an
-undefined layout. Most frames of most scenes draw no refractor, and pay nothing for the setting.
+**The two copies are separate passes behind separate gates.** The colour copy (`Scene Color Copy`)
+and its blur chain exist only under `Settings.Refraction`. The depth copy (`Scene Depth Copy`) is a
+single-attachment R32 pass wired wherever the translucent composite is — the Final view and the
+Bloom debug arm (`FrameTopology::SceneDepthCopyActive`) — with no look setting in the way, at the
+cost of one R32 target at the allocation extent. So a scene that wants depth but not refraction can
+have it.
+
+**Each copy runs only on a frame something samples it.** A material declares what its fragment
+reads in its `.vmat.json` (Translucent domain only, a cook error elsewhere): `"readsSceneColor":
+true` for the colour (`Material::IsSceneColorReader`), `"readsSceneDepth": true` for the depth alone
+(`Material::IsSceneDepthReader`). The gather reads both off every draw in the translucent and
+half-resolution plans, and `ResolveSceneGrabRecording` (`FrameTopology.h`, pure) decides what
+records:
+
+- **a colour or a depth reader** records the depth copy — a refractor depth-gates its samples, so a
+  colour reader gets the depth too;
+- **a colour reader, under `Refraction`,** also records the colour copy, every halving pass and the
+  coarse-tail dispatch — the whole grab;
+- **nothing reading** records none of them.
+
+A depth-only frame therefore costs one single-attachment fullscreen copy and no blur chain. The
+passes skip through `SkipWhenUnread` (below), and the view block's two availability flags —
+`SceneColor.z` and `SceneDepthCopied` — are patched to 0 after the gather for a copy that did not
+record, so `SceneColorAvailable` / `SceneDepthAvailable` are false that frame and a fragment that
+samples without declaring reads black or the far plane — never a stale grab, nor a level left in an
+undefined layout. A depth-only material must not call the colour helpers; the cook does not police
+that. Most frames of most scenes draw no reader, and pay nothing for either. A half-resolution
+translucent reads the same full-resolution copies at its own UVs.
 
 **`Settings.RefractionBlur` gives that copy a mip chain**, so the same fragment can read the scene
 behind it *blurred* — `SampleSceneColorBlurred(vc, uv, blur)`, with `blur` in [0,1] across whatever
@@ -1360,6 +1380,14 @@ threshold (`SceneView::SpecularAntiAliasingVariance` / `SpecularAntiAliasingThre
 non-negative), read by `MakeLightingSurface`; `.w` is unused. A view block a pass writes without them
 (zero) shades with the widening off.
 
+**The block carries the view's frame count and its temporal resolve.** `FrameIndex` is the
+renderer's executed-frame counter (the one the TAA jitter sequence reads), wrapped to 32 bits; each
+`SceneRenderer` keeps its own, so two viewports count their own frames and a cube capture counts one
+per face it renders. `TemporalResolveActive` is 1 when the view's anti-aliasing is TAA or TAAU
+(`FrameTopology::TaaActive`). Together they let a material that jitters its sampling rotate the
+jitter per frame only when a resolve will integrate it, and hold it still otherwise, where rotation
+reads as crawl. The volume-field march takes its jitter rotation from here.
+
 **The per-material parameter arena is not in this ring** — it rings by frame-in-flight alone, so a
 material's block sits at one offset whichever view is recording and a value written between two
 `Execute`s of one frame is what *both* viewports' draws read at submit. Ringing it per view would
@@ -1843,7 +1871,7 @@ media, a named future increment, not this.
   downstream then treats it as scene content: the pre-translucent **refraction grab captures it**, a
   **translucent blends over it**, **SSR reflects it**, and — the load-bearing one — the **TAA
   resolve is the march jitter's integrator** (the per-pixel start offset is dithered and temporally
-  rotated precisely so TAA converges it to a smooth result; without TAA the march reads as
+  rotated by the view block's `FrameIndex` precisely so TAA converges it to a smooth result; without TAA the march reads as
   per-pixel noise that a consumer must hide with a high step count).
 - **One fullscreen draw per field, blended `(ONE, SRC_ALPHA)`.** The fragment marches the view ray
   front-to-back and returns `float4(accumulated emission, surviving transmittance)`: with the blend

@@ -36,10 +36,6 @@ namespace Veng::Renderer
             u32 Sampler;      // shared sampler bindless index
             u32 ViewConstantsIndex;
             u32 Steps;
-            u32 FrameIndex;
-            u32 Pad0;
-            u32 Pad1;
-            u32 Pad2;
         };
 
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
@@ -153,10 +149,6 @@ namespace Veng::Renderer
 
     void VolumeScenePass::DrawFields(CommandBuffer& cmd, const ScenePassContext& ctx)
     {
-        // A monotonic counter feeds the shader's temporal jitter rotation (independent of the
-        // frames-in-flight cycle, so the per-pixel start offset decorrelates every real frame).
-        const u32 frameIndex = m_FrameIndex++;
-
         if (m_Fields == nullptr || m_Fields->empty())
         {
             m_FieldSets.clear();
@@ -210,7 +202,6 @@ namespace Veng::Renderer
                 .Sampler = m_SamplerIndex,
                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                 .Steps = inst->Steps,
-                .FrameIndex = frameIndex,
             });
             cmd.DrawFullscreenTriangle();
         }
