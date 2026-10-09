@@ -1182,6 +1182,16 @@ namespace Veng::Audio
 
     // -- engine --------------------------------------------------------------
 
+    namespace
+    {
+        // The gain a voice is ranked at when the budget evicts: a Muted voice is inaudible, so it
+        // goes before any audible one; a Held voice keeps its authored gain, since it resumes.
+        f32 EvictionGain(const PresentationState state, const f32 authoredGain)
+        {
+            return state == PresentationState::Muted ? 0.0f : authoredGain;
+        }
+    }
+
     AudioEngine::AudioEngine(AudioDevice& device, const PresentationScopes& scopes)
         : m_Device(device), m_Scopes(scopes), m_Music(CreateUnique<MusicDirector>(*this))
     {
@@ -1416,9 +1426,14 @@ namespace Veng::Audio
         f32 quietestGain = incomingGain;
         for (u32 i = 0; i < MaxVoices; ++i)
         {
-            if (m_Voices[i].Active && m_Voices[i].Params.Gain < quietestGain)
+            if (!m_Voices[i].Active)
             {
-                quietestGain = m_Voices[i].Params.Gain;
+                continue;
+            }
+            const f32 gain = EvictionGain(m_Voices[i].State, m_Voices[i].Params.Gain);
+            if (gain < quietestGain)
+            {
+                quietestGain = gain;
                 quietest = i;
             }
         }
@@ -1941,9 +1956,10 @@ namespace Veng::Audio
                 continue;
             }
             ++count;
-            if (m_Managed[i].BaseGain < quietestGain)
+            const f32 gain = EvictionGain(m_Voices[i].State, m_Managed[i].BaseGain);
+            if (gain < quietestGain)
             {
-                quietestGain = m_Managed[i].BaseGain;
+                quietestGain = gain;
                 quietest = i;
             }
         }

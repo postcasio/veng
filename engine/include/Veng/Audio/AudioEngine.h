@@ -322,8 +322,9 @@ namespace Veng::Audio
         /// @brief Registers a voice playing a buffer, arbitrating against the voice budget.
         ///
         /// Takes a free slot when one exists; when the budget is full, evicts the quietest active
-        /// voice if the incoming voice is louder, and otherwise rejects the request. The evicted or
-        /// rejected outcome is reported by an invalid handle.
+        /// voice if the incoming voice is louder, and otherwise rejects the request. A voice in a
+        /// Muted scope ranks as silent, so it is evicted first. The rejected outcome is reported by
+        /// an invalid handle.
         /// @param scope  The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param buffer The PCM source (held for the voice's lifetime).
         /// @param params The mix parameters.
@@ -377,8 +378,9 @@ namespace Veng::Audio
         /// @brief Fires a non-spatial one-shot voice on a chosen bus.
         ///
         /// A fire-and-forget voice: a non-looping clip's voice retires when it ends. Backed by the
-        /// engine one-shot pool; when the pool is full the quietest pooled voice is dropped if the
-        /// incoming voice is louder, and otherwise the request is rejected. An Encoded clip plays
+        /// engine one-shot pool; when the pool is full the quietest pooled voice (a Muted one ranking
+        /// as silent) is dropped if the incoming voice is louder, and otherwise the request is
+        /// rejected. An Encoded clip plays
         /// through the streaming path like any other; an unresident clip plays nothing.
         /// @param scope  The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param clip   The clip to play.
@@ -642,7 +644,8 @@ namespace Veng::Audio
         /// @brief Reserves a voice slot, evicting the quietest active voice when the budget is full.
         ///
         /// Returns a free slot, or the slot of a voice evicted because @p incomingGain is louder,
-        /// or InvalidSlot when the budget is full and the incoming voice would be the quietest.
+        /// or InvalidSlot when the budget is full and the incoming voice would be the quietest. A
+        /// voice is ranked at its authored gain, or at zero while its scope is Muted.
         /// @param incomingGain The incoming voice's pre-spatialization gain.
         [[nodiscard]] u32 AllocateSlot(f32 incomingGain);
 
@@ -653,7 +656,8 @@ namespace Veng::Audio
         /// @brief Makes room in the one-shot pool for an incoming voice, or reports it rejected.
         ///
         /// Evicts the quietest pooled voice when the pool is full and the incoming voice is louder;
-        /// returns false when the pool is full and the incoming voice would be the quietest.
+        /// returns false when the pool is full and the incoming voice would be the quietest. A
+        /// voice is ranked at its base gain, or at zero while its scope is Muted.
         /// @param incomingGain The incoming voice's pre-spatialization gain.
         [[nodiscard]] bool ReserveOneShotSlot(f32 incomingGain);
 

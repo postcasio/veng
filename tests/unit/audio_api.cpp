@@ -1,14 +1,16 @@
 // The code-facing audio surface over a null device — all pure CPU, no hardware. A one-shot lands in
 // the snapshot then retires on its own or on demand; a PlayAt voice shares the spatialization path;
-// the one-shot pool caps and drops the quietest; and the music director holds one logical track,
-// crossfading equal-power between two and collapsing to one, playing the request of the
-// highest-priority scope that is presented — running or paused — and following it as scopes close
-// and requests change.
+// the one-shot pool caps and drops the quietest, and a full budget or pool evicts a muted voice
+// first; and the music director holds one logical track, crossfading equal-power between two and
+// collapsing to one, playing the request of the highest-priority scope that is presented — running
+// or paused — and following it as scopes close and requests change.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Audio/AudioBuffer.h>
+#include <Veng/Audio/AudioBus.h>
 #include <Veng/Audio/AudioClip.h>
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/AudioDevice.h>
@@ -226,6 +228,74 @@ TEST_CASE("the one-shot pool caps at MaxOneShotVoices and drops the quietest")
     }
     CHECK(live == MaxOneShotVoices);
     CHECK(minLiveGain > maxDroppedGain);
+}
+
+TEST_CASE("a full voice budget evicts a muted voice before a quieter audible one")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    const Unique<PresentationScope> live = scopes.Open();
+    const Unique<PresentationScope> muted = scopes.Open();
+    const Unique<PresentationScope> held = scopes.Open();
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    frame({Live(live.get()), Muted(muted.get())});
+
+    const Ref<AudioBuffer> buffer = AudioBuffer::Create(std::vector<f32>(64, 0.5f), 1, 48000);
+    const auto params = [](const f32 gain)
+    { return VoiceParams{.Bus = AudioBuses::SFX(), .Gain = gain, .Loop = true}; };
+
+    // Loud but paused, loud but inaudible, and the rest of the budget audible and quiet; the held
+    // voice takes the lower slot, so ranking it silent too would evict it first.
+    const VoiceHandle heldVoice = engine.AddVoice(held->GetId(), buffer, params(1.0f));
+    const VoiceHandle mutedVoice = engine.AddVoice(muted->GetId(), buffer, params(1.0f));
+    std::vector<VoiceHandle> quiet;
+    for (u32 i = 2; i < MaxVoices; ++i)
+    {
+        quiet.push_back(engine.AddVoice(live->GetId(), buffer, params(0.2f)));
+    }
+    REQUIRE(mutedVoice.IsValid());
+    REQUIRE(heldVoice.IsValid());
+    REQUIRE(std::ranges::all_of(quiet, [](const VoiceHandle h) { return h.IsValid(); }));
+
+    // One more audible voice: the muted one goes, the held one and every audible one stay.
+    const VoiceHandle incoming = engine.AddVoice(live->GetId(), buffer, params(0.5f));
+    CHECK(incoming.IsValid());
+    CHECK_FALSE(engine.IsVoiceLive(mutedVoice));
+    CHECK(engine.IsVoiceLive(heldVoice));
+    CHECK(std::ranges::all_of(quiet, [&](const VoiceHandle h) { return engine.IsVoiceLive(h); }));
+}
+
+TEST_CASE("a full one-shot pool evicts a muted voice before a quieter audible one")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    const Unique<PresentationScope> live = scopes.Open();
+    const Unique<PresentationScope> muted = scopes.Open();
+    const Unique<PresentationScope> held = scopes.Open();
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    frame({Live(live.get()), Muted(muted.get())});
+
+    const AssetHandle<AudioClip> clip = MakePcmClip(0.5f, 48000);
+    const auto params = [](const f32 gain) { return OneShotParams{.Gain = gain, .Loop = true}; };
+
+    const VoiceHandle heldVoice = engine.PlayOneShot(held->GetId(), clip, params(1.0f));
+    const VoiceHandle mutedVoice = engine.PlayOneShot(muted->GetId(), clip, params(1.0f));
+    std::vector<VoiceHandle> quiet;
+    for (u32 i = 2; i < MaxOneShotVoices; ++i)
+    {
+        quiet.push_back(engine.PlayOneShot(live->GetId(), clip, params(0.2f)));
+    }
+    REQUIRE(mutedVoice.IsValid());
+    REQUIRE(heldVoice.IsValid());
+    REQUIRE(std::ranges::all_of(quiet, [](const VoiceHandle h) { return h.IsValid(); }));
+
+    const VoiceHandle incoming = engine.PlayOneShot(live->GetId(), clip, params(0.5f));
+    CHECK(incoming.IsValid());
+    CHECK_FALSE(engine.IsVoiceLive(mutedVoice));
+    CHECK(engine.IsVoiceLive(heldVoice));
+    CHECK(std::ranges::all_of(quiet, [&](const VoiceHandle h) { return engine.IsVoiceLive(h); }));
 }
 
 TEST_CASE("the music director keeps one logical track and crossfades equal-power")

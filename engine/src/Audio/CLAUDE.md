@@ -142,6 +142,12 @@ arbitrates against it. `AddVoice` takes a free slot when one exists; when the bu
 evicts the quietest active voice if the incoming voice is louder, and otherwise rejects the request
 (an invalid handle). Real-time CPU is therefore bounded by `MaxVoices`, not by scene population.
 
+**Quietest means quietest as heard.** Eviction ranks a voice at its authored gain (a one-shot's
+base gain in the one-shot pool), except that a voice whose scope's latched state is `Muted` ranks at
+zero: it is inaudible, so it goes before any audible voice however loud it was authored. A `Held`
+voice keeps its authored gain, since it resumes as authored. The incoming voice is ranked at its
+authored gain whatever its scope's state.
+
 ## The null device
 
 `AudioBackend::Null` (chosen automatically when no hardware initializes, or forced for
