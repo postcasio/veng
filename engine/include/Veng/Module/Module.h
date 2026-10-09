@@ -392,10 +392,15 @@ extern "C"
 /// scene-retiring hook is handed the scene mutable. A module subclasses GuiDriver, builds driver
 /// contexts and registers types, so a stale module dispatches through a short vtable and lays the
 /// context and the type record out short.
+/// Version 92 drops the builtin Sky's runtime-only LightingSource (a scene-lighting CaptureSurface is
+/// the one input that lights a scene from a cube other than its sky's), and SceneRenderer's
+/// GetLightingSourceDeriveCount becomes GetLightingDeriveCount. A module spawns prefabs carrying the
+/// builtin and may read the renderer's diagnostics, so a stale module lays Sky out long and calls an
+/// entry point the host no longer exports.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 91u
+#define VENG_MODULE_ABI_VERSION 92u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -1299,10 +1299,8 @@ active:
   and the resolver ignores lighting captures there, so each sweep is lit by the `Sky` rather than by
   the sweep before it — a feedback loop that would compound the scene's light into its lighting.
 
-`Sky::LightingSource` is the second way to feed the same arm: a caller-owned cube-view with no
-revision, derived one-shot, honoured on the IBL tier under any source kind, and outranked by an active
-lighting capture. `SkyResolver::GetLightingSourceDeriveCount` (and `SceneRenderer`'s) counts both
-kinds of derive. The ambient arm takes IBL once its source is resident
+A scene-lighting capture is the only input to this arm other than the sky's own cube.
+`SkyResolver::GetLightingDeriveCount` (and `SceneRenderer`'s) counts its derives. The ambient arm takes IBL once its source is resident
 (`SkyResolver::IsIblSourceResident`): a lighting cube, a loaded environment or sky material, or a
 baked cube a bake has landed in. **Cost** is authored, as the tiers are: one convolution per
 presenting renderer per completed sweep, plus the capture's own face renders.

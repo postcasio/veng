@@ -3233,9 +3233,9 @@ namespace Veng::Renderer
     {
         return m_SkyResolver->DidRegenerateAtmosphereLastFrame();
     }
-    u64 SceneRenderer::GetLightingSourceDeriveCount() const
+    u64 SceneRenderer::GetLightingDeriveCount() const
     {
-        return m_SkyResolver->GetLightingSourceDeriveCount();
+        return m_SkyResolver->GetLightingDeriveCount();
     }
     u32 SceneRenderer::GetBroadphaseNodeCount() const
     {

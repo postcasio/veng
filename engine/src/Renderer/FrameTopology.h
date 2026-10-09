@@ -74,8 +74,8 @@ namespace Veng::Renderer
         bool IsBaked = false;
         /// @brief Whether a lighting cube other than the sky's own feeds the IBL tier.
         ///
-        /// A scene-lighting capture or a Sky::LightingSource: image-based lighting is then wired
-        /// whatever the source kind, with no sky source at all included.
+        /// A scene-lighting capture: image-based lighting is then wired whatever the source kind,
+        /// with no sky source at all included.
         bool LightingCube = false;
     };
 

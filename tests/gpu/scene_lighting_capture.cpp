@@ -309,7 +309,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 0);
+    CHECK(resolver->GetLightingDeriveCount() == 0);
     CHECK_FALSE(resolver->IsLightingCubeResolved());
     CHECK(resolver->GetLightingDebugCube() == sourceCube->GetCubeView());
     const std::vector<u8> skyIrradiance = DownloadIrradiance(Context, resolver->GetIbl());
@@ -318,7 +318,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     frame();
     const SceneCapture* const capture = scene->Get<CaptureSurface>(probe).GetCapture();
     REQUIRE(capture != nullptr);
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     CHECK(resolver->IsLightingCubeResolved());
     CHECK(resolver->GetLightingDebugCube() == capture->GetCubeView());
     CHECK(resolver->GetSkyConsumerSet().get() == sourceCube->GetSet().get());
@@ -329,7 +329,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
 
     // MarkDirty re-arms it: nothing moves until that sweep completes, then the scene re-lights once.
     scene->Get<CaptureSurface>(probe).MarkDirty();
@@ -337,16 +337,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     frame();
-    CHECK(resolver->GetLightingSourceDeriveCount() == 2);
+    CHECK(resolver->GetLightingDeriveCount() == 2);
 
     // Disabled, it lets go on the next frame, and the Sky's lighting is derived again exactly.
     scene->Get<CaptureSurface>(probe).Enabled = false;
     frame();
     CHECK_FALSE(resolver->IsLightingCubeResolved());
     CHECK(resolver->GetLightingDebugCube() == sourceCube->GetCubeView());
-    CHECK(resolver->GetLightingSourceDeriveCount() == 2);
+    CHECK(resolver->GetLightingDeriveCount() == 2);
     CHECK(DownloadIrradiance(Context, resolver->GetIbl()) == skyIrradiance);
 }
 
@@ -379,7 +379,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     const SceneCapture* const capture = scene->Get<CaptureSurface>(probe).GetCapture();
     REQUIRE(capture != nullptr);
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     CHECK(resolver->GetResolvedLighting() == SkyLighting::IBL);
     CHECK(resolver->IsIblSourceResident(view));
     CHECK(resolver->GetLightingDebugCube() == capture->GetCubeView());
@@ -398,12 +398,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     frame();
-    CHECK(resolver->GetLightingSourceDeriveCount() == 2);
+    CHECK(resolver->GetLightingDeriveCount() == 2);
 
     // Its own faces were lit without it, through both sweeps.
-    CHECK(capture->GetFaceRenderer().GetLightingSourceDeriveCount() == 0);
+    CHECK(capture->GetFaceRenderer().GetLightingDeriveCount() == 0);
 
     // And a capture face resolving the same scene ignores it.
     const Unique<SkyResolver> faceResolver = SkyResolver::Create(Context, assets);
@@ -450,7 +450,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     CHECK(resolver->GetResolvedKind() == SkySourceKind::Material);
     CHECK(resolver->GetResolvedLighting() == SkyLighting::IBL);
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     CHECK(FaceCenter(DownloadIrradiance(Context, resolver->GetIbl()), FaceDown).g > 0.1f);
 }
 
@@ -489,7 +489,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 0);
+    CHECK(resolver->GetLightingDeriveCount() == 0);
     const std::vector<u8> skyIrradiance = DownloadIrradiance(Context, resolver->GetIbl());
     // The uniform blue panorama lights every direction blue.
     CHECK(FaceCenter(skyIrradiance, FaceDown).b > FaceCenter(skyIrradiance, FaceDown).g);
@@ -500,7 +500,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         frame();
     }
-    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetLightingDeriveCount() == 1);
     const vec3 litDown = FaceCenter(DownloadIrradiance(Context, resolver->GetIbl()), FaceDown);
     CHECK(litDown.g > FaceCenter(skyIrradiance, FaceDown).g + 0.05f);
 
