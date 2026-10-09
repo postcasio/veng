@@ -994,6 +994,18 @@ fragment discard switched off by the push block's `Occluded` word.
   tangents. The records sit in a host-mapped ring sized at the
   budget below, one region per frame in flight at set 3, as the sprite pass's do — so a frame's
   ribbons, trail samples and path segments all draw from one fixed region and never grow it.
+- **A tube trail is a second record kind.** A `Trail` with `Shape` `Tube` contributes one 144-byte
+  `GpuTrailTube` per consecutive pair of its points — both rings' eye-relative centres, colours and
+  axes (carrying the taper) and an index into a per-frame table of outline points
+  (`RibbonDrawPlan::Outlines`, at most `MaxTrailOutlinePointsPerFrame`) — in a ring of its own at set
+  3 binding 1, the outlines at binding 2. The vertex stage (`ribbon_tube.vert`) draws each record as
+  a quad per outline side at the most sides an outline has (`MaxTrailOutlinePoints`), collapsing the
+  quads past its own outline's count, with a smooth outward normal per outline point. The fragment
+  draws both faces, each covering `|N·V|^Softness`, so the core reads brightest and the silhouette
+  fades out. Tubes are scene-placed and occluded, draw between the occluded and unoccluded band sets
+  through their own alpha and additive pipelines, and count one record each against the shared
+  budget; the post-resolve pass holds token tube and outline rings, its set's bindings needing a
+  buffer each.
 - **A path stands where its entity's meshes draw.** A `RibbonPath`'s local points go through its
   entity's *drawn* world transform — interpolated by the view's alpha while the scene carries motion
   history, the current pose at alpha 0, with any `PredictionError` offset applied — the same pose

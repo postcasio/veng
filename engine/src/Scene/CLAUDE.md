@@ -261,7 +261,16 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   world X and Y axes (scale included), and the band is drawn as the silhouette of the elliptical
   tube those axes and the extents describe, `Width` scaling the extents and tapering them with
   `TailWidthScale` — so a wide, flat nozzle leaves a plume wide from one side and thin from the
-  other. `AdvanceTrail` takes the head's world transform for this; its position overload records the
+  other. **`Shape` `Tube` draws it as geometry instead**: its `Outline` (a closed
+  polygon in the entity's local X and Y, scaled by `Width`) — or, with none, the `CrossSection`'s
+  ellipse, or a circle `Width` across — swept between consecutive samples, each ring in the plane of
+  the axes its sample recorded and glowing by how squarely it faces the viewer (`Softness`).
+  **Samples may be fired rather than dropped**: a new one leaves with `EmitVelocity`
+  (along the entity's local axes) plus `InheritVelocity` of the emitter's own velocity, and every
+  sample's velocity decays by `Drag`, integrated exactly so its path does not depend on the frame
+  rate. The chain is joined in emission order, so a faster sample passing a slower one would double
+  it back on itself; `AdvanceTrail` drops a sample a newer one has overtaken, as faster exhaust sweeps
+  up slower exhaust ahead of it. A trail whose samples do not move keeps every one. `AdvanceTrail` takes the head's world transform for this; its position overload records the
   world's axes. **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples
   cleared, so a reused or teleported entity starts fresh instead of streaking from where it stood. A
   prefab may carry a `Trail`; it stands on every peer that instantiates the prefab.

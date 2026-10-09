@@ -6,7 +6,8 @@
 // dot of its width, and a path's placement routes it to the scene or the post-resolve plan under
 // one shared budget. A trail's cross-section draws the extent of its emitter's shape across the side
 // it is seen from; a sample fired from its emitter leaves along its axis, slows to rest by a path
-// the frame rate does not change, and inherits the emitter's motion; and a tube trail gathers a
+// the frame rate does not change, inherits the emitter's motion, and sweeps up the slower samples it
+// overtakes rather than doubling the trail back; and a tube trail gathers a
 // segment per sample pair around its outline, tapering with its age.
 
 #include <doctest/doctest.h>
@@ -317,6 +318,47 @@ TEST_CASE("A sample inherits its emitter's velocity, and a restart forgets where
     CHECK(trail.Samples.empty());
     AdvanceTrail(trail, vec3(1000.0f, 0.0f, 0.0f), Frame);
     CHECK(trail.Samples.front().Velocity == vec3(0.0f));
+}
+
+TEST_CASE("A faster sample sweeps up the slower ones it overtakes, so the trail never doubles back")
+{
+    // The exhaust speeds up and the emitter accelerates after it: each new sample is faster than
+    // those ahead of it, and comes to rest farther out, so unswept it would pass them.
+    Trail trail{
+        .Lifetime = 0.9f, .InheritVelocity = 1.0f, .Drag = 4.0f, .MinSampleDistance = 10.0f};
+    f32 position = 0.0f;
+    usize doubledBack = 0;
+    usize longest = 0;
+    for (u32 frame = 0; frame < 180; ++frame)
+    {
+        const f32 ramp = std::clamp(static_cast<f32>(frame) / 60.0f, 0.0f, 1.0f);
+        trail.EmitVelocity = vec3(0.0f, 0.0f, 60.0f + (340.0f * ramp));
+        position -= 200.0f * ramp * Frame;
+        const vec3 head(0.0f, 0.0f, position);
+        AdvanceTrail(trail, head, Frame);
+
+        vector<vec3> chain;
+        for (const TrailSample& sample : trail.Samples)
+        {
+            chain.push_back(sample.Position);
+        }
+        chain.push_back(head);
+        for (usize i = 2; i < chain.size(); ++i)
+        {
+            doubledBack += glm::dot(chain[i - 1] - chain[i - 2], chain[i] - chain[i - 1]) < 0.0f;
+        }
+        longest = std::max(longest, trail.Samples.size());
+    }
+    CHECK(doubledBack == 0);
+    CHECK(longest > 4);
+
+    // A trail whose samples stay put keeps every one, even where its emitter turns straight back.
+    Trail still{.Lifetime = 10.0f};
+    for (const f32 x : {0.0f, 1.0f, 2.0f, 1.0f, 0.0f})
+    {
+        AdvanceTrail(still, vec3(x, 0.0f, 0.0f), Frame);
+    }
+    CHECK(still.Samples.size() == 5);
 }
 
 TEST_CASE("A tube trail gathers a segment per sample pair around its outline, and a band none")

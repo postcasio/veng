@@ -27,6 +27,38 @@ namespace Veng
             }
             return world;
         }
+
+        // Drops every sample a newer one has overtaken — faster exhaust sweeping up slower exhaust
+        // ahead of it — so the chain, which joins samples in emission order, never doubles back.
+        // A kept sample is dropped when the step from it to the next point (a newer sample, or the
+        // head) turns back on the step into it.
+        void SweepOvertaken(vector<TrailSample>& samples, const vec3& head)
+        {
+            usize kept = 0;
+            const auto doublesBack = [&samples, &kept](const vec3& next)
+            {
+                if (kept < 2)
+                {
+                    return false;
+                }
+                const vec3 into = samples[kept - 1].Position - samples[kept - 2].Position;
+                const vec3 onward = next - samples[kept - 1].Position;
+                return glm::dot(into, onward) < 0.0f;
+            };
+            for (usize i = 0; i < samples.size(); ++i)
+            {
+                while (doublesBack(samples[i].Position))
+                {
+                    --kept;
+                }
+                samples[kept++] = samples[i];
+            }
+            while (doublesBack(head))
+            {
+                --kept;
+            }
+            samples.resize(kept);
+        }
     }
 
     void AdvanceTrail(Trail& trail, const vec3& head, const f32 delta)
@@ -71,6 +103,10 @@ namespace Veng
         }
         std::erase_if(trail.Samples, [lifetime = trail.Lifetime](const TrailSample& sample)
                       { return sample.Age >= lifetime; });
+        if (trail.Drag > 0.0f || trail.InheritVelocity != 0.0f || trail.EmitVelocity != vec3(0.0f))
+        {
+            SweepOvertaken(trail.Samples, position);
+        }
 
         if (trail.Emitting &&
             (trail.Samples.empty() ||
