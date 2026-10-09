@@ -79,8 +79,10 @@ namespace Veng
 
     /// @brief Inspector widget function for a single field.
     ///
-    /// Overrides the inspector's built-in widget for a given TypeId.
-    using FieldWidgetFn = function<void(void* fieldPtr, const FieldDescriptor& field)>;
+    /// Overrides the inspector's built-in widget for a given TypeId, drawing the value cell (the
+    /// inspector draws the label). Returns whether the edit changed the field, which is what makes
+    /// the edit undoable and marks the document dirty.
+    using FieldWidgetFn = function<bool(void* fieldPtr, const FieldDescriptor& field)>;
 
     /// @brief Holds the per-AssetTypeId editor factories, game-contributed panels,
     /// and per-TypeId inspector widget overrides registered by a game editor module.

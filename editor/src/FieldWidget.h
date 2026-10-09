@@ -9,6 +9,7 @@
 namespace Veng
 {
     class AssetManager;
+    class BehaviorTreeRegistry;
     class EditorRegistry;
 }
 
@@ -24,6 +25,16 @@ namespace VengEditor
     /// @param fieldPtr Pointer to the AssetHandle field bytes.
     /// @param chosen   The selected asset id to write.
     void ApplyAssetPick(void* fieldPtr, Veng::AssetId chosen);
+
+    /// @brief Registers the inspector widget for a BehaviorTreeId field: a combo over @p trees.
+    ///
+    /// Lists every registered tree by name beside "(none)", plus the current id when no tree claims
+    /// it, so a reference to an unregistered tree is shown rather than silently cleared. The catalog
+    /// is read as the widget draws, so trees a module registers after this call are listed.
+    /// @param editors  The registry the widget is registered into.
+    /// @param trees    The tree catalog; must outlive @p editors.
+    void RegisterBehaviorTreePicker(Veng::EditorRegistry& editors,
+                                    const Veng::BehaviorTreeRegistry& trees);
 
     /// @brief Dependencies a field widget needs beyond the field bytes themselves.
     struct FieldWidgetContext

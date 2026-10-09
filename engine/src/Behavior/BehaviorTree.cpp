@@ -53,6 +53,17 @@ namespace Veng
         slots[index] = NodeSlot{};
     }
 
+    void BehaviorTree::Abort(vector<NodeSlot>& slots, const u64 seed,
+                             const BehaviorContext& context) const
+    {
+        if (m_Nodes.empty() || slots.size() != m_Nodes.size())
+        {
+            slots.assign(m_Nodes.size(), NodeSlot{});
+            return;
+        }
+        AbortSubtree(m_Root, slots, seed, context);
+    }
+
     Status BehaviorTree::TickNode(const u32 index, vector<NodeSlot>& slots, const u64 seed,
                                   const BehaviorContext& context) const
     {

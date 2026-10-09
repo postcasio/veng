@@ -49,6 +49,7 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 #include "Gui/GuiCounters.h"
 #include "Platform/GamepadBackend.h"
@@ -2572,6 +2573,7 @@ namespace Veng
                 *m_Haptics, request.Scene.GetPresentationScope()->GetId(), *m_Input, &request.Scene,
                 request.Phase == SystemContextPhase::Replay),
             .Localization = GetLocalization(),
+            .BehaviorTrees = m_SystemRegistry.GetBehaviorTrees(),
             .Pointer = live ? m_SimInput.GetPointer(request.Scene) : PointerRouting{},
             .Tick = request.Tick,
             .Alpha = request.Alpha,

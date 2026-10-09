@@ -133,7 +133,7 @@ namespace Veng::UI
                 return false;
             }
             void* fieldPtr = static_cast<u8*>(base) + field.Offset;
-            auto disabled = UI::Disabled(!IsFieldEditable(field, hooks));
+            const auto disabled = UI::Disabled(!IsFieldEditable(field, hooks));
             return DrawFieldWidget(fieldPtr, field, hooks);
         }
     }
@@ -340,7 +340,7 @@ namespace Veng::UI
             for (usize i = 0; i < count; ++i)
             {
                 void* element = field.ArrayElement(fieldPtr, i);
-                auto elementScope = UI::PushId(fmt::format("{}elem{}", label, i));
+                const auto elementScope = UI::PushId(fmt::format("{}elem{}", label, i));
 
                 if (elementIsLeaf)
                 {
@@ -472,11 +472,13 @@ namespace Veng::UI
         const string& displayName = field.DisplayName.empty() ? field.Name : field.DisplayName;
         const string valueLabel = "##" + field.Name;
 
-        // A custom widget owns its whole row, including the property label. Its void signature
-        // carries no change signal, so a custom-widget edit does not re-resolve.
-        if (hooks.CustomWidget && hooks.CustomWidget(fieldPtr, field, displayName))
+        // A custom widget owns its whole row, including the property label.
+        if (hooks.CustomWidget)
         {
-            return false;
+            if (const optional<bool> changed = hooks.CustomWidget(fieldPtr, field, displayName))
+            {
+                return *changed;
+            }
         }
 
         // A nested struct flattens into further indented rows in the same table — never a nested
@@ -486,7 +488,7 @@ namespace Veng::UI
         {
             // Scope nested rows under the field name so a nested member sharing a name with an outer
             // field keeps a distinct widget id.
-            auto structScope = UI::PushId(valueLabel);
+            const auto structScope = UI::PushId(valueLabel);
             const TypeRegistry& registry = *hooks.Registry;
             const TypeInfo& nested = registry.Info(field.Type);
             const FieldDisplay display = ResolveFieldDisplay(field, registry);
@@ -507,7 +509,7 @@ namespace Veng::UI
         if (field.Class == FieldClass::Variant)
         {
             UI::PropertyLabel(displayName);
-            auto variantScope = UI::PushId(valueLabel);
+            const auto variantScope = UI::PushId(valueLabel);
             const bool changed = DrawVariant(fieldPtr, field, valueLabel, hooks);
             if (!field.Tooltip.empty())
             {
@@ -522,7 +524,7 @@ namespace Veng::UI
         if (field.Class == FieldClass::Array)
         {
             UI::PropertyLabel(displayName);
-            auto arrayScope = UI::PushId(valueLabel);
+            const auto arrayScope = UI::PushId(valueLabel);
             const FieldDisplay display = ResolveFieldDisplay(field, *hooks.Registry);
             const bool changed =
                 DrawArray(fieldPtr, field, valueLabel, hooks, display.Collapsible.value_or(true),
@@ -536,7 +538,7 @@ namespace Veng::UI
 
         UI::PropertyLabel(displayName);
 
-        auto id = UI::PushId(valueLabel);
+        const auto id = UI::PushId(valueLabel);
         return DrawValueWidget(fieldPtr, field, valueLabel, hooks);
     }
 
@@ -551,7 +553,7 @@ namespace Veng::UI
         }
 
         const string valueLabel = "##" + field.Name;
-        auto id = UI::PushId(valueLabel);
+        const auto id = UI::PushId(valueLabel);
         return DrawValueWidget(fieldPtr, field, valueLabel, hooks);
     }
 
@@ -580,7 +582,7 @@ namespace Veng::UI
                 return changed;
             }
 
-            auto disabled = UI::Disabled(field.ReadOnly);
+            const auto disabled = UI::Disabled(field.ReadOnly);
 
             // Drag speed and clamp range come from the field's resolved presentation (field override
             // over type default); absent metadata leaves the DragOptions defaults (0.01f speed,

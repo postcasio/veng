@@ -1,8 +1,9 @@
 // The behaviour runtime: the composites and decorators of a BehaviorTree, the reactive composites
 // and the abort contract they share with Parallel, the seeded per-agent slots two agents on one tree
-// keep apart, and the AI arm of the control pipeline end to end — a
+// keep apart, the AI arm of the control pipeline end to end — a
 // BehaviorAgent whose leaf writes Intent driving a pawn through the real MovementSystem, identically
-// to a raw Intent write. Pure CPU — no Context, no Vulkan — in the control_movement.cpp mould: a
+// to a raw Intent write — and the authored path: the tree catalog, a BehaviorTreeRef resolved into
+// an agent, retargeted and removed, and a stop that aborts every run in progress. Pure CPU — no Context, no Vulkan — in the control_movement.cpp mould: a
 // real Scene over RegisterBuiltinTypes and a headless SystemContext.
 
 #include <doctest/doctest.h>
@@ -15,6 +16,7 @@
 #include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Behavior/BehaviorSystem.h>
 #include <Veng/Behavior/BehaviorTree.h>
+#include <Veng/Behavior/BehaviorTreeRegistry.h>
 #include <Veng/Input.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -751,4 +753,177 @@ TEST_CASE("Aborting one agent's branch leaves another agent on the same tree run
     CHECK(back->Enters == 2);
     CHECK(back->Aborts == 1);
     CHECK(back->Ticks == 3);
+}
+
+namespace
+{
+    constexpr BehaviorTreeId PatrolTree{0x666A8BF0D20F188EULL};
+    constexpr BehaviorTreeId GuardTree{0x0529DCD2D857B7B0ULL};
+    constexpr BehaviorTreeId UnregisteredTree{0x172DE40E933A9CC5ULL};
+
+    // A scene, a system and the services whose catalog the system resolves against.
+    struct AuthoredHarness
+    {
+        TypeRegistry Registry = MakeRegistry();
+        Unique<Scene> World = Scene::Create(Registry);
+        TestSupport::TestServices Services;
+        BehaviorSystem System;
+
+        void Start() { System.OnStart(*World, Services.Make()); }
+        void Step() { System.OnUpdate(*World, 0.016f, Services.Make()); }
+        void Stop() { System.OnStop(*World, Services.Make()); }
+
+        Entity Place(const BehaviorTreeId tree, const u64 seed)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<BehaviorTreeRef>(entity, BehaviorTreeRef{.Tree = tree, .Seed = seed});
+            return entity;
+        }
+    };
+}
+
+TEST_CASE(
+    "An authored BehaviorTreeRef gets a seeded agent at start, and its leaf ticks the first step")
+{
+    AuthoredHarness harness;
+    const auto leaf = MakeRecording(Status::Running);
+    harness.Services.GetBehaviorTrees().Register(
+        PatrolTree, "Patrol",
+        [leaf]
+        {
+            return BehaviorTreeBuilder().Parallel().WaitRandom(1.0f, 3.0f).Leaf(leaf).End().Build();
+        });
+
+    const Entity a = harness.Place(PatrolTree, 0x1234u);
+    const Entity b = harness.Place(PatrolTree, 0x1234u);
+    const Entity c = harness.Place(PatrolTree, 0x9999u);
+
+    harness.Start();
+    REQUIRE(harness.World->Has<BehaviorAgent>(a));
+    const BehaviorAgent& agentA = harness.World->Get<BehaviorAgent>(a);
+    CHECK(agentA.Source == PatrolTree);
+    CHECK(agentA.Seed == 0x1234u);
+    CHECK(leaf->Enters == 0); // the start resolves; only a step ticks
+
+    harness.Step();
+    CHECK(leaf->Enters == 3);
+    CHECK(leaf->Ticks == 3);
+
+    // One shared tree; the WaitRandom (node 1, under the Parallel) drew from each agent's own seed.
+    const BehaviorAgent& agentB = harness.World->Get<BehaviorAgent>(b);
+    const BehaviorAgent& agentC = harness.World->Get<BehaviorAgent>(c);
+    CHECK(agentA.Tree == agentB.Tree);
+    CHECK(agentA.Slots[1].Duration == doctest::Approx(agentB.Slots[1].Duration));
+    CHECK(agentA.Slots[1].Duration != doctest::Approx(agentC.Slots[1].Duration));
+}
+
+TEST_CASE("The tree catalog builds a tree once, and an unregistered id gives no agent")
+{
+    AuthoredHarness harness;
+    int builds = 0;
+    BehaviorTreeRegistry& catalog = harness.Services.GetBehaviorTrees();
+    catalog.Register(PatrolTree, "Patrol",
+                     [&builds]
+                     {
+                         ++builds;
+                         return BehaviorTreeBuilder().Wait(1.0f).Build();
+                     });
+
+    REQUIRE(catalog.Entries().size() == 1);
+    CHECK(catalog.Entries()[0].Name == "Patrol");
+    CHECK(builds == 0); // enumerating builds nothing
+
+    const Ref<BehaviorTree> first = catalog.Resolve(PatrolTree);
+    const Ref<BehaviorTree> second = catalog.Resolve(PatrolTree);
+    CHECK(builds == 1);
+    CHECK(first == second);
+    CHECK(catalog.Resolve(UnregisteredTree) == nullptr);
+    CHECK(catalog.Resolve(BehaviorTreeId::Null) == nullptr);
+
+    const Entity stray = harness.Place(UnregisteredTree, 1);
+    harness.Start();
+    harness.Step();
+    harness.Step();
+    CHECK_FALSE(harness.World->Has<BehaviorAgent>(stray));
+}
+
+TEST_CASE("Stopping aborts a running leaf exactly once and leaves every slot inactive")
+{
+    AuthoredHarness harness;
+    const auto leaf = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Sequence().Leaf(leaf).End().Build();
+
+    // A code-built agent: the stop reaches every agent, not only authored ones.
+    const Entity agent = harness.World->CreateEntity();
+    harness.World->Add<BehaviorAgent>(agent, BehaviorAgent{.Tree = tree, .Seed = 3});
+
+    harness.Start();
+    harness.Step();
+    REQUIRE(leaf->Enters == 1);
+
+    harness.Stop();
+    CHECK(leaf->Aborts == 1);
+    CHECK(leaf->Exits == 0);
+    const vector<NodeSlot>& slots = harness.World->Get<BehaviorAgent>(agent).Slots;
+    CHECK(std::ranges::none_of(slots, [](const NodeSlot& slot) { return slot.Active; }));
+}
+
+TEST_CASE("Retargeting a reference aborts the old run before the new tree's leaf enters")
+{
+    AuthoredHarness harness;
+    vector<std::string> journal;
+    const auto patrol = MakeRecording(Status::Running);
+    patrol->Journal = &journal;
+    patrol->Name = "patrol";
+    const auto guard = MakeRecording(Status::Running);
+    guard->Journal = &journal;
+    guard->Name = "guard";
+    BehaviorTreeRegistry& catalog = harness.Services.GetBehaviorTrees();
+    catalog.Register(PatrolTree, "Patrol",
+                     [patrol] { return BehaviorTreeBuilder().Leaf(patrol).Build(); });
+    catalog.Register(GuardTree, "Guard",
+                     [guard] { return BehaviorTreeBuilder().Leaf(guard).Build(); });
+
+    const Entity entity = harness.Place(PatrolTree, 5);
+    harness.Start();
+    harness.Step();
+
+    harness.World->Get<BehaviorTreeRef>(entity).Tree = GuardTree;
+    harness.Step();
+    CHECK(journal == vector<std::string>{"patrol.enter", "patrol.abort", "guard.enter"});
+    CHECK(harness.World->Get<BehaviorAgent>(entity).Source == GuardTree);
+
+    // Removing the reference ends the run the same way and takes the agent with it.
+    (void)harness.World->Remove<BehaviorTreeRef>(entity);
+    harness.Step();
+    CHECK(guard->Aborts == 1);
+    CHECK(guard->Exits == 0);
+    CHECK_FALSE(harness.World->Has<BehaviorAgent>(entity));
+}
+
+TEST_CASE("A code-built agent is left alone by the resolve step")
+{
+    AuthoredHarness harness;
+    const auto authored = MakeRecording(Status::Running);
+    harness.Services.GetBehaviorTrees().Register(
+        PatrolTree, "Patrol", [authored] { return BehaviorTreeBuilder().Leaf(authored).Build(); });
+    const auto coded = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Leaf(coded).Build();
+
+    // A code-built agent beside a reference to another tree, and one with no reference at all.
+    const Entity referenced = harness.Place(PatrolTree, 1);
+    harness.World->Add<BehaviorAgent>(referenced, BehaviorAgent{.Tree = tree, .Seed = 1});
+    const Entity bare = harness.World->CreateEntity();
+    harness.World->Add<BehaviorAgent>(bare, BehaviorAgent{.Tree = tree, .Seed = 2});
+
+    harness.Start();
+    harness.Step();
+    harness.Step();
+
+    CHECK(harness.World->Get<BehaviorAgent>(referenced).Tree == tree);
+    REQUIRE(harness.World->Has<BehaviorAgent>(bare));
+    CHECK(harness.World->Get<BehaviorAgent>(bare).Tree == tree);
+    CHECK(coded->Ticks == 4);
+    CHECK(coded->Aborts == 0);
+    CHECK(authored->Enters == 0);
 }

@@ -116,7 +116,8 @@ namespace VengEditor
         /// The one custom field widget: an ActionId is a u64 leaf with no default scalar widget, so
         /// the generic path draws it disabled. This combo picks an action by name from m_Doc.Actions.
         /// @param fieldPtr Pointer to the ActionId field bytes.
-        void DrawActionCombo(void* fieldPtr);
+        /// @return True when the pick changed the field.
+        bool DrawActionCombo(void* fieldPtr);
 
         Veng::AssetId m_Id;
         Veng::path m_SourcePath;

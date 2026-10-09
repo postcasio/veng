@@ -90,6 +90,7 @@ add_library(veng SHARED
         src/Audio/Reverb.cpp
         src/Behavior/BehaviorSystem.cpp
         src/Behavior/BehaviorTree.cpp
+        src/Behavior/BehaviorTreeRegistry.cpp
         src/Capture/RecorderCore.cpp
         src/Capture/VideoRecorder.cpp
         src/Asset/AssetLoader.cpp

@@ -517,6 +517,11 @@ Here the agent has no `Possesses`, so it acts on itself — the pawn is its own 
 pilot flying a separate ship would instead carry `Possesses{ship}`, and the same leaf
 would write the ship's `Intent`.
 
+A patrol placed in a level rather than spawned can skip the code: register the tree under
+a minted id and author a `BehaviorTreeRef` on the pawn, and `BehaviorSystem` adds the agent
+at start ([Writing AI behaviours](writing-ai-behaviors.md#authoring-which-tree-an-entity-runs)).
+The agent above, added in code, is left alone by that step.
+
 ### Wire it into the level
 
 `BehaviorSystem` and `MovementSystem` are both builtins, so a level just names them in

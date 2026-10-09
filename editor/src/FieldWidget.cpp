@@ -8,6 +8,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Behavior/BehaviorTreeRegistry.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/UI/Inspector.h>
 #include <Veng/UI/UI.h>
@@ -23,6 +24,59 @@ namespace VengEditor
     {
         const u64 value = chosen.Value;
         std::memcpy(fieldPtr, &value, sizeof(value));
+    }
+
+    void RegisterBehaviorTreePicker(EditorRegistry& editors, const BehaviorTreeRegistry& trees)
+    {
+        editors.RegisterFieldWidget(
+            TypeIdOf<BehaviorTreeId>(),
+            [&trees](void* fieldPtr, const FieldDescriptor& field) -> bool
+            {
+                BehaviorTreeId current = BehaviorTreeId::Null;
+                std::memcpy(&current, fieldPtr, sizeof(current));
+
+                const vector<BehaviorTreeEntry> entries = trees.Entries();
+                vector<string> labels;
+                labels.reserve(entries.size() + 2);
+                labels.emplace_back("(none)");
+                i32 index = 0;
+                for (usize i = 0; i < entries.size(); ++i)
+                {
+                    labels.push_back(entries[i].Name);
+                    if (entries[i].Id == current)
+                    {
+                        index = static_cast<i32>(i) + 1;
+                    }
+                }
+                if (current != BehaviorTreeId::Null && index == 0)
+                {
+                    labels.push_back(
+                        fmt::format("(unregistered {:#018x})", static_cast<u64>(current)));
+                    index = static_cast<i32>(labels.size()) - 1;
+                }
+
+                const vector<string_view> items(labels.begin(), labels.end());
+                if (!UI::Combo("##" + field.Name, index, items))
+                {
+                    return false;
+                }
+                // Re-picking the unregistered row keeps the id it names.
+                BehaviorTreeId chosen = current;
+                if (index == 0)
+                {
+                    chosen = BehaviorTreeId::Null;
+                }
+                else if (static_cast<usize>(index) <= entries.size())
+                {
+                    chosen = entries[static_cast<usize>(index) - 1].Id;
+                }
+                if (chosen == current)
+                {
+                    return false;
+                }
+                std::memcpy(fieldPtr, &chosen, sizeof(chosen));
+                return true;
+            });
     }
 
     namespace
@@ -138,21 +192,21 @@ namespace VengEditor
                 [](void* fieldPtr, const FieldDescriptor& field, string_view valueLabel)
             { return DrawReference(fieldPtr, field, valueLabel); };
             hooks.CustomWidget = [&ctx](void* fieldPtr, const FieldDescriptor& field,
-                                        string_view displayName) -> bool
+                                        string_view displayName) -> optional<bool>
             {
                 const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type);
                 if (custom == nullptr)
                 {
-                    return false;
+                    return std::nullopt;
                 }
                 // A custom widget owns its whole row, including the property label.
                 UI::PropertyLabel(displayName);
-                (*custom)(fieldPtr, field);
+                const bool changed = (*custom)(fieldPtr, field);
                 if (!field.Tooltip.empty())
                 {
                     UI::Tooltip(field.Tooltip);
                 }
-                return true;
+                return changed;
             };
             return hooks;
         }

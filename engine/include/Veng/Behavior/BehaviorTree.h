@@ -156,6 +156,19 @@ namespace Veng
         /// @return The root node's status this tick.
         Status Tick(vector<NodeSlot>& slots, u64 seed, const BehaviorContext& context) const;
 
+        /// @brief Abandons one agent's run of the whole tree: OnAbort on every active leaf, then a reset.
+        ///
+        /// The abort a composite applies to a displaced subtree, applied from the root, so a caller
+        /// ending an agent's run from outside the walk — a stopping simulation, a retargeted agent —
+        /// keeps the contract that every run ends in exactly one of OnExit or OnAbort. Each aborted
+        /// leaf sees its own seeded stream, and every slot is inactive afterward. A tree with no active
+        /// leaf calls nothing; a slot vector not sized to @ref NodeCount (an agent never ticked on
+        /// this tree) has no active leaf of it and is only resized.
+        /// @param slots    The agent's per-node running state.
+        /// @param seed     The agent's seed for its random streams.
+        /// @param context  The blackboard and services the aborted leaves see.
+        void Abort(vector<NodeSlot>& slots, u64 seed, const BehaviorContext& context) const;
+
         /// @brief The status the tree reported on its most recent tick, read from the agent's slots.
         ///
         /// Reads the root node's stored status rather than ticking, so a View-phase consumer — a

@@ -26,11 +26,11 @@ namespace Veng::UI
     ///
     /// Called before the built-in path draws anything. When a custom widget is registered for the
     /// field's type the hook draws the property label, the custom value, and any tooltip itself,
-    /// then returns true so the inspector skips the built-in widget; when none is registered it
-    /// draws nothing and returns false, so the inspector falls through to the built-in. The void
-    /// custom-widget signature carries no change signal, so a custom-widget edit reports no change.
-    using CustomWidgetFn =
-        function<bool(void* fieldPtr, const FieldDescriptor& field, string_view displayName)>;
+    /// then returns whether the edit changed the field, and the inspector skips the built-in widget;
+    /// when none is registered it draws nothing and returns nullopt, so the inspector falls through
+    /// to the built-in.
+    using CustomWidgetFn = function<optional<bool>(void* fieldPtr, const FieldDescriptor& field,
+                                                   string_view displayName)>;
 
     /// @brief Gates a field on a fact the owning struct instance cannot express.
     ///

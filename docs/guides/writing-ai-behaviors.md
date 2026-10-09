@@ -7,8 +7,9 @@ each leaf the scene, the entity, and the pawn it acts through — so a leaf that
 another `Intent` producer; this guide is how to write one.
 
 The runtime is `Veng/Behavior/`: `BehaviorTree.h` (the tree, the builder, the node kinds, the `BehaviorTask`
-leaf), `BehaviorAgent.h` (the component that gives an entity a tree), and `BehaviorSystem.h` (the
-system that ticks them). Nothing here is device-bound, so the whole thing is unit-testable headless.
+leaf), `BehaviorAgent.h` (the component that gives an entity a tree, and the `BehaviorTreeRef` that
+names a registered one), `BehaviorTreeRegistry.h` (the catalog of trees a module registers by id), and
+`BehaviorSystem.h` (the system that ticks them). Nothing here is device-bound, so the whole thing is unit-testable headless.
 
 ## The shape
 
@@ -178,8 +179,52 @@ reads `context.Pawn` and never does the lookup itself. Because possession is the
 player's seat is.
 
 `BehaviorAgent` is runtime-only: it is never serialised and never replicated. A behaviour is
-re-decided from world state on whichever peer has authority, so a spawner adds the component at
-runtime rather than authoring it into a prefab.
+re-decided from world state on whichever peer has authority, so the agent itself is never authored —
+a spawner adds it at runtime, or the system adds it from an authored reference (below).
+
+## Authoring which tree an entity runs
+
+When an entity always runs the same tree — a patrol placed in a level, a turret in a prefab — register
+the tree once and let the data name it. A module registers each tree under an id minted with
+`vengc generate-id`, beside its systems:
+
+```cpp
+#include <Veng/Behavior/BehaviorTreeRegistry.h>
+
+constexpr BehaviorTreeId PatrolTree{0x666A8BF0D20F188EULL};   // vengc generate-id
+
+extern "C" void VengModuleRegister(VengModuleHost* host)
+{
+    // ...types and systems...
+    host->Systems.GetBehaviorTrees().Register(PatrolTree, "Patrol", []
+    {
+        return BehaviorTreeBuilder()
+            .Repeat()
+                .Sequence()
+                    .Leaf(CreateRef<MoveToTask>(pointA))
+                    .Wait(2.0f)
+                    .Leaf(CreateRef<MoveToTask>(pointB))
+                    .Wait(2.0f)
+                .End()
+            .Build();
+    });
+}
+```
+
+The build function runs once, the first time anything resolves the id, and every entity naming it
+shares the result. An entity then carries a **`BehaviorTreeRef`** — the editor's inspector shows its
+`Tree` as a combo over the registered names — and a prefab authors it like any component:
+
+```json
+"::Veng::BehaviorTreeRef": { "Tree": "0x666A8BF0D20F188E", "Seed": "1337" }
+```
+
+`BehaviorSystem` gives such an entity its agent at start, on a peer with authority. Change `Tree` while
+it runs and the old run is aborted (its leaf gets `OnAbort`) before the new tree's first leaf enters;
+remove the reference and the run is aborted and the agent removed. An id no module registered gives
+the entity no agent and logs a warning once. An agent you add in code is never touched by any of this,
+so the two paths mix freely in one scene — a tree that depends on run-time state (a pad the spawner
+picked, a heading it computed) stays a code-built agent.
 
 ## Wiring the system
 
@@ -193,15 +238,21 @@ that consumes what it produces:
 ```
 
 The system ticks only agents this peer has authority over (an agent on a `Remote`-tier entity is
-skipped, exactly as the other authoritative Sim systems skip one), gathers agents before ticking any
-so a task may safely spawn or destroy an entity mid-tick, and — when `SystemContext::Debug` is
-present — marks the pawn of any agent whose tree is still running.
+skipped, exactly as the other authoritative Sim systems skip one), and gathers agents before ticking
+any so a task may safely spawn or destroy an entity mid-tick. A consumer that selects the
+`SceneGizmo::Agents` gizmo family sees a mark at the pawn of any agent whose tree is still running.
+
+**When the simulation stops** — its world closes, its scene is replaced, the application shuts down —
+the system aborts every run in progress, so a leaf mid-run gets `OnAbort` exactly as if a branch had
+displaced it. The scene and every service are still live at that point, so `OnAbort` releases what it
+holds as usual; it just must not assume the world carries on.
 
 ## What this is not
 
-- **No cooked tree asset, no editor, no task registry.** Trees are built in code. Authoring one as an
-  asset is a [custom asset type](custom-asset-types.md) for the day a designer needs to; the builder
-  is that asset's in-memory target when it arrives.
+- **No cooked tree asset, no tree editor, no task registry.** A tree's structure is built in code; data
+  only selects a registered tree. Authoring the structure as an asset is a
+  [custom asset type](custom-asset-types.md) for the day a designer needs to; the builder is that
+  asset's in-memory target when it arrives.
 - **No utility scoring or planner.** A tree composes — a new objective is a new subtree — and a
   `Condition` over the ECS is the perception a tree needs.
 - **No replicated agent state.** An agent is authority-side by construction.

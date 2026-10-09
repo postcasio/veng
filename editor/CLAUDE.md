@@ -127,7 +127,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
   `AssetTypeId`→editor-factory map (double-click an asset opens its editor), `RegisterPanel` for
   game-contributed panels, and `RegisterFieldWidget(TypeId, FieldWidgetFn)` for custom inspector
-  widgets. It is non-null in `VengModuleHost` only in the editor host.
+  widgets (a widget returns whether it changed the field, which is what makes its edit undoable and
+  dirties the document). It is non-null in `VengModuleHost` only in the editor host.
 
 ## Scene editing: the prefab and level editors
 
@@ -273,7 +274,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`):
   it builds `Veng::UI::InspectorHooks` supplying the editor-only pieces the engine core can't
   resolve — the `AssetHandle` asset chip, the `Reference` Entity drop target, and the
-  `EditorRegistry`'s per-`TypeId` custom widgets (the registered `LightType` combo) — and
+  `EditorRegistry`'s per-`TypeId` custom widgets (the host registers the `BehaviorTreeId` picker,
+  a combo over the tree catalog, ahead of the modules) — and
   delegates to the engine walk. A bare game passes no hooks, so AssetHandle/Reference fields draw
   the engine's read-only fallbacks. The entity inspector and the node-property inspector both call
   `DrawFieldWidget`, so the two share identical widget behavior.

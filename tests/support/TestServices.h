@@ -6,6 +6,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
+#include <Veng/Behavior/BehaviorTreeRegistry.h>
 #include <Veng/Haptics/Haptics.h>
 #include <Veng/Localization/Localization.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -23,14 +24,17 @@ namespace Veng::TestSupport
         AssetManager* Assets = nullptr;
         /// @brief An input snapshot the case drives with events; null reads the headless one.
         const Veng::Input* Input = nullptr;
+        /// @brief A tree catalog the case filled (a system registry's); null reads the bundle's own.
+        const BehaviorTreeRegistry* BehaviorTrees = nullptr;
     };
 
     /// @brief Real, device-free instances of every service a SystemContext carries, for tests.
     ///
     /// A system under test that touches a service reaches a working one: an asset manager over an
     /// uninitialized render context and a one-worker task system, a headless input snapshot (all
-    /// zeros), an audio engine over the null device, a haptics engine driving no pads, and the inert
-    /// localization that resolves every key to itself. It also owns the presentation-scope registry a
+    /// zeros), an audio engine over the null device, a haptics engine driving no pads, the inert
+    /// localization that resolves every key to itself, and an empty behaviour-tree catalog a case
+    /// registers its trees into. It also owns the presentation-scope registry a
     /// test's WorldRunner opens its scenes' scopes in (WorldRunnerInfo::Presentation), so a bundle
     /// declared ahead of the runner outlives every scene holding one. Construct one per case; it is
     /// not copyable.
@@ -48,7 +52,8 @@ namespace Veng::TestSupport
                   m_Presentation, Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null,
                                                          .SampleRate = 48000,
                                                          .Channels = 2})),
-              m_AssetsOverride(info.Assets), m_InputOverride(info.Input)
+              m_AssetsOverride(info.Assets), m_InputOverride(info.Input),
+              m_BehaviorTreesOverride(info.BehaviorTrees)
         {
         }
 
@@ -70,6 +75,8 @@ namespace Veng::TestSupport
                 .Haptics = Haptics::ScopedHaptics(m_Haptics, m_Presentation.GetApplicationScope(),
                                                   input, nullptr, false),
                 .Localization = m_Localization,
+                .BehaviorTrees =
+                    m_BehaviorTreesOverride != nullptr ? *m_BehaviorTreesOverride : m_BehaviorTrees,
             };
         }
 
@@ -127,6 +134,9 @@ namespace Veng::TestSupport
         /// @brief Returns the inert localization service.
         [[nodiscard]] Localization::Localization& GetLocalization() { return m_Localization; }
 
+        /// @brief Returns the bundle's own behaviour-tree catalog, for a case to register trees into.
+        [[nodiscard]] BehaviorTreeRegistry& GetBehaviorTrees() { return m_BehaviorTrees; }
+
     private:
         /// @brief The presentation-scope registry; first, so it outlives every service that may
         /// reference a scope.
@@ -147,10 +157,14 @@ namespace Veng::TestSupport
         Haptics::HapticsEngine m_Haptics{m_Presentation};
         /// @brief The inert localization service.
         Localization::Localization m_Localization;
+        /// @brief The behaviour-tree catalog, empty until a case registers into it.
+        BehaviorTreeRegistry m_BehaviorTrees;
         /// @brief The case's own asset manager, read in place of m_Assets; null for none.
         AssetManager* m_AssetsOverride = nullptr;
         /// @brief The case's own input, read in place of m_Input; null for none.
         const Input* m_InputOverride = nullptr;
+        /// @brief The case's own tree catalog, read in place of m_BehaviorTrees; null for none.
+        const BehaviorTreeRegistry* m_BehaviorTreesOverride = nullptr;
     };
 
     /// @brief Returns a bundle that lives for the whole process, for a helper outside any case.

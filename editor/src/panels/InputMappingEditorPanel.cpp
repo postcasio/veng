@@ -58,7 +58,7 @@ namespace VengEditor
         // shared EditorRegistry keyed by TypeId, so it draws every ActionId field this panel walks.
         editors.RegisterFieldWidget(TypeIdOf<ActionId>(),
                                     [this](void* fieldPtr, const FieldDescriptor&)
-                                    { DrawActionCombo(fieldPtr); });
+                                    { return DrawActionCombo(fieldPtr); });
 
         LoadDocument();
         // Cook once on open so the asset is addressable behind the shadow mount; this reads the
@@ -153,7 +153,7 @@ namespace VengEditor
             });
     }
 
-    void InputMappingEditorPanel::DrawActionCombo(void* fieldPtr)
+    bool InputMappingEditorPanel::DrawActionCombo(void* fieldPtr)
     {
         ActionId current{};
         std::memcpy(&current, fieldPtr, sizeof(current));
@@ -199,7 +199,9 @@ namespace VengEditor
             }
             std::memcpy(fieldPtr, &chosen, sizeof(chosen));
             m_Dirty = true;
+            return true;
         }
+        return false;
     }
 
     void InputMappingEditorPanel::DrawPreview()

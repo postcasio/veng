@@ -24,6 +24,7 @@
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "EditorOnly.h"
+#include "FieldWidget.h"
 #include "JsonUtil.h"
 #include "PreviewCapability.h"
 #include <VengEditor/StatusTracker.h>
@@ -713,6 +714,9 @@ namespace VengEditor
                       editorModulePath.string(), loaded.error());
             editorModule.emplace(std::move(*loaded));
         }
+
+        // Registered ahead of the modules, so a module's own widget for the type replaces it.
+        RegisterBehaviorTreePicker(registries->Editor, registries->Systems.GetBehaviorTrees());
 
         VengModuleHost host{
             .App = registries->App,

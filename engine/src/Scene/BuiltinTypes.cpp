@@ -215,6 +215,9 @@ namespace Veng
         // re-decided from world state on any authoritative peer), so it carries no reflected field
         // and neither serializes nor rides the wire.
         registry.Register<BehaviorAgent>();
+        // The authored half: the registered tree an entity runs, which BehaviorSystem resolves into
+        // an agent. BehaviorTreeId registers transitively as its field's leaf type.
+        registry.Register<BehaviorTreeRef>();
 
         // The per-account session record, registered so its reflection-binary encoding (the
         // durability blob) has a schema everywhere a SessionRegistry runs. Not a component — it

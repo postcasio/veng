@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/Behavior/BehaviorTreeRegistry.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
@@ -32,6 +33,10 @@ namespace Veng
     /// ordered SystemId set selecting catalog entries, or from every entry. Registration
     /// is GPU-free — constructing a system touches no Context/device, preserving the
     /// headless/cooker contract.
+    ///
+    /// It also holds the behaviour-tree catalog (GetBehaviorTrees): trees are, like systems,
+    /// code-registered gameplay logic an authored id selects, and this catalog already reaches
+    /// every host that loads a module. Move-only, as that catalog is.
     class VE_API SystemRegistry
     {
     public:
@@ -88,8 +93,21 @@ namespace Veng
         /// @brief Returns the number of registered systems.
         [[nodiscard]] usize Count() const;
 
+        /// @brief Returns the behaviour-tree catalog a module registers its trees into.
+        /// @return The tree catalog.
+        [[nodiscard]] BehaviorTreeRegistry& GetBehaviorTrees() { return m_BehaviorTrees; }
+
+        /// @brief Returns the behaviour-tree catalog a BehaviorTreeRef resolves against.
+        /// @return The tree catalog.
+        [[nodiscard]] const BehaviorTreeRegistry& GetBehaviorTrees() const
+        {
+            return m_BehaviorTrees;
+        }
+
     private:
         /// @brief The registered catalog entries, in registration order.
         vector<SystemEntry> m_Entries;
+        /// @brief The behaviour trees registered beside the systems.
+        BehaviorTreeRegistry m_BehaviorTrees;
     };
 }

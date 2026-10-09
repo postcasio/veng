@@ -907,7 +907,8 @@ constructs it, **pre-registers the engine's reusable systems with `RegisterBuilt
 (`Veng/Scene/BuiltinSystems.h` — the system analogue of `RegisterBuiltinTypes`), the module fills
 its own through `VengModuleRegister`, `Application` borrows it) stores `{ SystemId, Name,
 factory }`, **enumerates the catalog** without instantiating anything, resolves an id, and fatally
-rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp`):
+rejects a duplicate id. It also holds the **behaviour-tree catalog** (`GetBehaviorTrees()`), the
+trees a `BehaviorTreeRef` selects by id (see [../Behavior/CLAUDE.md](../Behavior/CLAUDE.md)). The builtins register in this order (`BuiltinSystems.cpp`):
 `DeviceAssignmentSystem`, `InputMappingSystem`, `BehaviorSystem`, `MovementSystem`, `CharacterMovementSystem`,
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,

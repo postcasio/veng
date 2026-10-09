@@ -35,7 +35,8 @@ namespace Veng
         ApplicationRegistry& App;
         /// @brief Receives the module's component/type descriptors.
         TypeRegistry& Types;
-        /// @brief Receives the module's SceneSystem registrations, in run order.
+        /// @brief Receives the module's SceneSystem registrations, in run order, and its behaviour
+        ///        trees (SystemRegistry::GetBehaviorTrees).
         SystemRegistry& Systems;
         /// @brief Receives the module's asset-type identities, names, and display metadata.
         ///
@@ -376,10 +377,17 @@ extern "C"
 /// PhysicsCollisionRule register, and PhysicsSystem creates the scene's world at start. A module's
 /// prefabs and the registry it fills are read against the builtin set, so a stale module's cooked
 /// data and type table disagree with the host's.
+/// Version 90 lets a prefab name the behaviour tree an entity runs: SystemContext grows
+/// BehaviorTrees, SystemRegistry grows the BehaviorTreeRegistry a module registers trees into,
+/// BehaviorAgent grows Source, BehaviorSystem grows OnStart and OnStop, and the builtin
+/// BehaviorTreeRef registers; an editor FieldWidgetFn and the inspector's CustomWidgetFn return
+/// whether the edit changed the field. A module reads the context every tick, registers into the
+/// system catalog and may register field widgets, so a stale module reads the context and the
+/// registry at their old layouts and registers widgets of the old signature.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 89u
+#define VENG_MODULE_ABI_VERSION 90u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

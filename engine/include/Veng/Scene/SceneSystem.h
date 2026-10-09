@@ -14,6 +14,7 @@ namespace Veng
 {
     class Scene;
     class AssetManager;
+    class BehaviorTreeRegistry;
     class Input;
     class TaskSystem;
 }
@@ -161,6 +162,12 @@ namespace Veng
         /// every key to itself), so a tick-time caller producing text — a notice, a status line —
         /// localizes without an Application back-reference and needs no null-guard.
         Localization::Localization& Localization;
+        /// @brief The behaviour-tree catalog a BehaviorTreeRef's id resolves against.
+        ///
+        /// The host's system registry's tree catalog (SystemRegistry::GetBehaviorTrees), so a tree a
+        /// module registered resolves in every world the host runs. Always present; an empty catalog
+        /// resolves every id to null.
+        const BehaviorTreeRegistry& BehaviorTrees;
         /// @brief This frame's free-pointer owner + region-local position; default-empty when unrouted.
         ///
         /// The InputMappingSystem reads it to build each seat's region-gated pointer view. Its
