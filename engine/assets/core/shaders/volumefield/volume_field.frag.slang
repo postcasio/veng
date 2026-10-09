@@ -6,7 +6,7 @@
 // the medium's glow and attenuates the background behind it.
 //
 // The g-buffer depth is sampled through set-0 bindless; the field's 3D texture + sampler ride a
-// dedicated per-pass set (set 1) — a Texture3D in set 0's Metal argument buffer is a MoltenVK risk
+// dedicated per-pass set (set 3) — a Texture3D in set 0's Metal argument buffer is a MoltenVK risk
 // the engine refuses. Bounds, the Opacity-folded scales, the step count, and the frame index for
 // the jitter rotation ride the push.
 #include "../view_constants.slang"

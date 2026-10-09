@@ -1823,7 +1823,8 @@ media, a named future increment, not this.
 - **Resource / component split, the point-field model verbatim.** `Renderer::VolumeField`
   (`Veng/Renderer/VolumeField.h`) is the GPU resource: a `Type3D` emission+extinction texture + its
   view + sampler + a **world-space AABB**, `Build`/`BuildSync`-constructed from CPU voxel data
-  (worker-legal creation, no bindless registration — the dedicated-set decision below). The
+  (worker-legal creation; the march binds it through a dedicated set, below, and `Finalize()`
+  separately registers it into the bindless volume set for a material that samples it). The
   reflected **`VolumeField` scene component** (`Veng/Scene/Components.h`) carries the authored,
   live-tunable knobs — `Opacity` (an overall fade scaling emission and extinction toward zero),
   `EmissionScale`, `ExtinctionScale`, `Steps` (the fixed march step count, the quality knob,
@@ -1858,8 +1859,8 @@ media, a named future increment, not this.
 - **The 3D texture binds through a dedicated per-pass set, not set-0 bindless.** The pass binds set 0
   (view constants + the bindless depth texture) plus **its own volume set** (the `Texture3D` +
   sampler) — the IBL-cubemap / shadow-atlas precedent: a non-2D descriptor inside set 0's Metal
-  argument buffer is a MoltenVK mistranslation risk the engine refuses once, and a closed
-  producer→consumer resource needs no global registration.
+  argument buffer is a MoltenVK mistranslation risk the engine refuses once, and the march needs no
+  global registration. A field a material also samples is registered by `VolumeField::Finalize()`.
 - **Overlapping fields composite independently — a documented approximation.** Live fields draw
   **far-to-near** (`VolumeFieldFartherFirst`, by camera distance to bounds center), so each nearer
   field's `(ONE, SRC_ALPHA)` blend attenuates whatever the farther fields already composited behind
