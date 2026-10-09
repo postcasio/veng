@@ -403,6 +403,7 @@ namespace Veng::Renderer
                                       .Position = position,
                                       .FaceBasis = basis,
                                       .Exclude = entity,
+                                      .VisibleLayers = VisibleLayers,
                                       .Alpha = alpha});
             if (runtime.PendingFaces > 0)
             {

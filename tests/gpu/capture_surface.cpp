@@ -15,6 +15,8 @@
 //  - the published capture frame: with OrientationSlot named, the drive writes the basis the faces
 //    were oriented by as a quaternion — the identity for a world-aligned capture, the carrier's own
 //    rotation for an entity-aligned one — and teardown returns it to the identity;
+//  - the layer mask: a surface's authored VisibleLayers reaches its faces through the drive, so a
+//    drawable on a layer outside the mask is absent from the map while one inside it is present;
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
 //    material it fed stops sampling the capture rather than freezing on a released bindless slot;
@@ -53,6 +55,7 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RenderLayer.h>
 #include <Veng/Scene/Scene.h>
 
 #include <cmath>
@@ -244,26 +247,31 @@ namespace
     // CaptureSurface. The shell stands between a probe at the origin and everything else in every
     // direction, which is what a pane, canopy or monitor does to a probe sitting on its own surface,
     // generalized so one scene exercises every direction. Because the shell is opaque it writes
-    // depth, so it hides the geometry beyond it even if it were dropped from color alone.
+    // depth, so it hides the geometry beyond it even if it were dropped from color alone. The two
+    // meshes sit on the given render layers, for the layer-mask case.
     Unique<Scene> BuildExclusionScene(Context& context, AssetManager& assets, TypeRegistry& types,
                                       const AssetHandle<MaterialInstance>& shellMaterial,
                                       const AssetHandle<MaterialInstance>& belowMaterial,
                                       const AssetHandle<MaterialInstance>& aheadMaterial,
-                                      vector<Ref<Mesh>>& meshes, Entity& shellEntity)
+                                      vector<Ref<Mesh>>& meshes, Entity& shellEntity,
+                                      const RenderLayer belowLayer = RenderLayer::Default,
+                                      const RenderLayer aheadLayer = RenderLayer::Default)
     {
         Unique<Scene> scene = Scene::Create(types);
 
         const auto place = [&](const AssetHandle<MaterialInstance>& material, const char* name,
-                               const vec3& position)
+                               const vec3& position, const RenderLayer layer)
         {
             const Ref<Mesh> mesh = Mesh::BuildSync(context, Primitives::Cube(4.0f, material), name);
             meshes.push_back(mesh);
             const Entity entity = scene->CreateEntity();
             scene->Add<Transform>(entity).Position = position;
-            scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+            auto& renderer = scene->Add<MeshRenderer>(entity);
+            renderer.Mesh = assets.Adopt(mesh);
+            renderer.Layer = layer;
         };
-        place(belowMaterial, "Exclusion Below", vec3(0.0f, -8.0f, 0.0f));
-        place(aheadMaterial, "Exclusion Ahead", vec3(0.0f, 0.0f, 12.0f));
+        place(belowMaterial, "Exclusion Below", vec3(0.0f, -8.0f, 0.0f), belowLayer);
+        place(aheadMaterial, "Exclusion Ahead", vec3(0.0f, 0.0f, 12.0f), aheadLayer);
 
         const Ref<Mesh> shell =
             Mesh::BuildSync(context, Primitives::Cube(1.4f, shellMaterial), "Exclusion Shell");
@@ -1088,6 +1096,90 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(down.g > 0.5f);
         CHECK(down.g > down.r + 0.2f);
         CHECK(down.g > down.b + 0.2f);
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture layers: a capture surface draws only the layers its VisibleLayers names")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> shell =
+        assets.LoadSync<MaterialInstance>(ShellInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> below =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> ahead =
+        assets.LoadSync<MaterialInstance>(MarkerInstance);
+    REQUIRE(shell.has_value());
+    REQUIRE(below.has_value());
+    REQUIRE(ahead.has_value());
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // The green mesh below sits on `belowLayer`, the red one ahead on `aheadLayer`, and the surface
+    // authors `mask` (or keeps its default when none is given). The surface is driven only through
+    // CaptureSurface::Drive, so the mask reaches the faces by the same path an authored one does.
+    // Returns the captured colour straight down and straight ahead.
+    const auto CaptureBoth =
+        [&](const RenderLayer belowLayer, const RenderLayer aheadLayer, const optional<u32> mask)
+    {
+        vector<Ref<Mesh>> meshes;
+        Entity shellEntity;
+        const Unique<Scene> scene =
+            BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity,
+                                belowLayer, aheadLayer);
+        if (mask)
+        {
+            scene->Get<CaptureSurface>(shellEntity).VisibleLayers = *mask;
+        }
+        const CaptureSurface& capture = scene->Get<CaptureSurface>(shellEntity);
+        const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, shellEntity);
+
+        const auto sample = [&](const vec3& direction)
+        {
+            vector<u8> output;
+            for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+            {
+                auto* const built = capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f),
+                                                  0.0f, mat3(1.0f), material);
+                REQUIRE(built != nullptr);
+                material->SetParam("Direction", vec4(direction, 0.0f));
+                viewport->SetViewState(
+                    {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+                Context.ImmediateCommands(
+                    [&](CommandBuffer& cmd)
+                    {
+                        built->Render(cmd);
+                        viewport->Render(cmd);
+                    });
+                output = viewport->GetOutput()->GetImage()->Download();
+            }
+            return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+        };
+        return std::pair{sample(vec3(0.0f, -1.0f, 0.0f)), sample(vec3(0.0f, 0.0f, 1.0f))};
+    };
+
+    SUBCASE("an authored mask draws its layer and drops the rest")
+    {
+        // An environment-only capture: the red mesh on Environment is in the map, the green one on
+        // Default is not, though nothing but the mask stands between it and the probe.
+        const auto [down, forward] = CaptureBoth(RenderLayer::Default, RenderLayer::Environment,
+                                                 RenderLayerBit(RenderLayer::Environment));
+        CHECK(down.g < 0.2f);
+        CHECK(forward.r > 0.5f);
+        CHECK(forward.r > forward.g + 0.2f);
+    }
+
+    SUBCASE("the default mask drops a view-anchored drawable")
+    {
+        const auto [down, forward] =
+            CaptureBoth(RenderLayer::ViewAnchored, RenderLayer::Default, std::nullopt);
+        CHECK(down.g < 0.2f);
+        CHECK(forward.r > 0.5f);
+        CHECK(forward.r > forward.g + 0.2f);
     }
 }
 
