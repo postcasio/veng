@@ -4,6 +4,7 @@
 #include "AtmospherePrecompute.h"
 #include "AutoExposureMeter.h"
 #include "BloomPyramid.h"
+#include "CaptureRotation.h"
 #include "DebugBlitPipelines.h"
 #include "DepthInstancing.h"
 #include "DrawGather.h"
@@ -2511,8 +2512,11 @@ namespace Veng::Renderer
             // index, so the region carries its own copy. It is claimed BEFORE this render's own slot:
             // every pass that reads GetCurrentViewConstantsIndex at record time must land on the full
             // region, so the full claim is the later one. A frame whose view budget refuses this
-            // claim folds the layer's draws back into the full-res plan in PrepareDraws.
-            if (m_HalfResTranslucentActive && registry.TryBeginView())
+            // claim folds the layer's draws back into the full-res plan in PrepareDraws. It is taken
+            // only while a slot would remain for the full claim after it: a half-res region taken
+            // with the last slot would leave the full claim refused and the whole render skipped.
+            if (m_HalfResTranslucentActive && HalfResViewFits(registry.GetRemainingViews()) &&
+                registry.TryBeginView())
             {
                 registry.WriteLights(
                     std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));

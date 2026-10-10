@@ -242,6 +242,16 @@ namespace Veng::Renderer
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
+        /// @brief Returns how many of the frame's view slots one Execute claims: two while the
+        ///        half-res translucent layer is active (its own region, then the full one), else one.
+        ///
+        /// What a driver of other views this frame must leave for this renderer, so the full claim
+        /// is never the one refused.
+        [[nodiscard]] u32 GetViewSlotsPerExecute() const
+        {
+            return m_HalfResTranslucentActive ? 2u : 1u;
+        }
+
         /// @brief Returns the number of shadow views the depth passes rendered in the last Execute.
         ///
         /// Each cascade of every cascade set a light was granted, plus each punctual light's views

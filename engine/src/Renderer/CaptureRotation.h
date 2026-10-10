@@ -11,12 +11,23 @@ namespace Veng::Renderer
     /// window, while a capture that cannot only holds its last map. So the drive stops as soon as all
     /// that remains is the viewports' reservation.
     /// @param remainingViews  Slots still claimable this frame (BindlessRegistry::GetRemainingViews).
-    /// @param reservedViews   Slots held back for the registered viewports, one each.
+    /// @param reservedViews   Slots held back for the registered viewports: one each, two for one
+    ///                        whose half-res translucent layer is active
+    ///                        (SceneRenderer::GetViewSlotsPerExecute).
     /// @return True while a capture may still claim a slot.
     [[nodiscard]] constexpr bool CaptureDriveHasRoom(const u32 remainingViews,
                                                      const u32 reservedViews)
     {
         return remainingViews > reservedViews;
+    }
+
+    /// @brief Whether a renderer may claim its half-res translucent region with this many view slots
+    ///        left this frame: only while one would remain for its full region after it.
+    /// @param remainingViews  Slots still claimable this frame (BindlessRegistry::GetRemainingViews).
+    /// @return True when both regions fit.
+    [[nodiscard]] constexpr bool HalfResViewFits(const u32 remainingViews)
+    {
+        return remainingViews >= 2;
     }
 
     /// @brief The drive-list index a frame's capture drive visits on its step-th step.

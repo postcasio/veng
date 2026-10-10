@@ -329,6 +329,16 @@ namespace Veng::Renderer
         return true;
     }
 
+    u32 ViewportCompositor::ReservedViewSlots() const
+    {
+        u32 reserved = 0;
+        for (const Viewport* viewport : m_Viewports)
+        {
+            reserved += viewport->GetRenderer().GetViewSlotsPerExecute();
+        }
+        return reserved;
+    }
+
     void ViewportCompositor::DrivePortraits(CommandBuffer& cmd)
     {
         if (m_PortraitQueue.empty())
@@ -337,7 +347,7 @@ namespace Veng::Renderer
         }
         VE_PROFILE_SCOPE("Portrait/Render");
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-        const u32 reserved = static_cast<u32>(m_Viewports.size());
+        const u32 reserved = ReservedViewSlots();
         for (const ModelPortrait* portrait : m_PortraitQueue)
         {
             // A portrait left out keeps its last render and still owes one, so it renders on a
@@ -425,7 +435,7 @@ namespace Veng::Renderer
         }
 
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-        const u32 reserved = static_cast<u32>(m_Viewports.size());
+        const u32 reserved = ReservedViewSlots();
         const usize count = m_Captures.size();
 
         // Round-robin from where the last budget-limited frame stopped, so a capture set larger than

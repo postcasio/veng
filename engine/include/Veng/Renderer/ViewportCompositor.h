@@ -311,12 +311,17 @@ namespace Veng::Renderer
 
         /// @brief Renders the registered captures against the view budget left over from the viewports.
         ///
-        /// Reserves one view slot per registered viewport, then drives captures round-robin from
+        /// Reserves the viewports' view slots (ReservedViewSlots), then drives captures round-robin from
         /// m_CaptureCursor while the registry has a slot to spare, leaving the cursor on the first
         /// capture it could not afford so the next frame resumes there. Warns once per compositor when
         /// a frame cannot drive them all.
         /// @param cmd  The command buffer to record into.
         void DriveCaptures(CommandBuffer& cmd);
+
+        /// @brief The view slots the registered viewports' renders claim this frame, which the
+        ///        portrait and capture drives leave for them: one each, two for a viewport whose
+        ///        half-res translucent layer is active.
+        [[nodiscard]] u32 ReservedViewSlots() const;
 
         /// @brief Borrowed render context for the swapchain and per-frame command buffer.
         Context& m_Context;

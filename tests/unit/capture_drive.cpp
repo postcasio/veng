@@ -126,6 +126,12 @@ TEST_CASE("The capture rotation reserves the viewports' slots and starves no cap
     CHECK_FALSE(CaptureDriveHasRoom(4, 4));
     // An empty drive-list has no budget question to answer.
     CHECK_FALSE(CaptureDriveHasRoom(0, 0));
+    // A renderer's half-res region is taken only with a slot left for its full region after it, so
+    // its own first claim can never leave the second refused.
+    CHECK(HalfResViewFits(32));
+    CHECK(HalfResViewFits(2));
+    CHECK_FALSE(HalfResViewFits(1));
+    CHECK_FALSE(HalfResViewFits(0));
 
     SUBCASE("A frame that affords the whole list drives it in list order and holds the cursor")
     {
