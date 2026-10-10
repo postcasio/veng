@@ -1932,6 +1932,11 @@ if (VENG_BUILD_TESTS)
             # away, a thin near board not reflected into the floor behind it, and a RenderLook's
             # SSR knobs reaching a presenting viewport's trace.
             tests/gpu/ssr_reach.cpp
+            # ssr_rough.cpp drives rough reflections: a small emitter's blur keeping its shape under
+            # sub-pixel motion, no texel grid in a rough reflection, the same apparent blur at Full
+            # and Half SSR resolution, a narrower blur where the reflected ray is short, and a
+            # mirror staying sharp with its screen-edge fade intact.
+            tests/gpu/ssr_rough.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

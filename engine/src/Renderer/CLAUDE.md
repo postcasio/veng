@@ -1205,7 +1205,8 @@ extreme texel, and zero from a `NaN` or `inf`.
 ### Screen-space reflections reach as far as the view authors
 
 `SsrChain` reduces depth to a max-Z pyramid, traces one reflection ray per reflective pixel
-(`ssr_trace.frag`), blurs the result into a roughness mip chain and composites it. The trace is built
+(`ssr_trace.frag`), low-passes the result down a mip chain and composites it, blurred by the
+reflected cone's footprint (below). The trace is built
 so a scene spanning metres to kilometres reflects its far geometry, with every knob per-frame on
 the view and authorable on `RenderLook` (`SsrIntensity`, `SsrMaxDistance`, `SsrThickness`,
 `SsrMaxRoughness`, `SsrMaxSteps`):
@@ -1231,6 +1232,60 @@ the view and authorable on `RenderLook` (`SsrIntensity`, `SsrMaxDistance`, `SsrT
 For geometry out to ~10 km a look sets `SsrMaxDistance` to the reach wanted (10000), leaves
 `SsrThickness` at its near-range value, and raises `SsrMaxSteps` (512–1024) when long grazing rays
 stay close to a surface for much of their length, where skipping cannot help.
+
+#### A rough reflection blurs by its cone, smoothly, with anti-aliasing off
+
+A rough surface reflects a cone, not a ray. The chain blurs one traced ray per texel into that cone
+spatially — nothing here is temporal, so the result holds with no TAA, and a temporal resolve is
+only ever an improvement on top.
+
+- **Both targets are premultiplied by confidence.** The trace writes two chains at the SSR
+  resolution: the reflected radiance times the hit's screen-edge confidence, with the confidence in
+  alpha (`RGBA16F`), and the view-space ray length to the hit times the same confidence (`R16F`,
+  clamped at 60000). The composite adds the colour as it stands, so a coarse level that averaged few
+  hits is dim by exactly that share, and a level's distance over its alpha is the mean hit distance
+  of its footprint.
+- **Each level is band-limited.** `ssr_blur_down.comp` low-passes both chains a level at a time
+  through the bloom chain's 13-tap Call-of-Duty kernel at source-texel offsets (five overlapping 2×2
+  groups, the inner one at 0.5) — one dispatch per level, six source texels of support, against the
+  plain 2×2 box it replaces, which let a small bright reflection step from one coarse texel to the
+  next. A separable Gaussian would cost two dispatches a level for the same band limit. The kernel's
+  variance is 1.75 source texels² per axis.
+- **The cone is GGX's half-maximum.** With `α = roughness²`, the half-vector distribution falls to
+  half its peak at `tan θh = α·√((√2 − 1)/(1 − √2·α²))`; the reflected cone's half-angle is `2θh`
+  (held at its widest once `α² ≥ 1/√2`, where the lobe never halves). Its diameter at the hit is
+  `2·d·tan θr`, a world size.
+- **The footprint is projected from where the hit appears.** The reflected hit is seen along the
+  unfolded ray, `cameraDistance + d` from the camera, so the composite projects the footprint from
+  that depth (the reflection point's view depth scaled by `(cameraDistance + d)/cameraDistance`,
+  or no depth under an orthographic projection) through `Proj[1][1]` and the chain's own level-0
+  height. A contact reflection (`d → 0`) stays sharp; a far one tends to the cone's own angle.
+- **The level is converted last.** Level `L`, read through the B-spline below, has a kernel whose
+  full width at half maximum is about `2.25·2^L` level-0 texels (the downsample variances summed down
+  the chain plus the B-spline's own third of a texel², about `0.92·4^L`), so the composite reads
+  `lod = log2(footprintTexels / 2.25)`, clamped to the chain. Because only this last step knows the
+  SSR resolution, Full and Half give the same apparent blur and differ only in how finely it is
+  sampled.
+- **The hit distance is read at the pixel**, from the finest level whose confidence clears 0.02, so a
+  pixel whose own ray missed takes its neighbourhood's mean and a rough reflection blurs past the
+  edge of what it reflects; a pixel with nothing hit at any level adds nothing.
+- **Levels are reconstructed with a cubic B-spline** from four bilinear taps, so a coarse level
+  magnifies without drawing its texel grid, and the two levels either side of `lod` are blended by
+  its fraction. Level 0 is read bilinearly, so a mirror is exactly as sharp as the trace.
+- **The chains stop where their short axis reaches two texels** (`bit_width(min(w, h)) − 1` levels):
+  the smooth reconstruction makes the coarsest levels usable, so a wide cone reads a smooth average
+  of the screen, and a cone wider still clamps there.
+- **The roughness cutoff fades.** A surface rougher than `SsrMaxRoughness` traces nothing and the
+  composite adds nothing for it; across the top fifth of `[0, SsrMaxRoughness]` the composite fades
+  the reflection out, so a surface whose roughness crosses the cutoff shows no seam.
+
+What spatial filtering cannot do is recover what the trace never sampled: one ray per SSR texel
+point-samples a small or hard-edged source, so how much of it a reflection carries steps with the
+source's sub-texel position, at any roughness. The chain carries that energy through unchanged at
+every grid phase. `tests/gpu/ssr_rough.cpp` pins the properties: a small emitter's rough reflection
+keeps the trace's energy and its own shape across sub-pixel shifts, a rough reflection of a wall has
+no texel-grid kinks, a reflected edge blurs by the same width at Full and Half, a reflection is
+narrower where its rays are short, and a mirror stays sharp with its edge fade intact.
 
 ### Depth of field and the physical camera
 

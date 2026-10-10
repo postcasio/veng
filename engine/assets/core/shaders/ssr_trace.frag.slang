@@ -1,8 +1,10 @@
 // Screen-space reflection trace: for each reflective fragment, reflects the view
 // vector about the g-buffer normal and marches the ray through the depth buffer to
 // find the first surface it crosses, then samples the lit scene color there. Writes
-// the reflected radiance (rgb) and a confidence/mask (a) to a reflection target the
-// SSR composite folds back into the scene.
+// two targets, both premultiplied by the hit's confidence (the screen-edge fade) so the
+// blur chain filters them linearly: the reflected radiance with the confidence in alpha,
+// and the view-space length of the reflected ray to its hit, which the composite reads
+// to size the reflected cone's footprint.
 //
 // The ray is a straight segment in view space, projected to a straight line in screen space
 // (uv + NDC depth) and marched along that line at one texel per step, with a binary-search
@@ -60,11 +62,23 @@ static const float CellExitBias = 0.05;
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
+// The largest hit distance the R16F target stores; a footprint that far away is as wide as
+// the cone ever gets on screen.
+static const float MaxStoredHitDistance = 60000.0;
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
 };
+
+struct TraceOutput
+{
+    float4 Reflection : SV_Target0;  // reflected radiance x confidence, confidence
+    float HitDistance : SV_Target1;  // view-space ray length to the hit x confidence
+};
+
+static const TraceOutput Miss = { float4(0.0, 0.0, 0.0, 0.0), 0.0 };
 
 // Project a view-space position to a screen UV through the projection matrix.
 float2 ViewToScreenUV(float4x4 proj, float3 viewPos)
@@ -84,7 +98,7 @@ float3 ViewPositionAt(ViewConstants vc, float2 uv, float depth)
 }
 
 [shader("fragment")]
-float4 fsMain(VSOutput input) : SV_Target
+TraceOutput fsMain(VSOutput input)
 {
     SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
@@ -95,18 +109,18 @@ float4 fsMain(VSOutput input) : SV_Target
     float depth = depthTexture.Sample(samp, uv).r;
     // The cleared background (reverse-Z far = 0.0) has no surface to reflect from.
     if (depth <= 0.0)
-        return float4(0.0, 0.0, 0.0, 0.0);
+        return Miss;
 
     float roughness = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, uv).g;
-    // Very rough surfaces reflect nothing coherent; skip the trace (the composite's
-    // roughness LOD fades the rest out smoothly below this cutoff).
+    // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
+    // reflection out smoothly below this cutoff).
     if (roughness > g_PC.MaxRoughness)
-        return float4(0.0, 0.0, 0.0, 0.0);
+        return Miss;
 
     float3 worldNormal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, uv).xyz;
     float normalLength = length(worldNormal);
     if (normalLength < 1e-4)
-        return float4(0.0, 0.0, 0.0, 0.0);
+        return Miss;
     float3 N = mul((float3x3)vc.View, worldNormal / normalLength);
 
     // The camera is at the view-space origin, so the fragment's view position is also
@@ -124,7 +138,7 @@ float4 fsMain(VSOutput input) : SV_Target
         endDistance = min(endDistance, (NearClip - viewPos.z) / R.z);
     }
     if (endDistance <= 0.0)
-        return float4(0.0, 0.0, 0.0, 0.0);
+        return Miss;
     float3 endPos = viewPos + R * endDistance;
 
     // Project the ray's start and end into screen space (uv.xy + NDC depth). A straight
@@ -156,6 +170,7 @@ float4 fsMain(VSOutput input) : SV_Target
     float prevDeltaZ = -1.0;
     bool hit = false;
     float2 hitUV = float2(0.0, 0.0);
+    float hitDistance = 0.0;
 
     const uint topLevel = max(g_PC.HiZLevels, 1u) - 1u;
     const uint restartLevel = min(HiZStartLevel, topLevel);
@@ -252,6 +267,7 @@ float4 fsMain(VSOutput input) : SV_Target
                     lo = mid;
             }
             hitUV = hi.xy;
+            hitDistance = length(ViewPositionAt(vc, hi.xy, hi.z) - viewPos);
             hit = true;
             break;
         }
@@ -263,7 +279,7 @@ float4 fsMain(VSOutput input) : SV_Target
     }
 
     if (!hit)
-        return float4(0.0, 0.0, 0.0, 0.0);
+        return Miss;
 
     float3 reflected = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].Sample(samp, hitUV).rgb;
 
@@ -272,5 +288,8 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 edge = smoothstep(0.0, 0.15, hitUV) * (1.0 - smoothstep(0.85, 1.0, hitUV));
     float confidence = edge.x * edge.y;
 
-    return float4(reflected, confidence);
+    TraceOutput output;
+    output.Reflection = float4(reflected * confidence, confidence);
+    output.HitDistance = min(hitDistance, MaxStoredHitDistance) * confidence;
+    return output;
 }

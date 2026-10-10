@@ -262,8 +262,8 @@ namespace Veng::Renderer
         // their consumer set layouts must exist before CreatePipelines reserves sets (the lighting
         // layout reserves the IBL set, the sky layout the atmosphere set), so it is created here.
         m_SkyResolver = SkyResolver::Create(m_Context, m_Assets);
-        // Bloom's down/up set layout is reserved by the SSR chain's blur pipeline layout, so bloom
-        // is constructed before the SSR chain; its extent-sized pyramid is built by Resize below
+        // Bloom's down/up set layout is reserved by the depth-of-field chain's pipeline layouts, so
+        // bloom is constructed before that chain; its extent-sized pyramid is built by Resize below
         // (after the HDR target). TAA is grouped with it; both build their pipelines in their ctors.
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
@@ -280,11 +280,10 @@ namespace Veng::Renderer
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
-        // The SSR chain's blur pipeline layout reserves the bloom down/up set layout, and its
-        // min-Z reduce pipeline builds on the GPU cull subsystem's hi-Z reduce layout — both must
-        // already exist, so the chain is constructed after those subsystems and CreatePipelines.
+        // The SSR chain's min-Z reduce pipeline builds on the GPU cull subsystem's hi-Z reduce
+        // layouts, which must already exist, so the chain is constructed after that subsystem.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
-                                 m_GpuCull->GetHiZTailLayout(), m_Bloom->GetDownUpSetLayout());
+                                 m_GpuCull->GetHiZTailLayout());
         // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
@@ -2127,8 +2126,7 @@ namespace Veng::Renderer
         }
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
-                        m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout(),
-                        m_Bloom->GetDownUpSetLayout());
+                        m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);
@@ -3077,6 +3075,12 @@ namespace Veng::Renderer
             {
                 bindings.push_back(
                     {.Id = m_SsrReflectionChainId.Level(level), .View = reflectionMips[level]});
+            }
+            const std::vector<Ref<ImageView>>& distanceMips = m_Ssr->GetHitDistanceMipViews();
+            for (u32 level = 0; level < distanceMips.size(); level++)
+            {
+                bindings.push_back({.Id = m_Ssr->GetHitDistanceChainId().Level(level),
+                                    .View = distanceMips[level]});
             }
             const std::vector<Ref<ImageView>>& hiZMips = m_Ssr->GetHiZMipViews();
             for (u32 level = 0; level < hiZMips.size(); level++)

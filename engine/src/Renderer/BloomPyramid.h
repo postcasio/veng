@@ -132,7 +132,7 @@ namespace Veng::Renderer
         /// @brief The per-level storage views, bound to their per-mip import slots each Execute.
         [[nodiscard]] const std::vector<Ref<ImageView>>& GetMipViews() const { return m_Mips; }
 
-        /// @brief The down/up set-1 layout, shared with the SSR reflection blur (sampled + sampler + dest).
+        /// @brief The down/up set layout, shared with the depth-of-field tile and fill stages (sampled + sampler + dest).
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetDownUpSetLayout() const
         {
             return m_DownUpSetLayout;

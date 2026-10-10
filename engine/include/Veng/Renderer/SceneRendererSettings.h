@@ -75,7 +75,7 @@ namespace Veng::Renderer
         Bloom,
         /// @brief Per-object velocity (g-buffer channel G3) as an optical-flow field.
         MotionVectors,
-        /// @brief Raw SSR reflection target (rgb radiance, force-wires the SSR pass).
+        /// @brief Raw SSR reflection target (rgb radiance times hit confidence, force-wires the SSR pass).
         Reflections,
         /// @brief The authored emissive g-buffer channel (G4) alone.
         Emissive,

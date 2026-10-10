@@ -1071,8 +1071,8 @@ namespace Veng::Renderer
 
         /// @brief The compute mip-pyramid bloom battery — pyramid, pipelines, sets, and the sweep.
         ///
-        /// Its down/up set layout is reserved by the SSR blur pipeline layout, so it is constructed
-        /// before CreatePipelines; Resize rebuilds the extent-sized pyramid after the HDR target.
+        /// Its down/up set layout is reserved by the depth-of-field chain's pipeline layouts, so it is
+        /// constructed before that chain; Resize rebuilds the extent-sized pyramid after the HDR target.
         Unique<BloomPyramid> m_Bloom;
 
         /// @brief The auto-exposure metering battery — histogram pipeline, ring, and adaptation state.

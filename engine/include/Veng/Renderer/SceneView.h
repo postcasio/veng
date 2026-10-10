@@ -390,6 +390,9 @@ namespace Veng::Renderer
         /// behind it stops registering it.
         f32 SsrThickness = 0.5f;
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
+        ///
+        /// The composite fades the reflection out across the top fifth of [0, SsrMaxRoughness], so
+        /// a surface whose roughness crosses the cutoff shows no seam.
         f32 SsrMaxRoughness = 0.8f;
         /// @brief SSR per-ray budget: the most depth tests, and separately the most hi-Z probes.
         ///

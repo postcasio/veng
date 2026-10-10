@@ -24,22 +24,25 @@ namespace Veng::Renderer
     class PipelineLayout;
     struct SceneRendererSettings;
 
-    /// @brief Owns the screen-space-reflection chain — scene-color intermediate, mip chain, min-Z pyramid, and sweep.
+    /// @brief Owns the screen-space-reflection chain — scene-color intermediate, mip chains, min-Z pyramid, and sweep.
     ///
     /// The reflection vertical the renderer wires between lighting and the bloom/tonemap tail: the lit
     /// scene-color intermediate the trace samples (lighting/TAA writes it, the composite reflects into it
-    /// and writes the HDR target), the reflection mip chain (mip 0 the trace writes, coarser mips the
-    /// blur produces), the min-Z depth pyramid the hi-Z trace marches, and the four pipelines — min-Z
+    /// and writes the HDR target), two mip chains the trace writes level 0 of and the blur low-passes
+    /// down — the reflected radiance and the hit distance, both premultiplied by the trace's
+    /// confidence — the min-Z depth pyramid the hi-Z trace marches, and the four pipelines: min-Z
     /// reduction, trace, blur, composite. Recreate allocates the whole chain at the SsrResolution scale
     /// when SSR runs (the toggle or the Reflections debug arm), releasing it otherwise; Declare
     /// contributes min-Z reduction → trace → blur → composite into the graph.
     ///
-    /// Three of the chain's descriptor allocations borrow layouts owned elsewhere: the blur sets and
-    /// the blur pipeline layout use the bloom down/up set layout (from BloomPyramid), and the min-Z
-    /// reduce sets and pipeline, and its coarse-tail set and pipeline, build on the renderer's hi-Z
-    /// reduce and tail layouts. All are received by reference; the blur, min-Z reduce and min-Z tail
-    /// pipelines are built in the constructor, so the lending layouts must already exist when
-    /// SsrChain is created.
+    /// The mip chains stop where their short axis reaches two texels: the composite reconstructs a
+    /// coarse level with a B-spline, so the widest reflected cone reads a smooth average of the
+    /// screen rather than a blocky one.
+    ///
+    /// The min-Z reduce sets and pipeline, and its coarse-tail set and pipeline, build on the
+    /// renderer's hi-Z reduce and tail layouts, received by reference; the min-Z reduce and tail
+    /// pipelines are built in the constructor, so those layouts must already exist when SsrChain is
+    /// created.
     ///
     /// The min-Z pyramid's coarse tail — the smallest levels that fit one workgroup's shared memory
     /// (MipTailFirstLevel), never level 0, which ingests the full-resolution depth — is reduced by one
@@ -52,43 +55,39 @@ namespace Veng::Renderer
         /// @param assets            Asset manager used to load the SSR shaders.
         /// @param hiZReduceLayout   The hi-Z reduce pipeline layout (the min-Z reduce pipeline builds on it).
         /// @param hiZTailLayout     The hi-Z coarse-tail pipeline layout (the min-Z tail builds on it).
-        /// @param bloomDownUpLayout The bloom down/up set layout (the blur pipeline layout reserves it).
         /// @return A new SsrChain.
         static Unique<SsrChain> Create(Context& context, AssetManager& assets,
                                        const Ref<PipelineLayout>& hiZReduceLayout,
-                                       const Ref<PipelineLayout>& hiZTailLayout,
-                                       const Ref<DescriptorSetLayout>& bloomDownUpLayout);
+                                       const Ref<PipelineLayout>& hiZTailLayout);
 
-        /// @brief Releases the four SSR bindless slots; the images retire through the frame bin.
+        /// @brief Releases the SSR bindless slots; the images retire through the frame bin.
         ~SsrChain();
 
         SsrChain(const SsrChain&) = delete;
         SsrChain& operator=(const SsrChain&) = delete;
 
-        /// @brief Recreates the scene-color intermediate, reflection mip chain, and min-Z pyramid.
+        /// @brief Recreates the scene-color intermediate, the reflection and hit-distance mip chains, and the min-Z pyramid.
         ///
         /// Allocates the targets and per-level descriptor sets when SSR runs (Settings.SSR or the
-        /// Reflections debug arm); otherwise releases any previously-created ones. The reflection blur
-        /// chain mirrors the bloom pyramid, the min-Z pyramid the hi-Z reduction. Called from the
-        /// renderer's Create and every Resize/Configure.
+        /// Reflections debug arm); otherwise releases any previously-created ones. The min-Z pyramid
+        /// mirrors the hi-Z reduction. Called from the renderer's Create and every Resize/Configure.
         /// @param settings          The active renderer settings (SSR/Mode gate allocation, SsrResolutionScale sizes the chain).
         /// @param extent            The full render extent (the scene-color intermediate is full-res).
         /// @param depthView         The live depth target the min-Z reduction's mip-0 source binds.
         /// @param hiZReduceSetLayout The hi-Z reduce set layout the min-Z reduce sets allocate from.
         /// @param hiZTailSetLayout  The hi-Z coarse-tail set layout the min-Z tail set allocates from.
-        /// @param bloomDownUpLayout The bloom down/up set layout the blur sets allocate from.
         void Recreate(const SceneRendererSettings& settings, uvec2 extent,
                       const Ref<ImageView>& depthView,
                       const Ref<DescriptorSetLayout>& hiZReduceSetLayout,
-                      const Ref<DescriptorSetLayout>& hiZTailSetLayout,
-                      const Ref<DescriptorSetLayout>& bloomDownUpLayout);
+                      const Ref<DescriptorSetLayout>& hiZTailSetLayout);
 
         /// @brief Declares the min-Z reduction, trace, blur, and composite passes into the graph.
         ///
-        /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into the
-        /// reflection chain's mip 0, blurs the chain for rough reflections, then composites the
-        /// reflection into the HDR target the bloom/tonemap tail reads. Declared between the lighting
-        /// pass and the bloom sweep.
+        /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into level 0
+        /// of the reflection and hit-distance chains, low-passes both chains for rough reflections,
+        /// then composites the reflection into the HDR target the bloom/tonemap tail reads. Declared
+        /// between the lighting pass and the bloom sweep. Imports the hit-distance chain into the
+        /// graph itself; its per-mip views bind through GetHitDistanceChainId.
         /// @param graph              The renderer's internal graph being rebuilt.
         /// @param sceneId            The lit scene-color intermediate import (trace + composite sample).
         /// @param reflectionChainId  The per-mip reflection pyramid import (trace + blur).
@@ -133,6 +132,15 @@ namespace Veng::Renderer
             return static_cast<u32>(m_ReflectionMips.size());
         }
 
+        /// @brief The per-level hit-distance storage views, bound to their per-mip import slots each Execute.
+        [[nodiscard]] const std::vector<Ref<ImageView>>& GetHitDistanceMipViews() const
+        {
+            return m_HitDistanceMips;
+        }
+
+        /// @brief The hit-distance chain's per-mip import, declared by the last Declare.
+        [[nodiscard]] MipChainId GetHitDistanceChainId() const { return m_HitDistanceChainId; }
+
         /// @brief The per-level min-Z storage views, bound to their per-mip import slots each Execute.
         [[nodiscard]] const std::vector<Ref<ImageView>>& GetHiZMipViews() const
         {
@@ -144,8 +152,7 @@ namespace Veng::Renderer
 
     private:
         SsrChain(Context& context, AssetManager& assets, const Ref<PipelineLayout>& hiZReduceLayout,
-                 const Ref<PipelineLayout>& hiZTailLayout,
-                 const Ref<DescriptorSetLayout>& bloomDownUpLayout);
+                 const Ref<PipelineLayout>& hiZTailLayout);
 
         /// @brief The pixel extent the trace/min-Z/blur chain runs at (SsrResolutionScale folded onto m_Extent).
         [[nodiscard]] uvec2 RenderExtent() const;
@@ -165,9 +172,11 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_CompositePipeline;
         /// @brief Layout for m_CompositePipeline (the composite push block).
         Ref<PipelineLayout> m_CompositeLayout;
-        /// @brief SSR reflection blur-downsample compute pipeline (over the bloom down/up set layout).
+        /// @brief SSR blur-downsample compute pipeline, low-passing both chains one level per dispatch.
         Ref<ComputePipeline> m_BlurPipeline;
-        /// @brief Layout for m_BlurPipeline (the borrowed bloom set + the blur push block).
+        /// @brief The blur's set 3: both chains' sampled source and storage destination, and the sampler.
+        Ref<DescriptorSetLayout> m_BlurSetLayout;
+        /// @brief Layout for m_BlurPipeline (m_BlurSetLayout + the blur push block).
         Ref<PipelineLayout> m_BlurLayout;
         /// @brief SSR min-Z reduction compute pipeline (over the borrowed hi-Z reduce layout).
         Ref<ComputePipeline> m_HiZReducePipeline;
@@ -181,7 +190,7 @@ namespace Veng::Renderer
         /// @brief Bindless slot for m_SceneView.
         TextureHandle m_SceneHandle;
 
-        /// @brief Reflection mip chain: mip 0 the trace writes, coarser mips the blur produces.
+        /// @brief Reflection mip chain, premultiplied by confidence: mip 0 the trace writes, coarser mips the blur produces.
         Ref<Image> m_ReflectionImage;
         /// @brief One single-mip view per reflection level (mip 0 a color target, deeper mips storage dests).
         std::vector<Ref<ImageView>> m_ReflectionMips;
@@ -189,12 +198,22 @@ namespace Veng::Renderer
         Ref<ImageView> m_ReflectionSampleView;
         /// @brief Bindless slot for m_ReflectionSampleView.
         TextureHandle m_ReflectionSampleHandle;
-        /// @brief Trilinear clamp-to-edge sampler over the reflection mip chain (roughness LOD),
+        /// @brief Hit-distance mip chain (R16F, premultiplied by confidence), the reflection chain's companion.
+        Ref<Image> m_HitDistanceImage;
+        /// @brief One single-mip view per hit-distance level (mip 0 a color target, deeper mips storage dests).
+        std::vector<Ref<ImageView>> m_HitDistanceMips;
+        /// @brief Whole-chain sampled view of the hit-distance chain; the composite reads it by level.
+        Ref<ImageView> m_HitDistanceSampleView;
+        /// @brief Bindless slot for m_HitDistanceSampleView.
+        TextureHandle m_HitDistanceSampleHandle;
+        /// @brief The hit-distance chain's per-mip import, declared by Declare.
+        MipChainId m_HitDistanceChainId;
+        /// @brief Trilinear clamp-to-edge sampler over both chains,
         /// shared out of the bindless registry with every other consumer of the same settings.
         Ref<Sampler> m_ReflectionSampler;
         /// @brief Bindless slot for m_ReflectionSampler; the registry's, so it stays valid.
         SamplerHandle m_ReflectionSamplerHandle;
-        /// @brief One blur-downsample set per produced level k (reads mip k-1, writes mip k).
+        /// @brief One blur-downsample set per produced level k (reads both chains' mip k-1, writes their mip k).
         std::vector<Ref<DescriptorSet>> m_BlurSets;
 
         /// @brief Min-Z depth pyramid: the closest-surface mip chain the trace marches.
