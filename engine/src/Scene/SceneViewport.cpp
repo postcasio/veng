@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -79,6 +80,12 @@ namespace Veng
         view.BloomFireflyCeiling = look.BloomFireflyCeiling;
         view.BloomIntensity = look.BloomIntensity;
         view.BloomRadius = look.BloomRadius;
+        view.SsrIntensity = look.SsrIntensity;
+        view.SsrMaxDistance = look.SsrMaxDistance;
+        view.SsrThickness = look.SsrThickness;
+        view.SsrMaxRoughness = look.SsrMaxRoughness;
+        // A GPU loop bound, clamped here as well as at the push: a cooked level is untrusted input.
+        view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(look.SsrMaxSteps);
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -104,6 +111,11 @@ namespace Veng
         view.BloomFireflyCeiling = resolved.BloomFireflyCeiling;
         view.BloomIntensity = resolved.BloomIntensity;
         view.BloomRadius = resolved.BloomRadius;
+        view.SsrIntensity = resolved.SsrIntensity;
+        view.SsrMaxDistance = resolved.SsrMaxDistance;
+        view.SsrThickness = resolved.SsrThickness;
+        view.SsrMaxRoughness = resolved.SsrMaxRoughness;
+        view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(resolved.SsrMaxSteps);
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;

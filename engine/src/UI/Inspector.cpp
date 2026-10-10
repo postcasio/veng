@@ -646,6 +646,7 @@ namespace Veng::UI
             {
                 slider.Max = static_cast<f32>(*display.Max);
             }
+            slider.Logarithmic = display.Logarithmic.value_or(false);
 
             bool changed = false;
             switch (field.Class)
@@ -673,9 +674,15 @@ namespace Veng::UI
                 }
                 else if (field.Type == TypeIdOf<u32>())
                 {
-                    // u32 has no Drag overload; edit through a signed view clamped to 0+.
+                    // u32 has no Drag overload; edit through a signed view clamped to 0+ and to
+                    // the field's range hint.
                     i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
-                    if (UI::Drag(valueLabel, value, UI::DragOptions{.Min = 0.0f}))
+                    const UI::DragOptions unsignedDrag{
+                        .Speed = drag.Speed,
+                        .Min = std::max(drag.Min.value_or(0.0f), 0.0f),
+                        .Max = drag.Max,
+                    };
+                    if (UI::Drag(valueLabel, value, unsignedDrag))
                     {
                         *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
                         changed = true;

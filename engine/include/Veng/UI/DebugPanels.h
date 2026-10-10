@@ -250,7 +250,7 @@ namespace Veng::UI
     /// shadow-resolution, SSR-resolution, bloom-kernel, and cull-mode controls) and the
     /// per-frame `ViewState` knobs (exposure and the auto-exposure key/clamps/speed, the bloom
     /// threshold / intensity / radius, the SSR intensity / distance / thickness / roughness
-    /// cutoff). A knob whose feature is off, or that the device cannot honor (GPU cull without
+    /// cutoff / step budget, distance and thickness on logarithmic sliders). A knob whose feature is off, or that the device cannot honor (GPU cull without
     /// `IsGpuDrivenCullingSupported`, dynamic resolution without timestamps), draws disabled.
     /// The viewport's adaptive-resolution controls (dynamic resolution and the manual
     /// render-scale override) drive the viewport imperatively, since they recreate or resize

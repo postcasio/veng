@@ -11,7 +11,7 @@
 // surface's larger depth wins the max.
 //
 // Set 0 is reserved for the bindless registry; this closed producer->consumer reduction
-// binds its own resources on set 1 (the hi-Z reduce set layout: sampled source + storage dest).
+// binds its own resources on set 3 (the hi-Z reduce set layout: sampled source + storage dest).
 [[vk::binding(0, 3)]] Texture2D<float> g_Source;
 [[vk::binding(1, 3)]] [format("r32f")] RWTexture2D<float> g_Dest;
 

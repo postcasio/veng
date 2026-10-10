@@ -91,6 +91,21 @@ TEST_CASE("A field override of Precision resolves through to the widget hint")
     CHECK(resolved.Step == doctest::Approx(0.1));
 }
 
+TEST_CASE("A field override of Logarithmic resolves through, and is unset when nothing sets it")
+{
+    TypeRegistry registry;
+    registry.Register<StyledScalar>();
+
+    const FieldDescriptor plain = MakeField(TypeIdOf<StyledScalar>(), {});
+    CHECK_FALSE(ResolveFieldDisplay(plain, registry).Logarithmic.has_value());
+
+    const FieldDescriptor field = MakeField(TypeIdOf<StyledScalar>(), {.Logarithmic = true});
+    const FieldDisplay resolved = ResolveFieldDisplay(field, registry);
+    REQUIRE(resolved.Logarithmic.has_value());
+    CHECK(*resolved.Logarithmic);
+    CHECK(resolved.Widget == WidgetKind::Slider);
+}
+
 TEST_CASE("A field override of the widget wins over the type default")
 {
     TypeRegistry registry;

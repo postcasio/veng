@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/PointField.h>
+#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
 #include <Veng/Renderer/Tonemapper.h>
@@ -1714,6 +1715,33 @@ namespace Veng
         /// Off matches the renderer's own default. SSR renders the g-buffer at full resolution, so
         /// it disables the dynamic-resolution sub-rect while active.
         bool SSR = false;
+        /// @brief SSR reflection mix scale fed into the per-frame SceneView.
+        ///
+        /// Scales the Fresnel-weighted reflection the composite adds back. The default matches the
+        /// renderer's own ViewState default.
+        f32 SsrIntensity = 1.0f;
+        /// @brief SSR maximum ray length in view-space units, fed into the per-frame SceneView.
+        ///
+        /// How far from the reflector a reflected surface may be. A scene whose reflections should
+        /// reach geometry hundreds of metres to kilometres away raises it to that range. The default
+        /// matches the renderer's own ViewState default. @see Renderer::SceneView::SsrMaxDistance
+        f32 SsrMaxDistance = 12.0f;
+        /// @brief SSR view-space depth gap always accepted as a hit, fed into the per-frame SceneView.
+        ///
+        /// The near-range floor of the hit tolerance — at range the tolerance follows the ray's own
+        /// depth travel per step instead. The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrThickness
+        f32 SsrThickness = 0.5f;
+        /// @brief SSR roughness cutoff fed into the per-frame SceneView; rougher surfaces trace no ray.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        f32 SsrMaxRoughness = 0.8f;
+        /// @brief SSR per-ray depth-test budget (and hi-Z probe budget), fed into the per-frame
+        ///        SceneView.
+        ///
+        /// A GPU loop bound: clamped to [1, SsrMaxStepsCeiling] on the way in, since a cooked level
+        /// or prefab is untrusted input. @see Renderer::SceneView::SsrMaxSteps
+        u32 SsrMaxSteps = Renderer::DefaultSsrMaxSteps;
         /// @brief Whether the pre-translucent scene-color copy is populated each frame.
         ///
         /// Enables the grab a Translucent-domain material samples the scene behind its fragment
@@ -2297,6 +2325,22 @@ VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min 
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
+VE_FIELD(SsrIntensity, .DisplayName = "SSR Intensity", .Display = {.Min = 0.0})
+VE_FIELD(SsrMaxDistance, .DisplayName = "SSR Max Distance",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider,
+                     .Min = 0.1,
+                     .Max = 100000.0,
+                     .Logarithmic = true})
+VE_FIELD(SsrThickness, .DisplayName = "SSR Thickness",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider,
+                     .Min = 0.001,
+                     .Max = 1000.0,
+                     .Logarithmic = true})
+VE_FIELD(SsrMaxRoughness, .DisplayName = "SSR Max Roughness",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
+VE_FIELD(SsrMaxSteps, .DisplayName = "SSR Max Steps",
+         .Display = {
+             .Min = 1, .Max = static_cast<f64>(::Veng::Renderer::SsrMaxStepsCeiling), .Step = 1.0})
 VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction Blur (Grab Mip Chain)")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of Field")

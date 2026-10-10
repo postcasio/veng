@@ -43,6 +43,8 @@ namespace Veng::UI
         f32 Max = 1.0f;
         /// @brief Printf format string for the displayed value.
         const char* Format = "%.3f";
+        /// @brief Whether the slider's travel maps the range logarithmically (a positive Min).
+        bool Logarithmic = false;
     };
 
     /// @brief Configuration for the rotary `Knob` widget.

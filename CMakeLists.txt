@@ -1927,6 +1927,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/ssr_min_z_tail.cpp
+            # ssr_reach.cpp drives the SSR trace at range: a mirror floor reflecting a wall 800 m
+            # away, a thin near board not reflected into the floor behind it, and a RenderLook's
+            # SSR knobs reaching a presenting viewport's trace.
+            tests/gpu/ssr_reach.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

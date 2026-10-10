@@ -4,6 +4,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -762,12 +763,22 @@ namespace Veng::UI
 
             (void)UI::Drag("Intensity##ssr", view.SsrIntensity,
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
-            (void)UI::Drag("Max distance##ssr", view.SsrMaxDistance,
-                           {.Speed = 0.1f, .Min = 0.0f, .Max = 200.0f});
-            (void)UI::Drag("Thickness##ssr", view.SsrThickness,
-                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+            // Distance and thickness span centimetres to kilometres, so their sliders travel
+            // logarithmically.
+            (void)UI::Slider(
+                "Max distance##ssr", view.SsrMaxDistance,
+                {.Min = 0.1f, .Max = 100000.0f, .Format = "%.1f", .Logarithmic = true});
+            (void)UI::Slider(
+                "Thickness##ssr", view.SsrThickness,
+                {.Min = 0.001f, .Max = 1000.0f, .Format = "%.3f", .Logarithmic = true});
             (void)UI::Slider("Max roughness##ssr", view.SsrMaxRoughness,
                              {.Min = 0.0f, .Max = 1.0f});
+            i32 ssrSteps = static_cast<i32>(view.SsrMaxSteps);
+            if (UI::Slider("Max steps##ssr", ssrSteps, 1,
+                           static_cast<i32>(Renderer::SsrMaxStepsCeiling)))
+            {
+                view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(static_cast<u32>(ssrSteps));
+            }
         }
 
         if (const auto section = UI::CollapsingHeader("Depth of field"))

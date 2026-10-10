@@ -6,6 +6,7 @@
 #include <Veng/Renderer/DynamicResolution.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportId.h>
@@ -124,11 +125,19 @@ namespace Veng::Renderer
         /// @brief SSR reflection mix scale (ignored while the renderer's SSR pass is off).
         f32 SsrIntensity = 1.0f;
         /// @brief SSR maximum ray length in view-space units.
+        ///
+        /// @see SceneView::SsrMaxDistance
         f32 SsrMaxDistance = 12.0f;
-        /// @brief SSR view-space depth thickness accepted as a ray hit.
+        /// @brief SSR view-space depth gap always accepted as a ray hit (the near-range floor).
+        ///
+        /// @see SceneView::SsrThickness
         f32 SsrThickness = 0.5f;
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
         f32 SsrMaxRoughness = 0.8f;
+        /// @brief SSR per-ray depth-test budget (and hi-Z probe budget).
+        ///
+        /// @see SceneView::SsrMaxSteps
+        u32 SsrMaxSteps = DefaultSsrMaxSteps;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale; zero turns it off.
         ///
         /// @see SceneView::SpecularAntiAliasingVariance

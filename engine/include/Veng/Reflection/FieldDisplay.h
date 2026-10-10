@@ -32,6 +32,12 @@ namespace Veng
         /// widget's default. Lets a small-magnitude field show enough digits to read and edit its
         /// value rather than rounding it to the default precision's last place.
         optional<u32> Precision;
+        /// @brief When set, whether a ranged slider maps its travel logarithmically.
+        ///
+        /// For a field whose useful values span orders of magnitude (a distance from centimetres to
+        /// kilometres), so the slider resolves the small end as finely as the large. Needs a range
+        /// with a positive Min; a drag ignores it.
+        optional<bool> Logarithmic;
         /// @brief When set, whether a nested struct or category renders as a collapsible section.
         optional<bool> Collapsible;
         /// @brief When set, whether a collapsible section starts expanded.

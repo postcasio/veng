@@ -1202,6 +1202,36 @@ stay the same average of the same footprint. `tests/gpu/bloom_bright_pass.cpp` p
 properties on both kernels: invariance across sub-texel offsets, the ceiling's bound on one
 extreme texel, and zero from a `NaN` or `inf`.
 
+### Screen-space reflections reach as far as the view authors
+
+`SsrChain` reduces depth to a max-Z pyramid, traces one reflection ray per reflective pixel
+(`ssr_trace.frag`), blurs the result into a roughness mip chain and composites it. The trace is built
+so a scene spanning metres to kilometres reflects its far geometry, with every knob per-frame on
+the view and authorable on `RenderLook` (`SsrIntensity`, `SsrMaxDistance`, `SsrThickness`,
+`SsrMaxRoughness`, `SsrMaxSteps`):
+
+- **The march is one texel per step, and the budget bounds work, not reach.** The view-space ray is
+  projected to a screen line (ending at `SsrMaxDistance`, the near plane or a finite far plane) and
+  walked at one reflection-target texel per step. `SsrMaxSteps` caps the depth tests and, separately,
+  the hi-Z probes; the depth-test stride widens only when the tests left could not otherwise reach the
+  line's end, so a long ray degrades to a coarser march rather than stopping short.
+- **Empty space is skipped by a mip-climbing walk.** A probe whose cell's nearest depth is behind the
+  ray advances it to where it leaves the cell — or, heading deeper, reaches that depth — and climbs a
+  level; otherwise it descends, and level 0 takes a depth test. The test is on the sign of the ray's
+  depth slope, never an absolute epsilon, so it holds under reverse-Z at any distance, and a skip costs
+  one probe rather than the texels it crosses.
+- **The hit tolerance follows the ray at range.** A front-to-behind crossing is a hit when its gap is
+  under the larger of `SsrThickness` and 1.5 times the depth the ray moved since its last test. One
+  texel spans more depth further away, so a fixed thickness alone rejects every crossing at range and
+  the ray tunnels; a gap wider than the ray's own travel means it slid behind a nearer surface, which
+  `SsrThickness` alone governs — it is the near-range floor.
+- **Positions are reconstructed camera-relative** through `InvViewRotProj` and the view rotation, so
+  the trace's precision does not depend on the camera's distance from the world origin.
+
+For geometry out to ~10 km a look sets `SsrMaxDistance` to the reach wanted (10000), leaves
+`SsrThickness` at its near-range value, and raises `SsrMaxSteps` (512–1024) when long grazing rays
+stay close to a surface for much of their length, where skipping cannot help.
+
 ### Depth of field and the physical camera
 
 **Depth of field is a half-resolution ring-gather compute battery** (`DofChain`,

@@ -20,6 +20,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Types.h>
 
 #include "MipTail.h"
@@ -75,7 +76,8 @@ namespace Veng::Renderer
 
         // The SSR trace push block, matching ssr_trace.frag PushConstants: the scene-color and
         // g-buffer bindless slots, the shared sampler, the view-constants region, the reflection
-        // extent, and the ray parameters (max distance, hit thickness, roughness cutoff, step count).
+        // extent, and the ray parameters (max distance, hit-tolerance floor, roughness cutoff, and the
+        // per-ray depth-test and hi-Z probe budget).
         struct SsrTracePush
         {
             u32 SceneColorTexture;
@@ -135,7 +137,7 @@ namespace Veng::Renderer
                        const Ref<DescriptorSetLayout>& bloomDownUpLayout)
         : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "SsrChain: {} shader load failed: {}", what,
@@ -156,9 +158,9 @@ namespace Veng::Renderer
             LoadShader(SsrHiZReduceTailCompId, "SSR max-Z reduce tail");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the color format.
-        auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
-                                const AssetHandle<Veng::Shader>& fs,
-                                const Format format) -> Ref<GraphicsPipeline>
+        const auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
+                                      const AssetHandle<Veng::Shader>& fs,
+                                      const Format format) -> Ref<GraphicsPipeline>
         {
             return GraphicsPipeline::Create(
                 m_Context, {
@@ -582,10 +584,10 @@ namespace Veng::Renderer
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                         .HiZLevels = hizMips,
                         .Extent = renderExtent,
-                        .MaxDistance = view.SsrMaxDistance,
-                        .Thickness = view.SsrThickness,
+                        .MaxDistance = std::max(view.SsrMaxDistance, 0.0f),
+                        .Thickness = std::max(view.SsrThickness, 0.0f),
                         .MaxRoughness = view.SsrMaxRoughness,
-                        .MaxSteps = 256,
+                        .MaxSteps = ClampSsrMaxSteps(view.SsrMaxSteps),
                     });
                     cmd.DrawFullscreenTriangle();
                 });

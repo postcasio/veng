@@ -6,7 +6,7 @@
 // the color, so a coarse (rough) mip fades where few rays hit.
 //
 // Set 0 is reserved for the bindless registry; this closed producer->consumer chain
-// binds its own resources on set 1: a sampled source mip, a clamp-to-edge linear
+// binds its own resources on set 3: a sampled source mip, a clamp-to-edge linear
 // sampler, and a single storage destination mip (the bloom down/up set layout).
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;

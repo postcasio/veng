@@ -417,10 +417,15 @@ extern "C"
 /// Version 99 lets a look bound what one bright texel seeds into bloom: RenderLook, ViewState and
 /// SceneView grow BloomFireflyCeiling, inserted beside BloomThreshold. A module spawns prefabs
 /// carrying a RenderLook and builds views, so a stale module lays all three out short.
+/// Version 100 puts the screen-space-reflection knobs on the look: RenderLook grows SsrIntensity,
+/// SsrMaxDistance, SsrThickness, SsrMaxRoughness and SsrMaxSteps, and ViewState and SceneView grow
+/// SsrMaxSteps; FieldDisplay grows Logarithmic and UI::SliderOptions grows Logarithmic. A module
+/// spawns looks, builds views and registers reflected fields, so a stale module lays all of them out
+/// short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 99u
+#define VENG_MODULE_ABI_VERSION 100u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

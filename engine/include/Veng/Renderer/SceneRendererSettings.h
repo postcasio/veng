@@ -353,7 +353,8 @@ namespace Veng::Renderer
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
         /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
         /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
-        /// / SsrThickness / SsrMaxRoughness are per-frame values on SceneView and do not recompile.
+        /// / SsrThickness / SsrMaxRoughness / SsrMaxSteps are per-frame values on SceneView and do
+        /// not recompile.
         /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
         /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
         /// trace itself.

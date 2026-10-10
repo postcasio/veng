@@ -76,6 +76,10 @@ namespace Veng
         {
             resolved.Precision = override_.Precision;
         }
+        if (override_.Logarithmic)
+        {
+            resolved.Logarithmic = override_.Logarithmic;
+        }
         if (override_.Collapsible)
         {
             resolved.Collapsible = override_.Collapsible;

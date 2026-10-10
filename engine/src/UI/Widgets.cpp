@@ -105,7 +105,9 @@ namespace Veng::UI
     bool Slider(string_view label, f32& v, SliderOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::SliderFloat(id.c_str(), &v, options.Min, options.Max, options.Format);
+        return ImGui::SliderFloat(id.c_str(), &v, options.Min, options.Max, options.Format,
+                                  options.Logarithmic ? ImGuiSliderFlags_Logarithmic
+                                                      : ImGuiSliderFlags_None);
     }
 
     bool Slider(string_view label, vec2& v, SliderOptions options)
