@@ -1445,7 +1445,8 @@ namespace Veng::Renderer
         // Outside a frame the current slot's last frame may still read its per-view and material
         // regions, so its fence is waited before the recording takes them over.
         CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
-        if (!native.FrameRecording && outerImmediate == nullptr && native.Bindless)
+        const bool outsideFrame = !native.FrameRecording && outerImmediate == nullptr;
+        if (outsideFrame && native.Bindless)
         {
             native.SynchronizationFrames[native.CurrentFrameInFlight].GetInFlightFence().Wait();
             native.Bindless->OnImmediateRecordingBegun(native.CurrentFrameInFlight);
@@ -1463,6 +1464,15 @@ namespace Veng::Renderer
 
         commandBuffer->End();
         SubmitImmediateCommands(*commandBuffer);
+
+        // What was dropped outside a frame waits in the pending bin for a BeginFrame, which a
+        // process submitting only one-off work never reaches. This submit has completed, so once
+        // nothing else is in flight, everything retired before it is released here instead. A
+        // nested recording is skipped: the outer buffer, not yet submitted, may still use it.
+        if (outsideFrame)
+        {
+            native.DrainPendingRetiresIfIdle();
+        }
 
         if (!timed)
         {
@@ -2096,27 +2106,79 @@ namespace Veng::Renderer
         DrainRetireBin(PendingRetire);
     }
 
-    void Context::Native::AdoptPendingRetires()
+    usize Context::Native::RetireBin::Size() const
     {
-        const std::scoped_lock lock(RetireMutex);
-        RetireBin& bin = RetireBins[CurrentFrameInFlight];
+        return Buffers.size() + Images.size() + ImageViews.size() + Samplers.size() +
+               ShaderModules.size() + Pipelines.size() + PipelineLayouts.size() +
+               DescriptorSetLayouts.size() + DescriptorSets.size() + Teardowns.size();
+    }
+
+    void Context::Native::RetireBin::Append(RetireBin& source)
+    {
         const auto move = [](auto& dst, auto& src)
         {
             dst.insert(dst.end(), std::make_move_iterator(src.begin()),
                        std::make_move_iterator(src.end()));
             src.clear();
         };
-        move(bin.Buffers, PendingRetire.Buffers);
-        move(bin.Images, PendingRetire.Images);
-        move(bin.ImageViews, PendingRetire.ImageViews);
-        move(bin.Samplers, PendingRetire.Samplers);
-        move(bin.ShaderModules, PendingRetire.ShaderModules);
-        move(bin.Pipelines, PendingRetire.Pipelines);
-        move(bin.PipelineLayouts, PendingRetire.PipelineLayouts);
-        move(bin.DescriptorSets, PendingRetire.DescriptorSets);
-        move(bin.DescriptorSetLayouts, PendingRetire.DescriptorSetLayouts);
-        move(bin.Teardowns, PendingRetire.Teardowns);
+        move(Buffers, source.Buffers);
+        move(Images, source.Images);
+        move(ImageViews, source.ImageViews);
+        move(Samplers, source.Samplers);
+        move(ShaderModules, source.ShaderModules);
+        move(Pipelines, source.Pipelines);
+        move(PipelineLayouts, source.PipelineLayouts);
+        move(DescriptorSets, source.DescriptorSets);
+        move(DescriptorSetLayouts, source.DescriptorSetLayouts);
+        move(Teardowns, source.Teardowns);
+    }
+
+    void Context::Native::AdoptPendingRetires()
+    {
+        const std::scoped_lock lock(RetireMutex);
+        RetireBins[CurrentFrameInFlight].Append(PendingRetire);
         FrameRecording = true;
+    }
+
+    void Context::Native::DrainPendingRetiresIfIdle()
+    {
+        // Detached before anything in flight is examined. A handle is retired only after every
+        // submit using it was made, so whatever the detached bin holds was in use by work
+        // submitted before this point at the latest, and the checks below see all of it. A handle
+        // retired after the detach (a worker dropping upload state) stays pending for a later
+        // drain.
+        RetireBin detached;
+        {
+            const std::scoped_lock lock(RetireMutex);
+            if (PendingRetire.Size() == 0)
+            {
+                return;
+            }
+            detached = std::exchange(PendingRetire, {});
+        }
+
+        u64 transferSubmitted = 0;
+        {
+            const std::scoped_lock lock(SubmitMutex);
+            transferSubmitted = TransferTimelineValue;
+        }
+
+        // Neither check blocks. A frame slot whose fence is unsignaled may still read what was
+        // dropped since its EndFrame, and an unreached transfer value may still be writing an
+        // upload's destination. While either holds, the handles go back to pending, where the next
+        // BeginFrame adopts them or a later immediate submit retries.
+        const bool framesComplete =
+            std::ranges::all_of(SynchronizationFrames, [](const SynchronizationFrame& frame)
+                                { return frame.GetInFlightFence().IsSignaled(); });
+        const bool transferComplete = TransferTimeline->GetValue() >= transferSubmitted;
+        if (framesComplete && transferComplete)
+        {
+            DrainRetireBin(detached);
+            return;
+        }
+
+        const std::scoped_lock lock(RetireMutex);
+        PendingRetire.Append(detached);
     }
 
     void Context::AddFrameTransferWait(const TimelineSemaphore& timeline, const u64 value)

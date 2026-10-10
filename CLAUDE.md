@@ -949,7 +949,12 @@ they *retire* the handle into the current frame's bin on `Context` via the
 resource's stored back-reference (`m_Context.GetNative().Retire(...)`). The
 handle is destroyed only after that frame's fence is waited again
 (`Context::AcquireNextFrame`), i.e. once the GPU is done with it. No manual
-keep-alive lists. An async upload's staging buffer instead retires on the
+keep-alive lists. A drop made outside a recording frame parks in a pending bin
+the next `BeginFrame` adopts; a headless or tool process that never begins a frame
+and submits only through `ImmediateCommands` has that bin released after each such
+submit made outside a frame, once no frame slot and no transfer is still in flight
+(`Context::Native::DrainPendingRetiresIfIdle`), so what it drops does not pile up
+against the descriptor pool. An async upload's staging buffer instead retires on the
 **transfer timeline** (`RetireOnTransfer`), since its copy completes on the
 transfer queue, not the frame fence; off-thread drops make the whole retire path
 mutex-guarded. The one deliberate exception: `DescriptorSet` holds `Ref`s to the

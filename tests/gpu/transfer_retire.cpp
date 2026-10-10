@@ -1,4 +1,4 @@
-// Plan-05 plumbing: the two Context capabilities the async upload path needs.
+// The Context's deferred-destruction paths:
 //
 // 1. RetireOnTransfer keys a raw allocation on the transfer timeline, not a
 //    frame fence: the buffer is destroyed only once the timeline reaches the
@@ -8,14 +8,24 @@
 //    wrapper so its destructor does NOT route the handle through the frame bin.
 // 3. AddFrameTransferWait accumulates a (timeline, value) the next frame submit
 //    folds in — exercised through a headless SubmitFrame.
+// 4. The pending bin: a drop between frames waits for the next frame's fence, and
+//    a drop outside any frame is released after an ImmediateCommands recording
+//    once nothing else is in flight.
 //
 // These deal in raw Vulkan/VMA handles by design, so this case reaches through
 // the public Native.h escape hatch; veng_gpu links Vulkan + VMA for it.
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <mutex>
+
+#include <Veng/Renderer/Backend/SynchronizationFrame.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Renderer/Types.h>
@@ -107,8 +117,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "AddFrameTransferWait folds into a hea
 
     Context.AddFrameTransferWait(*timeline, 5);
 
-    auto& commandBuffer = Context.BeginFrame();
-    (void)commandBuffer;
+    Context.BeginFrame();
     Context.EndFrame();
 
     Context.WaitIdle();
@@ -169,4 +178,139 @@ TEST_CASE_FIXTURE(
     }
     Context.WaitIdle();
     CHECK(BinnedBufferCount(native) == 0);
+}
+
+namespace
+{
+    // Descriptors in the loop's one binding; with the iteration count below, the loop allocates
+    // eight times the pool's uniform-buffer budget.
+    constexpr u32 DescriptorsPerSet = 64;
+
+    // A uniform-buffer layout: MoltenVK enforces the pool's budget for buffer descriptors (it runs
+    // dry at a few times the nominal count) but not for image or sampler descriptors.
+    Ref<DescriptorSetLayout> MakeBufferLayout(Context& context)
+    {
+        return DescriptorSetLayout::Create(context, {
+                                                        .Name = "Retire Loop Layout",
+                                                        .Bindings = {{
+                                                            .Binding = 0,
+                                                            .Type = DescriptorType::UniformBuffer,
+                                                            .Count = DescriptorsPerSet,
+                                                            .Stages = ShaderStage::Compute,
+                                                        }},
+                                                    });
+    }
+
+    // Drops a buffer outside any frame, so it parks in the pending bin.
+    void RetireBufferOutsideFrame(Context& context)
+    {
+        auto buffer = MakeScratch(context);
+        buffer.reset();
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "immediate submits outside a frame keep the pending bin and descriptor pool bounded")
+{
+    // A process that never begins a frame retires everything into the pending bin. Each
+    // iteration allocates and drops a descriptor set and a buffer inside a one-off submit; the
+    // pool runs dry unless the drops are released between submits.
+    const Context::Native& native = Context.GetNative();
+    const auto layout = MakeBufferLayout(Context);
+    const u32 iterations =
+        8 * GetDescriptorTypeInfo(DescriptorType::UniformBuffer).PoolBudget / DescriptorsPerSet;
+
+    // One iteration retires one set and one buffer; a bin holding that many after a submit has
+    // carried a previous submit's drops forward.
+    constexpr usize RetiredPerIteration = 2;
+    usize peakPending = 0;
+    u32 completed = 0;
+    for (u32 i = 0; i < iterations; ++i)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer&)
+            {
+                auto set = DescriptorSet::Create(Context, {
+                                                              .Name = "Retire Loop Set",
+                                                              .Layout = layout,
+                                                          });
+                auto buffer = MakeScratch(Context);
+                set.reset();
+                buffer.reset();
+            });
+        peakPending = std::max(peakPending, native.PendingRetire.Size());
+        // Stop at the first violation, ahead of the pool assert it would lead to.
+        if (peakPending >= RetiredPerIteration)
+        {
+            break;
+        }
+        ++completed;
+    }
+
+    CHECK(completed == iterations);
+    CHECK(peakPending < RetiredPerIteration);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "an immediate submit keeps the pending bin while a frame slot is in flight")
+{
+    // A frame slot whose fence is unsignaled may still read what was dropped since its EndFrame.
+    // Unsignaling a slot other than the current one stands in for that frame without stalling
+    // the immediate submit, which waits only the current slot.
+    Context::Native& native = Context.GetNative();
+    REQUIRE(native.MaxFramesInFlight >= 2);
+    const u32 inFlightSlot = (native.CurrentFrameInFlight + 1) % native.MaxFramesInFlight;
+    const vk::Fence fence =
+        GetVkFence(native.SynchronizationFrames[inFlightSlot].GetInFlightFence());
+    VK_ASSERT(GetVkDevice(Context).resetFences(fence), "failed to reset fence");
+
+    RetireBufferOutsideFrame(Context);
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(native.PendingRetire.Buffers.size() == 1);
+
+    // The slot's work completes: the next immediate submit releases the buffer.
+    native.LockedSubmit(native.GraphicsQueue, vk::SubmitInfo{}, fence);
+    native.SynchronizationFrames[inFlightSlot].GetInFlightFence().Wait();
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(native.PendingRetire.Size() == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "an immediate submit keeps the pending bin while transfer work is in flight")
+{
+    // A transfer value submitted but not reached is work that may still write a resource dropped
+    // since. Allocating the value without signalling it stands in for that submit.
+    Context::Native& native = Context.GetNative();
+    u64 value = 0;
+    {
+        const std::scoped_lock lock(native.SubmitMutex);
+        value = ++native.TransferTimelineValue;
+    }
+
+    RetireBufferOutsideFrame(Context);
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(native.PendingRetire.Buffers.size() == 1);
+
+    native.TransferTimeline->Signal(value);
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(native.PendingRetire.Size() == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "an immediate submit nested in another leaves the pending bin to the outer one")
+{
+    // The outer recording is not yet submitted when the inner one completes, so what was dropped
+    // before the inner call may still be used by commands the outer buffer holds.
+    const Context::Native& native = Context.GetNative();
+    usize pendingAfterInner = 0;
+    Context.ImmediateCommands(
+        [&](CommandBuffer&)
+        {
+            RetireBufferOutsideFrame(Context);
+            Context.ImmediateCommands([](CommandBuffer&) {});
+            pendingAfterInner = native.PendingRetire.Buffers.size();
+        });
+    CHECK(pendingAfterInner == 1);
+    CHECK(native.PendingRetire.Size() == 0);
 }

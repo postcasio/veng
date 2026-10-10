@@ -243,10 +243,18 @@ namespace Veng::Renderer
         /// BeginFrame folds into the acquired slot's bin after the drain. Such a handle was
         /// last referenced by the previously submitted frame's command buffer, so binning it
         /// against the frame about to record (a strictly later fence) is what keeps it alive
-        /// long enough. Retirements outside any frame loop (init, post-WaitIdle) are caught by
-        /// the shutdown drain-all in ~Context.
+        /// long enough. A process that never begins a frame drains PendingRetire after each
+        /// ImmediateCommands recording made outside one, once nothing else is in flight (see
+        /// DrainPendingRetiresIfIdle); anything left at shutdown is caught by the drain-all in
+        /// ~Context.
         struct RetireBin
         {
+            /// @brief Returns the number of handles and teardowns the bin holds.
+            [[nodiscard]] usize Size() const;
+
+            /// @brief Moves every entry of @p source to the end of this bin, leaving it empty.
+            void Append(RetireBin& source);
+
             vector<std::pair<vk::Buffer, VmaAllocation>> Buffers;
             vector<std::pair<vk::Image, VmaAllocation>> Images;
             vector<vk::ImageView> ImageViews;
@@ -267,8 +275,11 @@ namespace Veng::Renderer
         };
 
         vector<RetireBin> RetireBins;
-        /// @brief Handles retired while no frame is recording; folded into the acquired slot's
-        /// bin by the next BeginFrame so they outlive the last submitted frame's command buffer.
+        /// @brief Handles retired while no frame is recording.
+        ///
+        /// Folded into the acquired slot's bin by the next BeginFrame so they outlive the last
+        /// submitted frame's command buffer, or destroyed by DrainPendingRetiresIfIdle after an
+        /// ImmediateCommands recording outside a frame finds nothing else in flight.
         RetireBin PendingRetire;
         /// @brief True between BeginFrame and EndFrame, so Retire targets the recording slot's
         /// bin; false otherwise, so Retire targets PendingRetire.
@@ -304,6 +315,18 @@ namespace Veng::Renderer
         /// @brief Moves PendingRetire's handles into the acquired slot's bin (called by BeginFrame
         /// after the drain), and marks the frame as recording so subsequent retires bin directly.
         void AdoptPendingRetires();
+
+        /// @brief Destroys PendingRetire's handles when no submitted work can still reference them.
+        ///
+        /// Called once an ImmediateCommands recording made outside any frame, and not nested in
+        /// another, has completed. The bin is detached under RetireMutex first, so it holds only
+        /// handles retired before the checks that follow. Those checks do not block: every frame
+        /// slot's in-flight fence must be signaled and the transfer timeline must have reached
+        /// its last submitted value. When both hold the detached handles are destroyed; otherwise
+        /// they return to PendingRetire for the next BeginFrame or a later call. This is what
+        /// bounds the pending bin, and the descriptor pool behind it, in a process that submits
+        /// only one-off work and never begins a frame.
+        void DrainPendingRetiresIfIdle();
 
         /// @brief Defers destruction of a handle into the current frame's retire bin.
         ///

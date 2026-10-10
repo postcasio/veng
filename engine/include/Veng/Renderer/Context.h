@@ -610,6 +610,11 @@ namespace Veng::Renderer
         /// BindlessRegistry::OnImmediateRecordingBegun). So any number of such recordings each
         /// render, and each sees every material write made before it. A recording inside a frame
         /// shares the frame's budget.
+        ///
+        /// Once such a recording has completed, the resources dropped outside a frame up to that
+        /// point are destroyed, provided no frame and no async transfer is still in flight; until
+        /// then they wait for the next BeginFrame. So a process that submits only through here
+        /// and never begins a frame does not accumulate them.
         /// @param function  Records the work into the one-shot command buffer it is handed.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
 

@@ -1745,7 +1745,15 @@ encoding makes unforgiving, is the Vulkan one: **nothing a submitted frame refer
 that frame's fence has been waited.** How each kind of state keeps it:
 
 - **Destruction** goes through the retire bins, keyed to frame fences — never to a submit returning.
-  Descriptor set layouts retire too.
+  Descriptor set layouts retire too. A drop outside a frame parks in `PendingRetire`, adopted by the
+  next `BeginFrame`. The one release a submit drives is an `ImmediateCommands` recording made outside
+  any frame and not nested in another: once its own fence is waited, `DrainPendingRetiresIfIdle`
+  detaches the pending bin under the retire lock, then checks without blocking that every frame
+  slot's fence has signaled and the transfer timeline has reached its last submitted value, and only
+  then destroys what it detached; otherwise the handles go back to pending. Detaching before checking
+  is what makes it safe against a worker: a handle is retired after every submit that uses it, so
+  the checks see all work the detached handles could be in. This is what keeps a process that never
+  begins a frame — a headless tool, a self-test — from exhausting the descriptor pool.
 - **Slot-keyed deferrals** — a bindless slot's `Release`, a material range — file under
   `Context::Native::GetReleaseSlot()`: the recording slot inside a frame, the last *submitted* slot
   outside one. Between `EndFrame` and the next `BeginFrame` (asset finalizes, the world tick,
