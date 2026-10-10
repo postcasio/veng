@@ -139,6 +139,34 @@ did not necessarily write, so four rules hold at the boundary:
   read, fails the open naming what it found rather than presenting the directory as a fresh empty
   slot.
 
+### Reading a slot without opening it
+
+`Store::ReadFamilies(slotDirectory, families)` is the read-only inspection a save browser lists
+slots with. `Open` takes the lock, decodes **every** family and sweeps; a summary needs a few small
+families, and a slot carrying one large family would otherwise cost its full decode per listed slot.
+So `ReadFamilies` reads the commit record and **only the named families' committed files**, and:
+
+- **takes no lock and writes, renames and deletes nothing** — no sweep, no `slot.lock` — so the
+  directory is byte-for-byte as it was, and a slot another process or `Store` holds open reads
+  fine. A commit landing between its read of the commit record and a family file (whose superseded
+  file the writer then deletes) is retried against the newer commit record; a committed file is
+  never rewritten in place, so a failed read under an unchanged commit record is reported, not
+  retried;
+- **applies `Open`'s untrusted-input rules** — the reserved-prefix refusal, an unreadable commit
+  record refused, stems validated and unique, counts bounded — and refuses a directory that does not
+  exist rather than creating it;
+- returns a **`StoreFamilyRecords`** per requested family, in request order: its records sorted by
+  key (`Find` looks one up), and its file's `StoredVersion`. A family the commit record does not
+  name, and every family of a fresh slot, comes back with no records and `StoredVersion` 0.
+
+**The records are unmigrated, and that is the contract.** No registration is in play, so no
+`Migrate` hook is available; rather than accept registrations and re-run a second copy of the
+store's migration path, the call reports the stored version and a reader whose own version differs
+migrates itself — with the very function it registers as `StoreFamily::Migrate`. Records keep the
+`StoreRecord` shape, so the keyed reads work over the result: `DecodeRecordComponent<T>(record,
+types)` decodes one component from any record, and `ReadRecordComponent<T>` / `ReadSingleton<T>`
+have overloads taking a `StoreFamilyRecords`.
+
 ### Consuming it
 
 Family ids are minted with **`vengc generate-family-id`**, the sibling of `generate-type-id` /
@@ -188,7 +216,9 @@ sorts on `SlotInfo::LastWriteWall` descending with the name breaking ties. That 
 perturbs it, since `Store::Open` writes `slot.lock` and may sweep superseded files. A consumer
 ordering a user-facing list on when the state was last written keys on its own persisted stamp;
 sorting here is a sensible default for a bare directory scan, not a guarantee. Display metadata
-beyond these facts is likewise the consumer's, layered through its own store family.
+beyond these facts is likewise the consumer's, layered through its own store family and read per
+slot with `Store::ReadFamilies` (see [Reading a slot without opening it](#reading-a-slot-without-opening-it)),
+which neither locks nor decodes the slot's other families.
 
 **`OpenSlot(root, name, createIfAbsent)`** resolves, optionally creates the directory, and calls
 `Store::Open`. Every failure is a recoverable `Result` — an unusable name, an absent slot without

@@ -429,17 +429,27 @@ namespace Veng
             return out;
         }
 
-        // Parses a family file image into a family state (records + stored version). Recoverable:
-        // a malformed file is an error and the slot open fails rather than silently dropping data.
-        [[nodiscard]] VoidResult DecodeFamilyFile(const vector<u8>& in,
-                                                  const StoreFamilyId expected, FamilyState& family)
+        /// @brief A family file's contents as decoded: its header version and its records in file
+        ///        order.
+        struct DecodedFamily
+        {
+            /// @brief The version the file header carries.
+            u32 Version = 0;
+            /// @brief The records, in file order.
+            vector<std::pair<StoreKey, StoreRecord>> Records;
+        };
+
+        // Parses a family file image. Recoverable: a malformed file is an error, so a reader fails
+        // rather than silently dropping data.
+        [[nodiscard]] Result<DecodedFamily> DecodeFamilyFile(const vector<u8>& in,
+                                                             const StoreFamilyId expected)
         {
             usize cursor = 0;
             u64 magic = 0;
             u64 id = 0;
-            u32 version = 0;
             u32 reserved = 0;
             u64 count = 0;
+            DecodedFamily family;
             if (!Take(in, cursor, magic) || magic != FamilyFileMagic)
             {
                 return std::unexpected(string("bad family file magic"));
@@ -448,7 +458,7 @@ namespace Veng
             {
                 return std::unexpected(string("family file id does not match the commit record"));
             }
-            if (!Take(in, cursor, version) || !Take(in, cursor, reserved) ||
+            if (!Take(in, cursor, family.Version) || !Take(in, cursor, reserved) ||
                 !Take(in, cursor, count))
             {
                 return std::unexpected(string("truncated family file header"));
@@ -459,7 +469,6 @@ namespace Veng
             {
                 return std::unexpected(string("implausible record count"));
             }
-            family.StoredVersion = version;
             family.Records.reserve(static_cast<usize>(count));
             for (u64 i = 0; i < count; ++i)
             {
@@ -491,9 +500,155 @@ namespace Veng
                                            in.begin() + static_cast<isize>(cursor + byteCount));
                     cursor += byteCount;
                 }
-                family.Records.emplace(key, CreateRef<const StoreRecord>(std::move(record)));
+                family.Records.emplace_back(key, std::move(record));
+            }
+            return family;
+        }
+
+        // Orders keys by their high half, then their low half: StoreFamilyRecords' sort.
+        constexpr auto KeyLess = [](const StoreKey& a, const StoreKey& b)
+        { return a.Hi != b.Hi ? a.Hi < b.Hi : a.Lo < b.Lo; };
+
+        // How many commit records ReadFamilies reads before a family file a concurrent commit keeps
+        // deleting is reported missing.
+        constexpr u32 ReadFamiliesAttempts = 4;
+
+        /// @brief The commit record as read off disk: the committed generation and every family's
+        ///        committed file, in record order.
+        struct CommitRecord
+        {
+            /// @brief The committed generation; 0 for a fresh slot.
+            u64 Generation = 0;
+            /// @brief Every family's committed file, each stem validated and unique.
+            vector<std::pair<StoreFamilyId, CommittedFile>> Files;
+        };
+
+        // The regular files directly in a slot directory, by name.
+        [[nodiscard]] vector<string> ListSlotFiles(const path& slotDirectory)
+        {
+            std::error_code ec;
+            vector<string> names;
+            for (const auto& entry : std::filesystem::directory_iterator(slotDirectory, ec))
+            {
+                if (entry.is_regular_file(ec))
+                {
+                    names.push_back(entry.path().filename().string());
+                }
+            }
+            return names;
+        }
+
+        // Refuses a directory carrying a file under the store's reserved prefix that the store does
+        // not recognize: such a directory is not a slot this store wrote, and reading it as a fresh
+        // empty slot would present someone else's data as an empty store.
+        [[nodiscard]] VoidResult CheckReservedFiles(const path& slotDirectory,
+                                                    const vector<string>& presentFiles)
+        {
+            for (const string& name : presentFiles)
+            {
+                if (name.starts_with(ReservedFilePrefix) && !IsStoreFileName(name))
+                {
+                    return std::unexpected(
+                        fmt::format("slot '{}' holds an unrecognized control file '{}'",
+                                    slotDirectory.string(), name));
+                }
             }
             return {};
+        }
+
+        // Reads and validates a slot's commit record; an absent one is a fresh slot (generation 0,
+        // no files). Every stem is validated before it is used — it is interpolated into a path —
+        // and every count is bounded by the bytes remaining.
+        [[nodiscard]] Result<CommitRecord> ReadCommitRecord(const path& slotDirectory)
+        {
+            CommitRecord commit;
+            std::error_code ec;
+            const path commitFile = slotDirectory / CommitFileName;
+            if (!std::filesystem::exists(commitFile, ec))
+            {
+                return commit;
+            }
+            Result<vector<u8>> bytes = ReadFileBytes(commitFile);
+            if (!bytes)
+            {
+                return std::unexpected(bytes.error());
+            }
+            usize cursor = 0;
+            u64 magic = 0;
+            u32 familyCount = 0;
+            if (!Take(*bytes, cursor, magic) || magic != CommitFileMagic ||
+                !Take(*bytes, cursor, commit.Generation) || !Take(*bytes, cursor, familyCount))
+            {
+                return std::unexpected(
+                    fmt::format("unreadable commit record '{}'", commitFile.string()));
+            }
+            if (familyCount > (bytes->size() - cursor) / MinimumCommitEntryBytes)
+            {
+                return std::unexpected(fmt::format("implausible family count in commit record '{}'",
+                                                   commitFile.string()));
+            }
+            std::unordered_set<string> claimedStems;
+            commit.Files.reserve(familyCount);
+            for (u32 i = 0; i < familyCount; ++i)
+            {
+                StoreFamilyId id;
+                u32 stemLength = 0;
+                if (!Take(*bytes, cursor, id.Value) || !Take(*bytes, cursor, stemLength) ||
+                    cursor + stemLength > bytes->size())
+                {
+                    return std::unexpected(
+                        fmt::format("truncated commit record '{}'", commitFile.string()));
+                }
+                string stem(reinterpret_cast<const char*>(bytes->data() + cursor), stemLength);
+                cursor += stemLength;
+                u64 fileGeneration = 0;
+                if (!Take(*bytes, cursor, fileGeneration))
+                {
+                    return std::unexpected(
+                        fmt::format("truncated commit record '{}'", commitFile.string()));
+                }
+                if (!Store::IsValidFileStem(stem))
+                {
+                    return std::unexpected(fmt::format("commit record '{}' names an illegal file "
+                                                       "stem '{}'",
+                                                       commitFile.string(), stem));
+                }
+                if (!claimedStems.insert(stem).second)
+                {
+                    return std::unexpected(
+                        fmt::format("commit record '{}' names the file stem '{}' twice",
+                                    commitFile.string(), stem));
+                }
+                commit.Files.emplace_back(
+                    id, CommittedFile{.FileStem = std::move(stem), .Generation = fileGeneration});
+            }
+            return commit;
+        }
+
+        // The path of a family's committed file.
+        [[nodiscard]] path CommittedFilePath(const path& slotDirectory, const CommittedFile& file)
+        {
+            return slotDirectory / fmt::format("{}.{}.vst", file.FileStem, file.Generation);
+        }
+
+        // Reads and decodes one committed family file.
+        [[nodiscard]] Result<DecodedFamily> ReadCommittedFamily(const path& slotDirectory,
+                                                                const StoreFamilyId id,
+                                                                const CommittedFile& file)
+        {
+            const path familyFile = CommittedFilePath(slotDirectory, file);
+            Result<vector<u8>> bytes = ReadFileBytes(familyFile);
+            if (!bytes)
+            {
+                return std::unexpected(bytes.error());
+            }
+            Result<DecodedFamily> decoded = DecodeFamilyFile(*bytes, id);
+            if (!decoded)
+            {
+                return std::unexpected(
+                    fmt::format("family file '{}': {}", familyFile.string(), decoded.error()));
+            }
+            return decoded;
         }
 
         // Runs a family's migration for one record read from an older version. Returns nullopt —
@@ -948,107 +1103,38 @@ namespace Veng
 
         // The directory listing drives both the reserved-prefix check below and the orphan sweep at
         // the end, so it is taken once, up front.
-        vector<string> presentFiles;
-        for (const auto& entry : std::filesystem::directory_iterator(slotDirectory, ec))
+        const vector<string> presentFiles = ListSlotFiles(slotDirectory);
+        if (const VoidResult reserved = CheckReservedFiles(slotDirectory, presentFiles); !reserved)
         {
-            if (entry.is_regular_file(ec))
-            {
-                presentFiles.push_back(entry.path().filename().string());
-            }
-        }
-
-        // A file under the store's reserved prefix that the store does not recognize means this
-        // directory is not a slot this store wrote. Reporting it is the whole point: reading such a
-        // directory as a fresh empty slot would present someone else's data as an empty store and
-        // then sweep it.
-        for (const string& name : presentFiles)
-        {
-            if (name.starts_with(ReservedFilePrefix) && !IsStoreFileName(name))
-            {
-                return std::unexpected(
-                    fmt::format("slot '{}' holds an unrecognized control file '{}'",
-                                slotDirectory.string(), name));
-            }
+            return std::unexpected(reserved.error());
         }
 
         // An absent commit record is a fresh slot (an empty store); a present one names the
         // committed generation and every family file of that generation.
-        const path commitFile = slotDirectory / CommitFileName;
-        if (std::filesystem::exists(commitFile, ec))
+        Result<CommitRecord> commit = ReadCommitRecord(slotDirectory);
+        if (!commit)
         {
-            Result<vector<u8>> bytes = ReadFileBytes(commitFile);
-            if (!bytes)
+            return std::unexpected(commit.error());
+        }
+        state->Writes->Generation = commit->Generation;
+        for (auto& [id, file] : commit->Files)
+        {
+            Result<DecodedFamily> decoded = ReadCommittedFamily(slotDirectory, id, file);
+            if (!decoded)
             {
-                return std::unexpected(bytes.error());
+                return std::unexpected(decoded.error());
             }
-            usize cursor = 0;
-            u64 magic = 0;
-            u32 familyCount = 0;
-            if (!Take(*bytes, cursor, magic) || magic != CommitFileMagic ||
-                !Take(*bytes, cursor, state->Writes->Generation) ||
-                !Take(*bytes, cursor, familyCount))
+            FamilyState family;
+            family.FileStem = file.FileStem;
+            family.TakenAt = state->OpenedAt;
+            family.StoredVersion = decoded->Version;
+            family.Records.reserve(decoded->Records.size());
+            for (auto& [key, record] : decoded->Records)
             {
-                return std::unexpected(
-                    fmt::format("unreadable commit record '{}'", commitFile.string()));
+                family.Records.emplace(key, CreateRef<const StoreRecord>(std::move(record)));
             }
-            if (familyCount > (bytes->size() - cursor) / MinimumCommitEntryBytes)
-            {
-                return std::unexpected(fmt::format("implausible family count in commit record '{}'",
-                                                   commitFile.string()));
-            }
-            std::unordered_set<string> claimedStems;
-            for (u32 i = 0; i < familyCount; ++i)
-            {
-                StoreFamilyId id;
-                u32 stemLength = 0;
-                if (!Take(*bytes, cursor, id.Value) || !Take(*bytes, cursor, stemLength) ||
-                    cursor + stemLength > bytes->size())
-                {
-                    return std::unexpected(
-                        fmt::format("truncated commit record '{}'", commitFile.string()));
-                }
-                string stem(reinterpret_cast<const char*>(bytes->data() + cursor), stemLength);
-                cursor += stemLength;
-                u64 fileGeneration = 0;
-                if (!Take(*bytes, cursor, fileGeneration))
-                {
-                    return std::unexpected(
-                        fmt::format("truncated commit record '{}'", commitFile.string()));
-                }
-                // The stem is interpolated into a path on both load and write, so it is validated
-                // before it is used rather than trusted because it came off disk.
-                if (!IsValidFileStem(stem))
-                {
-                    return std::unexpected(fmt::format("commit record '{}' names an illegal file "
-                                                       "stem '{}'",
-                                                       commitFile.string(), stem));
-                }
-                if (!claimedStems.insert(stem).second)
-                {
-                    return std::unexpected(
-                        fmt::format("commit record '{}' names the file stem '{}' twice",
-                                    commitFile.string(), stem));
-                }
-
-                FamilyState family;
-                family.FileStem = stem;
-                family.TakenAt = state->OpenedAt;
-                state->Writes->Committed.emplace(
-                    id, CommittedFile{.FileStem = std::move(stem), .Generation = fileGeneration});
-                const path familyFile =
-                    slotDirectory / fmt::format("{}.{}.vst", family.FileStem, fileGeneration);
-                Result<vector<u8>> fileBytes = ReadFileBytes(familyFile);
-                if (!fileBytes)
-                {
-                    return std::unexpected(fileBytes.error());
-                }
-                if (const VoidResult decoded = DecodeFamilyFile(*fileBytes, id, family); !decoded)
-                {
-                    return std::unexpected(
-                        fmt::format("family file '{}': {}", familyFile.string(), decoded.error()));
-                }
-                state->Families.emplace(id, std::move(family));
-            }
+            state->Families.emplace(id, std::move(family));
+            state->Writes->Committed.emplace(id, std::move(file));
         }
 
         // Sweep the store's own files the commit record does not reference — a crashed flush's
@@ -1070,6 +1156,84 @@ namespace Veng
         }
 
         return Unique<Store>(new Store(std::move(state)));
+    }
+
+    const StoreRecord* StoreFamilyRecords::Find(const StoreKey key) const
+    {
+        const auto it = std::ranges::lower_bound(Records, key, KeyLess,
+                                                 &std::pair<StoreKey, StoreRecord>::first);
+        return it != Records.end() && it->first == key ? &it->second : nullptr;
+    }
+
+    Result<vector<StoreFamilyRecords>>
+    Store::ReadFamilies(const path& slotDirectory, const std::span<const StoreFamilyId> families)
+    {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(slotDirectory, ec))
+        {
+            return std::unexpected(
+                fmt::format("slot directory '{}' does not exist", slotDirectory.string()));
+        }
+        if (const VoidResult reserved =
+                CheckReservedFiles(slotDirectory, ListSlotFiles(slotDirectory));
+            !reserved)
+        {
+            return std::unexpected(reserved.error());
+        }
+
+        // A writer holding the slot open may commit between this read of the commit record and the
+        // family files it names, deleting a superseded file; that is retried against the newer
+        // commit record, and only a file missing under an unchanged commit is an error.
+        for (u32 attempt = 0;; ++attempt)
+        {
+            Result<CommitRecord> commit = ReadCommitRecord(slotDirectory);
+            if (!commit)
+            {
+                return std::unexpected(commit.error());
+            }
+
+            vector<StoreFamilyRecords> result;
+            result.reserve(families.size());
+            bool superseded = false;
+            for (const StoreFamilyId id : families)
+            {
+                StoreFamilyRecords& entry = result.emplace_back(StoreFamilyRecords{.Id = id});
+                const auto file = std::ranges::find(
+                    commit->Files, id, &std::pair<StoreFamilyId, CommittedFile>::first);
+                if (file == commit->Files.end())
+                {
+                    continue;
+                }
+                Result<DecodedFamily> decoded =
+                    ReadCommittedFamily(slotDirectory, id, file->second);
+                if (!decoded)
+                {
+                    // A committed file is never rewritten in place, so a failed read under a commit
+                    // record that has since moved on is the race, not damage.
+                    const Result<CommitRecord> current = ReadCommitRecord(slotDirectory);
+                    if (attempt + 1 < ReadFamiliesAttempts && current &&
+                        current->Generation != commit->Generation)
+                    {
+                        superseded = true;
+                        break;
+                    }
+                    return std::unexpected(decoded.error());
+                }
+                entry.StoredVersion = decoded->Version;
+                entry.Records = std::move(decoded->Records);
+                // Sorted for Find; a key a malformed file repeats keeps its first record, as Open's
+                // table does.
+                std::ranges::stable_sort(entry.Records, KeyLess,
+                                         &std::pair<StoreKey, StoreRecord>::first);
+                const auto [first, last] = std::ranges::unique(
+                    entry.Records, {}, &std::pair<StoreKey, StoreRecord>::first);
+                entry.Records.erase(first, last);
+            }
+            if (!superseded)
+            {
+                return result;
+            }
+        }
     }
 
     void Store::RegisterFamily(StoreFamily family)

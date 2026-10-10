@@ -2,11 +2,13 @@
 // point), slot-lock contention, the per-family version migration at Read, the reflection walker's
 // tolerant read across a component schema change, the rehydrate seam's elapsed-seconds plumbing
 // (clamped >= 0), observer notification, and the untrusted-input hardening a public store API needs
-// (stem validation and uniqueness, bounded counts, a scoped orphan sweep, a refused foreign slot).
+// (stem validation and uniqueness, bounded counts, a scoped orphan sweep, a refused foreign slot),
+// and the read-only family inspection that reads a slot without opening it.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Persistence/Store.h>
+#include <Veng/Persistence/StorePatterns.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -18,6 +20,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <span>
 
 using namespace Veng;
@@ -670,4 +673,188 @@ TEST_CASE("a commit record the store cannot read is refused, not read as fresh")
     const Result<Unique<Store>> store = Store::Open(slot.Dir);
     REQUIRE(!store);
     CHECK(store.error().find("unreadable commit record") != string::npos);
+}
+
+namespace
+{
+    constexpr StoreFamilyId SummaryFamily{0x7E57000000000020ULL};
+    constexpr StoreFamilyId BulkFamily{0x7E57000000000021ULL};
+
+    // Every regular file in a directory, by name, with its bytes.
+    std::map<string, vector<u8>> DirectoryImage(const path& directory)
+    {
+        std::map<string, vector<u8>> image;
+        for (const auto& entry : std::filesystem::directory_iterator(directory))
+        {
+            std::ifstream stream(entry.path(), std::ios::binary);
+            image[entry.path().filename().string()] =
+                vector<u8>(std::istreambuf_iterator<char>(stream), {});
+        }
+        return image;
+    }
+
+    // A slot holding a small summary family (version 3) and a bulk family, committed and closed.
+    void WriteTwoFamilySlot(const path& slotDir)
+    {
+        Result<Unique<Store>> store = Store::Open(slotDir);
+        REQUIRE(store);
+        (*store)->RegisterFamily(
+            StoreFamily{.Id = SummaryFamily, .FileStem = "summary", .Version = 3});
+        (*store)->RegisterFamily(StoreFamily{.Id = BulkFamily, .FileStem = "bulk", .Version = 1});
+        (*store)->Write(SummaryFamily, StoreKey{.Lo = 9, .Hi = 1}, MakeRecord(30, {3}));
+        (*store)->Write(SummaryFamily, StoreKey{.Lo = 2, .Hi = 1}, MakeRecord(20, {2}));
+        (*store)->Write(SummaryFamily, StoreKey{.Lo = 5, .Hi = 0}, MakeRecord(10, {1}));
+        (*store)->Write(BulkFamily, StoreKey{.Lo = 1}, MakeRecord(1, vector<u8>(4096, 0xAB)));
+        REQUIRE((*store)->FlushAndWait());
+    }
+}
+
+TEST_CASE("ReadFamilies reads the named families' committed records, unmigrated, without the rest")
+{
+    const TempSlot slot;
+    WriteTwoFamilySlot(slot.Dir);
+
+    // Damage the family nobody asked for: it is never read, so the inspection still succeeds.
+    for (const auto& entry : std::filesystem::directory_iterator(slot.Dir))
+    {
+        if (entry.path().filename().string().starts_with("bulk."))
+        {
+            WriteBytes(entry.path(), {0xDE, 0xAD});
+        }
+    }
+
+    const StoreFamilyId wanted[] = {SummaryFamily};
+    const Result<vector<StoreFamilyRecords>> read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    REQUIRE(read->size() == 1);
+    const StoreFamilyRecords& summary = read->front();
+    CHECK(summary.Id == SummaryFamily);
+    // The file's own version, reported as stored: no registration is in play to migrate it.
+    CHECK(summary.StoredVersion == 3);
+    REQUIRE(summary.Records.size() == 3);
+    const StoreRecord* const record = summary.Find(StoreKey{.Lo = 2, .Hi = 1});
+    REQUIRE(record != nullptr);
+    CHECK(record->CapturedAtWall == 20);
+    CHECK(record->Components.front().Bytes == vector<u8>{2});
+    CHECK(summary.Find(StoreKey{.Lo = 2, .Hi = 0}) == nullptr);
+
+    // Asking for the damaged family is where the damage is reported.
+    const StoreFamilyId damaged[] = {BulkFamily};
+    CHECK_FALSE(Store::ReadFamilies(slot.Dir, damaged));
+}
+
+TEST_CASE("ReadFamilies leaves the slot directory byte-for-byte as it found it")
+{
+    const TempSlot slot;
+    WriteTwoFamilySlot(slot.Dir);
+    // Files an open would sweep: an orphaned next-generation family file and a commit temporary.
+    WriteBytes(slot.Dir / "summary.7.vst", {1, 2, 3});
+    WriteBytes(slot.Dir / "slot.commit.7.tmp", {4, 5, 6});
+    const std::map<string, vector<u8>> before = DirectoryImage(slot.Dir);
+
+    const StoreFamilyId wanted[] = {SummaryFamily, BulkFamily};
+    REQUIRE(Store::ReadFamilies(slot.Dir, wanted));
+
+    CHECK(DirectoryImage(slot.Dir) == before);
+}
+
+TEST_CASE("ReadFamilies reads a slot a Store holds open, and sees each commit it lands")
+{
+    const TempSlot slot;
+    Result<Unique<Store>> store = Store::Open(slot.Dir);
+    REQUIRE(store);
+    (*store)->RegisterFamily(StoreFamily{.Id = SummaryFamily, .FileStem = "summary"});
+    (*store)->Write(SummaryFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1}));
+    REQUIRE((*store)->FlushAndWait());
+
+    const StoreFamilyId wanted[] = {SummaryFamily};
+    Result<vector<StoreFamilyRecords>> read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    CHECK(read->front().Records.size() == 1);
+
+    // An uncommitted write is not visible; a committed one is, and the open store carries on.
+    (*store)->Write(SummaryFamily, StoreKey{.Lo = 2}, MakeRecord(2, {2}));
+    read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    CHECK(read->front().Records.size() == 1);
+    REQUIRE((*store)->FlushAndWait());
+    read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    CHECK(read->front().Records.size() == 2);
+    (*store)->Write(SummaryFamily, StoreKey{.Lo = 3}, MakeRecord(3, {3}));
+    CHECK((*store)->FlushAndWait());
+}
+
+TEST_CASE("ReadFamilies returns a family the slot has no file for as present and empty")
+{
+    const TempSlot slot;
+    std::filesystem::create_directories(slot.Dir);
+    const StoreFamilyId wanted[] = {SummaryFamily, OtherFamily};
+
+    // A fresh slot: no commit record at all.
+    Result<vector<StoreFamilyRecords>> read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    REQUIRE(read->size() == 2);
+    CHECK(read->at(1).Id == OtherFamily);
+    CHECK(read->at(1).StoredVersion == 0);
+    CHECK(read->at(1).Records.empty());
+
+    // A committed slot that never wrote the family.
+    WriteTwoFamilySlot(slot.Dir);
+    read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    CHECK(read->at(0).Records.size() == 3);
+    CHECK(read->at(1).StoredVersion == 0);
+    CHECK(read->at(1).Records.empty());
+}
+
+TEST_CASE("ReadFamilies refuses a missing, foreign, or unreadable slot")
+{
+    const StoreFamilyId wanted[] = {TestFamily};
+    const TempSlot missing;
+    CHECK_FALSE(Store::ReadFamilies(missing.Dir, wanted));
+    CHECK_FALSE(std::filesystem::exists(missing.Dir));
+
+    const TempSlot foreign;
+    std::filesystem::create_directories(foreign.Dir);
+    WriteBytes(foreign.Dir / "slot.index", {1});
+    const Result<vector<StoreFamilyRecords>> foreignRead = Store::ReadFamilies(foreign.Dir, wanted);
+    REQUIRE_FALSE(foreignRead);
+    CHECK(foreignRead.error().find("unrecognized control file") != string::npos);
+
+    const TempSlot unreadable;
+    std::filesystem::create_directories(unreadable.Dir);
+    WriteBytes(unreadable.Dir / "slot.commit", {1, 2, 3, 4});
+    const Result<vector<StoreFamilyRecords>> unreadableRead =
+        Store::ReadFamilies(unreadable.Dir, wanted);
+    REQUIRE_FALSE(unreadableRead);
+    CHECK(unreadableRead.error().find("unreadable commit record") != string::npos);
+
+    const TempSlot traversing;
+    std::filesystem::create_directories(traversing.Dir);
+    WriteBytes(traversing.Dir / "slot.commit", MakeCommitRecord("../escape", 1));
+    CHECK_FALSE(Store::ReadFamilies(traversing.Dir, wanted));
+}
+
+TEST_CASE("a family read without opening its slot decodes through the keyed component read")
+{
+    TypeRegistry types;
+    types.Register<StoreProbeV1>();
+
+    const TempSlot slot;
+    {
+        Result<Unique<Store>> store = Store::Open(slot.Dir);
+        REQUIRE(store);
+        (*store)->RegisterFamily(SingletonFamily(SummaryFamily, "summary"));
+        WriteSingleton(**store, SummaryFamily, StoreProbeV1{.Count = 41}, types);
+        REQUIRE((*store)->FlushAndWait());
+    }
+
+    const StoreFamilyId wanted[] = {SummaryFamily};
+    const Result<vector<StoreFamilyRecords>> read = Store::ReadFamilies(slot.Dir, wanted);
+    REQUIRE(read);
+    const optional<StoreProbeV1> probe = ReadSingleton<StoreProbeV1>(read->front(), types);
+    REQUIRE(probe.has_value());
+    CHECK(probe->Count == 41);
+    CHECK_FALSE(ReadSingleton<StoreProbeV2>(read->front(), types).has_value());
 }

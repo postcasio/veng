@@ -5,6 +5,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
 
+#include <span>
 #include <utility>
 
 namespace Veng
@@ -123,6 +124,27 @@ namespace Veng
         f64 FlushIntervalSeconds = 0.0;
     };
 
+    /// @brief One family's committed records, read from a slot without opening a Store on it.
+    ///
+    /// What Store::ReadFamilies returns per requested family. The records are exactly as the
+    /// family file holds them: no migration has run, because no registration is in play, so
+    /// StoredVersion says which format they are in and a reader whose own version differs runs
+    /// its migration itself (the function it would register as StoreFamily::Migrate).
+    struct StoreFamilyRecords
+    {
+        /// @brief The family the records belong to.
+        StoreFamilyId Id;
+        /// @brief The version the family file was written under; 0 when the slot holds no file
+        ///        for the family.
+        u32 StoredVersion = 0;
+        /// @brief The committed records, sorted by key (Hi, then Lo), each key once.
+        vector<std::pair<StoreKey, StoreRecord>> Records;
+
+        /// @brief Returns the record stored under a key, or nullptr when there is none.
+        /// @param key  The record's key.
+        [[nodiscard]] VE_API const StoreRecord* Find(StoreKey key) const;
+    };
+
     /// @brief How a store measures time and where its background writes run.
     struct StoreInfo
     {
@@ -177,6 +199,25 @@ namespace Veng
         /// unrecognized slot, a rejected file stem, an implausible record count).
         [[nodiscard]] static Result<Unique<Store>> Open(const path& slotDirectory,
                                                         StoreInfo info = {});
+
+        /// @brief Reads the committed records of the named families from a slot, without opening it.
+        ///
+        /// The read-only inspection a save browser lists slots with: it reads the commit record and
+        /// only the named families' committed files, so a slot's other families — however large —
+        /// cost nothing. It takes no lock and writes, renames and deletes nothing (no sweep), so it
+        /// leaves the directory byte-for-byte as it found it and may read a slot another process or
+        /// Store holds open; a commit landing mid-read is retried against the new commit record.
+        /// The untrusted-input rules are Open's: an unrecognized file under the reserved `slot.`
+        /// prefix or an unreadable commit record is refused, stems are validated, and counts are
+        /// bounded. A family the commit record does not name is returned with no records, and a
+        /// fresh slot (no commit record) returns every family empty.
+        /// @param slotDirectory  The slot directory; it must exist.
+        /// @param families       The families to read.
+        /// @return One entry per requested family, in request order, with its records unmigrated;
+        /// or a recoverable error (a missing directory, a foreign or unreadable slot, a malformed
+        /// or missing family file).
+        [[nodiscard]] static Result<vector<StoreFamilyRecords>>
+        ReadFamilies(const path& slotDirectory, std::span<const StoreFamilyId> families);
 
         /// @brief Waits for an in-flight write, and one queued behind it, then releases the slot
         ///        lock.
