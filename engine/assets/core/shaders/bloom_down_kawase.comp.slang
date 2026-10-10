@@ -6,58 +6,33 @@
 // Every level halves its source — mip 0 is half the scene colour — so the bright pass is the
 // chain's first 2:1 downsample.
 //
-// Mip 0 fuses two extra steps: a soft-knee bright-pass (the luminance above Threshold
-// ramps in continuously) and a Karis partial-tonemap average (each diagonal tap is weighted
-// by 1/(1+luma)) so a single firefly pixel cannot drive a flickering bloom. Deeper levels use
-// the plain 5-tap average. A push flag selects the path; the bright-pass + Karis wrap the
-// kernel rather than the reverse, so both bloom kernels share a stable mip 0.
+// Mip 0 fuses two extra steps: a per-tap brightness ceiling (bloom_bright_pass.slang) applied to
+// each tap before the plain 5-tap average, and a soft-knee bright-pass on that average (the
+// luminance above Threshold ramps in continuously). The average stays linear for every tap under
+// the ceiling, so a small bright source seeds the same light wherever it falls on the texel grid,
+// while one extreme texel seeds no more than the ceiling. Deeper levels are the plain 5-tap
+// average. A push flag selects the path; the ceiling and the bright-pass wrap the kernel rather
+// than the reverse, so both bloom kernels share a stable mip 0.
 //
 // Mip 0 also takes the larger of that luminance bright-pass and the authored bloom mask, a
 // screen-space target a forward material writes alongside its color to name the glow it wants
 // independently of how bright it is. The mask is gathered through the same taps and the same
-// Karis weights as the color, so the two stay in register, and the pyramid is still seeded with
-// the filtered scene *color* — a masked surface halos in its own hue.
+// weights as the color, so the two stay in register, and the pyramid is still seeded with the
+// filtered scene *color* — a masked surface halos in its own hue.
 //
 // Set 0 is reserved across every pipeline layout for the bindless registry; this closed
-// producer->consumer chain binds its own resources on set 1: a sampled source mip, the
-// clamp-to-edge linear sampler, and a single storage destination mip. The mask is the one
-// resource read off the registry instead — it belongs to the renderer, not to this chain.
+// producer->consumer chain binds its own resources on set 3, past the typed bindless registries:
+// a sampled source mip, the clamp-to-edge linear sampler, and a single storage destination mip.
+// The mask is the one resource read off the registry instead — it belongs to the renderer, not to
+// this chain.
+#include "bloom_bright_pass.slang"
+
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;
 [[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
-
-// The block the down sweep pushes, shared with the COD kernel: both downsample pipelines are
-// built against one layout, so this mirrors bloom_down.comp's block field for field.
-struct PushConstants
-{
-    uint2  DestExtent;     // destination mip dimensions in texels (the valid sub-rect)
-    float2 SourceScaleUV;  // source validExtent/allocExtent (dynamic-resolution sub-rect)
-    float2 SourceMaxUV;    // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
-    float  BrightPass;     // 1.0 = level-0 bright-pass + Karis, 0.0 = plain downsample
-    float  Threshold;      // bright-pass luminance knee (level 0 only)
-    uint   MaskTexture;    // bindless slot of the bloom-mask target (level 0 only)
-    uint   MaskSampler;    // bindless slot of the sampler the mask is read through
-    uint   MaskEnabled;    // 1 = fold the mask in, 0 = the two slots above are unset
-    uint   Pad0;
-};
-
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
-
-// Rec. 709 relative luminance.
-float Luma(float3 c)
-{
-    return dot(c, float3(0.2126, 0.7152, 0.0722));
-}
-
-// Karis weight: a partial-tonemap that down-weights bright outliers, applied per tap on the
-// first downsample so one firefly cannot dominate the average.
-float KarisWeight(float3 c)
-{
-    return 1.0 / (1.0 + Luma(c));
-}
 
 // The source is rendered into a dynamic-resolution sub-rect; map the valid-space UV into the
 // source's valid region and clamp so a bilinear tap never bleeds past it (identity at scale 1.0).
@@ -76,6 +51,12 @@ float SampleMask(float2 uv)
     return g_Textures[g_PC.MaskTexture]
         .SampleLevel(g_Samplers[g_PC.MaskSampler], physical, 0.0)
         .r;
+}
+
+// The plain Kawase weights: center 0.5, each diagonal 0.125 (sum 1).
+float3 KawaseAverage(float3 center, float3 tl, float3 tr, float3 bl, float3 br)
+{
+    return center * 0.5 + (tl + tr + bl + br) * 0.125;
 }
 
 [shader("compute")]
@@ -100,16 +81,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float3 result;
     if (g_PC.BrightPass != 0.0)
     {
-        // Karis-averaged taps: weight each by 1/(1+luma) so a single bright outlier is
-        // suppressed before the chain accumulates it.
-        float wc = KarisWeight(center);
-        float wtl = KarisWeight(tl);
-        float wtr = KarisWeight(tr);
-        float wbl = KarisWeight(bl);
-        float wbr = KarisWeight(br);
-        float wsum = wc + wtl + wtr + wbl + wbr;
-
-        result = (center * wc + tl * wtl + tr * wtr + bl * wbl + br * wbr) / wsum;
+        // Each tap is conditioned on its own before the average (see bloom_down.comp).
+        result = KawaseAverage(ConditionTap(center), ConditionTap(tl), ConditionTap(tr),
+                               ConditionTap(bl), ConditionTap(br));
 
         // Soft-knee bright-pass: a smooth quadratic ramp over a Threshold-wide band so a
         // surface near the knee fades in rather than popping (the standard shape).
@@ -119,14 +93,14 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
         if (g_PC.MaskEnabled != 0)
         {
-            // The mask through the same five taps and the same Karis weights the color took.
-            float mc = SampleMask(uv);
-            float mtl = SampleMask(uv + float2(-1, -1) * o);
-            float mtr = SampleMask(uv + float2(1, -1) * o);
-            float mbl = SampleMask(uv + float2(-1, 1) * o);
-            float mbr = SampleMask(uv + float2(1, 1) * o);
+            // The mask through the same five taps and the same weights the color took.
+            float mc = ConditionMask(SampleMask(uv));
+            float mtl = ConditionMask(SampleMask(uv + float2(-1, -1) * o));
+            float mtr = ConditionMask(SampleMask(uv + float2(1, -1) * o));
+            float mbl = ConditionMask(SampleMask(uv + float2(-1, 1) * o));
+            float mbr = ConditionMask(SampleMask(uv + float2(1, 1) * o));
 
-            float mask = (mc * wc + mtl * wtl + mtr * wtr + mbl * wbl + mbr * wbr) / wsum;
+            float mask = KawaseAverage(mc.xxx, mtl.xxx, mtr.xxx, mbl.xxx, mbr.xxx).x;
             gain = max(gain, mask);
         }
 
@@ -134,8 +108,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
     else
     {
-        // The plain Kawase weights: center 0.5, each diagonal 0.125 (sum 1).
-        result = center * 0.5 + (tl + tr + bl + br) * 0.125;
+        result = KawaseAverage(center, tl, tr, bl, br);
     }
 
     g_Dest[int2(id.xy)] = float4(result, 1.0);

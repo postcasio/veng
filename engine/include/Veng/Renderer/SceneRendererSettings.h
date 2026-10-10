@@ -254,8 +254,8 @@ namespace Veng::Renderer
         /// @brief Whether the compute mip-pyramid bloom runs ahead of tonemap.
         ///
         /// A topology change: it inserts/removes the bloom down/up/composite compute sweep.
-        /// BloomThreshold, BloomIntensity, and BloomRadius are per-frame values on SceneView
-        /// and do not trigger a recompile.
+        /// BloomThreshold, BloomFireflyCeiling, BloomIntensity, and BloomRadius are per-frame
+        /// values on SceneView and do not trigger a recompile.
         bool Bloom = true;
 
         /// @brief Selects the bloom pyramid's down/up filter kernel.

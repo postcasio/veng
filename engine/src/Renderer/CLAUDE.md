@@ -279,8 +279,8 @@ distribution gives it.
 **The guard sits on the output, where the overflow is.** `GuardLightingOutput` (`Veng/lighting.slang`)
 clamps a lighting entry point's radiance per channel to `LightingOutputMax` (6·10⁴), below the RGBA16F
 scene colour's 65504. A full-strength lobe on a mirror metal reaches about 3·10⁴ times the light's
-radiance at the floor, so a light brighter than the reference sun could write `inf`, which bloom's
-Karis weight then turns into a `NaN` that spreads. A clamp on `D` would reshape the lobe and still not
+radiance at the floor, so a light brighter than the reference sun could write `inf`, which a later
+filter (the TAA resolve, a blur) then turns into a `NaN` that spreads. A clamp on `D` would reshape the lobe and still not
 stop the output overflowing; a clamp on the output leaves every representable value exact. The
 deferred pass guards its final colour (direct, ambient and emissive together); the forward loop
 guards each component it returns (see "Forward lighting for translucent surfaces").
@@ -1148,9 +1148,8 @@ includes (and `Veng/ibl_maps.slang`) carry `#pragma once`, so a material lightin
 ### Bloom
 
 **Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow atlas —
-not a PostProcess material. The lit HDR target is bright-passed (a soft-knee `Threshold` with
-**Karis-average** firefly suppression on the first downsample, the firefly-stability mechanism
-that holds whether or not the optional TAA resolve is on) into a single `HdrFormat` mip-chain
+not a PostProcess material. The lit HDR target is bright-passed (a soft-knee `Threshold` over a
+**per-tap firefly ceiling** on the first downsample, below) into a single `HdrFormat` mip-chain
 image's mip 0, **progressively downsampled** through the chain, then **upsampled** with an
 accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`). **The pyramid begins at half
 resolution**: mip 0 is half the post-resolve allocation (floor-halved, `BloomPyramidBase`), so the
@@ -1177,10 +1176,31 @@ renderer with bloom off allocates no chain, and a reconfigure at an unchanged ex
 The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob — the COD/Jimenez 13-tap-down /
 tent-up dual filter (the default and the golden's kernel) or the bandwidth-optimized **Dual
 Kawase** filter for the TBDR GPUs veng primarily targets. `Bloom` (on/off) and `Kernel` are
-`SceneRendererSettings` topology knobs (a `Configure` recompile); `Threshold` / `Intensity` /
-`Radius` are per-frame `SceneView` values — the first and last ride the compute push, `Intensity`
-the tonemap's material block — so tuning them never recompiles. `DebugView::Bloom` blits pyramid
+`SceneRendererSettings` topology knobs (a `Configure` recompile); `Threshold` / `FireflyCeiling` /
+`Intensity` / `Radius` are per-frame `SceneView` values — all but `Intensity` ride the compute push,
+`Intensity` the tonemap's material block — so tuning them never recompiles. `DebugView::Bloom` blits pyramid
 mip 0 after the up-sweep — the accumulated bloom contribution the tonemap would add.
+
+**Firefly stability is a per-tap ceiling ahead of a linear average.** On the first downsample,
+each tap (a bilinear average over a 2×2 block of the scene) is conditioned on its own before the
+kernel averages it (`bloom_bright_pass.slang`, shared by both kernels): a non-finite tap becomes
+zero, and a tap brighter than half of `BloomFireflyCeiling` is rolled off along a smooth shoulder
+toward the ceiling, scaled whole so its hue is kept. The kernel then takes its plain weights — the
+same COD 13-tap (inner ring 0.5, corner groups 0.125) or Kawase 5-tap the deeper levels use — and
+the soft-knee `Threshold` runs on that average. Both kernels sum every source texel to the same
+total weight however it falls on the destination grid, so **below the ceiling the bright pass
+conserves a source's light**: a small bright source seeds the same energy at every sub-texel
+offset, and nothing pumps as it moves. A weighting that is nonlinear in brightness — the Karis
+`1/(1+luma)` group weight is the usual one — breaks that for exactly the few-texel sources it
+exists for, since how strongly it suppresses one depends on how it divides among the groups. Above
+the ceiling one texel seeds at most the ceiling's worth (the taps covering a texel carry a total
+weight of one), so a firefly is bounded however extreme; a source over half the ceiling across its
+whole footprint is rolled off per tap and blooms by its coverage again, which is why the default
+(64, display-referred like `Threshold`, so divided by the resolved exposure) sits well above what
+the tone curves resolve. The bloom mask takes the same plain weights, so the mask and the colour
+stay the same average of the same footprint. `tests/gpu/bloom_bright_pass.cpp` pins all three
+properties on both kernels: invariance across sub-texel offsets, the ceiling's bound on one
+extreme texel, and zero from a `NaN` or `inf`.
 
 ### Depth of field and the physical camera
 

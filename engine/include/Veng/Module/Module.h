@@ -414,10 +414,13 @@ extern "C"
 /// builds lights in code and spawns prefabs carrying them, so a stale module lays Light out short.
 /// Version 98 gives a system the extent its view renders at: SystemViewInfo grows RenderExtent. The
 /// host builds the view a module's systems and Gui drivers read, so a stale module reads it short.
+/// Version 99 lets a look bound what one bright texel seeds into bloom: RenderLook, ViewState and
+/// SceneView grow BloomFireflyCeiling, inserted beside BloomThreshold. A module spawns prefabs
+/// carrying a RenderLook and builds views, so a stale module lays all three out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 98u
+#define VENG_MODULE_ABI_VERSION 99u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

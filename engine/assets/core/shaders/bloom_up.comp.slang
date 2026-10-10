@@ -8,7 +8,7 @@
 // threads; the per-level barrier the graph derives orders this against the downsample
 // that wrote level i and against the next finer up-step that reads it.
 //
-// Set 0 is the bindless registry; set 1 carries the closed resources: the sampled
+// Set 0 is the bindless registry; set 3 carries the closed resources: the sampled
 // coarser source, the clamp-to-edge linear sampler, and the storage destination level.
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;

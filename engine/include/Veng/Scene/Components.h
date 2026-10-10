@@ -1624,7 +1624,7 @@ namespace Veng
     /// One per scene: every viewport presenting the scene reads it each frame
     /// (Renderer::Viewport) and resolves it — on change only — into the topology it configures
     /// (Bloom / Shadows / AO / SSR / …) and the per-frame knobs it writes over each pushed view
-    /// (Exposure, BloomThreshold, BloomIntensity, AmbientFloor, …), so a system writing a field here
+    /// (Exposure, BloomThreshold, BloomFireflyCeiling, BloomIntensity, AmbientFloor, …), so a system writing a field here
     /// changes the next frame's render, and a prefab carrying one brings its look into the scene.
     /// With several, the first in pool order wins and a presenting viewport warns once. A level's authored
     /// "render" block seeds one onto its settings entity (SeedLevel). A reflected,
@@ -1672,6 +1672,13 @@ namespace Veng
         bool Bloom = true;
         /// @brief Bloom bright-pass luminance knee fed into the per-frame SceneView.
         f32 BloomThreshold = 1.0f;
+        /// @brief The most luminance one bloom bright-pass tap carries, display-referred, fed into
+        ///        the per-frame SceneView.
+        ///
+        /// Caps what a single extreme texel seeds into the bloom while leaving ordinary bright
+        /// content averaged linearly; raise it for a scene whose legitimate small sources sit near
+        /// it. @see Renderer::SceneView::BloomFireflyCeiling
+        f32 BloomFireflyCeiling = 64.0f;
         /// @brief Bloom composite intensity fed into the per-frame SceneView.
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread fed into the per-frame SceneView.
@@ -2280,6 +2287,7 @@ VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto Exposure High Percenti
          .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})
+VE_FIELD(BloomFireflyCeiling, .DisplayName = "Bloom Firefly Ceiling", .Display = {.Min = 0.0})
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(BloomRadius, .DisplayName = "Bloom Radius", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")

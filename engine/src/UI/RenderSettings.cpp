@@ -38,6 +38,8 @@ namespace Veng::UI
                         {.Speed = 0.05f, .Min = 0.0f, .Max = 16.0f, .Format = "%.2f"});
         changed |= Drag("Bloom threshold", state.BloomThreshold,
                         {.Speed = 0.02f, .Min = 0.0f, .Max = 16.0f, .Format = "%.2f"});
+        changed |= Drag("Bloom firefly ceiling", state.BloomFireflyCeiling,
+                        {.Speed = 0.5f, .Min = 0.0f, .Max = 1024.0f, .Format = "%.1f"});
         changed |= Drag("Bloom intensity", state.BloomIntensity,
                         {.Speed = 0.01f, .Min = 0.0f, .Max = 2.0f, .Format = "%.2f"});
         changed |= Drag("Bloom radius", state.BloomRadius,

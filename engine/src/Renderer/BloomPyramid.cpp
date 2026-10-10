@@ -50,8 +50,9 @@ namespace Veng::Renderer
         constexpr ImageUsage BloomPyramidUsage = ImageUsage::Storage | ImageUsage::Sampled;
 
         // The bloom downsample push: the destination mip extent, a level-0 bright-pass
-        // flag (1.0 enables bright-pass + Karis), the soft-knee threshold, and the level-0
-        // bloom-mask slots. Matches bloom_down.comp and bloom_down_kawase.comp.
+        // flag (1.0 enables the tap ceiling + bright-pass), the soft-knee threshold, the level-0
+        // bloom-mask slots, and the per-tap ceiling. Matches bloom_bright_pass.slang, which both
+        // down kernels include.
         struct BloomDownPush
         {
             uvec2 DestExtent;
@@ -62,7 +63,7 @@ namespace Veng::Renderer
             u32 MaskTexture;
             u32 MaskSampler;
             u32 MaskEnabled;
-            u32 Pad0;
+            f32 FireflyCeiling;
         };
 
         // The bloom upsample push: the destination (finer) mip extent, the source sub-rect
@@ -98,7 +99,7 @@ namespace Veng::Renderer
     BloomPyramid::BloomPyramid(Context& context, AssetManager& assets, const BloomKernel kernel)
         : m_Context(context), m_Kernel(kernel)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "BloomPyramid: {} shader load failed: {}", what,
@@ -106,7 +107,7 @@ namespace Veng::Renderer
             return *result;
         };
 
-        // The bloom compute pipelines. Set 1 is off bindless (the closed bloom chain needs
+        // The bloom compute pipelines. Set 3 is off bindless (the closed bloom chain needs
         // no global registration, and a dedicated set sidesteps the set-0 storage-image
         // argument-buffer path on MoltenVK). Down/up share one set layout (sampled source +
         // linear sampler + storage dest).
@@ -394,8 +395,8 @@ namespace Veng::Renderer
         const u32 tailFirst = m_TailSet != nullptr ? m_TailFirst : mipCount;
 
         // Down-sweep: dispatch k samples level k's source (HDR for k=0, mip k-1 otherwise)
-        // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
-        // 13-tap. The per-mip graph surface derives the read-after-write barrier between
+        // and writes mip k. Mip 0 fuses the tap ceiling + bright-pass; deeper levels are the plain
+        // kernel. The per-mip graph surface derives the read-after-write barrier between
         // dispatch k's write and dispatch k+1's read.
         for (u32 level = 0; level < tailFirst; level++)
         {
@@ -450,21 +451,21 @@ namespace Veng::Renderer
                         .FirstSet = 3, // sets 0-2 are the typed bindless registries
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
+                    // Both authored knobs are display-referred (1.0 = the post-exposure white
+                    // point); dividing by the frame's resolved exposure moves them into HDR units,
+                    // so they track the metered exposure across lighting regimes. The resolved
+                    // exposure is the one cross-battery read (from the meter).
+                    const f32 toHdr = 1.0f / std::max(meter->GetResolvedExposure(), 1e-5f);
                     cmd.PushConstants(BloomDownPush{
                         .DestExtent = dst.ValidExtent,
                         .SourceScaleUV = src.ScaleUV,
                         .SourceMaxUV = src.MaxUV,
                         .BrightPass = brightPass,
-                        // The authored threshold is display-referred (1.0 = the post-exposure
-                        // white point); dividing by the frame's resolved exposure moves it into
-                        // HDR units, so it tracks the metered exposure across lighting regimes.
-                        // The resolved exposure is the one cross-battery read (from the meter).
-                        .Threshold =
-                            view->BloomThreshold / std::max(meter->GetResolvedExposure(), 1e-5f),
+                        .Threshold = view->BloomThreshold * toHdr,
                         .MaskTexture = maskHandle.Index,
                         .MaskSampler = maskSampler.Index,
                         .MaskEnabled = levelMask ? 1u : 0u,
-                        .Pad0 = 0,
+                        .FireflyCeiling = view->BloomFireflyCeiling * toHdr,
                     });
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });

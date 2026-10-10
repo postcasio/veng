@@ -24,7 +24,7 @@
 // and moving silhouettes) and sampled with a Catmull-Rom filter (countering the
 // blur a bilinear history accumulates). The blend is luminance-weighted to damp
 // fireflies (the Karis weighting), the stability mechanism the bloom bright-pass's
-// Karis average complements.
+// per-tap ceiling complements.
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];

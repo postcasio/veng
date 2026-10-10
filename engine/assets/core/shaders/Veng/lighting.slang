@@ -40,8 +40,8 @@ static const float LightingOutputMax = 6.0e4;
 
 // Clamps lit radiance per channel to LightingOutputMax. The bound exists for overflow, not for the
 // lobe: a full-strength GGX peak on a glossy metal under a bright light can exceed the half-float
-// range, and an inf in the scene colour becomes a NaN wherever a later pass weights it (bloom's
-// Karis average), which then spreads. Every value the target can represent passes unchanged.
+// range, and an inf in the scene colour becomes a NaN wherever a later pass filters it (the TAA
+// resolve, a blur), which then spreads. Every value the target can represent passes unchanged.
 //
 // It bounds the radiance it is handed, not what a caller makes of it afterwards: a material that
 // scales lit radiance up, or sums it with other radiance, passes its final colour through it again.

@@ -2444,8 +2444,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 //   (b) far-halo lift — luminance at ≥12 px from the highlight (beyond a single
 //       9-tap separable blur's reach) rises with bloom on, the multi-octave spread;
 //   (c) radius monotonicity — far-halo energy grows across three increasing Radius;
-//   (d) firefly suppression — an extreme single-light spike does not blow the halo
-//       out of proportion (pins the mandatory Karis average on mip 0);
+//   (d) the firefly ceiling — under a low ceiling a 10× brighter light grows the bloom far
+//       less than it does with the ceiling out of reach, where bloom follows the light;
 //   (e) Threshold / Intensity / Radius change the result with NO recompile.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "scene renderer: compute mip-pyramid bloom spreads a wide halo, and its "
@@ -2531,7 +2531,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64
     { return AnnulusLuma(pixels, 12, 40); };
 
-    const auto Render = [&](f32 threshold, f32 intensity, f32 radius) -> vector<u8>
+    const auto Render = [&](f32 threshold, f32 intensity, f32 radius,
+                            f32 ceiling = 64.0f) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2540,6 +2541,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                                            .Camera = camera,
                                                            .Delta = 0.0f,
                                                            .BloomThreshold = threshold,
+                                                           .BloomFireflyCeiling = ceiling,
                                                            .BloomIntensity = intensity,
                                                            .BloomRadius = radius});
             });
@@ -2585,16 +2587,37 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const f64 haloHighThreshold = HaloLuma(Render(100.0f, 1.0f, 1.0f)); // rejects the highlight
     CHECK(haloHighThreshold < haloBloom);
 
-    // (d) Firefly suppression: a 10× brighter light is an extreme HDR spike. The Karis
-    // average on mip 0 weights bright outliers by 1/(1+luma), so the far halo grows far
-    // less than the 10× input would without it — pinning the mandatory suppression.
-    const f64 farHaloModerate = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
+    // (d) The firefly ceiling: a 10× brighter light is an extreme HDR spike. Read through the
+    // bloom debug view (the accumulated bloom alone, in linear HDR), the spike's whole-frame bloom
+    // follows the light with the ceiling out of reach, and grows far less under a ceiling the
+    // highlight's core already exceeds — every capped tap seeds the ceiling, however bright.
+    renderer->Configure({.Mode = DebugView::Bloom, .Bloom = true});
+    const auto BloomEnergy = [&](const f32 ceiling) -> f64
+    {
+        const vector<u8> pixels = Render(1.0f, 1.0f, 1.0f, ceiling);
+        f64 sum = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+            }
+        }
+        return sum;
+    };
+    constexpr f32 OpenCeiling = 6.0e4f;
+    constexpr f32 LowCeiling = 2.0f;
+    const f64 moderateOpen = BloomEnergy(OpenCeiling);
+    const f64 moderateCapped = BloomEnergy(LowCeiling);
     scene->Get<Light>(lightEntity).Intensity = DirectionalLux(80.0f);
-    const f64 farHaloSpike = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
-    // The spike still bloom (it is brighter), but Karis compresses it well below the 10×
-    // the un-suppressed input would drive — a generous bound that a removed Karis breaks.
-    CHECK(farHaloSpike > farHaloModerate);
-    CHECK(farHaloSpike < farHaloModerate * 10.0);
+    const f64 spikeOpen = BloomEnergy(OpenCeiling);
+    const f64 spikeCapped = BloomEnergy(LowCeiling);
+    // Nothing capped, the 10× light seeds about 10× the bloom (9.9× measured). Under the low
+    // ceiling the capped taps hold still and only the area over it grows (3.6× measured).
+    CHECK(spikeOpen / moderateOpen > 8.0);
+    CHECK(spikeCapped > moderateCapped);
+    CHECK(spikeCapped / moderateCapped < 5.0);
 
     std::filesystem::remove(outArchive);
 }

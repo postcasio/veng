@@ -122,6 +122,7 @@ namespace
         look.AutoExposureLowPercentile = 0.2f;
         look.AutoExposureHighPercentile = 0.9f;
         look.BloomThreshold = 0.5f;
+        look.BloomFireflyCeiling = 200.0f;
         look.BloomIntensity = 1.7f;
         look.BloomRadius = 2.0f;
         look.AmbientFloor = vec3(0.4f, 0.5f, 0.6f);
@@ -165,6 +166,7 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.AutoExposureLowPercentile == direct.AutoExposureLowPercentile);
     CHECK(carried.AutoExposureHighPercentile == direct.AutoExposureHighPercentile);
     CHECK(carried.BloomThreshold == direct.BloomThreshold);
+    CHECK(carried.BloomFireflyCeiling == direct.BloomFireflyCeiling);
     CHECK(carried.BloomIntensity == direct.BloomIntensity);
     CHECK(carried.BloomRadius == direct.BloomRadius);
     CHECK(carried.AmbientFloor == direct.AmbientFloor);

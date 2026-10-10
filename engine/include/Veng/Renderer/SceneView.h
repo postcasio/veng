@@ -341,6 +341,22 @@ namespace Veng::Renderer
         /// lighting regime. Tuning this rides the compute push, so it does not trigger a
         /// recompile. Ignored when bloom is inactive.
         f32 BloomThreshold = 1.0f;
+        /// @brief The most luminance one bright-pass tap carries; pushed to the downsample compute
+        ///        each Execute.
+        ///
+        /// Display-referred like BloomThreshold (divided by the frame's resolved exposure). Each of
+        /// the HDR → mip 0 downsample's taps — a bilinear average over a 2×2 block of the scene — is
+        /// rolled off toward this along a smooth shoulder that starts at half of it, before the taps
+        /// are averaged. So one extreme texel (a specular sparkle, a firefly a degenerate shading
+        /// path wrote) seeds at most this much light, while a tap at or under half of it averages
+        /// linearly, which is what makes a small bright source bloom the same wherever it sits on
+        /// the texel grid. A source brighter than half of it across its whole footprint is rolled
+        /// off and blooms by how many taps it covers again, so this belongs well above any
+        /// legitimate small source: the default sits four times past the ~16× white point beyond
+        /// which the tone curves resolve nothing, leaving ordinary bright content untouched. A
+        /// non-finite tap contributes nothing whatever this is. Rides the compute push (no
+        /// recompile). Ignored when bloom is inactive.
+        f32 BloomFireflyCeiling = 64.0f;
         /// @brief Bloom mix intensity; written to the tonemap material each Execute.
         ///
         /// Scales the accumulated bloom the tonemap adds back into the HDR ahead of exposure. A

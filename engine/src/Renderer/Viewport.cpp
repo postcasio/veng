@@ -632,6 +632,7 @@ namespace Veng::Renderer
             .AutoExposureHighPercentile = m_ViewState.AutoExposureHighPercentile,
             .AmbientFloor = m_ViewState.AmbientFloor,
             .BloomThreshold = m_ViewState.BloomThreshold,
+            .BloomFireflyCeiling = m_ViewState.BloomFireflyCeiling,
             .BloomIntensity = m_ViewState.BloomIntensity,
             .BloomRadius = m_ViewState.BloomRadius,
             .SsrIntensity = m_ViewState.SsrIntensity,

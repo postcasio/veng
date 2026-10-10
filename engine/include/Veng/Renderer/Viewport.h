@@ -113,6 +113,10 @@ namespace Veng::Renderer
         /// @brief Bloom bright-pass luminance knee, display-referred (1.0 = the post-exposure
         /// white point).
         f32 BloomThreshold = 1.0f;
+        /// @brief The most luminance one bloom bright-pass tap carries, display-referred.
+        ///
+        /// @see SceneView::BloomFireflyCeiling
+        f32 BloomFireflyCeiling = 64.0f;
         /// @brief Bloom composite mix intensity.
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread.

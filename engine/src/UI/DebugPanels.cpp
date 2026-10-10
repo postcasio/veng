@@ -735,6 +735,8 @@ namespace Veng::UI
 
             (void)UI::Drag("Threshold##bloom", view.BloomThreshold,
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
+            (void)UI::Drag("Firefly ceiling##bloom", view.BloomFireflyCeiling,
+                           {.Speed = 0.5f, .Min = 0.0f, .Max = 1024.0f});
             (void)UI::Drag("Intensity##bloom", view.BloomIntensity,
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
             (void)UI::Drag("Radius##bloom", view.BloomRadius,

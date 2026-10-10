@@ -76,6 +76,7 @@ namespace Veng
         view.AutoExposureLowPercentile = look.AutoExposureLowPercentile;
         view.AutoExposureHighPercentile = look.AutoExposureHighPercentile;
         view.BloomThreshold = look.BloomThreshold;
+        view.BloomFireflyCeiling = look.BloomFireflyCeiling;
         view.BloomIntensity = look.BloomIntensity;
         view.BloomRadius = look.BloomRadius;
 
@@ -100,6 +101,7 @@ namespace Veng
         view.AutoExposureLowPercentile = resolved.AutoExposureLowPercentile;
         view.AutoExposureHighPercentile = resolved.AutoExposureHighPercentile;
         view.BloomThreshold = resolved.BloomThreshold;
+        view.BloomFireflyCeiling = resolved.BloomFireflyCeiling;
         view.BloomIntensity = resolved.BloomIntensity;
         view.BloomRadius = resolved.BloomRadius;
         if (!view.DofFromPhysicalCamera)

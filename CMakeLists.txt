@@ -1927,6 +1927,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/ssr_min_z_tail.cpp
+            # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
+            # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
+            # non-finite tap seeding nothing.
+            tests/gpu/bloom_bright_pass.cpp
             tests/gpu/volume_texture_3d.cpp
             # storage_image_range.cpp drives a normalised sixteen-bit storage image: a compute
             # shader declaring the Rgba16 image format writes both ends of the range and the datum,
