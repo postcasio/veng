@@ -42,7 +42,8 @@ namespace Veng::Renderer
     Viewport::Viewport(const ViewportInfo& info)
         : m_Context(info.Context), m_Assets(info.Assets), m_Region(info.Region),
           m_RenderScale(info.RenderScale), m_MaxAllocationScale(info.MaxAllocationScale),
-          m_Role(info.Role), m_RenderOnDemand(info.RenderOnDemand), m_UiScale(info.UiScale)
+          m_Role(info.Role), m_RenderOnDemand(info.RenderOnDemand), m_UiScale(info.UiScale),
+          m_Settings(info.Settings)
     {
         VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
                   info.RenderScale);
@@ -254,7 +255,7 @@ namespace Veng::Renderer
 
     f32 Viewport::GetRenderScale() const
     {
-        return m_RenderScale;
+        return m_DebugOverrides.RenderScale.value_or(m_RenderScale);
     }
 
     void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings)
@@ -362,6 +363,10 @@ namespace Veng::Renderer
         // side alone — the post-resolve tail is allocated at the region's own (capped) extent, so a
         // temporal-upscaling resolve and a spatial promotion alike reconstruct it from whatever
         // sub-native render this scale produced.
+        if (m_DebugOverrides.RenderScale)
+        {
+            return *m_DebugOverrides.RenderScale;
+        }
         return m_DynamicResolution ? m_DynamicResolution->MaxScale : m_RenderScale;
     }
 
@@ -396,7 +401,7 @@ namespace Veng::Renderer
         // targets are sized to): at the ceiling the fraction is 1 (renders the whole render
         // allocation), below it a sub-rect of it. The clamp guards the window between a MaxScale
         // drop and the next controller update.
-        return glm::min(m_RenderScale / GetAllocationScale(), 1.0f);
+        return glm::min(GetRenderScale() / GetAllocationScale(), 1.0f);
     }
 
     void Viewport::DebounceAllocationResize(const uvec2 priorPostAlloc,
@@ -421,7 +426,8 @@ namespace Veng::Renderer
     {
         // A hold pins the scale for its whole span, so the controller step is skipped rather than
         // computed and discarded — its result must not become the post-release state either.
-        if (!m_DynamicResolution || m_RenderScaleHeld || !m_Context.IsGpuTimingSupported())
+        if (!m_DynamicResolution || m_RenderScaleHeld || m_DebugOverrides.RenderScale ||
+            !m_Context.IsGpuTimingSupported())
         {
             return;
         }
@@ -487,14 +493,92 @@ namespace Veng::Renderer
 
     void Viewport::Configure(const SceneRendererSettings& settings)
     {
+        m_Settings = settings;
+        ApplyEffectiveSettings();
+    }
+
+    void Viewport::ApplyEffectiveSettings()
+    {
+        m_DebugSettingsPending = false;
+
         // Unchanged settings leave the renderer, the allocation and the output handle exactly as
         // they stand; the renderer's own Configure is a no-op for them too.
-        if (settings == m_Renderer->GetSettings())
+        const SceneRendererSettings effective = GetEffectiveSettings();
+        if (effective == m_Renderer->GetSettings())
         {
             return;
         }
-        m_Renderer->Configure(settings);
+        m_Renderer->Configure(effective);
         RefreshOutputHandle();
+    }
+
+    SceneRendererSettings Viewport::GetEffectiveSettings() const
+    {
+        SceneRendererSettings effective = m_Settings;
+        m_DebugOverrides.ApplyTo(effective);
+        return effective;
+    }
+
+    ViewState Viewport::GetEffectiveViewState() const
+    {
+        ViewState effective = m_ViewState;
+        m_DebugOverrides.ApplyTo(effective);
+        return effective;
+    }
+
+    void Viewport::SetDebugOverrides(const ViewportDebugOverrides& overrides)
+    {
+        VE_ASSERT(!overrides.RenderScale || *overrides.RenderScale > 0.0f,
+                  "Viewport debug render scale must be > 0 (got {})",
+                  overrides.RenderScale.value_or(0.0f));
+
+        const uvec2 priorPostAlloc = GetPostResolveAllocationExtent();
+        const uvec2 priorRenderAlloc = ScaledExtent();
+        m_DebugOverrides = overrides;
+        DebounceAllocationResize(priorPostAlloc, priorRenderAlloc);
+
+        // Configured at the next Render rather than here: an editor sets this from its UI pass,
+        // after this frame's render, while the compositor has still to sample the output.
+        m_DebugSettingsPending = true;
+    }
+
+    void Viewport::ClearDebugOverrides()
+    {
+        SetDebugOverrides(ViewportDebugOverrides{});
+    }
+
+    bool ViewportDebugOverrides::IsEmpty() const
+    {
+        return Settings.IsEmpty() && View.IsEmpty() && !RenderScale;
+    }
+
+    usize ViewportDebugOverrides::GetCount() const
+    {
+        return Settings.GetCount() + View.GetCount() + (RenderScale ? 1 : 0);
+    }
+
+    void ViewportDebugOverrides::Clear()
+    {
+        Settings.ClearAll();
+        View.ClearAll();
+        RenderScale.reset();
+    }
+
+    void ViewportDebugOverrides::ApplyTo(SceneRendererSettings& settings) const
+    {
+        Settings.ApplyTo(settings);
+    }
+
+    void ViewportDebugOverrides::ApplyTo(ViewState& view) const
+    {
+        if (View.IsEmpty())
+        {
+            return;
+        }
+        View.ApplyTo(view);
+        view.SsrMaxSteps = ClampSsrMaxSteps(view.SsrMaxSteps);
+        view.DofMaxCoc = ClampDofMaxCoc(view.DofMaxCoc);
+        view.DofRingCount = ClampDofRingCount(view.DofRingCount);
     }
 
     void Viewport::SetLookResolver(LookResolver resolver)
@@ -554,7 +638,7 @@ namespace Veng::Renderer
 
     const SceneRendererSettings& Viewport::GetSettings() const
     {
-        return m_Renderer->GetSettings();
+        return m_Settings;
     }
 
     void Viewport::Render(CommandBuffer& cmd)
@@ -600,6 +684,11 @@ namespace Veng::Renderer
             RefreshOutputHandle();
         }
 
+        if (m_DebugSettingsPending)
+        {
+            ApplyEffectiveSettings();
+        }
+
         // A null World renders nothing: SceneView::World is a const Scene& that cannot be
         // built from a null pointer, so the early return precedes the SceneView build.
         if (m_ViewState.World == nullptr)
@@ -616,41 +705,43 @@ namespace Veng::Renderer
         // precedent); the built lists ride the SceneView below (the SkyMaterial precedent).
         DriveHdrOverlays();
 
+        // The debug overrides win over the push and the look alike.
+        const ViewState state = GetEffectiveViewState();
         const SceneView view{
-            .World = *m_ViewState.World,
-            .Camera = m_ViewState.Camera,
-            .Delta = m_ViewState.Delta,
-            .Alpha = m_ViewState.Alpha,
+            .World = *state.World,
+            .Camera = state.Camera,
+            .Delta = state.Delta,
+            .Alpha = state.Alpha,
             // The sub-rect fraction of the render allocation to render this frame; the promotion
             // carries it up to the post-resolve allocation, so GetOutput stays full-resolution.
             .RenderScale = GetViewRenderScale(),
-            .Exposure = m_ViewState.Exposure,
-            .Tonemapper = m_ViewState.Tonemapper,
-            .AutoExposureKey = m_ViewState.AutoExposureKey,
-            .AutoExposureMinLuminance = m_ViewState.AutoExposureMinLuminance,
-            .AutoExposureMaxLuminance = m_ViewState.AutoExposureMaxLuminance,
-            .AutoExposureSpeed = m_ViewState.AutoExposureSpeed,
-            .AutoExposureLowPercentile = m_ViewState.AutoExposureLowPercentile,
-            .AutoExposureHighPercentile = m_ViewState.AutoExposureHighPercentile,
-            .AmbientFloor = m_ViewState.AmbientFloor,
-            .BloomThreshold = m_ViewState.BloomThreshold,
-            .BloomFireflyCeiling = m_ViewState.BloomFireflyCeiling,
-            .BloomIntensity = m_ViewState.BloomIntensity,
-            .BloomRadius = m_ViewState.BloomRadius,
-            .SsrIntensity = m_ViewState.SsrIntensity,
-            .SsrMaxDistance = m_ViewState.SsrMaxDistance,
-            .SsrThickness = m_ViewState.SsrThickness,
-            .SsrMaxRoughness = m_ViewState.SsrMaxRoughness,
-            .SsrMaxSteps = m_ViewState.SsrMaxSteps,
-            .SpecularAntiAliasingVariance = m_ViewState.SpecularAntiAliasingVariance,
-            .SpecularAntiAliasingThreshold = m_ViewState.SpecularAntiAliasingThreshold,
-            .DofFocusDistance = m_ViewState.DofFocusDistance,
-            .DofAperture = m_ViewState.DofAperture,
-            .DofCocScale = m_ViewState.DofCocScale,
-            .DofMaxCoc = m_ViewState.DofMaxCoc,
-            .DofRingCount = m_ViewState.DofRingCount,
-            .OutputBrightness = m_ViewState.OutputBrightness,
-            .OutputGamma = m_ViewState.OutputGamma,
+            .Exposure = state.Exposure,
+            .Tonemapper = state.Tonemapper,
+            .AutoExposureKey = state.AutoExposureKey,
+            .AutoExposureMinLuminance = state.AutoExposureMinLuminance,
+            .AutoExposureMaxLuminance = state.AutoExposureMaxLuminance,
+            .AutoExposureSpeed = state.AutoExposureSpeed,
+            .AutoExposureLowPercentile = state.AutoExposureLowPercentile,
+            .AutoExposureHighPercentile = state.AutoExposureHighPercentile,
+            .AmbientFloor = state.AmbientFloor,
+            .BloomThreshold = state.BloomThreshold,
+            .BloomFireflyCeiling = state.BloomFireflyCeiling,
+            .BloomIntensity = state.BloomIntensity,
+            .BloomRadius = state.BloomRadius,
+            .SsrIntensity = state.SsrIntensity,
+            .SsrMaxDistance = state.SsrMaxDistance,
+            .SsrThickness = state.SsrThickness,
+            .SsrMaxRoughness = state.SsrMaxRoughness,
+            .SsrMaxSteps = state.SsrMaxSteps,
+            .SpecularAntiAliasingVariance = state.SpecularAntiAliasingVariance,
+            .SpecularAntiAliasingThreshold = state.SpecularAntiAliasingThreshold,
+            .DofFocusDistance = state.DofFocusDistance,
+            .DofAperture = state.DofAperture,
+            .DofCocScale = state.DofCocScale,
+            .DofMaxCoc = state.DofMaxCoc,
+            .DofRingCount = state.DofRingCount,
+            .OutputBrightness = state.OutputBrightness,
+            .OutputGamma = state.OutputGamma,
             .HdrOverlays = m_HdrOverlayViews,
             .GuiTime = m_GuiTime,
         };

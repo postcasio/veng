@@ -86,6 +86,8 @@ namespace Veng
         view.SsrMaxRoughness = look.SsrMaxRoughness;
         // A GPU loop bound, clamped here as well as at the push: a cooked level is untrusted input.
         view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(look.SsrMaxSteps);
+        view.SpecularAntiAliasingVariance = look.SpecularAntiAliasingVariance;
+        view.SpecularAntiAliasingThreshold = look.SpecularAntiAliasingThreshold;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -116,6 +118,8 @@ namespace Veng
         view.SsrThickness = resolved.SsrThickness;
         view.SsrMaxRoughness = resolved.SsrMaxRoughness;
         view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(resolved.SsrMaxSteps);
+        view.SpecularAntiAliasingVariance = resolved.SpecularAntiAliasingVariance;
+        view.SpecularAntiAliasingThreshold = resolved.SpecularAntiAliasingThreshold;
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;

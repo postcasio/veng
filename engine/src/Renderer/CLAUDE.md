@@ -296,7 +296,8 @@ normal's screen-space variance `|∂N/∂x|² + |∂N/∂y|²` (`NormalScreenVar
 applies Kaplanyan and Tokuyoshi's widening as Filament's `normalFiltering` does, once per surface:
 `α² = saturate(α² + min(2·σ²·variance, κ))`, converted back to perceptual roughness. `σ²` is
 `SceneView::SpecularAntiAliasingVariance` (default 0.15) and `κ` `SpecularAntiAliasingThreshold`
-(default 0.2), Filament's defaults, carried in the view block's `AmbientParams.yz` (see "View
+(default 0.2), Filament's defaults — authored on a scene's `RenderLook` like the other per-frame
+knobs — carried in the view block's `AmbientParams.yz` (see "View
 constants"); a zero `σ²` adds exactly nothing, which is how the feature is off. Because it changes the
 surface's roughness it reaches every light's `D` and G, a sized light's widening (which composes in
 `α²`), the LTC lookups and the image-based reflection's mip and BRDF-LUT lookups: a reflection blurs
@@ -2118,6 +2119,41 @@ barrier).
   composites. The managed primary viewport is the game's plug-and-play path; the editor registers
   no `Presented` viewport, so there are **zero placements**, the gather is skipped, and the
   composite is ImGui over a black stand-in.
+
+### The debug override layer
+
+**A developer panel's edits need a layer that wins over both the application and the look.** An
+application's graphics resolve (`OnResolveGraphics`, run as the viewport's look resolver)
+legitimately rewrites every field its saved quality tiers own whenever a look resolves, and the look
+writes its per-frame knobs over every push — so a field set through `Configure` or a pushed view
+lasts only until the next resolve, which a system writing the look triggers as often as it likes.
+`ViewportDebugOverrides` (`Viewport::SetDebugOverrides` / `GetDebugOverrides` /
+`ClearDebugOverrides`) is that layer, and it composes last:
+
+- **Settings:** `GetSettings()` is what the owner and the look resolve configured (the read side of
+  `Configure`, and what a resolver starts from, so no override is baked into it);
+  `GetEffectiveSettings()` is that with the overrides written over it, and is what the renderer is
+  configured to. A changed override set configures it at the next `Render`, through the same
+  configure-only-on-change compare, so an override that leaves the topology as it is rebuilds
+  nothing and a held one costs nothing per frame.
+- **View:** `GetViewState()` is the push with the look's knobs written over it;
+  `GetEffectiveViewState()` adds the overrides, and is what `Render` builds its `SceneView` from. So
+  an override wins over the look, over a resolver's view, and over a managed viewport's
+  default-constructed push — including knobs no look carries.
+- **Render scale:** while set it is the scale (`GetRenderScale()` reports it), the scene is
+  allocated at exactly it and the dynamic-resolution step holds still; `SetRenderScale`, holds and
+  controller changes made meanwhile are recorded and render once it clears.
+
+`Settings` and `View` are `FieldOverrides<T>` (`Veng/Reflection/FieldOverrides.h`): one value and one
+set bit per reflected field, applied by copying exactly the set fields. That is why
+`SceneRendererSettings` and `ViewState` are reflected (the latter over its knobs only) — the set, and
+the engine's `UI::RenderSettingsEditor` that drives it, enumerate the fields rather than listing
+them, so a field added to either struct is overridable and editable with no other change. The GPU
+loop bounds (`SsrMaxSteps`, `DofMaxCoc`, `DofRingCount`) are clamped again after the overrides. The
+layer is runtime-only — never saved, never replicated — and lasts until cleared or until the viewport
+is destroyed. `tests/unit/viewport_debug_overrides.cpp` pins the set's semantics device-free;
+`tests/gpu/render_look_resolve.cpp` pins that an override holds against a resolver through a look
+change and a re-resolve, wins over a managed push, and returns the resolved value when cleared.
 
 **A gather pass assembles; the composite encodes.** `GatherPass` (`Veng/Renderer/GatherPass.h`)
 scissor-blits each `Presented` viewport's texture (a `CompositePlacement` = its `Ref<ImageView>` +

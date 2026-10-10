@@ -17,14 +17,11 @@
 namespace Veng
 {
     class TypeRegistry;
-    struct RenderLook;
 }
 
 namespace Veng::Renderer
 {
     class Viewport;
-    struct SceneRendererSettings;
-    struct ViewState;
     enum class DebugView : u8;
 }
 
@@ -233,61 +230,34 @@ namespace Veng::UI
 
     /// @brief Draws the renderer debug-view selector as a combo over every DebugView arm.
     ///
-    /// The reusable "View" dropdown `RenderSettingsEditor` embeds — equally placeable on its
-    /// own (a toolbar, a viewport header). Selecting an arm is a topology change: on a true
-    /// return the caller reconfigures the renderer with the edited settings, exactly as for
-    /// `RenderSettingsEditor`.
+    /// The reusable "View" dropdown — placeable on its own (a toolbar, a viewport header). It edits
+    /// @p mode only; the caller decides where the selection lands, normally as a debug override
+    /// (Renderer::ViewportDebugOverrides) so a look resolve does not undo it.
     /// @param mode  The debug-view arm edited in place.
-    /// @return True the frame the selection changed (the caller should `Configure`).
+    /// @return True the frame the selection changed.
     [[nodiscard]] bool DebugViewCombo(Renderer::DebugView& mode);
 
-    /// @brief Draws the renderer's full settings surface: every topology toggle and per-frame
-    /// view knob, grouped into collapsible sections.
+    /// @brief Draws a viewport's render settings as its debug override layer: every topology field,
+    ///        every per-frame view knob, and the render scale.
     ///
-    /// Edits every exposable `SceneRendererSettings` topology knob (the debug-view mode; the
-    /// SSAO / TAA / SSR / emissive / shadow / punctual-shadow / bloom / auto-exposure /
-    /// frustum-cull / GPU-occlusion / debug-draw / picking toggles; the cascade,
-    /// shadow-resolution, SSR-resolution, bloom-kernel, and cull-mode controls) and the
-    /// per-frame `ViewState` knobs (exposure and the auto-exposure key/clamps/speed, the bloom
-    /// threshold / intensity / radius, the SSR intensity / distance / thickness / roughness
-    /// cutoff / step budget, distance and thickness on logarithmic sliders). A knob whose feature is off, or that the device cannot honor (GPU cull without
-    /// `IsGpuDrivenCullingSupported`, dynamic resolution without timestamps), draws disabled.
-    /// The viewport's adaptive-resolution controls (dynamic resolution and the manual
-    /// render-scale override) drive the viewport imperatively, since they recreate or resize
-    /// renderer resources directly. The sky is the scene's `Sky` component, resolved by the
-    /// renderer itself — authored in the inspector, not here.
+    /// Each row shows the value the viewport is rendering with — its configured settings and its
+    /// pushed, look-resolved view with the overrides written over them (Viewport::
+    /// GetEffectiveSettings, GetEffectiveViewState, GetRenderScale) — and editing a row overrides
+    /// that field (Viewport::SetDebugOverrides). An overridden row is drawn in the accent colour
+    /// with a button clearing that one override, and "Clear all overrides" drops the whole layer,
+    /// returning every field to what the application and the look resolve. Because overrides apply
+    /// after the look resolve, an edit holds through a level's look, an application's graphics
+    /// resolve and any system writing the look; the panel never writes a scene's RenderLook and
+    /// never calls Configure.
     ///
-    /// Returns whether a topology field of `settings` changed this frame, per the editable-widget
-    /// idiom. The helper does **not** reconfigure: the caller decides whether to call
-    /// `Viewport::Configure(settings)` (a recompile) on a true return — the engine reserves
-    /// `Configure` for the resource owner. The per-frame `ViewState` edits ride the next frame's
-    /// push with no reconfigure.
-    /// @param settings  The renderer topology/sizing knobs to edit in place.
-    /// @param view      The per-frame view knobs (exposure/auto-exposure, bloom, SSR) to edit in
-    ///                  place.
-    /// @param viewport  The viewport whose adaptive-resolution controls this panel drives.
-    /// @return True the frame a `settings` topology field changed (the caller should `Configure`).
-    [[nodiscard]] bool RenderSettingsEditor(Renderer::SceneRendererSettings& settings,
-                                            Renderer::ViewState& view,
-                                            Renderer::Viewport& viewport);
-
-    /// @brief Draws the settings surface for a viewport presenting a scene that carries a RenderLook.
-    ///
-    /// A presented look owns its fields — the viewport resolves it into its topology and writes
-    /// its per-frame values over every push — so editing those on the viewport would be undone by
-    /// the next resolve. This overload edits them where they live, on the scene's component, every
-    /// field through the reflection inspector, live on the next frame (a topology field recompiles
-    /// once, a per-frame one not at all); the lens fields grey out while the viewport's camera
-    /// authors them. On @p settings it edits only what a look does not own — the debug view, the
-    /// shading override and the anti-aliasing mode — plus the viewport's adaptive-resolution
-    /// controls, which drive the viewport imperatively as in the other overload.
-    /// @param look      The presented scene's RenderLook, edited in place.
-    /// @param settings  The viewport's topology knobs, of which the non-look fields are edited.
-    /// @param viewport  The viewport presenting the look.
-    /// @param types     The type registry the look's fields are reflected through.
-    /// @return True the frame a field of @p settings changed (the caller should `Configure`).
-    [[nodiscard]] bool RenderSettingsEditor(RenderLook& look,
-                                            Renderer::SceneRendererSettings& settings,
-                                            Renderer::Viewport& viewport,
+    /// The rows are the reflected fields of SceneRendererSettings and of the view's knobs, grouped by
+    /// their Category, so a field added to either appears here with no change. The depth-of-field
+    /// lens fields grey out while the viewport's camera is Physical (its lens authors them). The
+    /// Resolution section carries the render-scale override and the viewport's dynamic-resolution
+    /// controls, which drive the viewport directly.
+    /// @param viewport  The viewport whose override layer this panel edits.
+    /// @param types     The type registry the fields' enums are drawn through.
+    /// @return True the frame the override layer changed.
+    [[nodiscard]] bool RenderSettingsEditor(Renderer::Viewport& viewport,
                                             const TypeRegistry& types);
 }

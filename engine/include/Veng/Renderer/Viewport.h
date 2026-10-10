@@ -2,7 +2,9 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Math/Ray.h>
+#include <Veng/Reflection/FieldOverrides.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/DynamicResolution.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
@@ -205,6 +207,58 @@ namespace Veng::Renderer
     using LookResolver =
         function<void(const RenderLook& look, SceneRendererSettings& settings, ViewState& view)>;
 
+    /// @brief A viewport's debug override layer: settings, view knobs and render scale that win.
+    ///
+    /// The layer a developer panel edits. An application's graphics resolve legitimately rewrites
+    /// whatever its saved choices own each time a look resolves, and a scene's look writes its
+    /// per-frame knobs over every push, so an edit made through Configure or a pushed view lasts only
+    /// until the next resolve. An override instead applies after both: over the settings the
+    /// viewport's owner and its look resolve configured (Viewport::GetSettings), and over the view as
+    /// pushed with the look's knobs written on it (Viewport::GetViewState), so it holds through any
+    /// number of look changes and re-resolves until it is cleared.
+    ///
+    /// Settings and View are field-masked over their reflected fields, so any SceneRendererSettings
+    /// field and any per-frame view knob a viewport pushes — the look's own and those no look carries
+    /// — can be overridden one by one. RenderScale replaces the viewport's render scale while set.
+    /// Runtime-only: nothing saves, replicates or restores it, and it lasts until cleared or until
+    /// the viewport is destroyed.
+    struct ViewportDebugOverrides
+    {
+        /// @brief Topology overrides, written over the configured settings before they configure the
+        ///        renderer.
+        FieldOverrides<SceneRendererSettings> Settings;
+
+        /// @brief Per-frame view overrides, written over each frame's view after the look's knobs.
+        FieldOverrides<ViewState> View;
+
+        /// @brief The render scale in effect while set, in place of the scale the viewport holds.
+        ///
+        /// The scene is allocated at exactly this scale and the dynamic-resolution step is
+        /// suspended while it is set; scale and controller changes made meanwhile take effect when
+        /// it clears. Must be > 0.
+        optional<f32> RenderScale;
+
+        /// @brief Returns whether nothing is overridden.
+        [[nodiscard]] bool IsEmpty() const;
+
+        /// @brief Returns the number of overridden fields, the render scale counting as one.
+        [[nodiscard]] usize GetCount() const;
+
+        /// @brief Drops every override.
+        void Clear();
+
+        /// @brief Writes the settings overrides over @p settings.
+        /// @param settings  The configured settings the overrides win over.
+        void ApplyTo(SceneRendererSettings& settings) const;
+
+        /// @brief Writes the view overrides over @p view, then clamps its GPU loop bounds.
+        ///
+        /// SsrMaxSteps, DofMaxCoc and DofRingCount are clamped as they are at every other entry,
+        /// since an override reaches the shaders as directly as a look does.
+        /// @param view  The composed view (pushed, then the look's knobs) the overrides win over.
+        void ApplyTo(ViewState& view) const;
+    };
+
     /// @brief Construction parameters for Viewport.
     struct ViewportInfo
     {
@@ -317,7 +371,8 @@ namespace Veng::Renderer
 
         /// @brief Sets the uniform render-resolution multiplier on the region extent.
         ///
-        /// While dynamic resolution is enabled this is the current (per-frame) scale: the render
+        /// While a debug override names a render scale (ViewportDebugOverrides::RenderScale) the
+        /// scale is recorded and renders once the override clears. While dynamic resolution is enabled this is the current (per-frame) scale: the render
         /// target is sized to the controller's MaxScale, so a scale at or below it only adjusts the
         /// rendered sub-rect — no resize. With dynamic resolution off the scale is the allocation
         /// ceiling, so the target becomes round(GetRegion().Extent * scale) and a real change
@@ -327,14 +382,18 @@ namespace Veng::Renderer
         /// @pre scale > 0 — asserted otherwise.
         void SetRenderScale(f32 scale);
 
-        /// @brief Returns the current render-resolution multiplier.
+        /// @brief Returns the render-resolution multiplier in effect.
+        ///
+        /// The debug override's render scale while one is set (ViewportDebugOverrides::RenderScale),
+        /// else the scale SetRenderScale, a hold or the dynamic-resolution controller left.
         [[nodiscard]] f32 GetRenderScale() const;
 
         /// @brief Returns the fixed allocation scale the **scene** targets are sized at.
         ///
         /// The fraction of the (capped) region the SceneRenderer allocates its scene side to: the
         /// upper bound of the render scale — MaxScale while dynamic resolution is on, else the
-        /// static RenderScale. The allocation never reacts to frame-time pressure; the per-frame
+        /// static RenderScale — or the debug override's render scale while one is set. The
+        /// allocation never reacts to frame-time pressure; the per-frame
         /// sub-rect inside it does. Reads with GetRenderScale() as "rendering at GetRenderScale()
         /// of a render allocation that is this of the region." The post-resolve tail is unaffected
         /// by it — see GetPostResolveAllocationExtent.
@@ -448,9 +507,42 @@ namespace Veng::Renderer
         /// @brief Returns the retained view: the last push, with the presented look written over it.
         ///
         /// The ViewState the last SetViewState pushed, carrying — once a Render has resolved the
-        /// presented scene's RenderLook — that look's per-frame fields (CopyLookKnobs), so it reads
-        /// what the last frame rendered with. Default-constructed before any push.
+        /// presented scene's RenderLook — that look's per-frame fields (CopyLookKnobs). The debug
+        /// overrides are not on it; GetEffectiveViewState adds them. Default-constructed before any
+        /// push.
         [[nodiscard]] const ViewState& GetViewState() const { return m_ViewState; }
+
+        /// @brief Returns the view the viewport renders with: GetViewState with the debug overrides
+        ///        written over it.
+        ///
+        /// Composed on each call from the retained view and the current overrides — exactly what
+        /// Render builds its SceneView from — so a settings surface showing it shows the value in
+        /// effect, override or not.
+        /// @return The composed view.
+        [[nodiscard]] ViewState GetEffectiveViewState() const;
+
+        /// @brief Replaces the viewport's debug override layer.
+        ///
+        /// The render scale takes effect at once (debouncing a resize to the next Render when it
+        /// moves the allocation); the settings overrides configure the renderer at the next Render,
+        /// through the same configure-only-on-change path a look resolve takes, so an override that
+        /// leaves the topology as it is rebuilds nothing. The view overrides apply from the next
+        /// Render.
+        /// @param overrides  The new layer; an empty one returns the viewport to its configured
+        ///                   settings, pushed view and render scale.
+        /// @pre overrides.RenderScale, when set, is > 0 — asserted otherwise.
+        void SetDebugOverrides(const ViewportDebugOverrides& overrides);
+
+        /// @brief Returns the viewport's debug override layer (empty unless one was set).
+        ///
+        /// The read side of SetDebugOverrides: an editor copies it, edits the copy and hands it back.
+        [[nodiscard]] const ViewportDebugOverrides& GetDebugOverrides() const
+        {
+            return m_DebugOverrides;
+        }
+
+        /// @brief Drops every debug override (SetDebugOverrides with an empty layer).
+        void ClearDebugOverrides();
 
         /// @brief Sets the resolver this viewport runs over the look of the scene it presents.
         ///
@@ -480,23 +572,35 @@ namespace Veng::Renderer
 
         /// @brief Reconfigures the owned renderer's topology and sizing knobs.
         ///
-        /// Invalidates GetOutput()/GetOutputHandle() exactly as SceneRenderer::Configure does;
-        /// re-fetch both after this call.
+        /// The renderer is configured to @p settings with the debug overrides written over it
+        /// (GetEffectiveSettings), at once, and only when that differs from what it holds — so an
+        /// unchanged topology leaves the renderer, the allocation and the output handle as they are.
+        /// A change invalidates GetOutput()/GetOutputHandle() exactly as SceneRenderer::Configure
+        /// does; re-fetch both after this call.
         /// @param settings  The new topology and sizing knobs.
         void Configure(const SceneRendererSettings& settings);
 
-        /// @brief Returns the owned renderer's settings in effect, as of the last Create/Configure.
+        /// @brief Returns the settings last configured, before the debug overrides.
         ///
-        /// The read side of Configure: a settings editor starts from here and hands its edited
-        /// copy back to Configure, so no consumer mirrors the settings.
+        /// The read side of Configure, as of the last Create, Configure or look resolve: a settings
+        /// editor or a look resolver starts from here and hands its edited copy back to Configure,
+        /// so no consumer mirrors the settings, and no override is baked into what it configures.
         [[nodiscard]] const SceneRendererSettings& GetSettings() const;
+
+        /// @brief Returns the settings the viewport renders with: GetSettings with the debug
+        ///        overrides written over it.
+        ///
+        /// The owned renderer holds exactly this once the next Render has applied a pending
+        /// override change (immediately after a Configure).
+        /// @return The composed settings.
+        [[nodiscard]] SceneRendererSettings GetEffectiveSettings() const;
 
         /// @brief Renders the bound view into the viewport's texture and makes it sampleable.
         ///
-        /// Applies any pending region resize, resolves the presented scene's RenderLook (running
-        /// the look resolver and configuring the topology only when the look changed or was
-        /// invalidated, then writing its per-frame fields over the bound ViewState), builds the
-        /// internal SceneView from the bound ViewState, calls SceneRenderer::Execute, then
+        /// Applies any pending region resize and settings override, resolves the presented scene's
+        /// RenderLook (running the look resolver and configuring the topology only when the look
+        /// changed or was invalidated, then writing its per-frame fields over the bound ViewState),
+        /// builds the internal SceneView from the effective view (GetEffectiveViewState), calls SceneRenderer::Execute, then
         /// transitions the output for sampling (PrepareForAccess(Sample)). A scene with no look
         /// renders the pushed ViewState as pushed, on the topology last configured. A null World
         /// (no ViewState set, or a closed document) is a no-op — the viewport renders nothing
@@ -923,6 +1027,10 @@ namespace Veng::Renderer
         /// @param priorRenderAlloc  The render allocation extent captured before the change.
         void DebounceAllocationResize(uvec2 priorPostAlloc, uvec2 priorRenderAlloc);
 
+        /// @brief Configures the owned renderer to GetEffectiveSettings when it differs from what it
+        ///        holds, re-registering the output; a no-op otherwise.
+        void ApplyEffectiveSettings();
+
         /// @brief Advances the render scale from measured GPU frame time when control is enabled.
         ///
         /// Called at the top of Render. Reads Context::GetLastGpuFrameTimeMs() less the
@@ -985,6 +1093,16 @@ namespace Veng::Renderer
 
         /// @brief The resolver run over the presented scene's look; empty maps the look alone.
         LookResolver m_LookResolver;
+
+        /// @brief The settings last configured (Create, Configure, a look resolve), before overrides.
+        SceneRendererSettings m_Settings;
+
+        /// @brief The debug override layer (see ViewportDebugOverrides).
+        ViewportDebugOverrides m_DebugOverrides;
+
+        /// @brief Set when the settings overrides changed and the renderer has not been configured
+        ///        to them yet; the next Render configures it.
+        bool m_DebugSettingsPending = false;
 
         /// @brief The look last resolved, compared each frame to detect a change; null when none.
         Unique<RenderLook> m_ResolvedLook;
@@ -1262,3 +1380,80 @@ namespace Veng::Renderer
         SamplerHandle m_SurfaceSamplerHandle;
     };
 }
+
+// Reflected over its per-frame knobs only, so a field-masked override set (FieldOverrides) and a
+// reflected-field settings surface address them without listing them. The scene, camera, delta and
+// alpha are the push's identity rather than knobs; DofCocScale is derived on every push and
+// DofFromPhysicalCamera is a report, so none of them is reflected.
+VE_REFLECT(::Veng::Renderer::ViewState, 0xAEB63D80FD4F9E04ULL)
+VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0, .Max = 16.0},
+         .Category = "Exposure")
+VE_FIELD(Tonemapper, .DisplayName = "Tonemapper", .Category = "Exposure")
+VE_FIELD(AutoExposureKey, .DisplayName = "Auto exposure key", .Display = {.Min = 0.01, .Max = 1.0},
+         .Category = "Exposure")
+VE_FIELD(AutoExposureMinLuminance, .DisplayName = "Auto exposure min luminance",
+         .Display = {.Min = 0.0, .Precision = 4}, .Category = "Exposure")
+VE_FIELD(AutoExposureMaxLuminance, .DisplayName = "Auto exposure max luminance",
+         .Display = {.Min = 0.0}, .Category = "Exposure")
+VE_FIELD(AutoExposureSpeed, .DisplayName = "Auto exposure speed",
+         .Display = {.Min = 0.0, .Max = 20.0}, .Category = "Exposure")
+VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto exposure low percentile",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Exposure")
+VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto exposure high percentile",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Exposure")
+VE_FIELD(AmbientFloor, .DisplayName = "Ambient floor", .Category = "Lighting")
+VE_FIELD(BloomThreshold, .DisplayName = "Bloom threshold", .Display = {.Min = 0.0, .Max = 8.0},
+         .Category = "Bloom")
+VE_FIELD(BloomFireflyCeiling, .DisplayName = "Bloom firefly ceiling",
+         .Display = {.Min = 0.0, .Max = 1024.0}, .Category = "Bloom")
+VE_FIELD(BloomIntensity, .DisplayName = "Bloom intensity", .Display = {.Min = 0.0, .Max = 4.0},
+         .Category = "Bloom")
+VE_FIELD(BloomRadius, .DisplayName = "Bloom radius", .Display = {.Min = 0.0, .Max = 4.0},
+         .Category = "Bloom")
+VE_FIELD(SsrIntensity, .DisplayName = "SSR intensity", .Display = {.Min = 0.0, .Max = 4.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrMaxDistance, .DisplayName = "SSR max distance",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider,
+                     .Min = 0.1,
+                     .Max = 100000.0,
+                     .Logarithmic = true},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrThickness, .DisplayName = "SSR thickness",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider,
+                     .Min = 0.001,
+                     .Max = 1000.0,
+                     .Logarithmic = true},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrMaxRoughness, .DisplayName = "SSR max roughness",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrMaxSteps, .DisplayName = "SSR max steps",
+         .Display = {.Min = 1.0,
+                     .Max = static_cast<f64>(::Veng::Renderer::SsrMaxStepsCeiling),
+                     .Step = 1.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA variance",
+         .Tooltip = "Screen-space normal variance scale; zero turns specular anti-aliasing off",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Anti-aliasing")
+VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA threshold",
+         .Tooltip = "Ceiling on the roughness (alpha squared) specular anti-aliasing adds",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Anti-aliasing")
+VE_FIELD(DofFocusDistance, .DisplayName = "DoF focus distance",
+         .Display = {.Min = 0.01, .Max = 1000.0}, .Category = "Depth of field")
+VE_FIELD(DofAperture, .DisplayName = "DoF aperture",
+         .Display = {.Min = 0.0, .Max = 0.5, .Precision = 4}, .Category = "Depth of field")
+VE_FIELD(DofMaxCoc, .DisplayName = "DoF max blur radius",
+         .Display = {.Min = 0.0, .Max = static_cast<f64>(::Veng::Renderer::DofCocCeiling)},
+         .Category = "Depth of field")
+VE_FIELD(DofRingCount, .DisplayName = "DoF ring count",
+         .Display = {.Min = 1.0, .Max = static_cast<f64>(::Veng::Renderer::MaxDofRings)},
+         .Category = "Depth of field")
+VE_FIELD(OutputBrightness, .DisplayName = "Output brightness", .Display = {.Min = 0.0, .Max = 4.0},
+         .Category = "Output")
+VE_FIELD(OutputGamma, .DisplayName = "Output gamma", .Display = {.Min = 0.1, .Max = 4.0},
+         .Category = "Output")
+VE_REFLECT_END();

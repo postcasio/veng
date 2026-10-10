@@ -1232,6 +1232,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_driver_registry.cpp
             tests/unit/gui_component_driver.cpp
             tests/unit/render_look.cpp
+            tests/unit/viewport_debug_overrides.cpp
             tests/unit/graphics_resolve.cpp
             tests/unit/audio_resolve.cpp
             tests/unit/display_settings.cpp

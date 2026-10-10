@@ -995,7 +995,7 @@ namespace Veng::Mcp
                 return std::unexpected(applied.error());
             }
             viewport->Configure(settings);
-            return DebugSettingsJson(viewport->GetSettings()).dump();
+            return DebugSettingsJson(viewport->GetEffectiveSettings()).dump();
         };
         server.RegisterTool(std::move(tool));
     }

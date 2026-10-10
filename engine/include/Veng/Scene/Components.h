@@ -1742,6 +1742,19 @@ namespace Veng
         /// A GPU loop bound: clamped to [1, SsrMaxStepsCeiling] on the way in, since a cooked level
         /// or prefab is untrusted input. @see Renderer::SceneView::SsrMaxSteps
         u32 SsrMaxSteps = Renderer::DefaultSsrMaxSteps;
+        /// @brief Geometric specular anti-aliasing's screen-space variance scale, fed into the
+        ///        per-frame SceneView; zero turns it off.
+        ///
+        /// How strongly a glossy surface's roughness widens with the variation of its normal across
+        /// a pixel. The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SpecularAntiAliasingVariance
+        f32 SpecularAntiAliasingVariance = 0.15f;
+        /// @brief Geometric specular anti-aliasing's ceiling on the alpha² it adds, fed into the
+        ///        per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SpecularAntiAliasingThreshold
+        f32 SpecularAntiAliasingThreshold = 0.2f;
         /// @brief Whether the pre-translucent scene-color copy is populated each frame.
         ///
         /// Enables the grab a Translucent-domain material samples the scene behind its fragment
@@ -2341,6 +2354,10 @@ VE_FIELD(SsrMaxRoughness, .DisplayName = "SSR Max Roughness",
 VE_FIELD(SsrMaxSteps, .DisplayName = "SSR Max Steps",
          .Display = {
              .Min = 1, .Max = static_cast<f64>(::Veng::Renderer::SsrMaxStepsCeiling), .Step = 1.0})
+VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA Variance",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
+VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA Threshold",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction Blur (Grab Mip Chain)")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of Field")

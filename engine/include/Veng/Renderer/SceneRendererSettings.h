@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
 #include <array>
@@ -527,3 +528,103 @@ namespace Veng::Renderer
         [[nodiscard]] bool operator==(const SceneRendererSettings&) const = default;
     };
 }
+
+VE_ENUM(::Veng::Renderer::DebugView, 0xC23242A904ADC170ULL)
+VE_ENUMERATOR(Final)
+VE_ENUMERATOR(Albedo)
+VE_ENUMERATOR(Normal)
+VE_ENUMERATOR(Depth)
+VE_ENUMERATOR(Roughness)
+VE_ENUMERATOR(Metallic)
+VE_ENUMERATOR(Occlusion)
+VE_ENUMERATOR(AO)
+VE_ENUMERATOR(Shadows)
+VE_ENUMERATOR(Cascades)
+VE_ENUMERATOR(PunctualShadows)
+VE_ENUMERATOR(Bloom)
+VE_ENUMERATOR(MotionVectors)
+VE_ENUMERATOR(Reflections)
+VE_ENUMERATOR(Emissive)
+VE_ENUMERATOR(CoC)
+VE_ENUMERATOR(EnvironmentIrradiance)
+VE_ENUMERATOR(EnvironmentSource)
+VE_ENUMERATOR(IblContribution)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::BloomKernel, 0x62E9A50DEDB73EC0ULL)
+VE_ENUMERATOR(Cod)
+VE_ENUMERATOR(Kawase)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::AntiAliasingMode, 0xAA935BA2CB779756ULL)
+VE_ENUMERATOR(None)
+VE_ENUMERATOR(FXAA)
+VE_ENUMERATOR(TAA)
+VE_ENUMERATOR(CMAA2)
+VE_ENUMERATOR(TAAU)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::RenderPath, 0xAA4082E0B2E08CFBULL)
+VE_ENUMERATOR(Shaded)
+VE_ENUMERATOR(GeometryDepthNormal)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::SceneRendererSettings::CullMode, 0xF097C435E1F04F2FULL)
+VE_ENUMERATOR(CPU)
+VE_ENUMERATOR(GPU)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrResolution, 0x0FBF897EC03530AFULL)
+VE_ENUMERATOR(Full)
+VE_ENUMERATOR(Half)
+VE_ENUMERATOR(Quarter)
+VE_ENUM_END();
+
+// Reflected so a field-masked override set (FieldOverrides) and a reflected-field settings surface
+// can address every field without listing them. Category groups the fields into the sections a
+// settings surface draws; the render path is chosen at Create, so it reads but does not edit.
+VE_REFLECT(::Veng::Renderer::SceneRendererSettings, 0x086EC468B7B8D334ULL)
+VE_FIELD(Path, .DisplayName = "Render path", .ReadOnly = true, .Category = "Pipeline")
+VE_FIELD(Mode, .DisplayName = "Debug view", .Category = "Pipeline")
+VE_FIELD(GBufferShadingOverride, .DisplayName = "G-buffer shading override",
+         .Tooltip = "Shades every opaque draw with a constant albedo and its vertex normal, so "
+                    "the g-buffer pass's time without material shading can be compared",
+         .Category = "Pipeline")
+VE_FIELD(Bloom, .DisplayName = "Bloom", .Category = "Bloom")
+VE_FIELD(Kernel, .DisplayName = "Bloom kernel", .Category = "Bloom")
+VE_FIELD(AntiAliasing, .DisplayName = "Anti-aliasing", .Category = "Anti-aliasing")
+VE_FIELD(Shadows, .DisplayName = "Directional shadows", .Category = "Shadows")
+VE_FIELD(PunctualShadows, .DisplayName = "Punctual shadows", .Category = "Shadows")
+VE_FIELD(ShadowResolution, .DisplayName = "Shadow resolution",
+         .Display = {.Min = 256.0, .Max = 8192.0, .Step = 16.0}, .Category = "Shadows")
+VE_FIELD(PunctualShadowResolution, .DisplayName = "Punctual shadow resolution",
+         .Display = {.Min = 256.0, .Max = 8192.0, .Step = 16.0}, .Category = "Shadows")
+VE_FIELD(CascadeCount, .DisplayName = "Cascades",
+         .Display = {.Min = 1.0, .Max = static_cast<f64>(::Veng::Renderer::MaxCascades)},
+         .Category = "Shadows")
+VE_FIELD(CascadeSplitLambda, .DisplayName = "Cascade split lambda",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Shadows")
+VE_FIELD(MaxShadowDistance, .DisplayName = "Max shadow distance",
+         .Display = {.Min = 0.0, .Max = 10000.0}, .Category = "Shadows")
+VE_FIELD(MinShadowDistance, .DisplayName = "Min shadow distance", .Display = {.Min = 0.0},
+         .Category = "Shadows")
+VE_FIELD(ShadowCasterMinTexels, .DisplayName = "Shadow caster min texels", .Display = {.Min = 0.0},
+         .Category = "Shadows")
+VE_FIELD(SSR, .DisplayName = "Screen-space reflections", .Category = "Screen-space reflections")
+VE_FIELD(SsrResolutionScale, .DisplayName = "SSR trace resolution",
+         .Category = "Screen-space reflections")
+VE_FIELD(DepthOfField, .DisplayName = "Depth of field", .Category = "Depth of field")
+VE_FIELD(Refraction, .DisplayName = "Refraction (scene-color grab)", .Category = "Refraction")
+VE_FIELD(RefractionBlur, .DisplayName = "Refraction blur (grab mip chain)",
+         .Category = "Refraction")
+VE_FIELD(AO, .DisplayName = "SSAO", .Category = "Lighting")
+VE_FIELD(AutoExposure, .DisplayName = "Auto exposure", .Category = "Exposure")
+VE_FIELD(FrustumCull, .DisplayName = "Frustum culling", .Category = "Culling")
+VE_FIELD(LightTileCulling, .DisplayName = "Light tile culling", .Category = "Culling")
+VE_FIELD(Cull, .DisplayName = "Cull mode", .Category = "Culling")
+VE_FIELD(Occlusion, .DisplayName = "GPU occlusion", .Category = "Culling")
+VE_FIELD(DebugDraw, .DisplayName = "Debug draw", .Category = "Authoring")
+VE_FIELD(Picking, .DisplayName = "Picking", .Category = "Authoring")
+VE_FIELD(PostProcessEffects, .DisplayName = "Post-process effects", .Category = "Pipeline")
+VE_REFLECT_END();

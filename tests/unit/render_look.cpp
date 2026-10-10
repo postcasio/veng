@@ -34,10 +34,11 @@ TEST_CASE("ApplyRenderLook delivers the authored auto-exposure metering onto the
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(0.98f));
 }
 
-TEST_CASE("A look authoring no metering keeps the engine ViewState defaults")
+TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewState defaults")
 {
-    // A default-constructed RenderLook carries the same metering values as the renderer's own
-    // ViewState defaults, so a look that authors none renders as the renderer would.
+    // A default-constructed RenderLook carries the same metering and specular anti-aliasing values
+    // as the renderer's own ViewState defaults, so a look that authors none renders as the renderer
+    // would.
     const RenderLook render; // engine defaults
     const Renderer::ViewState defaults;
 
@@ -49,6 +50,8 @@ TEST_CASE("A look authoring no metering keeps the engine ViewState defaults")
     CHECK(view.AutoExposureMaxLuminance == doctest::Approx(defaults.AutoExposureMaxLuminance));
     CHECK(view.AutoExposureLowPercentile == doctest::Approx(defaults.AutoExposureLowPercentile));
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(defaults.AutoExposureHighPercentile));
+    CHECK(view.SpecularAntiAliasingVariance == defaults.SpecularAntiAliasingVariance);
+    CHECK(view.SpecularAntiAliasingThreshold == defaults.SpecularAntiAliasingThreshold);
 }
 
 TEST_CASE("ApplyRenderLook clamps the authored depth-of-field quality knobs")
@@ -131,6 +134,8 @@ namespace
         look.SsrThickness = 2.0f;
         look.SsrMaxRoughness = 0.4f;
         look.SsrMaxSteps = 640;
+        look.SpecularAntiAliasingVariance = 0.45f;
+        look.SpecularAntiAliasingThreshold = 0.35f;
         look.DofFocusDistance = 4.0f;
         look.DofAperture = 0.03f;
         look.DofMaxCoc = 9.0f;
@@ -150,7 +155,6 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     // A pushed view whose knobs a look does not own are all off their defaults, so a carry that
     // wrote one of them would show.
     Renderer::ViewState pushed;
-    pushed.SpecularAntiAliasingVariance = 0.6f;
     pushed.AutoExposureKey = 0.4f;
     pushed.AutoExposureSpeed = 7.0f;
     pushed.OutputBrightness = 1.3f;
@@ -180,12 +184,13 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.SsrThickness == direct.SsrThickness);
     CHECK(carried.SsrMaxRoughness == direct.SsrMaxRoughness);
     CHECK(carried.SsrMaxSteps == direct.SsrMaxSteps);
+    CHECK(carried.SpecularAntiAliasingVariance == direct.SpecularAntiAliasingVariance);
+    CHECK(carried.SpecularAntiAliasingThreshold == direct.SpecularAntiAliasingThreshold);
     CHECK(carried.DofFocusDistance == direct.DofFocusDistance);
     CHECK(carried.DofAperture == direct.DofAperture);
     CHECK(carried.DofMaxCoc == direct.DofMaxCoc);
     CHECK(carried.DofRingCount == direct.DofRingCount);
 
-    CHECK(carried.SpecularAntiAliasingVariance == pushed.SpecularAntiAliasingVariance);
     CHECK(carried.AutoExposureKey == pushed.AutoExposureKey);
     CHECK(carried.AutoExposureSpeed == pushed.AutoExposureSpeed);
     CHECK(carried.OutputBrightness == pushed.OutputBrightness);

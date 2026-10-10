@@ -1639,22 +1639,11 @@ private:
             m_SceneTextureGeneration = viewport.GetOutputGeneration();
         }
 
-        // The look's fields are edited on the scene's RenderLook, which the viewport resolves on
-        // the next frame; a true return means a field the look does not own changed (the debug
-        // view), so the sample owns that Configure (the engine helper never reconfigures).
+        // Edits land in the viewport's debug override layer, which wins over the level's look, so
+        // the window needs neither the scene nor a Configure of its own.
         if (const auto settingsWindow = UI::Window("Render Settings"))
         {
-            if (Scene* scene = ManagedScene(); scene != nullptr)
-            {
-                if (auto* look = scene->TryGetFirst<RenderLook>(); look != nullptr)
-                {
-                    Renderer::SceneRendererSettings settings = viewport.GetSettings();
-                    if (UI::RenderSettingsEditor(*look, settings, viewport, GetTypeRegistry()))
-                    {
-                        ReconfigureScene(settings);
-                    }
-                }
-            }
+            (void)UI::RenderSettingsEditor(viewport, GetTypeRegistry());
         }
 
         // The renderer's read-only stats, plus the sample's own pause-spin control beneath them.

@@ -428,10 +428,16 @@ extern "C"
 /// controller, and BindlessRegistry grows the view epoch GetViewEpoch reads inline. A module builds
 /// requests, reads stats and calls the service's and the registry's inline accessors, so a stale
 /// module lays the first two out short and reads both classes at their old offsets.
+/// Version 102 gives a viewport a debug override layer and puts specular anti-aliasing on the look:
+/// Viewport grows the configured settings and the ViewportDebugOverrides that win over them and
+/// over each frame's view, and RenderLook grows SpecularAntiAliasingVariance and
+/// SpecularAntiAliasingThreshold, inserted after SsrMaxSteps. A module owns viewports and spawns
+/// looks, so a stale module lays both out short and reads every later RenderLook field at a shifted
+/// offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 101u
+#define VENG_MODULE_ABI_VERSION 102u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

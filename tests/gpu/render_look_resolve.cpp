@@ -10,7 +10,9 @@
 //  - a prefab carrying a RenderLook brings its look into a scene that had none;
 //  - the bootstrap world, a managed rebind and an overlay each render their own look, through the
 //    resolver when there is one and exactly as authored when there is none;
-//  - the applied output calibration rides every managed and overlay push.
+//  - the applied output calibration rides every managed and overlay push;
+//  - a viewport's debug overrides win over a resolver, a look and a managed push through a look
+//    change and a re-resolve, and the resolved values return when they clear.
 //
 // It needs a Context for the Application/viewports, so it rides the gpu band though it pins no pixels.
 
@@ -532,4 +534,111 @@ TEST_CASE("A managed rebind renders the destination's look, applied in one recon
     CHECK(applied.ShadowResolution == SavedShadowResolution);
     CHECK(applied.Exposure == doctest::Approx(SavedExposure));
     CHECK(applied.Reconfigures == 1);
+}
+
+namespace
+{
+    // What a viewport rendered with under its debug overrides, captured inside the run.
+    struct Overridden
+    {
+        bool ConfiguredSsr = false;
+        bool RenderedSsr = false;
+        bool EffectiveIsRendered = false;
+        f32 SsrMaxDistance = 0.0f;
+        f32 SpecularVariance = 0.0f;
+        uvec2 Allocation{};
+    };
+
+    Overridden ReadOverridden(const Renderer::Viewport& viewport)
+    {
+        const Renderer::ViewState view = viewport.GetEffectiveViewState();
+        return Overridden{
+            .ConfiguredSsr = viewport.GetSettings().SSR,
+            .RenderedSsr = viewport.GetRenderer().GetSettings().SSR,
+            .EffectiveIsRendered =
+                viewport.GetEffectiveSettings() == viewport.GetRenderer().GetSettings(),
+            .SsrMaxDistance = view.SsrMaxDistance,
+            .SpecularVariance = view.SpecularAntiAliasingVariance,
+            .Allocation = viewport.GetAllocationExtent(),
+        };
+    }
+}
+
+TEST_CASE("A debug override wins over a resolver, a look and a managed push until it is cleared")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    LookApp app(HeadlessInfo(), types, systems);
+
+    // The application's resolve owns SSR and its reach, whatever the look authors; the look owns
+    // the specular anti-aliasing strength, over the managed viewport's default push.
+    constexpr f32 ResolvedReach = 500.0f;
+    constexpr f32 LookVariance = 0.3f;
+    app.Resolver = [](const GraphicsResolveInput&, GraphicsResolveOutput& output)
+    {
+        output.Settings.SSR = true;
+        output.View.SsrMaxDistance = ResolvedReach;
+    };
+    RenderLook look = AuthoredLook();
+    look.SpecularAntiAliasingVariance = LookVariance;
+
+    WorldInstanceId world;
+    uvec2 fullAllocation{};
+    Overridden held;
+    Overridden reResolved;
+    Overridden cleared;
+    app.InitFn = [&](LookApp& app)
+    {
+        world = app.OpenCameraWorld(look);
+        app.GetManagedViewports().SetViewportWorld(0, world);
+    };
+    app.StepFn = [&](LookApp& app, int frame)
+    {
+        Renderer::Viewport& viewport = *app.GetManagedViewports().Get(0);
+        if (frame == 0)
+        {
+            fullAllocation = viewport.GetAllocationExtent();
+            Renderer::ViewportDebugOverrides overrides;
+            overrides.Settings.Set(&Renderer::SceneRendererSettings::SSR, false);
+            overrides.View.Set(&Renderer::ViewState::SsrMaxDistance, 7.0f);
+            overrides.View.Set(&Renderer::ViewState::SpecularAntiAliasingVariance, 0.9f);
+            overrides.RenderScale = 0.5f;
+            viewport.SetDebugOverrides(overrides);
+        }
+        else if (frame == 1)
+        {
+            held = ReadOverridden(viewport);
+            // A look edit and an explicit invalidation each re-run the resolver.
+            app.LookOf(world).Exposure = 2.5f;
+            viewport.InvalidateLook();
+        }
+        else if (frame == 2)
+        {
+            reResolved = ReadOverridden(viewport);
+            viewport.ClearDebugOverrides();
+        }
+        else if (frame == 3)
+        {
+            cleared = ReadOverridden(viewport);
+        }
+    };
+    app.Run({});
+
+    for (const Overridden* overridden : {&held, &reResolved})
+    {
+        CHECK(overridden->ConfiguredSsr);
+        CHECK_FALSE(overridden->RenderedSsr);
+        CHECK(overridden->EffectiveIsRendered);
+        CHECK(overridden->SsrMaxDistance == 7.0f);
+        CHECK(overridden->SpecularVariance == 0.9f);
+        CHECK(overridden->Allocation == fullAllocation / 2u);
+    }
+
+    CHECK(cleared.RenderedSsr);
+    CHECK(cleared.EffectiveIsRendered);
+    CHECK(cleared.SsrMaxDistance == ResolvedReach);
+    CHECK(cleared.SpecularVariance == LookVariance);
+    CHECK(cleared.Allocation == fullAllocation);
 }

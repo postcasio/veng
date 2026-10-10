@@ -23,6 +23,7 @@
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/ModelPortrait.h>
+#include <Veng/Renderer/SceneRendererSettings.h>
 #include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
@@ -248,6 +249,16 @@ namespace Veng
         // resolves.
         registry.Register<Renderer::Tonemapper>();
         registry.Register<RenderLook>();
+
+        // The renderer settings' enums, so a reflected-field settings surface draws them as named
+        // combos. SceneRendererSettings and ViewState themselves stay unregistered: they are not
+        // components, and a settings surface reads their fields straight off their describe blocks.
+        registry.Register<Renderer::DebugView>();
+        registry.Register<Renderer::BloomKernel>();
+        registry.Register<Renderer::AntiAliasingMode>();
+        registry.Register<Renderer::RenderPath>();
+        registry.Register<Renderer::SceneRendererSettings::CullMode>();
+        registry.Register<Renderer::SceneRendererSettings::SsrResolution>();
 
         // The scene's one authored sky, resolved by the renderer per Execute. SkySource and its
         // alternatives (EnvironmentSky / AtmosphereSky / MaterialSky), SkyLighting, and
