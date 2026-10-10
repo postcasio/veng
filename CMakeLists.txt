@@ -1938,6 +1938,10 @@ if (VENG_BUILD_TESTS)
             # and Half SSR resolution, a narrower blur where the reflected ray is short, and a
             # mirror staying sharp with its screen-edge fade intact.
             tests/gpu/ssr_rough.cpp
+            # ssr_upsample.cpp drives a reflection magnified past a Half trace at half render scale:
+            # no SSR texel grid in a glossy reflection at any sub-texel camera offset, and nothing
+            # carried across a silhouette from either side.
+            tests/gpu/ssr_upsample.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

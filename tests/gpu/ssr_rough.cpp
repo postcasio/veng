@@ -9,8 +9,8 @@
 //  - the apparent blur of a reflected edge is the same at SSR resolution Full and Half;
 //  - at one roughness, the reflection of a wall's side edge is narrower where the wall meets the
 //    floor than where the reflected ray travels far;
-//  - a mirror floor stays sharp, and a reflection fades out smoothly as its hits near the screen's
-//    edge.
+//  - a mirror floor stays sharp — as sharp as the trace at Full SSR resolution — and a reflection
+//    fades out smoothly as its hits near the screen's edge.
 //
 // Every measure is on the linear HDR target the SSR composite writes, as the difference between a
 // renderer with SSR and one without, so the floor's own shading cancels. The floor is a white
@@ -486,11 +486,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = MountPack(assets, "veng_gpu_ssr_rough_mirror.vengpack");
     ReflectionProbe probe(Context, assets, SceneRendererSettings::SsrResolution::Half);
 
-    // The mirror's reflected edge is as sharp as the half-resolution trace draws it.
+    // At one composite pixel per SSR texel the mirror's reflected edge is as sharp as the trace
+    // draws it; at Half, magnified through the B-spline, it spans little more than one SSR texel.
     {
         const RoughScene built = BuildWallScene(Context, assets, Types, 0.0f, 1.2f);
+        ReflectionProbe full(Context, assets, SceneRendererSettings::SsrResolution::Full);
+        const auto [fullAdded, fullPlain] = full.Render(Context, built);
+        CHECK(ReflectedTopEdgeWidth(fullAdded, fullPlain) < 1.5f);
         const auto [added, plain] = probe.Render(Context, built);
-        CHECK(ReflectedTopEdgeWidth(added, plain) < 2.0f);
+        CHECK(ReflectedTopEdgeWidth(added, plain) < 2.5f);
     }
 
     // A wall rising past the top of the frame: the floor's bottom rows reflect its part beyond the

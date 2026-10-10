@@ -1272,7 +1272,7 @@ only ever an improvement on top.
   edge of what it reflects; a pixel with nothing hit at any level adds nothing.
 - **Levels are reconstructed with a cubic B-spline** from four bilinear taps, so a coarse level
   magnifies without drawing its texel grid, and the two levels either side of `lod` are blended by
-  its fraction. Level 0 is read bilinearly, so a mirror is exactly as sharp as the trace.
+  its fraction. Level 0 is read by how far it is magnified (below).
 - **The chains stop where their short axis reaches two texels** (`bit_width(min(w, h)) − 1` levels):
   the smooth reconstruction makes the coarsest levels usable, so a wide cone reads a smooth average
   of the screen, and a cone wider still clamps there.
@@ -1286,7 +1286,50 @@ source's sub-texel position, at any roughness. The chain carries that energy thr
 every grid phase. `tests/gpu/ssr_rough.cpp` pins the properties: a small emitter's rough reflection
 keeps the trace's energy and its own shape across sub-pixel shifts, a rough reflection of a wall has
 no texel-grid kinks, a reflected edge blurs by the same width at Full and Half, a reflection is
-narrower where its rays are short, and a mirror stays sharp with its edge fade intact.
+narrower where its rays are short, and a mirror stays sharp with its edge fade intact — as sharp
+as the trace at Full SSR resolution.
+
+#### A reflection magnified past the trace stays smooth and stops at silhouettes
+
+The composite runs at the render allocation and the chain at the SSR resolution, so at Half (or a
+reduced render scale with Half, where the trace is a quarter of the output per axis) one level-0
+texel spans several composite pixels. A glossy surface reads level 0 alone, and a bilinear read
+there magnifies the trace as visible blocks and smears a reflection across every silhouette, a
+fraction of a texel onto the surface beside it. So level 0 is read by the composite-to-SSR texel
+ratio, taken from the depth target's and the chain's own sizes:
+
+- **At a ratio of one, level 0 is read bilinearly**, which lands on the pixel's own texel, so Full
+  SSR at render scale 1 reflects exactly as the trace drew it.
+- **Magnified, it is a joint-bilateral read of the 3×3 texels nearest the pixel.** Each tap's
+  weight is the cubic B-spline's (the same reconstruction as the coarse levels, so a magnified
+  reflection is C²-smooth rather than kinked once per texel) times how well the surface its ray
+  left from agrees with the pixel's. The B-spline's fourth tap per axis carries at most 1/48 of the
+  weight; it is folded out of the far tap, so the window moves to the next texel without a jump.
+  The weights blend from bilinear at a ratio of 1 to the full B-spline at 2, so the read is
+  continuous in the ratio.
+- **A tap's surface is the g-buffer sampled exactly as the trace sampled it**, at the texel's centre,
+  so no SSR-resolution depth or normal target is kept. It agrees in position when it lies within
+  about an SSR texel's width of the pixel's tangent plane (fully under half a width, not at all past
+  two), which a floor at any grazing angle satisfies and a silhouette's depth step does not; and in
+  orientation when its normal is within about 25° of the pixel's, falling to nothing by 45°, which
+  catches a crease where depth is continuous. A background tap traced nothing and never agrees.
+- **The weights renormalize over the agreeing taps**, so a reflection keeps its full strength up
+  to a silhouette and adds nothing past it, from either side, and the confidence in alpha fades with
+  the same weights. A pixel no tap agrees with — a feature thinner than a texel — reflects nothing
+  rather than its neighbour's reflection. The coarse levels a rough surface blends in stay
+  unweighted: they are wide blurs by design.
+- **Every g-buffer read in the trace and the composite names level 0.** Those reads sit past early
+  returns, or at per-lane ray positions in the march, where implicit derivatives are undefined and
+  the g-buffer sampler, which is anisotropic, blends texels along whatever footprint they imply —
+  across a silhouette, exactly where the joint weights need the pixel's own surface.
+
+It costs nine chain loads and eighteen g-buffer samples per reflective pixel, only where the chain
+is coarser than the composite. `tests/gpu/ssr_upsample.cpp` pins it at half render scale and Half
+SSR: a glossy floor's reflection of a lit sphere carries no structure at the texel period (the
+fourth difference along every row and column of floor stays a small, steady fraction of the peak
+at every quarter-texel camera offset — a bilinear read leaves about a quarter of a reflected step's
+height there, moving with the grid phase), and a polished panel on a polished floor takes none of
+the floor's reflection beside its edges while the floor keeps all of it.
 
 ### Depth of field and the physical camera
 
