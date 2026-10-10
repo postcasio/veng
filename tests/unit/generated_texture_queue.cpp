@@ -342,3 +342,50 @@ TEST_CASE("GeneratedTextureQueue: cost does not change selection order")
     CHECK(recorder.Log ==
           std::vector<std::string>{"2.0", "2!", "3.0", "3!", "1.0", "1!", "4.0", "4!"});
 }
+
+TEST_CASE("GeneratedTextureQueue: a refused tick ends the spend and runs at the next")
+{
+    GeneratedTextureQueue queue;
+    queue.Add(1, 3, 0);
+    queue.Add(2, 2, 0);
+
+    // A view-slot style budget: two admissions a spend, then everything waits.
+    u32 admitted = 0;
+    const GeneratedTextureSpendLimits limits{
+        .Admit = [&admitted](u64) { return admitted++ < 2; },
+    };
+
+    Recorder recorder;
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedCost, recorder.Tick(), recorder.Complete(), 0,
+                      limits) == 2u);
+    CHECK(recorder.Log == std::vector<std::string>{"1.0", "1.1"});
+    CHECK(queue.GetLastSpentCost() == 2u);
+
+    // A refusal stops rather than skipping to job 2, so job 1 keeps its turn and resumes first.
+    admitted = 0;
+    recorder.Log.clear();
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedCost, recorder.Tick(), recorder.Complete(), 0,
+                      limits) == 2u);
+    CHECK(recorder.Log == std::vector<std::string>{"1.2", "1!", "2.0"});
+
+    // Refused outright — even the one-tick minimum waits.
+    recorder.Log.clear();
+    const GeneratedTextureSpendLimits none{.Admit = [](u64) { return false; }};
+    CHECK(queue.Spend(4, recorder.Tick(), recorder.Complete(), 0, none) == 0u);
+    CHECK(recorder.Log.empty());
+    CHECK(queue.GetLastSpentCost() == 0u);
+}
+
+TEST_CASE("GeneratedTextureQueue: the tick ceiling bounds a spend whatever the budget")
+{
+    GeneratedTextureQueue queue;
+    queue.Add(1, 10, 0);
+
+    Recorder recorder;
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedCost, recorder.Tick(), recorder.Complete(), 0,
+                      {.MaxTicks = 3}) == 3u);
+    CHECK(queue.Find(1)->TicksDone == 3u);
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedCost, recorder.Tick(), recorder.Complete()) ==
+          7u);
+    CHECK(queue.Find(1)->State == GeneratedTextureState::Resident);
+}

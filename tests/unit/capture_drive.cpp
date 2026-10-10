@@ -178,3 +178,16 @@ TEST_CASE("The capture rotation reserves the viewports' slots and starves no cap
         CHECK(NextCaptureCursor(0, 0, 0) == 0);
     }
 }
+
+TEST_CASE("Work ahead of the frame's renders leaves the viewports whole and half the rest")
+{
+    constexpr u32 Max = 32;
+    // The viewports' claims are reserved in full, and a modest capture set entirely.
+    CHECK(BackgroundViewReserve(2, 0, Max) == 2u);
+    CHECK(BackgroundViewReserve(2, 5, Max) == 7u);
+    // A capture set larger than half the spare slots is capped, so background work can still reach
+    // the other half — and never more than the budget is reserved.
+    CHECK(BackgroundViewReserve(2, 40, Max) == 2u + (Max - 2u) / 2u);
+    CHECK(BackgroundViewReserve(Max, 4, Max) == Max);
+    CHECK(BackgroundViewReserve(Max + 3, 4, Max) == Max + 3);
+}

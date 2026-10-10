@@ -40,6 +40,26 @@ namespace Veng::Renderer
         f32 MaxStep = 0.1f;
     };
 
+    /// @brief The GPU frame time the controller reacts to: the measured frame less the background
+    ///        work it carried.
+    ///
+    /// Background generation (GeneratedTextureService) fills GPU idle time and scales with it, not
+    /// with the resolution, so counting it as frame load would have the controller trade resolution
+    /// for work that a lower resolution does not shorten. A frame left with no time of its own reads
+    /// as the smallest positive measurement rather than as "no data".
+    /// @param gpuFrameTimeMs   The measured GPU frame time in ms; <= 0 means "no data" and passes
+    ///                         through unchanged.
+    /// @param backgroundGpuMs  The GPU time background work took within that frame, in ms.
+    /// @return The frame time to hand ComputeDynamicResolutionScale.
+    [[nodiscard]] inline f32 DynamicResolutionFrameTimeMs(f32 gpuFrameTimeMs, f32 backgroundGpuMs)
+    {
+        if (gpuFrameTimeMs <= 0.0f)
+        {
+            return gpuFrameTimeMs;
+        }
+        return glm::max(gpuFrameTimeMs - glm::max(backgroundGpuMs, 0.0f), 1e-3f);
+    }
+
     /// @brief Maps a measured GPU frame time to the next render scale.
     ///
     /// Pure and device-free. GPU cost is taken proportional to the rendered pixel count (scale²),

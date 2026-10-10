@@ -13,6 +13,7 @@
 #include <Veng/Gui/Surface.h>
 #include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
@@ -427,7 +428,8 @@ namespace Veng::Renderer
 
         // The controller's scale is applied through SetRenderScale, which for a sub-rect change
         // (scale <= 1) only updates the per-frame fraction — no resize, the dynamic-resolution win.
-        const f32 gpuFrameTimeMs = m_Context.GetLastGpuFrameTimeMs();
+        const f32 gpuFrameTimeMs = DynamicResolutionFrameTimeMs(
+            m_Context.GetLastGpuFrameTimeMs(), m_Context.GetGeneratedTextures().GetLastPumpGpuMs());
         SetRenderScale(
             ComputeDynamicResolutionScale(m_RenderScale, gpuFrameTimeMs, *m_DynamicResolution));
     }

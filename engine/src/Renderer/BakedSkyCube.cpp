@@ -520,26 +520,25 @@ namespace Veng::Renderer
             vk::Filter::eLinear);
     }
 
-    u32 BakedSkyCube::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face, const bool faceFirst)
+    u32 BakedSkyCube::AcquireFaceViewSlot(const u32 face, const bool faceFirst)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // One view slot per face, reused by that face's tiles within a single recording (one frame's
-        // command buffer). Every tile of a face writes the identical face basis, so one slot serves
-        // them all — bounding a whole-cube bake to CubeFaces view slots per frame regardless of how
-        // many tiles it renders or how many run in one pump (an UnlimitedCostBudget re-bake of a
-        // large face would otherwise claim one slot per tile, far past MaxViewsPerFrame). A fresh
-        // slot is claimed at the face's first tile and whenever a new frame's command buffer starts
-        // — an amortized face split across frames re-claims each frame, since a slot claimed in a
-        // prior frame is not this frame's to reference. Frames-in-flight is >= 2, so consecutive
-        // frames never share a command buffer and the reuse branch is never taken across a frame
-        // boundary.
-        if (faceFirst || &cmd != m_LastTileCmd || face != m_LastTileFace)
+        // One view slot per face, reused by that face's tiles within a single recording. Every tile
+        // of a face writes the identical face basis, so one slot serves them all — bounding a
+        // whole-cube bake to CubeFaces view slots per frame regardless of how many tiles it renders
+        // or how many run in one pump (an UnlimitedCostBudget re-bake of a large face would otherwise
+        // claim one slot per tile, far past MaxViewsPerFrame). A fresh slot is claimed at the face's
+        // first tile and whenever the registry's view slots have reset since — an amortized face
+        // split across frames re-claims each frame, since a slot claimed in a prior frame is not
+        // this frame's to reference. The epoch, not the command buffer, marks the recording: two
+        // frames a slot apart share one command buffer.
+        if (faceFirst || registry.GetViewEpoch() != m_LastTileViewEpoch || face != m_LastTileFace)
         {
             const bool claimed = registry.TryBeginView();
             VE_ASSERT(claimed,
-                      "BakedSkyCube: the frame's view budget is spent; a bake claims one view "
-                      "slot per face and the caller must reserve them");
+                      "BakedSkyCube: the frame's view budget is spent; a bake tick declares its "
+                      "view slot so the generated-texture pump defers it instead");
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
             // The face basis is already a pure direction mapping with no camera translation in it, so
@@ -550,7 +549,7 @@ namespace Veng::Renderer
             region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
             registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
             m_LastTileViewIndex = registry.GetCurrentViewConstantsIndex();
-            m_LastTileCmd = &cmd;
+            m_LastTileViewEpoch = registry.GetViewEpoch();
             m_LastTileFace = face;
         }
         return m_LastTileViewIndex;
@@ -571,7 +570,7 @@ namespace Veng::Renderer
         // tile (offset 0,0) — which under a layered bake is not the layer that clears, so the claim is
         // keyed on the tile, not the clear.
         const bool faceFirst = tileOffset.x == 0 && tileOffset.y == 0;
-        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, faceFirst);
+        const u32 viewIndex = AcquireFaceViewSlot(face, faceFirst);
 
         cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
         // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
@@ -713,7 +712,7 @@ namespace Veng::Renderer
 
         // Draw the atmosphere fragment through the face's fixed basis, sampling the LUT set bound at
         // set 3, with the far-plane stand-in in the depth slot.
-        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, clear);
+        const u32 viewIndex = AcquireFaceViewSlot(face, clear);
 
         cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
         // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
@@ -898,6 +897,8 @@ namespace Veng::Renderer
             .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
             .Cost = jobCost,
+            // A face tile renders through a view slot of its own (AcquireFaceViewSlot).
+            .ViewSlots = 1,
             .OnTick =
                 [this, render = std::move(render),
                  promoteTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
@@ -981,6 +982,7 @@ namespace Veng::Renderer
                 .SampledViewType = ImageViewType::Cube,
             }},
             .TickCount = CubeFaces * m_TilesPerFace,
+            .ViewSlots = 1,
             .OnTick =
                 [this, pipeline, atmosphereSet, atmosphere, sunDirection,
                  intensity](CommandBuffer& cmd, const GeneratedTextureTickContext& context)

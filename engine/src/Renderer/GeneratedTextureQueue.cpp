@@ -121,16 +121,21 @@ namespace Veng::Renderer
     }
 
     u32 GeneratedTextureQueue::Spend(const u32 budget, const function<void(u64, u32, u32)>& tick,
-                                     const function<void(u64)>& complete, const u64 spent)
+                                     const function<void(u64)>& complete, const u64 spent,
+                                     const GeneratedTextureSpendLimits& limits)
     {
         u32 ticks = 0;
         // u64 so an UnlimitedCost budget (~0u) never overflows the running sum, however many cheap
         // ticks a pump runs.
         u64 spentCost = spent;
-        while (true)
+        while (ticks < limits.MaxTicks)
         {
             const optional<u64> key = NextKey();
             if (!key)
+            {
+                break;
+            }
+            if (limits.Admit && !limits.Admit(*key))
             {
                 break;
             }
@@ -167,6 +172,7 @@ namespace Veng::Renderer
                 complete(*key);
             }
         }
+        m_LastSpentCost = spentCost;
         return ticks;
     }
 }

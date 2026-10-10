@@ -332,6 +332,7 @@ add_library(veng SHARED
         src/Renderer/FlowFieldConfig.cpp
         src/Renderer/AsyncReadback.cpp
         src/Renderer/GeneratedTextureBlob.cpp
+        src/Renderer/GeneratedTextureBudget.cpp
         src/Renderer/GeneratedTextureQueue.cpp
         src/Renderer/GeneratedTextureService.cpp
         src/Renderer/RenderGraph.cpp

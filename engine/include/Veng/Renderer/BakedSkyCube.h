@@ -397,15 +397,15 @@ namespace Veng::Renderer
         /// @brief Claims (or reuses) the view slot carrying a face's basis, for a tile about to draw.
         ///
         /// Every tile of a face writes the identical face basis, so one view slot serves them all: a
-        /// fresh slot is claimed and written at the face's first tile (and whenever a new frame's
-        /// command buffer starts, so an amortized face split across frames re-claims each frame), and
-        /// reused for the face's remaining tiles within that command buffer. This bounds a whole-cube
-        /// bake to CubeFaces view slots per frame regardless of tile count or tick budget.
-        /// @param cmd       The command buffer the tile is recorded into (its identity marks a frame).
+        /// fresh slot is claimed and written at the face's first tile (and whenever the registry's
+        /// view slots have reset since the last claim, so an amortized face split across frames
+        /// re-claims each frame), and reused for the face's remaining tiles within that recording.
+        /// This bounds a whole-cube bake to CubeFaces view slots per frame regardless of tile count or
+        /// tick budget.
         /// @param face      The cube face index, selecting its fixed view-ray basis.
         /// @param faceFirst Whether this is the first tile of its face (forces a fresh claim).
         /// @return The view-constants index the tile pushes.
-        u32 AcquireFaceViewSlot(CommandBuffer& cmd, u32 face, bool faceFirst);
+        u32 AcquireFaceViewSlot(u32 face, bool faceFirst);
 
         /// @brief Records one material tile render into a target face view.
         ///
@@ -537,12 +537,14 @@ namespace Veng::Renderer
         // world direction, matching the cube image-view layer order so shared edges agree.
         std::array<mat4, CubeFaces> m_FaceInvViewProj;
 
-        // The view slot the current face's tiles share, and the command buffer + face that slot was
-        // claimed for. A tile reuses the slot while the command buffer (a frame) and face match, so a
-        // bake spends one view slot per face per frame rather than one per tile. Non-owning: the
-        // command buffer pointer is an identity token compared, never dereferenced.
-        const CommandBuffer* m_LastTileCmd = nullptr;
+        /// @brief The registry view epoch the shared face slot was claimed under.
+        ///
+        /// A tile reuses the slot while the epoch (one frame or one immediate recording) and the face
+        /// match, so a bake spends one view slot per face per frame rather than one per tile.
+        u64 m_LastTileViewEpoch = ~0ULL;
+        /// @brief The face the shared slot carries the basis of.
         u32 m_LastTileFace = ~0u;
+        /// @brief The view-constants index of the shared face slot.
         u32 m_LastTileViewIndex = 0;
     };
 }

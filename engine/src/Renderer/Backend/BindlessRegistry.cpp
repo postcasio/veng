@@ -1057,6 +1057,7 @@ namespace Veng::Renderer
         // Reset the per-frame view slot: the first Viewport::Render this frame takes slot 0.
         m_ViewsThisFrame = 0;
         m_ViewSlot = 0;
+        ++m_ViewEpoch;
 
         // Flush still-dirty materials into the region just made current — the fence
         // was waited before this call, so the prior GPU use has completed. The walk is over the
@@ -1084,6 +1085,7 @@ namespace Veng::Renderer
     {
         m_ViewsThisFrame = 0;
         m_ViewSlot = 0;
+        ++m_ViewEpoch;
 
         for (const u32 entryIndex : m_DirtyMaterials)
         {

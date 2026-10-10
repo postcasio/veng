@@ -339,6 +339,14 @@ namespace Veng::Renderer
         return reserved;
     }
 
+    u32 ViewportCompositor::GetBackgroundViewReserve() const
+    {
+        const auto captureDemand =
+            static_cast<u32>(m_Captures.size()) + m_PortraitDrive.PortraitsDriven;
+        return BackgroundViewReserve(ReservedViewSlots(), captureDemand,
+                                     BindlessRegistry::MaxViewsPerFrame);
+    }
+
     void ViewportCompositor::DrivePortraits(CommandBuffer& cmd)
     {
         if (m_PortraitQueue.empty())

@@ -21,6 +21,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GatherPass.h>
@@ -3187,6 +3188,15 @@ namespace Veng
             VE_PROFILE_SCOPE("Frame/ViewPush");
             m_ManagedViewports->PushViews(*m_WorldRunner, delta, m_SimAlpha);
         }
+
+        // Background generation sizes its budget from how this frame is paced and keeps the view
+        // slots this frame's own viewports and captures render through.
+        m_RenderContext.GetGeneratedTextures().SetFrameHint({
+            .MeasuredDeltaSeconds = delta,
+            .FrameCapHz = m_FrameLimiter.GetCapHz(),
+            .Driven = Time::IsDriven(),
+            .ViewReserve = m_Compositor.GetBackgroundViewReserve(),
+        });
 
         {
             VE_PROFILE_SCOPE("Frame/RenderBegin");

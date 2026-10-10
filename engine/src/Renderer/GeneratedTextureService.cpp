@@ -8,6 +8,7 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Persistence/DerivedDataCache.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -15,6 +16,7 @@
 #include <Veng/Task/TaskSystem.h>
 
 #include "GeneratedTextureBlob.h"
+#include "GeneratedTextureBudget.h"
 #include "GeneratedTextureQueue.h"
 
 namespace Veng::Renderer
@@ -238,7 +240,8 @@ namespace Veng::Renderer
     }
 
     GeneratedTextureService::GeneratedTextureService(Context& context)
-        : m_Context(context), m_Queue(CreateUnique<GeneratedTextureQueue>())
+        : m_Context(context), m_Queue(CreateUnique<GeneratedTextureQueue>()),
+          m_Budget(CreateUnique<GeneratedTextureBudgetController>(DefaultCostBudget))
     {
     }
 
@@ -268,6 +271,7 @@ namespace Veng::Renderer
         job->Serial = m_NextSerial++;
         job->OnTick = std::move(request.OnTick);
         job->OnComplete = std::move(request.OnComplete);
+        job->ViewSlots = request.ViewSlots;
         job->CacheKey = cached ? std::move(request.CacheKey) : string{};
 
         vector<GeneratedTextureTargetInfo> targets = std::move(request.Targets);
@@ -472,7 +476,7 @@ namespace Veng::Renderer
 
         // Sized for the whole payload: the header's few bytes ride along at the front so the
         // vector uploads whole, and the copy regions simply start past them.
-        auto staging =
+        const auto staging =
             Buffer::Create(m_Context, {
                                           .Name = "GeneratedTextureRestore",
                                           .Size = layout->TexelOffset + layout->TexelBytes,
@@ -569,12 +573,12 @@ namespace Veng::Renderer
             return;
         }
 
-        auto staging = Buffer::Create(m_Context, {
-                                                     .Name = "GeneratedTextureRestore",
-                                                     .Size = total,
-                                                     .Usage = BufferUsage::TransferSrc,
-                                                     .HostMapped = true,
-                                                 });
+        const auto staging = Buffer::Create(m_Context, {
+                                                           .Name = "GeneratedTextureRestore",
+                                                           .Size = total,
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                           .HostMapped = true,
+                                                       });
         job->Restore =
             PendingRestore{.Staging = staging, .TargetOffsets = std::move(targetOffsets)};
         job->Restoring = true;
@@ -886,7 +890,10 @@ namespace Veng::Renderer
                                     .CompletedTotal = m_CompletedTotal,
                                     .CancelledTotal = m_CancelledTotal,
                                     .RestoredTotal = m_RestoredTotal,
-                                    .StoredTotal = m_StoredTotal};
+                                    .StoredTotal = m_StoredTotal,
+                                    .CostBudgetLastPump = m_CostBudgetLastPump,
+                                    .CostSpentLastPump = m_CostSpentLastPump,
+                                    .MillisecondsPerCost = m_Budget->GetMillisecondsPerCost()};
         for (const Unique<Job>& job : m_Jobs)
         {
             if (job->Probing)
@@ -931,10 +938,89 @@ namespace Veng::Renderer
         return it == m_Jobs.end() ? nullptr : it->get();
     }
 
-    void GeneratedTextureService::Pump(CommandBuffer& cmd, const u32 budget)
+    void GeneratedTextureService::SetCostBudget(const u32 costPerFrame)
+    {
+        m_FixedCostBudget = costPerFrame;
+    }
+
+    void GeneratedTextureService::ClearCostBudget()
+    {
+        m_FixedCostBudget.reset();
+    }
+
+    bool GeneratedTextureService::IsCostBudgetFixed() const
+    {
+        return m_FixedCostBudget.has_value();
+    }
+
+    u32 GeneratedTextureService::GetCostBudget() const
+    {
+        return m_FixedCostBudget.value_or(m_CostBudgetLastPump);
+    }
+
+    void GeneratedTextureService::SetBudgetSettings(const GeneratedTextureBudgetSettings& settings)
+    {
+        m_BudgetSettings = settings;
+    }
+
+    const GeneratedTextureBudgetSettings& GeneratedTextureService::GetBudgetSettings() const
+    {
+        return m_BudgetSettings;
+    }
+
+    void GeneratedTextureService::SetFrameHint(const GeneratedTextureFrameHint& hint)
+    {
+        m_FrameHint = hint;
+    }
+
+    const GeneratedTextureFrameHint& GeneratedTextureService::GetFrameHint() const
+    {
+        return m_FrameHint;
+    }
+
+    f32 GeneratedTextureService::GetLastPumpGpuMs() const
+    {
+        return m_LastPumpGpuMs;
+    }
+
+    u32 GeneratedTextureService::ResolveBudget()
+    {
+        // The timings BeginFrame just read back belong to the frame this slot last recorded, so
+        // they are paired with the cost that frame's pump spent, not the most recent pump's.
+        const u32 slot = m_Context.GetCurrentFrameInFlight();
+        if (m_CostSpentBySlot.size() != m_Context.GetMaxFramesInFlight())
+        {
+            m_CostSpentBySlot.assign(m_Context.GetMaxFramesInFlight(), 0);
+        }
+        m_LastPumpGpuMs = FindTopLevelGpuScopeMs(m_Context.GetLastGpuPassTimings(), GpuScopeName);
+        m_Budget->Observe(m_LastPumpGpuMs, m_CostSpentBySlot[slot]);
+        m_CostSpentBySlot[slot] = 0;
+
+        const bool hasWork =
+            m_Queue->GetSelectableCount() > 0 ||
+            std::ranges::any_of(m_Jobs, [](const Unique<Job>& job)
+                                { return job->Restore.has_value() && job->Restore->Staged; });
+        const u32 adaptive = m_Budget->Resolve(
+            {
+                .Hint = m_FrameHint,
+                .TimingSupported = m_Context.IsGpuTimingSupported(),
+                .GpuFrameMs = m_Context.GetLastGpuFrameTimeMs(),
+                .PumpMs = m_LastPumpGpuMs,
+                .HasWork = hasWork,
+            },
+            m_BudgetSettings);
+        return m_FixedCostBudget.value_or(adaptive);
+    }
+
+    void GeneratedTextureService::Pump(CommandBuffer& cmd)
     {
         m_TicksLastPump = 0;
+        m_CostSpentLastPump = 0;
         m_PumpCount++;
+
+        const u32 budget = ResolveBudget();
+        m_CostBudgetLastPump = budget;
+        VE_PROFILE_COUNTER("GeneratedTextures/Budget", static_cast<f64>(budget));
 
         // Ahead of the early-out: a store outlives the job it read, so a set of jobs that have all
         // gone resident still has bytes to hand over.
@@ -945,7 +1031,7 @@ namespace Veng::Renderer
             return;
         }
 
-        m_Context.BeginGpuScope(cmd, "Generated Textures");
+        m_Context.BeginGpuScope(cmd, GpuScopeName);
 
         vector<GeneratedTextureKey> completed;
 
@@ -954,6 +1040,23 @@ namespace Veng::Renderer
         // share the one budget.
         const u64 restoreCost = ApplyRestores(cmd, budget, completed);
 
+        // A tick claiming view slots runs only while the frame keeps its own renders' reservation;
+        // otherwise the frame's spending ends there and the tick waits for a later pump.
+        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        const GeneratedTextureSpendLimits limits{
+            .MaxTicks = m_FixedCostBudget.has_value()
+                            ? ~0u
+                            : std::max(1u, m_BudgetSettings.MaxTicksPerFrame),
+            .Admit =
+                [&](const GeneratedTextureKey key)
+            {
+                const Job* job = FindJob(key);
+                return job == nullptr || job->ViewSlots == 0 ||
+                       registry.GetRemainingViews() >= m_FrameHint.ViewReserve + job->ViewSlots;
+            },
+        };
+
+        u32 ticksRecorded = 0;
         m_TicksLastPump = m_Queue->Spend(
             budget,
             [&](const GeneratedTextureKey key, const u32 tickIndex, const u32 tickCount)
@@ -977,12 +1080,21 @@ namespace Veng::Renderer
                     .Targets = job->Targets,
                 };
                 // Each tick is scoped by its job, so a capture names which job a frame's
-                // generation time went to.
-                m_Context.BeginGpuScope(cmd, job->Name);
+                // generation time went to — the first MaxTickScopesPerPump of them, since the
+                // frame's scope budget is shared with every pass after the pump.
+                const bool scoped = ticksRecorded < MaxTickScopesPerPump;
+                ticksRecorded++;
+                if (scoped)
+                {
+                    m_Context.BeginGpuScope(cmd, job->Name);
+                }
                 m_InTick = true;
                 job->OnTick(cmd, context);
                 m_InTick = false;
-                m_Context.EndGpuScope(cmd);
+                if (scoped)
+                {
+                    m_Context.EndGpuScope(cmd);
+                }
             },
             [&](const GeneratedTextureKey key)
             {
@@ -995,9 +1107,11 @@ namespace Veng::Renderer
                 m_CompletedTotal++;
                 completed.push_back(key);
             },
-            restoreCost);
+            restoreCost, limits);
+        m_CostSpentLastPump = m_Queue->GetLastSpentCost();
+        m_CostSpentBySlot[m_Context.GetCurrentFrameInFlight()] = m_CostSpentLastPump;
         VE_PROFILE_COUNTER("GeneratedTextures/Ticks", static_cast<f64>(m_TicksLastPump));
-
+        VE_PROFILE_COUNTER("GeneratedTextures/Cost", static_cast<f64>(m_CostSpentLastPump));
         // Completions run outside the tick loop so one may request or cancel a job — the prefetch
         // ladder's next rung — without mutating the set the loop is selecting from.
         for (const GeneratedTextureKey key : completed)

@@ -1141,7 +1141,7 @@ namespace Veng::Renderer
         // Amortized generation and readback record here, at the top of the frame and ahead of
         // every pass: a job's result is sampleable by the passes of the frame that finished it,
         // and a readback staged now is delivered once this frame's fence has been waited again.
-        m_GeneratedTextures->Pump(*commandBuffer, m_GeneratedTextures->GetCostBudget());
+        m_GeneratedTextures->Pump(*commandBuffer);
         m_AsyncReadback->Pump(*commandBuffer);
 
         return *commandBuffer;

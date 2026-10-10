@@ -50,6 +50,19 @@ namespace Veng::Renderer
         bool Held = false;
     };
 
+    /// @brief What else bounds one Spend beyond its cost budget.
+    struct GeneratedTextureSpendLimits
+    {
+        /// @brief The most ticks the spend runs, whatever their cost.
+        u32 MaxTicks = ~0u;
+        /// @brief Asked before each tick whether the job it belongs to may run one now; a refusal
+        ///        ends the spend, leaving that tick and every later one to the next.
+        ///
+        /// Empty admits every tick. A refusal ends the spend rather than skipping to the next job,
+        /// so a deferred job keeps its place in the order.
+        function<bool(u64)> Admit;
+    };
+
     /// @brief Priority-then-FIFO scheduling over a keyed job set, spending a per-frame cost budget.
     ///
     /// The selection rule is the whole policy: among the jobs with ticks left, the one with the
@@ -136,9 +149,15 @@ namespace Veng::Renderer
         /// @param spent    Cost this pump has already spent on other work (cache restores); a
         ///                 non-zero value means the budget is no longer untouched, so no tick runs
         ///                 past it.
+        /// @param limits   The tick ceiling and the admission check, which bind before the one-tick
+        ///                 minimum does.
         /// @return The number of ticks run.
         u32 Spend(u32 budget, const function<void(u64, u32, u32)>& tick,
-                  const function<void(u64)>& complete, u64 spent = 0);
+                  const function<void(u64)>& complete, u64 spent = 0,
+                  const GeneratedTextureSpendLimits& limits = {});
+
+        /// @brief The summed cost the last Spend ended at, its @p spent included.
+        [[nodiscard]] u64 GetLastSpentCost() const { return m_LastSpentCost; }
 
     private:
         /// @brief The mutable record for a key, or null when the key is not live.
@@ -148,5 +167,7 @@ namespace Veng::Renderer
         vector<GeneratedTextureJobRecord> m_Jobs;
         /// @brief Monotonic request counter feeding GeneratedTextureJobRecord::Sequence.
         u64 m_NextSequence = 0;
+        /// @brief The summed cost the last Spend ended at.
+        u64 m_LastSpentCost = 0;
     };
 }

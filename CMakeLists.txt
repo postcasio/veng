@@ -1131,6 +1131,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/post_process_effect.cpp
             tests/unit/surface_claim.cpp
             tests/unit/generated_texture_queue.cpp
+            tests/unit/generated_texture_budget.cpp
             tests/unit/fluid_sim_config.cpp
             tests/unit/flow_field.cpp
             tests/unit/draw_grouping.cpp

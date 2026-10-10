@@ -422,10 +422,16 @@ extern "C"
 /// SsrMaxSteps; FieldDisplay grows Logarithmic and UI::SliderOptions grows Logarithmic. A module
 /// spawns looks, builds views and registers reflected fields, so a stale module lays all of them out
 /// short.
+/// Version 101 sizes background generation from the frame's GPU headroom: GeneratedTextureRequest
+/// grows ViewSlots, GeneratedTextureStats grows the budget it resolved, the cost it spent and the
+/// learned milliseconds per cost, GeneratedTextureService grows its frame hint, policy settings and
+/// controller, and BindlessRegistry grows the view epoch GetViewEpoch reads inline. A module builds
+/// requests, reads stats and calls the service's and the registry's inline accessors, so a stale
+/// module lays the first two out short and reads both classes at their old offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 100u
+#define VENG_MODULE_ABI_VERSION 101u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

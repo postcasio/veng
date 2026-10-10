@@ -220,6 +220,14 @@ namespace Veng::Renderer
         /// handed a released capture from the pool builds nothing and is not counted.
         static constexpr u32 MaxNewCapturesPerFrame = 1;
 
+        /// @brief The view slots this frame's renders want kept from work recorded ahead of them.
+        ///
+        /// Every registered viewport's claim (two for one whose half-res translucent layer is
+        /// active), plus one per registered capture and per portrait driven last frame, that share
+        /// capped at half of what the viewports leave. GeneratedTextureService defers a
+        /// view-claiming tick that would cut into it (GeneratedTextureFrameHint::ViewReserve).
+        [[nodiscard]] u32 GetBackgroundViewReserve() const;
+
         /// @brief Returns what the last RenderRegistered's capture pre-pass did.
         [[nodiscard]] const CaptureSurfaceDriveResult& GetCaptureSurfaceDrive() const
         {

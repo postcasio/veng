@@ -221,9 +221,9 @@ namespace Veng::Renderer
         /// tail). Each pass is bracketed by a timestamp pair around its GPU work, so a duration
         /// includes the pass's own barrier waits and its nested passes; BeginNanos/EndNanos and
         /// Depth carry the placement and nesting that execution order flattens. Empty before the
-        /// first measurement, whenever IsGpuTimingSupported() is false, and on a frame whose scope
-        /// count exceeded the per-frame budget (the surplus scopes go unmeasured). The span is
-        /// valid until the next BeginFrame.
+        /// first measurement and whenever IsGpuTimingSupported() is false; a frame whose scope
+        /// count exceeded the per-frame budget reports the scopes opened within it, the surplus
+        /// going unmeasured. The span is valid until the next BeginFrame.
         /// @return The last completed frame's per-pass timings, in execution order.
         [[nodiscard]] std::span<const GpuPassTiming> GetLastGpuPassTimings() const;
 

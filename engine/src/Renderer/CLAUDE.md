@@ -1486,9 +1486,10 @@ instance by its constructor instead. A pass whose writes derive only from the sc
 viewport writes the same bytes.
 
 **`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
-registered viewports (one slot each), one face per driven scene capture, and one slot per amortized
-sky-bake tick — a single tile of a face (the display cube fills through `GeneratedTextureService`, so
-a dirty sky claims one slot per tick spread across frames, not six in one) — so ordinary content can want more than one
+registered viewports (one slot each), one face per driven scene capture, and one slot per face an
+amortized sky bake renders in a frame (its tiles share their face's slot; the display cube fills
+through `GeneratedTextureService`, whose pump defers a tick that would eat the frame's own views) — so
+ordinary content can want more than one
 frame holds, and the ceiling is sized by memory the whole
 ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). The SH ambient tier reads its
 coefficients back off the amortized display cube through `AsyncReadback` (a copy, not a view render),
@@ -2189,7 +2190,8 @@ decide which quadrant a click landed in) consume these primitives.
 
 **Adaptive resolution eases a per-frame sub-rect over a fixed allocation.**
 `SetDynamicResolution(settings)` engages it; it runs inside `Render`, before the pending-resize
-apply. Each `Render` reads `Context::GetLastGpuFrameTimeMs()` and steps
+apply. Each `Render` reads `Context::GetLastGpuFrameTimeMs()`, less the generated-texture pump's
+scope (`DynamicResolutionFrameTimeMs` — background work is not frame load), and steps
 `ComputeDynamicResolutionScale` (`Veng/Renderer/DynamicResolution.h`) toward a GPU-frame-time
 budget, rendering into a `round(renderAllocExtent · RenderScale)` sub-rect of the render allocation
 that the promotion carries back up. It is **free**: a sub-rect change moves no allocation, only the
@@ -2469,11 +2471,74 @@ caller-chosen `u64`:
   their summed cost reaches the budget — so an expensive fragment amortizes over many frames and a
   cheap one runs many ticks a frame, without the engine ever pricing a fragment it did not write. A
   single tick dearer than the whole budget still runs one a frame (the one-tick minimum), so it
-  makes progress rather than stalling; at the default cost of 1 the budget is a tick count, the
-  schedule this replaced. Raising a queued job's priority preempts a running one at the *next tick*,
+  makes progress rather than stalling; at the default cost of 1 the budget is a tick count. How big
+  the budget is each frame is the adaptive policy's (below) unless `SetCostBudget` fixes it. Raising
+  a queued job's priority preempts a running one at the *next tick*,
   not the next job. Requests are **idempotent on the key**, so re-requesting every frame while the
   result is still wanted is the intended usage; `Cancel` tears an unfinished job down and simply
   releases its targets.
+
+### The budget follows the frame's GPU headroom
+
+A fixed cost per frame bakes at a rate tied to the frame rate rather than to the GPU's idle time: an
+application capped at 30 fps bakes at half the wall-clock rate of 60 fps while its GPU idles most of
+each frame, and one at 120 fps bakes twice as fast in frames that may have no idle time at all. So
+the pump sizes its budget each frame from what the frame actually leaves (`GeneratedTextureBudgetController`,
+`src/Renderer/GeneratedTextureBudget.h`, device-free):
+
+- **The period** is the run loop's frame-cap period when one is set, else an exponentially smoothed
+  measured frame delta (sleep included, a hitch clamped at 100 ms), which covers uncapped vsync and
+  VRR. It reaches the service as a `GeneratedTextureFrameHint` that `Application::Frame` sets every
+  frame just before `Context::BeginFrame` (`SetFrameHint`) — the delta, the limiter's cap, whether the
+  clock is driven, and the view reserve below. `Context` itself knows neither the cap nor the delta.
+- **The headroom** is `period · (1 − FrameMargin)` minus the last measured GPU frame time *excluding
+  the pump's own `Generated Textures` scope* — so the bake's time never reads as load it must back
+  off from, which would make it oscillate. The target is `clamp(headroom · IdleShare, 0,
+  MaxMilliseconds)`.
+- **Milliseconds become cost** through a learned `msPerCost`: a running average of the pump scope's
+  measured time over the cost that pump spent. A frame's timings are read back when its
+  frame-in-flight slot comes round again (two frames late), so the service keeps the cost each slot's
+  pump spent and pairs the timings with that slot's figure, never with the latest pump's.
+- **Damping**: the budget falls to its target at once — a frame that lost its headroom must not keep
+  paying for it — and rises an eighth of the gap a frame, because the measurement justifying a rise
+  is already two frames old.
+- **Bounds**: never below `DefaultCostBudget` (4), so the policy never bakes less than the fixed
+  schedule did; boosted only while a job has a selectable tick or a staged restore (an idle service
+  drops to the floor, so no boost carries into the next job); at most `MaxTicksPerFrame` ticks a pump.
+
+**Why the share is below one.** Idle time is not free: a fanless machine whose GPU runs flat out
+every frame throttles, and the frame-to-frame variance of the rest of the frame needs somewhere to
+land. The defaults (`GeneratedTextureBudgetSettings`) are `IdleShare` 0.5, `FrameMargin` 0.1,
+`MaxMilliseconds` 8 and `MaxTicksPerFrame` 64. The policy does not model the CPU cost of recording a
+tick; a job whose recording is heavy declares a higher `Cost`.
+
+**Fallbacks.** A device without GPU timing scales the floor by `period / (1 / FallbackReferenceHz)`
+(60 Hz by default), clamped to `[1, 4]` and carrying the fraction a frame cannot spend into the next,
+so a 30 Hz frame spends twice the 60 Hz budget and a 120 Hz frame keeps the floor. A driven frame
+clock, a context handed no hint (the gpu fixtures, any consumer driving `Context` without a run loop),
+and `Enabled = false` spend exactly `DefaultCostBudget`, so captures and tests stay deterministic.
+`SetCostBudget` fixes the budget outright until `ClearCostBudget`. `GeneratedTextureStats` reports the
+resolved budget, the cost spent and the learned `msPerCost`; the pump samples the
+`GeneratedTextures/Budget` and `GeneratedTextures/Cost` counters.
+
+**The frame's own views come first.** A tick that renders a view — a sky-bake face tile claims a
+view slot (`BindlessRegistry::TryBeginView`) — declares it through `GeneratedTextureRequest::ViewSlots`,
+and the pump runs it only while the registry has that many slots left beyond the hint's
+`ViewReserve`. A tick that would cut into it ends the frame's spending (the queue's `Admit` refusal
+stops rather than skipping, so the job keeps its place) and runs at a later pump, never an assert.
+The pump runs before the frame's portraits, captures and viewports, so `Application` computes the
+reserve from the compositor (`ViewportCompositor::GetBackgroundViewReserve`): every registered
+viewport's `GetViewSlotsPerExecute` in full, plus one per registered capture and per portrait driven
+last frame — that share capped at half of what the viewports leave (`BackgroundViewReserve`,
+`CaptureRotation.h`), since captures degrade gracefully too and a large capture set must not starve
+background work outright.
+
+**A large budget does not crowd out the frame's timings.** The pump opens one GPU scope for itself
+and one per tick for only the first `MaxTickScopesPerPump` (16) ticks; later ticks record under the
+pump's scope alone, so a many-tick frame cannot spend the `MaxGpuScopes` (128) the passes after it
+need. **Dynamic resolution ignores the pump**: `Viewport::UpdateDynamicResolution` hands the
+controller `DynamicResolutionFrameTimeMs(GetLastGpuFrameTimeMs(), GetLastPumpGpuMs())`, so
+background generation filling idle time never drives the render scale down.
 
 **Nothing ever waits.** No immediate submits, no fences on the render thread, no job started outside
 the pump. A consumer whose approach outruns its bake gets "the result lands a moment later", never a

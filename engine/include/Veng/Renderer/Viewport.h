@@ -362,7 +362,8 @@ namespace Veng::Renderer
 
         /// @brief Enables automatic render-scale control from measured GPU frame time.
         ///
-        /// Each Render the viewport reads Context::GetLastGpuFrameTimeMs() and eases its
+        /// Each Render the viewport reads Context::GetLastGpuFrameTimeMs(), less the time background
+        /// generation took in that frame (DynamicResolutionFrameTimeMs), and eases its
         /// RenderScale toward the settings' frame budget (ComputeDynamicResolutionScale), rendering
         /// into a sub-rect of the fixed allocation without a resize — adapting cost, never the
         /// allocation footprint. The render target is sized once to the allocation scale (MaxScale,
@@ -924,7 +925,8 @@ namespace Veng::Renderer
 
         /// @brief Advances the render scale from measured GPU frame time when control is enabled.
         ///
-        /// Called at the top of Render. Reads Context::GetLastGpuFrameTimeMs(), computes the next
+        /// Called at the top of Render. Reads Context::GetLastGpuFrameTimeMs() less the
+        /// generated-texture pump's time (GeneratedTextureService::GetLastPumpGpuMs), computes the next
         /// scale, and debounces a resize (via SetRenderScale) only when the integer render extent
         /// would change — so a steady-state micro-adjustment within a pixel never resizes. A no-op
         /// when control is disabled or timing is unsupported.

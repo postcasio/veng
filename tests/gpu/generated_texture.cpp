@@ -795,3 +795,99 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Tasks.WaitForAll();
     CHECK(service.Release(BakedKey));
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a view-claiming tick defers at the frame's reservation")
+{
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    BindlessRegistry& registry = Context.GetBindlessRegistry();
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+
+    constexpr GeneratedTextureKey Key = 0x5721'B1E5ull;
+    u32 ticks = 0;
+    bool everyClaimGranted = true;
+    GeneratedTextureRequest request = StripeJob(Key, "ViewBake");
+    request.TickCount = 3;
+    request.ViewSlots = 1;
+    request.OnTick = [&](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        everyClaimGranted = registry.TryBeginView() && everyClaimGranted;
+        ticks++;
+        StripeTick(cmd, context);
+    };
+
+    // The frame keeps every slot for its own renders: the job waits, and nothing asserts.
+    service.SetFrameHint({.ViewReserve = BindlessRegistry::MaxViewsPerFrame});
+    REQUIRE(service.Request(std::move(request)));
+    DriveUntil(Context, [] { return false; }, 3);
+    CHECK(ticks == 0u);
+    CHECK(service.IsPending(Key));
+
+    // One slot to spare: each frame's first tick claims it and the next defers to the following
+    // frame, however large the budget.
+    service.SetFrameHint({.ViewReserve = BindlessRegistry::MaxViewsPerFrame - 1});
+    const u32 frames = DriveUntil(Context, [&] { return service.IsResident(Key); });
+    CHECK(frames == 3u);
+    CHECK(ticks == 3u);
+    CHECK(everyClaimGranted);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a paced idle frame bakes above the floor, a driven one at it")
+{
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    REQUIRE_FALSE(service.IsCostBudgetFixed());
+
+    // Far more cheap ticks than any frame here will run, so the job is still pending throughout.
+    constexpr GeneratedTextureKey Key = 0x5721'FA57ull;
+    GeneratedTextureRequest request = StripeJob(Key, "PacedBake");
+    request.TickCount = 100000;
+    request.OnTick = [](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        GeneratedTextureTickContext row = context;
+        row.TickIndex = context.TickIndex % StripeEdge;
+        StripeTick(cmd, row);
+    };
+    REQUIRE(service.Request(std::move(request)));
+
+    // A context nothing paces spends the fixed default.
+    DriveUntil(Context, [] { return false; }, 2);
+    CHECK(service.GetStats().CostBudgetLastPump == GeneratedTextureService::DefaultCostBudget);
+
+    // Paced at 30 Hz with an all-but-idle GPU, the budget rises above the floor — through the
+    // measured headroom with timing, through the period fallback without — and the tick ceiling
+    // bounds what one pump records.
+    service.SetFrameHint({.MeasuredDeltaSeconds = 1.0f / 30.0f, .FrameCapHz = 30});
+    u32 highest = 0;
+    u32 lowest = ~0u;
+    u32 mostTicks = 0;
+    for (u32 frame = 0; frame < 24; frame++)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+        const GeneratedTextureStats stats = service.GetStats();
+        highest = std::max(highest, stats.CostBudgetLastPump);
+        lowest = std::min(lowest, stats.CostBudgetLastPump);
+        mostTicks = std::max(mostTicks, stats.TicksLastPump);
+    }
+    CHECK(lowest >= GeneratedTextureService::DefaultCostBudget);
+    CHECK(highest > GeneratedTextureService::DefaultCostBudget);
+    CHECK(mostTicks <= service.GetBudgetSettings().MaxTicksPerFrame);
+    CHECK(service.GetCostBudget() == service.GetStats().CostBudgetLastPump);
+
+    // The same pacing under a driven clock spends exactly the default, from the first frame.
+    service.SetFrameHint({.MeasuredDeltaSeconds = 1.0f / 30.0f, .FrameCapHz = 30, .Driven = true});
+    DriveUntil(Context, [] { return false; }, 1);
+    CHECK(service.GetStats().CostBudgetLastPump == GeneratedTextureService::DefaultCostBudget);
+    CHECK(service.GetStats().TicksLastPump == GeneratedTextureService::DefaultCostBudget);
+
+    // An explicit budget overrides the policy until it is cleared.
+    service.SetFrameHint({.MeasuredDeltaSeconds = 1.0f / 30.0f, .FrameCapHz = 30});
+    service.SetCostBudget(2);
+    DriveUntil(Context, [] { return false; }, 1);
+    CHECK(service.GetStats().TicksLastPump == 2u);
+    service.ClearCostBudget();
+    CHECK_FALSE(service.IsCostBudgetFixed());
+
+    CHECK(service.Cancel(Key));
+}

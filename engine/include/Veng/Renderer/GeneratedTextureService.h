@@ -18,6 +18,7 @@ namespace Veng::Renderer
     class Buffer;
     class CommandBuffer;
     class Context;
+    class GeneratedTextureBudgetController;
     class GeneratedTextureQueue;
     class ImageView;
 
@@ -226,6 +227,16 @@ namespace Veng::Renderer
         /// a Kth the ticks-per-frame of a baseline job. The default of one reproduces the pump's
         /// prior tick-count schedule exactly, so a job that declares no cost is unchanged.
         u32 Cost = 1;
+        /// @brief The most frame view slots one of this job's ticks may claim through
+        ///        BindlessRegistry::TryBeginView.
+        ///
+        /// The pump runs such a tick only while the frame has this many slots left beyond the
+        /// frame's own reservation (GeneratedTextureFrameHint::ViewReserve); otherwise it stops
+        /// spending for the frame and the tick runs at a later pump. Zero — the default — declares a
+        /// tick that claims none, which the view budget never defers. A tick that reuses a slot it
+        /// already claimed this frame claims fewer than it declares, which only makes the check
+        /// conservative.
+        u32 ViewSlots = 0;
         /// @brief Higher runs first; ties break by request order.
         i32 Priority = 0;
         /// @brief Records one tick's GPU work — compute dispatches, a raster pass, or both.
@@ -262,6 +273,68 @@ namespace Veng::Renderer
         u64 RestoredTotal = 0;
         /// @brief Job results written to the cache.
         u64 StoredTotal = 0;
+        /// @brief The cost budget the most recent pump resolved, fixed or adaptive.
+        u32 CostBudgetLastPump = 0;
+        /// @brief The cost the most recent pump spent, restores included.
+        u64 CostSpentLastPump = 0;
+        /// @brief The learned GPU milliseconds one unit of tick cost takes; zero until measured.
+        f32 MillisecondsPerCost = 0.0f;
+    };
+
+    /// @brief How the frame the next pump records into is paced, handed to the service each frame.
+    ///
+    /// The run loop sets it before Context::BeginFrame (Application does so every frame), and the
+    /// service keeps the last one it was given. A default-constructed hint names no period, which
+    /// leaves the service on its fixed per-frame budget — the posture of a context driven without
+    /// a run loop, as the gpu fixtures are.
+    struct GeneratedTextureFrameHint
+    {
+        /// @brief The measured period of the previous frame in seconds, any frame-cap sleep
+        ///        included; zero when unknown.
+        f32 MeasuredDeltaSeconds = 0.0f;
+        /// @brief The run loop's frame cap in frames per second; zero when uncapped.
+        u32 FrameCapHz = 0;
+        /// @brief Whether the frame clock is driven, in which case the fixed per-frame budget is
+        ///        spent so a driven run is reproducible frame for frame.
+        bool Driven = false;
+        /// @brief The view slots the frame's own renders claim after the pump, which a
+        ///        view-claiming tick leaves for them.
+        ///
+        /// The default covers one viewport whose half-res translucent layer is active.
+        u32 ViewReserve = 2;
+    };
+
+    /// @brief The knobs of the adaptive per-frame budget the generated-texture pump spends.
+    ///
+    /// The policy fills the GPU idle time of the frame's period with background generation: the
+    /// headroom is the period, less a safety margin, less the GPU time of the rest of the frame,
+    /// and the pump takes a share of it, bounded by an absolute ceiling. It never spends less than
+    /// GeneratedTextureService::DefaultCostBudget a frame. See GeneratedTextureService for what it
+    /// reads and its fallbacks.
+    struct GeneratedTextureBudgetSettings
+    {
+        /// @brief Whether the policy runs; false spends DefaultCostBudget every frame.
+        bool Enabled = true;
+        /// @brief The fraction of the measured GPU idle time the pump may take, in (0, 1].
+        ///
+        /// Below one because idle time is not free: a fanless machine whose GPU runs flat out
+        /// every frame throttles, and the margin left absorbs a frame that runs long.
+        f32 IdleShare = 0.5f;
+        /// @brief The fraction of the frame period held back before the idle time is measured.
+        f32 FrameMargin = 0.1f;
+        /// @brief The most GPU milliseconds the pump aims to take in one frame.
+        f32 MaxMilliseconds = 8.0f;
+        /// @brief The most ticks one adaptive pump runs, whatever their cost.
+        ///
+        /// A ceiling on recording work and on the GPU scopes a pump opens, for jobs whose declared
+        /// cost undervalues what a tick records.
+        u32 MaxTicksPerFrame = 64;
+        /// @brief The frame rate at which a device without GPU timing spends DefaultCostBudget.
+        ///
+        /// Without timing the budget scales with the frame period against this rate's period,
+        /// so a slower frame bakes proportionally more and the wall-clock rate holds; a faster one
+        /// keeps the floor.
+        f32 FallbackReferenceHz = 60.0f;
     };
 
     /// @brief Persistent GPU textures filled by caller-recorded jobs the frame amortizes.
@@ -292,18 +365,37 @@ namespace Veng::Renderer
     /// without the job's ticks running, a miss is the job running exactly as if no cache existed,
     /// and a deleted cache directory is a valid state at any moment.
     ///
-    /// Owned by Context and pumped once per frame from BeginFrame with the service's own cost
-    /// budget, so every consumer of one context shares one budget. It records around the
+    /// **The budget follows the frame's GPU headroom.** A fixed cost per frame would bake at half
+    /// the wall-clock rate at 30 fps that it does at 60 while the GPU idles most of each frame, so
+    /// by default the pump sizes its budget each frame from three readings: the frame period (the
+    /// cap's period when the run loop caps the rate, else a smoothed measured frame delta, from
+    /// SetFrameHint), the GPU time of the last measured frame less the pump's own "Generated
+    /// Textures" scope, and a learned milliseconds-per-cost — the pump scope's time over the cost
+    /// spent in the same frame, paired per frame-in-flight because a frame's timings are read back
+    /// when its slot comes round again. The target is the idle time's IdleShare, clamped to
+    /// MaxMilliseconds, converted to cost; it rises gradually and falls at once, never goes below
+    /// DefaultCostBudget, and is boosted only while a job has work selectable. A device without
+    /// GPU timing scales DefaultCostBudget by the frame period against FallbackReferenceHz instead.
+    /// A driven frame clock, a context given no hint, a disabled policy, and an explicit
+    /// SetCostBudget all spend a fixed budget, so captures and tests stay deterministic.
+    ///
+    /// **The frame's own views come first.** A job declaring ViewSlots runs a tick only while the
+    /// frame keeps GeneratedTextureFrameHint::ViewReserve slots for the viewports and captures that
+    /// render after the pump; a tick that would cut into them ends the frame's spending instead,
+    /// and runs at a later pump.
+    ///
+    /// Owned by Context and pumped once per frame from BeginFrame, so every consumer of one context
+    /// shares one budget. It records around the
     /// RenderGraph rather than through it — the graph's transients are 2D single-layer and its
     /// compiled schedule is static between rebuilds, neither of which suits a per-frame-varying set
     /// of layered, mipped targets.
     class GeneratedTextureService
     {
     public:
-        /// @brief The default per-frame cost budget.
+        /// @brief The fixed per-frame cost budget, and the floor of the adaptive one.
         ///
-        /// With every request at the default Cost of one, this spends this many ticks per frame —
-        /// the tick-count budget the cost budget replaced.
+        /// With every request at the default Cost of one, this spends this many ticks per frame. A
+        /// driven frame, a context given no frame hint, and a disabled policy spend exactly this.
         static constexpr u32 DefaultCostBudget = 4;
 
         /// @brief A budget meaning "run every pending tick each frame" — amortization off.
@@ -378,28 +470,70 @@ namespace Veng::Renderer
         /// @brief The attached cache, or null when none is.
         [[nodiscard]] DerivedDataCache* GetCache() const { return m_Cache; }
 
-        /// @brief Sets the summed tick cost the pump may spend per frame across every job.
+        /// @brief Fixes the summed tick cost the pump spends per frame across every job, overriding
+        ///        the adaptive policy until ClearCostBudget.
         /// @param costPerFrame The budget, or UnlimitedCostBudget for no amortization.
-        void SetCostBudget(u32 costPerFrame) { m_CostBudget = costPerFrame; }
+        void SetCostBudget(u32 costPerFrame);
 
-        /// @brief The summed tick cost the pump may spend per frame.
-        [[nodiscard]] u32 GetCostBudget() const { return m_CostBudget; }
+        /// @brief Returns the budget to the adaptive policy.
+        void ClearCostBudget();
+
+        /// @brief Whether SetCostBudget has fixed the budget.
+        [[nodiscard]] bool IsCostBudgetFixed() const;
+
+        /// @brief The summed tick cost the pump spends per frame: the fixed budget when one is set,
+        ///        else the budget the most recent pump resolved (DefaultCostBudget before any).
+        [[nodiscard]] u32 GetCostBudget() const;
+
+        /// @brief Sets the adaptive policy's knobs.
+        void SetBudgetSettings(const GeneratedTextureBudgetSettings& settings);
+
+        /// @brief The adaptive policy's knobs.
+        [[nodiscard]] const GeneratedTextureBudgetSettings& GetBudgetSettings() const;
+
+        /// @brief Hands the service how the coming frame is paced and what views it keeps.
+        ///
+        /// Called before Context::BeginFrame; the hint stands until the next call.
+        void SetFrameHint(const GeneratedTextureFrameHint& hint);
+
+        /// @brief The pacing hint the next pump reads.
+        [[nodiscard]] const GeneratedTextureFrameHint& GetFrameHint() const;
+
+        /// @brief The GPU milliseconds the pump took in the frame GetLastGpuFrameTimeMs describes.
+        ///
+        /// The time a consumer reacting to whole-frame GPU time subtracts so that background
+        /// generation does not read as frame load; the dynamic-resolution controller does. Zero when
+        /// that frame ran no pump scope or GPU timing is unavailable.
+        [[nodiscard]] f32 GetLastPumpGpuMs() const;
 
         /// @brief What the service is holding right now.
         [[nodiscard]] GeneratedTextureStats GetStats() const;
 
+        /// @brief The name of the GPU timestamp scope the pump records under.
+        static constexpr string_view GpuScopeName = "Generated Textures";
+
     private:
         friend class Context;
 
-        /// @brief Spends up to @p budget of summed tick cost across the pending jobs, in
+        /// @brief Resolves the frame's budget and spends it across the pending jobs, in
         ///        priority-then-FIFO order.
         ///
         /// Called once per frame by Context::BeginFrame with the frame's command buffer, before any
         /// pass records. Completions fire after the tick loop, so a job requested from one is
         /// scheduled from the next pump.
-        /// @param cmd    The frame's command buffer the ticks are recorded into.
-        /// @param budget Maximum summed tick cost to spend this frame.
-        void Pump(CommandBuffer& cmd, u32 budget);
+        /// @param cmd The frame's command buffer the ticks are recorded into.
+        void Pump(CommandBuffer& cmd);
+
+        /// @brief Folds the last measured frame into the policy and returns this frame's budget.
+        /// @return The summed tick cost this pump may spend.
+        [[nodiscard]] u32 ResolveBudget();
+
+        /// @brief The most ticks one pump records its own GPU scope for.
+        ///
+        /// The frame's scope budget is shared with every pass that follows the pump, so a pump
+        /// running many cheap ticks names only the first of them and records the rest under the
+        /// pump's scope alone.
+        static constexpr u32 MaxTickScopesPerPump = 16;
 
         /// @brief Names the task system the service's own off-thread work runs on.
         ///
@@ -458,6 +592,8 @@ namespace Veng::Renderer
             function<void(CommandBuffer&, const GeneratedTextureTickContext&)> OnTick;
             /// @brief Fired once the job's ticks are exhausted.
             function<void(const GeneratedTextureResult&)> OnComplete;
+            /// @brief The most frame view slots one tick may claim.
+            u32 ViewSlots = 0;
             /// @brief The cache key the result is stored under; empty when the job is not cached.
             string CacheKey;
             /// @brief Each target's declared mip level within the cached shape, in target order.
@@ -575,8 +711,23 @@ namespace Veng::Renderer
         vector<PendingStore> m_Stores;
         /// @brief Pumps run so far; a store's copies are readable framesInFlight pumps after theirs.
         u64 m_PumpCount = 0;
-        /// @brief Summed tick cost the pump may spend per frame.
-        u32 m_CostBudget = DefaultCostBudget;
+        /// @brief The adaptive budget controller, device-free.
+        Unique<GeneratedTextureBudgetController> m_Budget;
+        /// @brief The budget SetCostBudget fixed, or nullopt while the adaptive policy runs.
+        optional<u32> m_FixedCostBudget;
+        /// @brief The adaptive policy's knobs.
+        GeneratedTextureBudgetSettings m_BudgetSettings;
+        /// @brief The pacing hint the next pump reads.
+        GeneratedTextureFrameHint m_FrameHint;
+        /// @brief The cost each frame-in-flight slot's most recent pump spent, so a slot's timings
+        ///        are paired with the work that produced them when the slot comes round again.
+        vector<u64> m_CostSpentBySlot;
+        /// @brief The pump scope's GPU time in the last measured frame.
+        f32 m_LastPumpGpuMs = 0.0f;
+        /// @brief The budget the most recent pump resolved.
+        u32 m_CostBudgetLastPump = DefaultCostBudget;
+        /// @brief The cost the most recent pump spent.
+        u64 m_CostSpentLastPump = 0;
         /// @brief Ticks the most recent pump ran.
         u32 m_TicksLastPump = 0;
         /// @brief Jobs completed over the service's lifetime.

@@ -485,6 +485,14 @@ namespace Veng::Renderer
         /// @return The number of slots TryBeginView can still grant this frame.
         [[nodiscard]] u32 GetRemainingViews() const;
 
+        /// @brief A count advanced each time the view slots reset — once per frame, and before each
+        ///        ImmediateCommands recording made outside one.
+        ///
+        /// A caller reusing a view slot it claimed earlier compares it, since a slot index claimed
+        /// under one epoch names another view's region under the next.
+        /// @return The current view epoch.
+        [[nodiscard]] u64 GetViewEpoch() const { return m_ViewEpoch; }
+
         /// @brief Writes the per-frame view-constants block into the current view slot's region
         /// of the shared view-constants buffer.
         ///
@@ -1056,6 +1064,9 @@ namespace Veng::Renderer
 
         /// @brief The view slot the current Execute writes and reads (set by TryBeginView).
         u32 m_ViewSlot = 0;
+
+        /// @brief Advanced at every view-slot reset; see GetViewEpoch.
+        u64 m_ViewEpoch = 0;
 
         /// @brief Latch for the spent-view-budget warning, so it is logged once per registry.
         bool m_ViewBudgetWarned = false;

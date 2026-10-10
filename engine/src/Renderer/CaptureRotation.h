@@ -21,6 +21,23 @@ namespace Veng::Renderer
         return remainingViews > reservedViews;
     }
 
+    /// @brief The view slots work recorded ahead of a frame's renders leaves for them.
+    ///
+    /// The viewports' slots are reserved whole. The captures and portraits are background too — each
+    /// keeps its last render when it cannot claim — so their demand is reserved only up to half of
+    /// what the viewports leave, and work ahead of them can always reach the other half rather than
+    /// a large capture set starving it.
+    /// @param viewportSlots  Slots the registered viewports' renders claim (ReservedViewSlots).
+    /// @param captureDemand  Slots the captures and portraits would claim: one each.
+    /// @param maxViews       The frame's view budget (BindlessRegistry::MaxViewsPerFrame).
+    /// @return The slots to leave for the frame's renders.
+    [[nodiscard]] constexpr u32 BackgroundViewReserve(const u32 viewportSlots,
+                                                      const u32 captureDemand, const u32 maxViews)
+    {
+        const u32 spare = maxViews > viewportSlots ? maxViews - viewportSlots : 0u;
+        return viewportSlots + (captureDemand < spare / 2 ? captureDemand : spare / 2);
+    }
+
     /// @brief Whether a renderer may claim its half-res translucent region with this many view slots
     ///        left this frame: only while one would remain for its full region after it.
     /// @param remainingViews  Slots still claimable this frame (BindlessRegistry::GetRemainingViews).
