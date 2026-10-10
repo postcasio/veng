@@ -42,9 +42,10 @@ namespace Veng::Renderer
         ///
         /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit. The alpha is the
         /// surface-flags channel a material writes through the values in the core shader header
-        /// `Veng/surface_flags.slang` — today a single flag declining shadow-map reception, for a
-        /// material whose drawn geometry does not stand where its shading says it does. A material
-        /// writing 0 there gets the ordinary shading path.
+        /// `Veng/surface_flags.slang` — two independent flags, one declining shadow-map reception
+        /// and one declining the sky's image-based or SH ambient for the flat floor, encoded as a
+        /// two-bit code over four exact UNORM8 levels and point-loaded by the lighting pass. A
+        /// material writing 0 there gets the ordinary shading path.
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
         /// @brief G3 — screen-space motion vector, written by the surface pass.

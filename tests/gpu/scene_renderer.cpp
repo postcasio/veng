@@ -3221,10 +3221,21 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 
     // The flag set: the same geometry, the same light, the same shadow atlas — the lookup
-    // declined.
-    mat.SetParam("SurfaceFlags", 1.0f);
+    // declined. The values are surface_flags.slang's levels (code / 3): bit 0 alone, bit 1 alone,
+    // and both.
+    constexpr f32 NoShadowReception = 1.0f / 3.0f;
+    constexpr f32 NoEnvironmentLighting = 2.0f / 3.0f;
+    mat.SetParam("SurfaceFlags", NoShadowReception);
     const f32 declinedLuma =
         Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+
+    // The scene has no sky, so declining environment lighting changes nothing here: the
+    // environment flag alone keeps the shadow, and beside the shadow flag it still declines it.
+    mat.SetParam("SurfaceFlags", NoEnvironmentLighting);
+    const f32 environmentOnlyLuma =
+        Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+    mat.SetParam("SurfaceFlags", NoShadowReception + NoEnvironmentLighting);
+    const f32 bothLuma = Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
 
     // The reference: the flag clear again, with the shadow system off, so no atlas exists to
     // sample. This is the radiance a declined lookup must reproduce.
@@ -3238,6 +3249,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // ...to exactly the unshadowed radiance: the fragment keeps its lighting and loses only the
     // occlusion. A flag that skipped the light instead would read black here.
     CHECK(declinedLuma == doctest::Approx(unshadowedLuma).epsilon(0.02));
+    // Each flag decodes on its own: the environment flag never reads as the shadow flag, and the
+    // shadow flag still reads with the environment flag beside it.
+    CHECK(environmentOnlyLuma == doctest::Approx(shadowedLuma).epsilon(0.02));
+    CHECK(bothLuma == doctest::Approx(declinedLuma).epsilon(0.02));
 
     std::filesystem::remove(outArchive);
 }

@@ -15,7 +15,8 @@
 //   evaluated identically. The shadow maps hold only opaque casters, so a translucent surface is
 //   shadowed by opaque geometry and never by another translucent one.
 // - The ambient arm (split-sum IBL, SH skylight, or the flat floor) is the one the view's sky
-//   selects, scaled by ForwardSurface.Occlusion. Screen-space AO is not applied: it is computed
+//   selects — the flat floor for a surface setting DeclinesEnvironmentLighting — scaled by
+//   ForwardSurface.Occlusion. Screen-space AO is not applied: it is computed
 //   from the opaque depth, which describes what lies behind a translucent surface, not the surface.
 // - Emission is not part of the result; a fragment adds its own.
 //
@@ -45,6 +46,9 @@
 #include "Veng/lighting.slang"
 
 // The surface a forward-lit fragment shades, in world space.
+//
+// A declared `ForwardSurface s;` is default-constructed: the two flags start false and Occlusion
+// starts at 1, so a material sets only what it shades with.
 struct ForwardSurface
 {
     float3 Position;   // world position (reconstructable from sv_position via ForwardWorldPosition)
@@ -54,6 +58,25 @@ struct ForwardSurface
     float  Roughness;  // perceptual roughness [0,1] (floored and widened as the deferred pass does)
     float  Metallic;   // [0,1]
     float  Occlusion;  // ambient occlusion [0,1]
+    // The forward twin of SurfaceFlagNoShadowReception (Veng/surface_flags.slang): full visibility
+    // in place of every shadow-atlas lookup.
+    bool   DeclinesShadowMaps;
+    // The forward twin of SurfaceFlagNoEnvironmentLighting (Veng/surface_flags.slang): the view's
+    // flat ambient floor in place of the sky's IBL or SH arm.
+    bool   DeclinesEnvironmentLighting;
+
+    __init()
+    {
+        Position = float3(0.0);
+        Normal = float3(0.0, 0.0, 1.0);
+        View = float3(0.0, 0.0, 1.0);
+        Albedo = float3(0.0);
+        Roughness = 1.0;
+        Metallic = 0.0;
+        Occlusion = 1.0;
+        DeclinesShadowMaps = false;
+        DeclinesEnvironmentLighting = false;
+    }
 };
 
 // The light a forward-lit fragment receives, split so a material can weight the two apart.
@@ -76,8 +99,8 @@ ForwardLighting EvaluateForwardLighting(ForwardSurface s)
 {
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     LightingSurface surface = MakeLightingSurface(vc, s.Position, s.Normal, s.View, s.Albedo,
-                                                  s.Roughness, s.Metallic,
-                                                  /*declinesShadowMaps=*/false,
+                                                  s.Roughness, s.Metallic, s.DeclinesShadowMaps,
+                                                  s.DeclinesEnvironmentLighting,
                                                   NormalScreenVariance(s.Normal));
 
     LightingResult direct = EvaluateDirectLighting(vc, surface);

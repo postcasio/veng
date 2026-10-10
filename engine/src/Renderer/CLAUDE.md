@@ -1700,13 +1700,24 @@ float2 Velocity : SV_Target3; float3 Emissive : SV_Target4;`). Albedo (G0) is sR
 (sampled back as linear); the normal (G1) is the tangent-space-perturbed world normal in a signed
 float format; ORM (G2) packs occlusion (R), roughness (G), and metallic (B) — the
 metallic-roughness PBR channel set — with **the alpha the surface-flags channel**, whose values and
-predicates live in the core shader header `Veng/surface_flags.slang`: today one flag,
-`SurfaceFlagNoShadowReception`, which a material whose drawn geometry does not stand where its
-shading says it does (an impostor, a sky proxy, a matte-painting shell, a proxy drawn at a
-compressed distance) writes so the lighting pass takes full visibility in place of every shadow
-atlas lookup — the receiving counterpart of `MeshRenderer::CastsShadows = false`, and a material
-property rather than a per-instance one because it describes how the surface shades. A material
-writing 0 there is unaffected. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
+predicates live in the core shader header `Veng/surface_flags.slang`. Two independent flags are
+defined. `SurfaceFlagNoShadowReception` is written by a material whose drawn geometry does not stand
+where its shading says it does (an impostor, a sky proxy, a matte-painting shell, a proxy drawn at a
+compressed distance), so the lighting pass takes full visibility in place of every shadow atlas
+lookup — the receiving counterpart of `MeshRenderer::CastsShadows = false`.
+`SurfaceFlagNoEnvironmentLighting` is written by a material the view's sky should not light: the
+split-sum IBL and SH skylight arms are replaced, for that surface alone, by the view's flat ambient
+floor (`SceneView::AmbientFloor`, carried in the view block under every arm), so a flagged surface in
+shadow reads dim rather than black; its direct lights and shadows are untouched. Both are material
+properties rather than per-instance ones because they describe how the surface shades. The channel
+holds a two-bit code over four evenly spaced levels (`code / 3`, each an exact UNORM8 step), each
+flag's value being its bit's level, so a material writes either flag, both
+(`SurfaceFlagNoShadowReception + SurfaceFlagNoEnvironmentLighting`), or `SurfaceFlagsNone`; a
+material writing 0 is unaffected. The lighting pass reads the channel with a **point load**
+(`LoadSurfaceFlags`), not through the g-buffer's linear sampler: no scalar encoding of two
+independent flags survives a filtered blend between surfaces. The forward path carries the same two
+flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, which a translucent
+material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears both. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
 vector
 (`curUV - prevUV`) the TAA resolve reprojects through, written by the shared `ComputeMotionVector`
 helper from the vertex stage's unjittered current/previous clip positions; emissive (G4,

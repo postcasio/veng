@@ -10,6 +10,7 @@ struct MaterialParams
     float  Metallic;
     float  Occlusion;
     float  Coverage;  // unused by the opaque twin
+    float  DeclinesEnvironment; // > 0.5 writes SurfaceFlagNoEnvironmentLighting
 };
 
 [shader("fragment")]
@@ -20,7 +21,9 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     GBufferOutput output;
     output.Albedo = float4(p.BaseColor.rgb, 1.0);
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
-    output.ORM = float4(p.Occlusion, p.Roughness, p.Metallic, 0.0);
+    float flags =
+        p.DeclinesEnvironment > 0.5 ? SurfaceFlagNoEnvironmentLighting : SurfaceFlagsNone;
+    output.ORM = float4(p.Occlusion, p.Roughness, p.Metallic, flags);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
     output.Emissive = float3(0.0);
     return output;

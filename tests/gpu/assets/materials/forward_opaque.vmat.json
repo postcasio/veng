@@ -9,6 +9,7 @@
     { "name": "Roughness", "type": "float", "value": 0.6 },
     { "name": "Metallic", "type": "float", "value": 0.2 },
     { "name": "Occlusion", "type": "float", "value": 1.0 },
-    { "name": "Coverage", "type": "float", "value": 1.0 }
+    { "name": "Coverage", "type": "float", "value": 1.0 },
+    { "name": "DeclinesEnvironment", "type": "float", "value": 0.0 }
   ]
 }

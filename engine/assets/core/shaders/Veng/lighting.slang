@@ -64,6 +64,7 @@ struct LightingSurface
     float3 F0;               // base reflectance: a flat 0.04 for dielectrics, albedo-tinted for metals
     float  ViewDepth;        // positive view-space distance in front of the camera (cascade select)
     bool   DeclinesShadowMaps; // take full visibility in place of every shadow-atlas lookup
+    bool   DeclinesEnvironmentLighting; // take the flat ambient floor in place of the sky's arm
 };
 
 // Diffuse and specular outgoing radiance, kept apart so a caller can weight them independently.
@@ -98,7 +99,8 @@ float NormalScreenVariance(float3 normal)
 // which is what Roughness holds and every reader expects.
 LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 normal,
                                     float3 view, float3 albedo, float roughness, float metallic,
-                                    bool declinesShadowMaps, float normalVariance)
+                                    bool declinesShadowMaps, bool declinesEnvironmentLighting,
+                                    float normalVariance)
 {
     LightingSurface s;
     s.Position = position;
@@ -115,6 +117,7 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     s.F0 = lerp(float3(0.04), albedo, metallic);
     s.ViewDepth = -mul(vc.View, float4(position, 1.0)).z;
     s.DeclinesShadowMaps = declinesShadowMaps;
+    s.DeclinesEnvironmentLighting = declinesEnvironmentLighting;
     return s;
 }
 
@@ -522,6 +525,10 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
 // With no environment but a skylight, the diffuse-only SH ambient: the sky projected to order-2 SH,
 // reconstructed per fragment and tinted by albedo. Otherwise the flat floor. Every arm is scaled
 // by the ambient occlusion so the occlusion channel reads.
+//
+// A surface that declines environment lighting takes the flat floor whatever the view's arm: the
+// floor is carried in the view block under every arm, so the surface reads the same ambient it
+// would in a view with no lit sky.
 LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, float ambientOcclusion)
 {
     float3 N = s.Normal;
@@ -530,7 +537,7 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
     LightingResult ambient;
     ambient.Specular = float3(0.0);
 
-    uint arm = vc.LightState.w;
+    uint arm = s.DeclinesEnvironmentLighting ? AmbientArmFlat : vc.LightState.w;
     if (arm == AmbientArmIbl)
     {
         float nDotV = max(dot(N, V), 1e-4);

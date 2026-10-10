@@ -126,11 +126,15 @@ float4 fsMain(VSOutput input) : SV_Target
     float occlusion = orm.r;
     float roughness = orm.g;
     float metallic  = orm.b;
-    // The surface-flags channel. A fragment whose material declines shadow-map reception is lit
-    // exactly as any other, but every atlas lookup below resolves to full visibility: the world
-    // position reconstructed for it is not where its geometry stands, so any silhouette found at
-    // that coordinate belongs to unrelated geometry.
-    bool declinesShadowMaps = GBufferDeclinesShadowMaps(orm.a);
+    // The surface-flags channel, point-loaded so a texel straddling two surfaces reports one
+    // surface's flags rather than a blend no surface wrote. A fragment declining shadow-map
+    // reception is lit exactly as any other, but every atlas lookup below resolves to full
+    // visibility: the world position reconstructed for it is not where its geometry stands. A
+    // fragment declining environment lighting takes the flat ambient floor in place of the sky's.
+    float surfaceFlags =
+        LoadSurfaceFlags(g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)], sampleUV);
+    bool declinesShadowMaps = GBufferDeclinesShadowMaps(surfaceFlags);
+    bool declinesEnvironmentLighting = GBufferDeclinesEnvironmentLighting(surfaceFlags);
 
     // Reconstruct world position: form NDC from the screen UV + sampled depth,
     // transform by the inverse view-projection, and perspective-divide.
@@ -141,7 +145,8 @@ float4 fsMain(VSOutput input) : SV_Target
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
     LightingSurface surface = MakeLightingSurface(vc, worldPos, N, V, albedo, roughness, metallic,
-                                                  declinesShadowMaps, normalVariance);
+                                                  declinesShadowMaps, declinesEnvironmentLighting,
+                                                  normalVariance);
 
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade

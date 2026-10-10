@@ -6,10 +6,20 @@
 // the forward draw binds the renderer's shadow and IBL sets; the opaque cube and its translucent
 // twin are rendered in turn and compared across a grid of texels on that face, where the point
 // light's falloff makes each texel a different shading point.
+//
+// The same pair carries the environment-lighting surface flag: the opaque twin writes
+// SurfaceFlagNoEnvironmentLighting into the g-buffer, the translucent twin sets
+// ForwardSurface::DeclinesEnvironmentLighting, and both must take the flat ambient floor under an
+// image-based or SH sky.
+
+#include <cstring>
 
 #include <doctest/doctest.h>
 
+#include <Veng/Asset/Archive.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
@@ -47,6 +57,47 @@ namespace
         return vec3(glm::unpackHalf1x16(halves[base + 0]), glm::unpackHalf1x16(halves[base + 1]),
                     glm::unpackHalf1x16(halves[base + 2]));
     }
+
+    path CookForwardPack(const char* archiveName)
+    {
+        const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+        const path outArchive = Veng::TestSupport::TempDir() / archiveName;
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        const VoidResult cookResult = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "forward_lighting_pack.json", outArchive, {}, nullptr, nullptr,
+            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        REQUIRE(cookResult.has_value());
+        return outArchive;
+    }
+
+    // A pack holding one uniform equirectangular panorama under the given id, to mount from memory.
+    vector<u8> PanoramaArchive(AssetId id, const vec3& colour)
+    {
+        constexpr u32 Width = 8;
+        constexpr u32 Height = 4;
+        const CookedEnvironmentHeader header{.Version = CookedEnvironmentVersion,
+                                             .Format = static_cast<u32>(Format::RGBA16Sfloat),
+                                             .Width = Width,
+                                             .Height = Height};
+        vector<u8> blob(sizeof(header) + static_cast<usize>(Width) * Height * 8);
+        std::memcpy(blob.data(), &header, sizeof(header));
+        auto* texels = reinterpret_cast<u16*>(blob.data() + sizeof(header));
+        for (u32 i = 0; i < Width * Height; ++i)
+        {
+            texels[i * 4 + 0] = glm::packHalf1x16(colour.r);
+            texels[i * 4 + 1] = glm::packHalf1x16(colour.g);
+            texels[i * 4 + 2] = glm::packHalf1x16(colour.b);
+            texels[i * 4 + 3] = glm::packHalf1x16(1.0f);
+        }
+        ArchiveWriter writer;
+        writer.Add(id, AssetTypes::Environment, blob);
+        return writer.Build();
+    }
+
+    // Two uniform skies of very different colour and brightness.
+    constexpr AssetId WarmPanorama{0x62F1025508D196B5ULL};
+    constexpr AssetId CoolPanorama{0x95D20444346C88C0ULL};
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -54,15 +105,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     RegisterBuiltinTypes(Types);
 
-    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_forward_lighting.vengpack";
-
-    Cook::Cooker cooker;
-    Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cookResult = Veng::TestSupport::CookCached(
-        cooker, fixtureDir / "forward_lighting_pack.json", outArchive, {}, nullptr, nullptr,
-        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
-    REQUIRE(cookResult.has_value());
+    const path outArchive = CookForwardPack("veng_gpu_forward_lighting.vengpack");
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -117,7 +160,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
 
     // The cube stands alone in the frame each time, so the translucent twin blends over nothing.
-    auto Render = [&](const Ref<Mesh>& mesh) -> vector<u8>
+    const auto Render = [&](const Ref<Mesh>& mesh) -> vector<u8>
     {
         const Entity cube = scene->CreateEntity();
         scene->Add<Transform>(cube).Position = vec3(0.0f, 0.0f, -0.5f);
@@ -163,6 +206,125 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The g-buffer stores albedo as sRGB8 and roughness/metallic as 8-bit channels where the forward
     // path shades the exact floats; the tolerance covers that quantization through the tone curve.
     CHECK(maxDifference < 0.01f);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "forward lighting: a surface declining environment lighting takes the flat "
+                  "ambient floor under an image-based or SH sky, deferred and forward alike")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path outArchive = CookForwardPack("veng_gpu_forward_environment_flag.vengpack");
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const MountHandle warmMount =
+        assets.MountMemory(PanoramaArchive(WarmPanorama, vec3(2.0f, 0.6f, 0.1f)), "warm sky");
+    const MountHandle coolMount =
+        assets.MountMemory(PanoramaArchive(CoolPanorama, vec3(0.05f, 0.3f, 1.2f)), "cool sky");
+    const AssetResult<AssetHandle<EnvironmentMap>> warm =
+        assets.LoadSync<EnvironmentMap>(WarmPanorama);
+    const AssetResult<AssetHandle<EnvironmentMap>> cool =
+        assets.LoadSync<EnvironmentMap>(CoolPanorama);
+    REQUIRE(warm.has_value());
+    REQUIRE(cool.has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> opaque =
+        assets.LoadSync<MaterialInstance>(AssetId{0xF34FF2CE488F7B19ULL});
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(AssetId{0xA1F58FB895475E00ULL});
+    REQUIRE(opaque.has_value());
+    REQUIRE(translucent.has_value());
+
+    const Ref<Mesh> opaqueCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *opaque), "Environment Flag Opaque");
+    const Ref<Mesh> translucentCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *translucent), "Environment Flag Lit");
+
+    // No light at all: the face's radiance is its ambient term alone.
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const auto SetDeclines = [&](bool declines)
+    {
+        for (const AssetHandle<MaterialInstance>* instance : {&*opaque, &*translucent})
+        {
+            const_cast<MaterialInstance&>(*instance->Get())
+                .SetParam("DeclinesEnvironment", declines ? 1.0f : 0.0f);
+        }
+    };
+
+    // The front face's centre texel, rendered with the cube alone in the frame.
+    const auto FaceColour = [&](const Ref<Mesh>& mesh) -> vec3
+    {
+        const Entity cube = scene->CreateEntity();
+        scene->Add<Transform>(cube).Position = vec3(0.0f, 0.0f, -0.5f);
+        scene->Add<MeshRenderer>(cube).Mesh = assets.Adopt(mesh);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        scene->DestroyEntity(cube);
+        return DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    };
+
+    // The reference: no sky, so every surface takes the flat floor.
+    SetDeclines(false);
+    const vec3 floorColour = FaceColour(opaqueCube);
+    REQUIRE(glm::dot(floorColour, vec3(1.0f)) > 0.01f);
+
+    const Entity skyEntity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(skyEntity);
+    auto* source = static_cast<EnvironmentSky*>(sky.Source.SetActive(TypeIdOf<EnvironmentSky>()));
+
+    f32 flaggedError = 0.0f;
+    for (const SkyLighting lighting : {SkyLighting::IBL, SkyLighting::SH})
+    {
+        CAPTURE(static_cast<u32>(lighting));
+        sky.Lighting = lighting;
+
+        vec3 unflagged[2];
+        const AssetHandle<EnvironmentMap>* maps[2] = {&*warm, &*cool};
+        for (u32 i = 0; i < 2; ++i)
+        {
+            source->Map = *maps[i];
+            SetDeclines(false);
+            unflagged[i] = FaceColour(opaqueCube);
+
+            SetDeclines(true);
+            const vec3 deferred = FaceColour(opaqueCube);
+            const vec3 forward = FaceColour(translucentCube);
+            const vec3 error =
+                glm::max(glm::abs(deferred - floorColour), glm::abs(forward - floorColour));
+            flaggedError = glm::max(flaggedError, glm::max(error.r, glm::max(error.g, error.b)));
+        }
+
+        // The sky really lights an unflagged surface, and the two skies light it differently: the
+        // warm sky is redder than the cool one by far more than any tolerance below.
+        CHECK(unflagged[0].r - unflagged[1].r > 0.05f);
+        CHECK(unflagged[1].b - unflagged[0].b > 0.02f);
+    }
+
+    // A flagged surface reads the flat floor under either sky and either arm, deferred and forward:
+    // the environment's content does not reach it. The tolerance covers the g-buffer's 8-bit albedo
+    // against the forward path's exact floats.
+    CHECK(flaggedError < 0.01f);
 
     std::filesystem::remove(outArchive);
 }

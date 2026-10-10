@@ -10,6 +10,7 @@ struct MaterialParams
     float  Metallic;
     float  Occlusion;
     float  Coverage;
+    float  DeclinesEnvironment; // > 0.5 declines the sky's ambient for the flat floor
 };
 
 [shader("fragment")]
@@ -25,6 +26,7 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     surface.Roughness = p.Roughness;
     surface.Metallic = p.Metallic;
     surface.Occlusion = p.Occlusion;
+    surface.DeclinesEnvironmentLighting = p.DeclinesEnvironment > 0.5;
 
     // Two guarded components can sum past the guard's bound, so the sum takes the guard again.
     ForwardLighting lit = EvaluateForwardLighting(surface);
