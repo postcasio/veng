@@ -106,18 +106,22 @@ TraceOutput fsMain(VSOutput input)
     Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
     Texture2D hiZ = g_Textures[NonUniformResourceIndex(g_PC.HiZTexture)];
 
-    float depth = depthTexture.Sample(samp, uv).r;
+    // The depth, normal and ORM reads name their level: they sit past early returns and at per-lane
+    // ray positions, where implicit derivatives are undefined and the anisotropic sampler blends
+    // texels across a silhouette.
+    float depth = depthTexture.SampleLevel(samp, uv, 0.0).r;
     // The cleared background (reverse-Z far = 0.0) has no surface to reflect from.
     if (depth <= 0.0)
         return Miss;
 
-    float roughness = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, uv).g;
+    float roughness = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].SampleLevel(samp, uv, 0.0).g;
     // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
     // reflection out smoothly below this cutoff).
     if (roughness > g_PC.MaxRoughness)
         return Miss;
 
-    float3 worldNormal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, uv).xyz;
+    float3 worldNormal =
+        g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].SampleLevel(samp, uv, 0.0).xyz;
     float normalLength = length(worldNormal);
     if (normalLength < 1e-4)
         return Miss;
@@ -231,7 +235,7 @@ TraceOutput fsMain(VSOutput input)
         level = restartLevel;
 
         float rayZ = ViewPositionAt(vc, ray.xy, ray.z).z;
-        float sampleDepth = depthTexture.Sample(samp, ray.xy).r;
+        float sampleDepth = depthTexture.SampleLevel(samp, ray.xy, 0.0).r;
         if (sampleDepth <= 0.0)
         {
             // No geometry here (background): the ray is in front of nothing, so reset the
@@ -258,7 +262,7 @@ TraceOutput fsMain(VSOutput input)
             for (uint b = 0; b < 5; ++b)
             {
                 float3 mid = (lo + hi) * 0.5;
-                float midDepth = depthTexture.Sample(samp, mid.xy).r;
+                float midDepth = depthTexture.SampleLevel(samp, mid.xy, 0.0).r;
                 float midStored = ViewPositionAt(vc, mid.xy, midDepth).z;
                 float midRay = ViewPositionAt(vc, mid.xy, mid.z).z;
                 if (midStored - midRay > 0.0)

@@ -152,14 +152,17 @@ float4 fsMain(VSOutput input) : SV_Target
     SamplerState reflSamp = g_Samplers[NonUniformResourceIndex(g_PC.ReflectionSampler)];
     float2 uv = input.v_UV;
 
-    float3 scene = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].Sample(samp, uv).rgb;
+    // Every read names its level: most sit past an early return, where implicit derivatives are
+    // undefined and the anisotropic g-buffer sampler would blend texels across a silhouette.
+    float3 scene =
+        g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].SampleLevel(samp, uv, 0.0).rgb;
 
-    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
+    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].SampleLevel(samp, uv, 0.0).r;
     // Reverse-Z: the cleared background sits at depth 0.
     if (depth <= 0.0)
         return float4(scene, 1.0);
 
-    float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, uv);
+    float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].SampleLevel(samp, uv, 0.0);
     float roughness = saturate(orm.g);
     if (roughness >= g_PC.MaxRoughness)
         return float4(scene, 1.0);
@@ -216,14 +219,15 @@ float4 fsMain(VSOutput input) : SV_Target
     if (blend > 0.0 && coarse != fine)
         reflection = lerp(reflection, SampleLevel(reflectionChain, reflSamp, uv, coarse), blend);
 
-    float3 worldNormal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, uv).xyz;
+    float3 worldNormal =
+        g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].SampleLevel(samp, uv, 0.0).xyz;
     float normalLength = length(worldNormal);
     float3 N = normalLength > 1e-4 ? worldNormal / normalLength : float3(0.0, 0.0, 1.0);
     float3 V = -relative / cameraDistance;
 
     // Metallic workflow base reflectance: dielectrics reflect a flat 0.04, metals tint
     // the reflection by albedo.
-    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Sample(samp, uv).rgb;
+    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].SampleLevel(samp, uv, 0.0).rgb;
     float3 f0 = lerp(float3(0.04), albedo, metallic);
     float3 fresnel = FresnelSchlick(max(dot(N, V), 0.0), f0);
 
