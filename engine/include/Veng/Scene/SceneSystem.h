@@ -96,6 +96,15 @@ namespace Veng
         Renderer::ViewportRegion Region;
         /// @brief The scale the viewport's documents lay out at (region pixels per logical point).
         f32 UiScale = 1.0f;
+        /// @brief The extent, in pixels, the presenting viewport's scene renderer renders the scene at.
+        ///
+        /// The renderer's valid extent (SceneRenderer::GetValidExtent) from the last completed frame:
+        /// Region's extent after the render scale and dynamic resolution, so it is the pixel grid the
+        /// scene rasterizes onto, where Region is the upscaled placement. Size a screen-space effect
+        /// in render pixels against it — one render pixel subtends the camera's vertical field of
+        /// view over RenderExtent.y on axis. Dynamic resolution moves it by at most the controller's
+        /// MaxStep of the scale per frame, so the one-frame lag is small. Zero in a hand-built view.
+        uvec2 RenderExtent{0};
     };
 
     /// @brief Who holds simulation authority for the peer running this tick.

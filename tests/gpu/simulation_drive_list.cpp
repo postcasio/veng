@@ -9,6 +9,8 @@
 //    handle (SetWorldPaused / IsWorldPaused are handle-keyed; no privileged primary);
 //  - SystemContext carries Tasks always, View + Debug for a presented world, and View == nullopt for
 //    a view-less world and around a never-pushed viewport (no crash);
+//  - View.RenderExtent is the presenting renderer's valid extent, below the region under a reduced
+//    render scale;
 //  - the engine drives a rendered world's captures even while its sim is paused, and drives none of
 //    an unpresented world's (presentation, not run-state, gates capture driving).
 //
@@ -58,6 +60,7 @@ namespace
         static inline bool HadDebug = false;
         static inline const TaskSystem* Tasks = nullptr;
         static inline Renderer::ViewportRegion Region{};
+        static inline uvec2 RenderExtent{0};
 
         static void Reset()
         {
@@ -66,6 +69,7 @@ namespace
             HadDebug = false;
             Tasks = nullptr;
             Region = {};
+            RenderExtent = uvec2(0);
         }
 
         [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
@@ -79,6 +83,7 @@ namespace
             if (context.View)
             {
                 Region = context.View->Region;
+                RenderExtent = context.View->RenderExtent;
             }
         }
     };
@@ -133,7 +138,7 @@ namespace
             return GetWorldRunner().ResolveWorld(id)->GetScene();
         }
 
-        Renderer::Viewport& AddPresentedViewport()
+        Renderer::Viewport& AddPresentedViewport(const bool renders = false)
         {
             Unique<Renderer::Viewport> viewport = Renderer::Viewport::Create({
                 .Context = GetRenderContext(),
@@ -141,7 +146,7 @@ namespace
                 .Region = {.Offset = {0, 0}, .Extent = {64, 64}},
                 .Role = Renderer::ViewportRole::Presented,
             });
-            viewport->SetEnabled(false); // this suite pins drive semantics, not pixels
+            viewport->SetEnabled(renders); // most cases pin drive semantics, not pixels
             RegisterViewport(*viewport);
             Viewports.push_back(std::move(viewport));
             return *Viewports.back();
@@ -333,6 +338,48 @@ TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presente
                 CHECK(viaHelper->x == doctest::Approx(viaViewport->x));
                 CHECK(viaHelper->y == doctest::Approx(viaViewport->y));
             }
+        }
+    };
+
+    app.Frames = 5;
+    app.Run({});
+}
+
+TEST_CASE("SystemContext's View carries the extent the presenting renderer renders at")
+{
+    ProbeSystem<1>::Reset();
+
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    systems.Register<ProbeSystem<1>>();
+
+    DriveApp app(HeadlessInfo(), types, systems);
+
+    Scene* presented = nullptr;
+
+    app.InitFn = [&](DriveApp& a)
+    {
+        presented = &a.AddWorld({SystemIdOf<ProbeSystem<1>>()});
+        // Dynamic resolution allocates at its 1.0 ceiling and the hold renders half of it, so the
+        // rendered sub-rect differs from both the region and the allocation.
+        Renderer::Viewport& viewport = a.AddPresentedViewport(true);
+        viewport.SetDynamicResolution({.MinScale = 0.25f, .MaxScale = 1.0f});
+        viewport.HoldRenderScale(0.5f);
+    };
+
+    app.StepFn = [&](DriveApp& a, int frame)
+    {
+        a.Viewports.front()->SetViewState({.World = presented, .Delta = 0.016f});
+
+        if (frame == 3)
+        {
+            const Renderer::Viewport& vp = *a.Viewports.front();
+            REQUIRE(ProbeSystem<1>::HadView);
+            CHECK(ProbeSystem<1>::RenderExtent == vp.GetRenderer().GetValidExtent());
+            CHECK(ProbeSystem<1>::RenderExtent == uvec2(32, 32));
+            CHECK(vp.GetAllocationExtent() == uvec2(64, 64));
+            CHECK(ProbeSystem<1>::Region.Extent == uvec2(64, 64));
         }
     };
 

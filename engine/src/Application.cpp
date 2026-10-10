@@ -2620,6 +2620,7 @@ namespace Veng
                 .Camera = presenting->GetPresentedCamera(),
                 .Region = presenting->GetRegion(),
                 .UiScale = presenting->GetUiScale(),
+                .RenderExtent = presenting->GetRenderer().GetValidExtent(),
             };
             context.Debug = &presenting->GetDebugDraw();
         }

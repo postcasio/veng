@@ -412,10 +412,12 @@ extern "C"
 /// Version 97 lets a material find a scene light by an authored identity: Light grows Tag,
 /// PackedSceneLights grows DuplicateTag, and SceneRenderer grows the duplicate-tag warning. A module
 /// builds lights in code and spawns prefabs carrying them, so a stale module lays Light out short.
+/// Version 98 gives a system the extent its view renders at: SystemViewInfo grows RenderExtent. The
+/// host builds the view a module's systems and Gui drivers read, so a stale module reads it short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 97u
+#define VENG_MODULE_ABI_VERSION 98u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
