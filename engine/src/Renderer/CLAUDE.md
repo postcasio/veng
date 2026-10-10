@@ -661,7 +661,9 @@ the view, so it is decided once per candidate per frame. The work is scoped `Sha
 batch of its own with its one view.
 
 **Both arms are opt-out per light, through `Light::CastsShadows`.** It defaults true, so a light
-shadows unless it says otherwise; cleared, the light scores zero and is passed over for every arm.
+shadows unless it says otherwise; cleared, the light scores zero and is passed over for every arm,
+and it packs `LightFlags::CastsNoShadow` — a Directional holding no cascade set would otherwise read
+its set index as 0 and be shadowed by another light's cascades.
 The reason it exists is that the slots are scarce: only `MaxShadowedPunctual` lights get one and
 the rest silently get none, and the contribution ranking does not know intent — a bright light that
 wants no silhouette still outranks a dimmer one that does, so a light that does not need a shadow
@@ -1110,6 +1112,38 @@ specular term, or divides it out, rather than letting the blend dim both alike.
   radiance can pass the bound again, so it passes its final colour through `GuardLightingOutput`
   before returning it. The gpu fixture `forward_lit.frag` does, since even its unscaled
   `Diffuse + Specular` can sum past the bound.
+
+**A medium a Translucent material marches asks the shadow maps about any point.**
+`Veng/medium_lighting.slang` is the medium's counterpart of the forward loop — volumetric fog with
+light shafts, dust lit through a window, any view-filling medium a material integrates itself. It
+includes `shadow.slang`, `Veng/light_buffer.slang` and `Veng/light_flags.slang`, not the lighting
+core, plus `Veng/ibl_maps.slang`'s set-4 declarations, which it never samples: a material's
+declared sets must be contiguous (`ShaderInterface::GroupBindingsBySet`), and the forward-lit
+layout binds set 4 ahead of the shadow set. It answers two questions:
+
+- **`LightVisibility(vc, lightIndex, worldPosition[, filter])`** is the share of a light reaching a
+  point through the opaque shadow maps, in [0, 1]. It dispatches on the light's arm exactly as
+  `AccumulateLight` does — a Directional's cascade set, a near-parallel area light's cascade set,
+  any other light's punctual tile — through the same lookups, at the point's own view depth, so a
+  surface and a medium at one point agree on whether it is shadowed. A medium has no normal, so the
+  normal-offset bias steps toward the light (`N := L`). An area light's tile is read through the
+  plain comparison lookup, never `AreaShadowSample`'s rotated PCSS disk, so the answer carries no
+  per-fragment pattern. The filter is `LightVisibilitySingleTap` (one hardware 2×2 comparison tap,
+  the default, for a point integrated along a march) or `LightVisibilityPcf` (the surface lookups'
+  3×3 kernel). It returns 1 outside every map's coverage, for a light casting no shadow, and for an
+  index naming no live light, so a medium marched past the shadowed scene is lit, not black.
+- **`FindLightByTag(vc, tag)`** is the packed index of the first light carrying `Light::Tag`, or
+  `LightIndexInvalid`; tag 0 is untagged and finds nothing. The tag rides `Response.y` of the packed
+  light as its u32 bits (`PackLightTag`), read back by `LoadLightTag` as raw bits, so the stride is
+  unchanged and any tag survives. The tag namespace is the consumer's; a debug build warns once per
+  duplicate when two lights in a view carry the same nonzero tag (`PackedSceneLights::DuplicateTag`).
+
+Neither takes a derivative, so both are legal in a loop and in divergent flow. A fragment including
+the file declares set 5, so `IsForwardLit` recognises it and the pass binds the forward layout in
+both layers, with no new path; `tests/gpu/light_visibility.cpp` reads every cascade from the
+half-resolution layer and at full resolution, and an area light's punctual tile. The shared light
+includes (and `Veng/ibl_maps.slang`) carry `#pragma once`, so a material lighting a surface includes
+`Veng/forward_lighting.slang` and then this.
 
 ### Bloom
 

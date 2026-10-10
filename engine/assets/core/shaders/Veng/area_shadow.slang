@@ -6,6 +6,8 @@
 // lighting radius is a physical quantity and is correct at any size; this one is an input to an
 // approximation with a limited domain, and is capped to stay inside it.
 
+#pragma once
+
 // The largest source angular radius — as a sine, emitter radius over receiver-to-light distance —
 // the PCSS estimator is allowed to see. Past it a source still shadows; it is simply treated as
 // subtending this much, which yields a softer shadow than physics would give.

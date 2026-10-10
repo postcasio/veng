@@ -17,8 +17,9 @@
 //
 // The includer declares the set-0 bindless arrays g_Textures / g_Samplers and the view block
 // (view_constants.slang) before including this, and chooses the shadow system's set through
-// VE_SHADOW_SET (see shadow.slang). This file declares the image-based-lighting maps at set 4, and
-// through Veng/light_buffer.slang the set-0 light and area-vertex buffers (bindings 6 and 7).
+// VE_SHADOW_SET (see shadow.slang). This file declares, through Veng/ibl_maps.slang, the
+// image-based-lighting maps at set 4, and through Veng/light_buffer.slang the set-0 light and
+// area-vertex buffers (bindings 6 and 7).
 #include "../shadow.slang"
 #include "Veng/brdf.slang"
 #include "Veng/light_buffer.slang"
@@ -26,14 +27,7 @@
 #include "Veng/light_flags.slang"
 #include "Veng/ltc.slang"
 
-// Set 4: the image-based-lighting maps (off the bindless registry, a closed renderer-owned set).
-// Irradiance is the diffuse term; the prefiltered cube + the BRDF LUT are the split-sum specular
-// term. Binding 0 (the radiance cube) is the skybox pass's and is unused here. Always bound and
-// valid; sampling is gated on the view block's ambient arm.
-[[vk::binding(1, 4)]] TextureCube g_Irradiance;
-[[vk::binding(2, 4)]] TextureCube g_Prefilter;
-[[vk::binding(3, 4)]] Texture2D g_BrdfLut;
-[[vk::binding(4, 4)]] SamplerState g_IblSampler;
+#include "Veng/ibl_maps.slang"
 
 // The view block's ambient arm (LightState.w), matching the renderer's AmbientArm.
 static const uint AmbientArmFlat = 0;
@@ -468,11 +462,11 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
         return;
     }
 
-    // A directional light is shadowed by the cascade set fit to its direction, unless the
-    // atlas had none left for it (the denied flag), in which case it shades unshadowed
-    // rather than reading a cascade fit to some other light. A point or spot light is
-    // shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z, -1 =
-    // unshadowed). Both sample through hardware SampleCmp.
+    // A directional light is shadowed by the cascade set fit to its direction, unless it
+    // holds none — the atlas had none left for it, or it casts no shadow — in which case it
+    // shades unshadowed rather than reading a cascade fit to some other light. A point or
+    // spot light is shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z,
+    // -1 = unshadowed). Both sample through hardware SampleCmp.
     float visibility;
     if (s.DeclinesShadowMaps)
     {
@@ -480,7 +474,7 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
     }
     else if (isDirectional)
     {
-        visibility = LightIsCascadeDenied(light.Cone.w)
+        visibility = (LightIsCascadeDenied(light.Cone.w) || LightCastsNoShadow(light.Cone.w))
             ? 1.0
             : DirectionalShadowVisibility(worldPos, N, L, s.ViewDepth,
                                           LightCascadeSet(light.Cone.w));

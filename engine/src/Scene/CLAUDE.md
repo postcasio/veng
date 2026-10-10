@@ -224,9 +224,10 @@ rotation, and with one each rotation is post-multiplied onto the sampled or blen
 so a clip and a procedural turn compose; a joint turns about its own axes and carries exactly its
 subtree. Names resolve once per skeleton into a cache on the component, an unknown name is ignored
 with one warning, and there are no limits — the caller clamps. The CPU read of a posed joint,
-`Skeleton::JointModelTransform`, is in [../Asset/CLAUDE.md](../Asset/CLAUDE.md)), `Light` (a directional light —
-`Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects the first `Light` entity into
-the `SceneView`, or a zero-intensity default → flat ambient when the scene has none), and
+`Skeleton::JointModelTransform`, is in [../Asset/CLAUDE.md](../Asset/CLAUDE.md)), `Light` (a scene light of any
+`LightType` — directional, point, spot, or a Rect/Sphere/Polygon area light; `SceneRenderer::Execute`
+packs every one that can light the view, see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), and its
+`Tag` names it to a material that looks a light up), and
 `ViewPose` (a fieldless runtime-only tag marking an entity whose `Transform` is authored per
 frame in the View phase — a camera-anchored impostor, a billboard: the render gather resolves
 its own local transform live instead of blending the scene's two-tick history, which holds

@@ -6,6 +6,8 @@
 // The includer declares the view block (view_constants.slang) before including this. This file
 // declares the set-0 light and area-vertex buffers (bindings 6 and 7) and nothing else.
 
+#pragma once
+
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 // The per-view area-light polygon-vertex buffer (Rect/Polygon world-space vertices, one vec4
 // each). A light's Area.y/z give the base/count relative to this view's region; the view block's
@@ -28,7 +30,7 @@ static const float LightTypePolygon = 5.0;
 // carry the source/shape size: a Sphere's or a Point/Spot's source radius, a Directional's
 // sine of angular radius (dimensionless, not a world radius), a Rect/Polygon's vertex range
 // into the area-vertex buffer, the area-shadow slot, and the world area normal. Response
-// weights the light's terms.
+// weights the light's terms, and carries the light's authored tag (see LoadLightTag).
 struct GpuLight
 {
     float4 PositionRange;   // xyz world position, w range
@@ -37,13 +39,24 @@ struct GpuLight
     float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
     float4 Area;            // x sphere/point/spot source radius or directional sin(angular radius), y poly vertex base, z poly vertex count, w area-shadow slot
     float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w shadow source radius
-    float4 Response;        // x specular scale, yzw unused
+    float4 Response;        // x specular scale, y the tag's u32 bits (LoadLightTag), zw unused
 };
 
 // The index-th light of this view's region.
 GpuLight LoadLight(ViewConstants vc, uint index)
 {
     return g_Lights.Load<GpuLight>((vc.LightState.x + index) * LightStride);
+}
+
+// Byte offset of the tag lane, Response.y, within a packed light.
+static const uint LightTagOffset = 100;
+
+// The tag the scene authored on the index-th light of this view's region (Light::Tag), 0 when
+// untagged. The lane holds the tag's u32 bit pattern rather than a float value, so it is loaded as
+// raw bits: a tag past 2^24, or one whose bits spell a NaN, survives exactly.
+uint LoadLightTag(ViewConstants vc, uint index)
+{
+    return g_Lights.Load<uint>((vc.LightState.x + index) * LightStride + LightTagOffset);
 }
 
 // Load a packed area-light polygon vertex (world space) by its region-relative index.

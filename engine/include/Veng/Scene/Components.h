@@ -550,6 +550,16 @@ namespace Veng
         f32 SpecularScale{1.0f};
         /// @brief Convex polygon vertices in entity-local space, wound CCW about local +Z (Polygon).
         vector<vec3> PolygonVertices;
+        /// @brief An identity a material can find this light by; 0, the default, is untagged.
+        ///
+        /// The renderer packs it with the light, and a shader looks the light up by it
+        /// (`FindLightByTag`, Veng/medium_lighting.slang) — so a material lighting itself from one
+        /// particular light, such as a fog lit by the one light standing for its sun, can pick that
+        /// light out of the view's list. It changes nothing about how the light shades. The values
+        /// mean whatever the code writing them says: the engine assigns none and reserves only 0.
+        /// Two lights in one view carrying the same nonzero tag make the lookup return the first
+        /// of them, and a debug build warns.
+        u32 Tag{0};
     };
 
     /// @brief Per-seat resolved input for this tick — the serializable action snapshot.
@@ -1906,6 +1916,8 @@ VE_ARRAY_FIELD(PolygonVertices, .DisplayName = "Polygon Vertices",
 VE_FIELD(CastsShadows, .DisplayName = "Casts Shadows")
 VE_FIELD(SpecularScale, .DisplayName = "Specular Scale",
          .Display = {.Min = 0.0, .Max = 1.0, .Step = 0.05})
+VE_FIELD(Tag, .DisplayName = "Tag",
+         .Tooltip = "An identity a material can find this light by; 0 is untagged")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)

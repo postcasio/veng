@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <bit>
 
 #include <Veng/Veng.h>
 #include <Veng/Math/AABB.h>
@@ -53,7 +54,7 @@ namespace Veng::Renderer
     /// @brief The bit meanings of a PackedLight's Cone.w flags word, mirrored in light_flags.slang.
     ///
     /// A small integer carried in a float, so every value must stay well inside f32's exact
-    /// integer range — which two flags, a two-bit index and one more flag comfortably do.
+    /// integer range — which two flags, a two-bit index and two more flags comfortably do.
     namespace LightFlags
     {
         /// @brief The area light emits from both faces of its shape.
@@ -73,6 +74,12 @@ namespace Veng::Renderer
         /// light denied a set keeps its perspective tile instead. The flag is what makes the
         /// budget's edge visible in the packed light rather than an unexplained missing shadow.
         inline constexpr u32 CascadeDenied = 1u << 4;
+        /// @brief The light casts no shadow (Light::CastsShadows is clear); every arm reads it lit.
+        ///
+        /// A punctual or area light already says so through its -1 slot. A Directional needs the
+        /// bit: its cascade-set index reads as set 0 when it holds no set, which would shadow it by
+        /// another light's cascades.
+        inline constexpr u32 CastsNoShadow = 1u << 5;
     }
 
     /// @brief One light packed for the ring-buffered light buffer (set-0 binding 6).
@@ -81,7 +88,7 @@ namespace Veng::Renderer
     /// first four are the punctual-light fields; the next two carry the area-light
     /// shape (emitter radius, polygon vertex range into the area-vertex buffer, the
     /// area-shadow slot, the precomputed world-space area normal, and the shadow source radius);
-    /// the last carries how the light's response is weighted.
+    /// the last carries how the light's response is weighted, and the light's tag.
     struct PackedLight
     {
         /// @brief xyz world position, w range.
@@ -109,12 +116,31 @@ namespace Veng::Renderer
         /// with a bounded domain, so the lighting pass caps this lane's *angular* size per
         /// fragment. Keep the two lanes separate; the cap must never reach Area's x.
         vec4 AreaNormal;
-        /// @brief x the specular scale (Light::SpecularScale); y, z and w unused.
+        /// @brief x the specular scale (Light::SpecularScale), y the tag (Light::Tag); z and w unused.
+        ///
+        /// y holds the tag's u32 bit pattern, not its value as a float (see PackLightTag), so any
+        /// tag survives exactly; the shader loads that lane as raw bits.
         vec4 Response;
     };
 
     static_assert(sizeof(PackedLight) == BindlessRegistry::LightStride,
                   "PackedLight must match the bindless light buffer stride");
+
+    /// @brief The f32 lane a light's tag rides in PackedLight::Response.y: its bits, unconverted.
+    /// @param tag  The light's Light::Tag.
+    /// @return A float whose bit pattern is @p tag.
+    [[nodiscard]] inline f32 PackLightTag(const u32 tag)
+    {
+        return std::bit_cast<f32>(tag);
+    }
+
+    /// @brief The tag a PackedLight carries, read back from its Response.y lane.
+    /// @param light  A packed light.
+    /// @return The Light::Tag it was packed with.
+    [[nodiscard]] inline u32 UnpackLightTag(const PackedLight& light)
+    {
+        return std::bit_cast<u32>(light.Response.y);
+    }
 
     /// @brief A cascade-travel array filled with the direction a set with no source is fit to.
     ///
@@ -183,6 +209,13 @@ namespace Veng::Renderer
         /// scene asked for more cascade sets than MaxCascadeSets, which is a budget statement
         /// rather than an error — but a silent one without this count.
         u32 DeniedDirectionalCount = 0;
+
+        /// @brief A nonzero tag two or more packed lights carry, or 0 when every tag is unique.
+        ///
+        /// A shader's lookup by tag returns the first light carrying it, so a duplicate hides the
+        /// others; SceneRenderer warns of it in a debug build. The first duplicate found in packed
+        /// order is named.
+        u32 DuplicateTag = 0;
     };
 
     /// @brief Packs the Light entities in @p world that can light this view into the renderer's GPU light layout.

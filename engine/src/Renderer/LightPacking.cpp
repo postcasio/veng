@@ -307,6 +307,10 @@ namespace Veng::Renderer
             {
                 flags |= LightFlags::CascadeDenied;
             }
+            if (!light.CastsShadows)
+            {
+                flags |= LightFlags::CastsNoShadow;
+            }
             return flags;
         }
 
@@ -722,8 +726,22 @@ namespace Veng::Renderer
                 .Cone = vec4(cosInner, cosOuter, shadowSlot, flags),
                 .Area = area,
                 .AreaNormal = vec4(areaNormal, shadowRadius),
-                .Response = vec4(light.SpecularScale, 0.0f, 0.0f, 0.0f),
+                .Response = vec4(light.SpecularScale, PackLightTag(light.Tag), 0.0f, 0.0f),
             };
+        }
+
+        // A lookup by tag returns the first light carrying it, so name a nonzero tag that repeats.
+        for (u32 i = 0; i < candidateCount && result.DuplicateTag == 0; ++i)
+        {
+            const u32 tag = candidates[i].Source->Tag;
+            for (u32 j = i + 1; j < candidateCount && tag != 0; ++j)
+            {
+                if (candidates[j].Source->Tag == tag)
+                {
+                    result.DuplicateTag = tag;
+                    break;
+                }
+            }
         }
 
         return result;

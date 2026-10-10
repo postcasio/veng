@@ -805,6 +805,56 @@ TEST_CASE("PackSceneLights: a non-casting area light is not selected to drive th
     CHECK_FALSE(IsAreaCascadeShadowed(packed.Lights[0]));
 }
 
+TEST_CASE("PackSceneLights: a non-casting directional is flagged so it reads no cascade set")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A shadow-casting sun takes set 0; a fill directional declining shadows holds no set, and its
+    // set index reads as 0 regardless, so only the flag keeps it off the sun's cascades.
+    AddLight(*scene, Light{.Type = LightType::Directional, .Intensity = 4.0f});
+    AddLight(*scene, Light{.Type = LightType::Directional,
+                           .Direction = vec3(1.0f, 0.0f, 0.0f),
+                           .Intensity = 1.0f,
+                           .CastsShadows = false});
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 2);
+    CHECK(packed.CascadeSetCount == 1);
+    CHECK((static_cast<u32>(packed.Lights[0].Cone.w) & LightFlags::CastsNoShadow) == 0);
+    CHECK((static_cast<u32>(packed.Lights[1].Cone.w) & LightFlags::CastsNoShadow) != 0);
+}
+
+TEST_CASE("PackSceneLights: a light's tag rides its packed record bit for bit")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // One untagged and one tagged light, the tag chosen past f32's exact integer range and with the
+    // bits of a NaN, so a pack that converted it to a float value would not round-trip it.
+    constexpr u32 Tag = 0xFFC0FFEEu;
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f});
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f, .Tag = Tag},
+             vec3(2.0f, 0.0f, 0.0f));
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 2);
+    CHECK(UnpackLightTag(packed.Lights[0]) == 0u);
+    CHECK(UnpackLightTag(packed.Lights[1]) == Tag);
+    // The tag shares the lane vec4 with the specular scale and leaves it alone.
+    CHECK(packed.Lights[1].Response.x == doctest::Approx(1.0f));
+    CHECK(packed.DuplicateTag == 0u);
+
+    // A second light carrying the same tag is named, so the renderer can say the lookup hides it.
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f, .Tag = Tag},
+             vec3(4.0f, 0.0f, 0.0f));
+    CHECK(PackSceneLights(*scene, true, 1024).DuplicateTag == Tag);
+}
+
 TEST_CASE("PackSceneLights: a Sphere's lighting radius and its shadow source radius are two lanes")
 {
     TypeRegistry types;

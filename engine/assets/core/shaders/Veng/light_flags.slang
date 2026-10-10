@@ -2,9 +2,11 @@
 // accessors the deferred lighting pass reads them back with. Mirrors the LightFlags constants
 // in Veng/Renderer/LightPacking.h; the two must move together.
 //
-// The word is a small integer carried in a float, exact well past the four bits used here.
-// A two-sided bit, an arm bit for area lights, a two-bit cascade-set index and a denial bit —
-// which together say, for any light, whether it is shadowed and by which atlas.
+// The word is a small integer carried in a float, exact well past the six bits used here.
+// A two-sided bit, an arm bit for area lights, a two-bit cascade-set index, a denial bit and a
+// no-shadow bit — which together say, for any light, whether it is shadowed and by which atlas.
+
+#pragma once
 
 // The area light emits from both faces of its shape.
 static const int LightFlagTwoSided = 1;
@@ -24,6 +26,11 @@ static const int LightFlagCascadeSetMask = 3 << LightFlagCascadeSetShift;
 // own perspective tile instead.
 static const int LightFlagCascadeDenied = 16;
 
+// The light casts no shadow (Light::CastsShadows is clear), so every shadow arm reads it as fully
+// visible. A punctual or area light already says so through its -1 slot; a Directional, whose
+// cascade set index reads as set 0 when it holds none, needs this bit.
+static const int LightFlagCastsNoShadow = 32;
+
 // True when an area light emits from both faces of its shape.
 bool LightIsTwoSided(float flags)
 {
@@ -40,6 +47,12 @@ bool LightIsAreaCascadeShadowed(float flags)
 bool LightIsCascadeDenied(float flags)
 {
     return (int(flags) & LightFlagCascadeDenied) != 0;
+}
+
+// True when the light casts no shadow at all.
+bool LightCastsNoShadow(float flags)
+{
+    return (int(flags) & LightFlagCastsNoShadow) != 0;
 }
 
 // The cascade set fit to this light's direction. Meaningful only for a light the cascade arm

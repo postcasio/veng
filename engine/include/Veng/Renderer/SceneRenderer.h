@@ -1202,6 +1202,9 @@ namespace Veng::Renderer
         /// @brief Set once the cascade-budget message has logged, so the WARN fires only once.
         bool m_CascadeBudgetWarned = false;
 
+        /// @brief The duplicate light tag last warned of, so a standing duplicate warns once.
+        u32 m_WarnedDuplicateLightTag = 0;
+
         /// @brief Warns once per renderer, per budget, when the last gather clamped.
         ///
         /// Reads m_DrawBudgetStats after the gather phases have run. An overflowed scene is a
@@ -1216,6 +1219,14 @@ namespace Veng::Renderer
         /// signal is PackedSceneLights::DeniedDirectionalCount and the light's own denied flag.
         /// @param denied Shadow-casting directionals the last pack could not seat.
         void ReportDeniedCascades(u32 denied);
+
+        /// @brief Warns, in a debug build, when two lights in this view carry the same nonzero tag.
+        ///
+        /// A shader's lookup by tag returns the first such light and silently hides the others.
+        /// A duplicate is a steady state, so each distinct duplicate tag warns once, when it first
+        /// appears; a release build says nothing.
+        /// @param tag PackedSceneLights::DuplicateTag from the last pack.
+        void ReportDuplicateLightTag(u32 tag);
 
         /// @brief Allocates the mode-independent per-draw buffers + their descriptor sets.
         ///

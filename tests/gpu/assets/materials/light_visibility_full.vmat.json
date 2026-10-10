@@ -1,0 +1,14 @@
+{
+  "defaultInstance": "0xC26ABDC66BCB00A2",
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0xA3F19C26E191A26E"
+  },
+  "fields": [
+    { "name": "Select", "type": "vec4", "value": [0.0, 0.0, 0.0, 0.0] },
+    { "name": "Shadowed", "type": "vec4", "value": [0.0, 0.0, 0.0, 0.0] },
+    { "name": "Lit", "type": "vec4", "value": [0.0, 0.0, 0.0, 0.0] },
+    { "name": "Past", "type": "vec4", "value": [0.0, 0.0, 0.0, 0.0] }
+  ]
+}

@@ -1842,6 +1842,20 @@ namespace Veng::Renderer
         m_CascadeBudgetWarned = true;
     }
 
+    void SceneRenderer::ReportDuplicateLightTag(const u32 tag)
+    {
+        if (tag == 0 || tag == m_WarnedDuplicateLightTag)
+        {
+            return;
+        }
+        m_WarnedDuplicateLightTag = tag;
+#if defined(VE_DEBUG) && VE_DEBUG
+        Log::Warn("SceneRenderer: more than one light in this view carries tag {}; a lookup by "
+                  "that tag finds only the first.",
+                  tag);
+#endif
+    }
+
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex,
                                      const u32 halfResViewConstantsIndex,
                                      const bool halfResViewReady)
@@ -2305,6 +2319,7 @@ namespace Veng::Renderer
             view.World, m_Settings.PunctualShadows, m_Settings.PunctualShadowResolution,
             casterBounds, m_Settings.FrustumCull ? &cameraFrustum : nullptr, &cameraPosition);
         ReportDeniedCascades(packed.DeniedDirectionalCount);
+        ReportDuplicateLightTag(packed.DuplicateTag);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
         // AtlasParams.x = 1/tileRes, used by the lighting pass for inset clamping and PCF.

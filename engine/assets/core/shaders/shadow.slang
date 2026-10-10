@@ -16,6 +16,7 @@
 // lighting layout (the default), and a later set where set 3 is already taken — a forward-lit
 // material's layout carries the per-draw DrawData there (see Veng/forward_lighting.slang). Define
 // it before including this file.
+#pragma once
 #include "Veng/area_shadow.slang"
 
 #ifndef VE_SHADOW_SET
@@ -71,8 +72,8 @@ struct PunctualShadows
 [[vk::binding(3, VE_SHADOW_SET)]] ConstantBuffer<PunctualShadows> g_Punctual;
 [[vk::binding(4, VE_SHADOW_SET)]] Texture2D g_PunctualAtlas;
 
-// The PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps, each
-// offset by the atlas texel size and individually hardware-filtered, widening the
+// The surface lookups' PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps,
+// each offset by the atlas texel size and individually hardware-filtered, widening the
 // penumbra past the comparison sampler's own 2×2 bilinear footprint.
 static const int ShadowPcfRadius = 1;
 
@@ -90,18 +91,22 @@ uint SelectCascade(float viewDepth, uint count, uint set)
 }
 
 // Project worldPos by a tile-remapped view-proj and PCF-SampleCmp the atlas tile it
-// lands in. The matrix bakes in the tile UV remap (cascade or punctual record), so
+// lands in, over a (2*pcfRadius+1)² grid of comparison taps (0 is one hardware 2×2 tap).
+// The matrix bakes in the tile UV remap (cascade or punctual record), so
 // the projected NDC.xy already lies in the tile's atlas window. The reference depth
 // carries the supplied bias; every tap UV (including the kernel offsets) is clamped
 // to the tile sub-rect [tileMin, tileMax] inset by a half-texel so a tap near a tile
 // edge cannot bleed into a neighbouring tile — the atlas's one cost over a texture
-// array. Returns full visibility when the projected fragment falls outside the tile
-// or the valid depth range. Shared by the cascade and punctual paths over the two
-// atlases, selected by the atlas + sampler the caller passes.
+// array. Returns full visibility when the projected point falls behind the projection,
+// outside the tile, or outside the valid depth range. Shared by the cascade and punctual
+// paths over the two atlases, selected by the atlas + sampler the caller passes.
 float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tileViewProj,
-                      float3 worldPos, float bias, float2 texel, float2 tileMin, float2 tileMax)
+                      float3 worldPos, float bias, float2 texel, float2 tileMin, float2 tileMax,
+                      int pcfRadius)
 {
     float4 lightClip = mul(tileViewProj, float4(worldPos, 1.0));
+    if (lightClip.w <= 0.0)
+        return 1.0;
     float3 lightNdc = lightClip.xyz / lightClip.w;
 
     if (lightNdc.z < 0.0 || lightNdc.z > 1.0)
@@ -120,8 +125,8 @@ float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tile
 
     float visibility = 0.0;
     float weight = 0.0;
-    for (int dy = -ShadowPcfRadius; dy <= ShadowPcfRadius; ++dy)
-        for (int dx = -ShadowPcfRadius; dx <= ShadowPcfRadius; ++dx)
+    for (int dy = -pcfRadius; dy <= pcfRadius; ++dy)
+        for (int dx = -pcfRadius; dx <= pcfRadius; ++dx)
         {
             float2 tapUV = shadowUV + float2(float(dx), float(dy)) * texel;
             tapUV = clamp(tapUV, clampMin, clampMax);
@@ -135,8 +140,10 @@ float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tile
 // held off by two texel-proportional terms, both in world units so they track cascade
 // coarseness and stay independent of the light-space depth range: a normal-offset that
 // displaces the sample point off the surface, and a depth bias converted to the
-// compare's NDC-z through the cascade's actual depth extent.
-float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count, uint set)
+// compare's NDC-z through the cascade's actual depth extent. pcfRadius sizes the tap grid
+// (see SampleAtlasTile).
+float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count, uint set,
+                    int pcfRadius)
 {
     // The cascade's tile sub-rect in atlas UV: one set is min(count,2) columns ×
     // ceil(count/2) rows, and the sets stack as further row bands, matching the renderer's
@@ -172,7 +179,7 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
     float bias = biasWorld / max(g_Shadow.Sets[set].DepthRange[cascade], 1e-4);
 
     return SampleAtlasTile(g_ShadowAtlas, g_ShadowSampler, g_Shadow.Sets[set].ViewProj[cascade],
-                           samplePos, bias, texel, tileMin, tileMax);
+                           samplePos, bias, texel, tileMin, tileMax, pcfRadius);
 }
 
 // Cascaded directional-shadow visibility via hardware SampleCmp, for the cascade set fit
@@ -180,8 +187,10 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
 // splits, samples that cascade's atlas tile, and cross-fades into the next cascade within
 // a small blend band before the selected cascade's far split so the resolution change
 // across a cascade edge reads as a gradient, not a hard line. The last cascade fades to
-// full visibility past its far plane. The band width rides ShadowParams.y.
-float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float viewDepth, uint set)
+// full visibility past its far plane. The band width rides ShadowParams.y. pcfRadius sizes
+// each cascade sample's tap grid (see SampleAtlasTile).
+float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float viewDepth, uint set,
+                                  int pcfRadius)
 {
     // ShadowParams.w gates the whole path: 0 when the shadow pass is compiled out,
     // so the term is fully lit and the dummy/zeroed atlas is never meaningfully read.
@@ -196,7 +205,7 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
     if (cascade >= count)
         return 1.0; // past the last cascade's far plane — unshadowed
 
-    float visibility = SampleCascade(worldPos, N, L, cascade, count, set);
+    float visibility = SampleCascade(worldPos, N, L, cascade, count, set, pcfRadius);
 
     // Cross-fade: within a blend band before this cascade's far split, blend toward
     // the next cascade's sample (or toward full visibility past the last cascade).
@@ -209,7 +218,7 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
         {
             float t = saturate((viewDepth - bandStart) / band);
             float nextVisibility = (cascade + 1u < count)
-                ? SampleCascade(worldPos, N, L, cascade + 1u, count, set)
+                ? SampleCascade(worldPos, N, L, cascade + 1u, count, set, pcfRadius)
                 : 1.0;
             visibility = lerp(visibility, nextVisibility, t);
         }
@@ -224,6 +233,12 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
                       saturate((viewDepth - fadeStart) / max(lastSplit - fadeStart, 1e-4)));
 
     return visibility;
+}
+
+// DirectionalShadowVisibility with the surface lookups' ShadowPcfRadius kernel.
+float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float viewDepth, uint set)
+{
+    return DirectionalShadowVisibility(worldPos, N, L, viewDepth, set, ShadowPcfRadius);
 }
 
 // Select a point light's cube face from the light→fragment direction (-L, since L
@@ -250,7 +265,8 @@ uint SelectCubeFace(float3 toFragment)
 // selects the cube face from the major axis of -L and SampleCmps that face's tile. Both
 // reuse SampleAtlasTile — the tile remap is baked into the record's matrix, so the
 // sample is a projective SampleCmp of the record's tile exactly as a cascade tile is.
-float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
+// pcfRadius sizes the tap grid (see SampleAtlasTile).
+float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot, int pcfRadius)
 {
     if (slot < 0)
         return 1.0;
@@ -285,7 +301,13 @@ float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
     float bias = record.Params.w * (1.0 + 2.0 * slope);
 
     return SampleAtlasTile(g_PunctualAtlas, g_ShadowSampler, record.ViewProj[face],
-                           worldPos, bias, texel, tileMin, tileMax);
+                           worldPos, bias, texel, tileMin, tileMax, pcfRadius);
+}
+
+// PunctualShadowVisibility with the surface lookups' ShadowPcfRadius kernel.
+float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
+{
+    return PunctualShadowVisibility(worldPos, N, L, slot, ShadowPcfRadius);
 }
 
 // A 16-point Poisson disk over the unit circle: the sample pattern for the PCSS blocker search

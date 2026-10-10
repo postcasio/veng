@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002400",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x67077ECD2D8C4F1A",
+      "type": "Shader",
+      "source": "shaders/forward_opaque.frag.shader.json"
+    },
+    {
+      "id": "0x3AEA87F2E94072A6",
+      "type": "Material",
+      "source": "materials/forward_opaque.vmat.json"
+    },
+    {
+      "id": "0xA3F19C26E191A26E",
+      "type": "Shader",
+      "source": "shaders/light_visibility.frag.shader.json"
+    },
+    {
+      "id": "0x2BF0C5867F940FA6",
+      "type": "Material",
+      "source": "materials/light_visibility_full.vmat.json"
+    },
+    {
+      "id": "0xB52448F87DB0DC8A",
+      "type": "Material",
+      "source": "materials/light_visibility_half.vmat.json"
+    }
+  ]
+}
