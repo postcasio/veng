@@ -486,13 +486,26 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = MountPack(assets, "veng_gpu_ssr_rough_mirror.vengpack");
     ReflectionProbe probe(Context, assets, SceneRendererSettings::SsrResolution::Half);
 
-    // At one composite pixel per SSR texel the mirror's reflected edge is as sharp as the trace
-    // draws it; at Half, magnified through the B-spline, it spans little more than one SSR texel.
+    // At one composite pixel per SSR texel the mirror's reflected edges are as sharp as the trace
+    // draws them: the far edge, where the rays stop hitting the wall, and the side edge, where they
+    // land a texel apart across the wall's own silhouette in the scene colour and a footprint read
+    // takes a single tap. At Half, magnified through the B-spline, the far edge spans little more
+    // than one SSR texel.
     {
         const RoughScene built = BuildWallScene(Context, assets, Types, 0.0f, 1.2f);
         ReflectionProbe full(Context, assets, SceneRendererSettings::SsrResolution::Full);
         const auto [fullAdded, fullPlain] = full.Render(Context, built);
         CHECK(ReflectedTopEdgeWidth(fullAdded, fullPlain) < 1.5f);
+        const u32 contact = ContactRow(fullPlain);
+        const vector<f32> column = ColumnProfile(fullAdded, Extent.x / 2);
+        const f32 bottom =
+            Crossing(column, static_cast<i32>(Extent.y) - 1, static_cast<i32>(contact) + 1,
+                     0.5f * *std::max_element(column.begin() + contact + 1, column.end()));
+        const vector<f32> row = RowProfile(
+            fullAdded, contact + static_cast<u32>((bottom - static_cast<f32>(contact)) * 0.5f));
+        REQUIRE(row[Extent.x / 2] > 0.0f);
+        CHECK(EdgeWidth(row, static_cast<i32>(Extent.x) - 1, static_cast<i32>(Extent.x / 2),
+                        row[Extent.x / 2]) < 1.2f);
         const auto [added, plain] = probe.Render(Context, built);
         CHECK(ReflectedTopEdgeWidth(added, plain) < 2.5f);
     }

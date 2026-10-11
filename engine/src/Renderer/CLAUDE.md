@@ -1266,6 +1266,17 @@ the view and authorable on `RenderLook` (`SsrIntensity`, `SsrMaxDistance`, `SsrT
   `SsrThickness` alone governs — it is the near-range floor.
 - **Positions are reconstructed camera-relative** through `InvViewRotProj` and the view rotation, so
   the trace's precision does not depend on the camera's distance from the world origin.
+- **The reflected colour is read through the rays' own footprint**, never by implicit derivatives
+  (undefined past the march's early exits, and across a quad whose rays hit different surfaces an
+  anisotropic smear along the gap). The neighbouring trace texels' pixel rays are met with the ray's
+  surface plane, reflected about its normal and met with the hit's tangent plane; their landing
+  offsets from the hit, in scene-colour texels, are the footprint's axes. The read is a tent over
+  that lattice: four bilinear taps along the axes add whatever variance the bilinear tap's own sixth
+  of a texel² lacks, so rays landing a texel apart or closer read one tap (a mirror stays as sharp as
+  the trace) and diverging rays are prefiltered across the gap between them, which steadies how
+  much of a small source the reflection carries as it moves. An axis is capped at 8 texels, and a
+  grazing meeting falls back to one tap. Being the hit's own tangent plane, the footprint never
+  spans a silhouette.
 
 For geometry out to ~10 km a look sets `SsrMaxDistance` to the reach wanted (10000), leaves
 `SsrThickness` at its near-range value, and raises `SsrMaxSteps` (512–1024) when long grazing rays
@@ -1323,8 +1334,8 @@ source's sub-texel position, at any roughness. The chain carries that energy thr
 every grid phase. `tests/gpu/ssr_rough.cpp` pins the properties: a small emitter's rough reflection
 keeps the trace's energy and its own shape across sub-pixel shifts, a rough reflection of a wall has
 no texel-grid kinks, a reflected edge blurs by the same width at Full and Half, a reflection is
-narrower where its rays are short, and a mirror stays sharp with its edge fade intact — as sharp
-as the trace at Full SSR resolution.
+narrower where its rays are short, and a mirror stays sharp with its edge fade intact — its far and
+side edges as sharp as the trace at Full SSR resolution.
 
 #### A reflection magnified past the trace stays smooth and stops at silhouettes
 

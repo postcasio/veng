@@ -28,6 +28,18 @@
 // View positions are reconstructed camera-relative (InvViewRotProj, then the view rotation), so
 // their precision does not depend on how far the camera is from the world origin; the camera sits
 // at the view-space origin and the depth comparison is a single Z test.
+//
+// The reflected colour is read through an explicit footprint rather than by implicit derivatives,
+// which are undefined past the march's early exits and across a quad whose rays hit different
+// surfaces. The footprint is where the neighbouring trace texels' rays land: each neighbour's pixel
+// ray meets this ray's surface plane, reflects about the same normal and meets the hit surface's
+// tangent plane, and the two landing points' offsets from the hit, in scene-colour texels, span it.
+// Rays a footprint apart sample the reflected image on that lattice, and the read is a tent over it:
+// four bilinear taps along the footprint's axes add whatever variance the bilinear tap's own (one
+// sixth of a texel squared) lacks of the tent's, so a mirror whose rays land a texel apart or closer
+// reads one bilinear tap and stays as sharp as the trace, while rays that diverge are prefiltered
+// across the gap between them. The footprint is the hit's own tangent plane, so it never spans a
+// silhouette the way a quad's derivatives do.
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -66,6 +78,15 @@ static const float CellExitBias = 0.05;
 // the cone ever gets on screen.
 static const float MaxStoredHitDistance = 60000.0;
 
+// The longest footprint axis the reflected-colour read is prefiltered over, in scene-colour texels:
+// a ray grazing the surface it hits spreads its neighbours far along it, and a read that wide would
+// smear the hit surface rather than antialias it.
+static const float MaxFootprintTexels = 8.0;
+
+// The least cosine between a neighbouring ray and the plane it meets for the footprint to be taken;
+// a grazing intersection has no stable landing point, and the read falls back to one bilinear tap.
+static const float MinFootprintCosine = 1e-3;
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -95,6 +116,44 @@ float3 ViewPositionAt(ViewConstants vc, float2 uv, float depth)
     float2 ndcXY = uv * 2.0 - 1.0;
     float4 relativeH = mul(vc.InvViewRotProj, float4(ndcXY, depth, 1.0));
     return mul((float3x3)vc.View, relativeH.xyz / relativeH.w);
+}
+
+// The landing offset, in scene-colour texels, of the ray leaving the neighbouring trace texel at
+// `neighbourUV`: its pixel ray meets the plane through `surface` with normal `normal`, reflects
+// about that normal and meets the plane through `hit` with normal `hitNormal`. Zero when either
+// meeting is grazing or the landing point is behind the camera.
+float2 NeighbourLanding(ViewConstants vc, float2 neighbourUV, float depth, float3 surface, float3 normal,
+                        float3 hit, float3 hitNormal, float2 hitUV, float2 sceneSize)
+{
+    // The pixel ray through the neighbour, from its point at this surface's depth toward one further
+    // away, so a perspective and an orthographic projection give it alike.
+    float3 near = ViewPositionAt(vc, neighbourUV, depth);
+    float3 direction = normalize(ViewPositionAt(vc, neighbourUV, depth * 0.5) - near);
+    float towardSurface = dot(normal, direction);
+    if (abs(towardSurface) < MinFootprintCosine)
+        return float2(0.0, 0.0);
+    float3 start = near + direction * (dot(normal, surface - near) / towardSurface);
+    float3 reflected = reflect(direction, normal);
+    float towardHit = dot(hitNormal, reflected);
+    if (abs(towardHit) < MinFootprintCosine)
+        return float2(0.0, 0.0);
+    float3 landing = start + reflected * (dot(hitNormal, hit - start) / towardHit);
+    if (landing.z >= 0.0)
+        return float2(0.0, 0.0);
+    float2 offset = (ViewToScreenUV(vc.Proj, landing) - hitUV) * sceneSize;
+    float length2 = dot(offset, offset);
+    return length2 > MaxFootprintTexels * MaxFootprintTexels ? offset * (MaxFootprintTexels * rsqrt(length2))
+                                                             : offset;
+}
+
+// The tap offset along one footprint axis: the share of the axis whose square, as a variance, is
+// what the tent over the axis needs beyond the bilinear tap's own sixth of a texel squared.
+float2 TapSpread(float2 axis)
+{
+    float length2 = dot(axis, axis);
+    if (length2 <= 1.0)
+        return float2(0.0, 0.0);
+    return axis * sqrt((1.0 - 1.0 / length2) / 6.0);
 }
 
 [shader("fragment")]
@@ -174,6 +233,7 @@ TraceOutput fsMain(VSOutput input)
     float prevDeltaZ = -1.0;
     bool hit = false;
     float2 hitUV = float2(0.0, 0.0);
+    float3 hitPos = float3(0.0, 0.0, 0.0);
     float hitDistance = 0.0;
 
     const uint topLevel = max(g_PC.HiZLevels, 1u) - 1u;
@@ -271,7 +331,8 @@ TraceOutput fsMain(VSOutput input)
                     lo = mid;
             }
             hitUV = hi.xy;
-            hitDistance = length(ViewPositionAt(vc, hi.xy, hi.z) - viewPos);
+            hitPos = ViewPositionAt(vc, hi.xy, hi.z);
+            hitDistance = length(hitPos - viewPos);
             hit = true;
             break;
         }
@@ -285,7 +346,47 @@ TraceOutput fsMain(VSOutput input)
     if (!hit)
         return Miss;
 
-    float3 reflected = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].Sample(samp, hitUV).rgb;
+    // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span.
+    Texture2D sceneColor = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)];
+    uint sceneWidth;
+    uint sceneHeight;
+    uint sceneLevels;
+    sceneColor.GetDimensions(0u, sceneWidth, sceneHeight, sceneLevels);
+    float2 sceneSize = float2(sceneWidth, sceneHeight);
+    Texture2D normalTexture = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)];
+    uint normalWidth;
+    uint normalHeight;
+    uint normalLevels;
+    normalTexture.GetDimensions(0u, normalWidth, normalHeight, normalLevels);
+    int2 hitTexel = clamp(int2(hitUV * float2(normalWidth, normalHeight)), int2(0, 0),
+                          int2(normalWidth, normalHeight) - 1);
+    float3 hitWorldNormal = normalTexture.Load(int3(hitTexel, 0)).xyz;
+    float hitNormalLength = length(hitWorldNormal);
+    float2 spreadX = float2(0.0, 0.0);
+    float2 spreadY = float2(0.0, 0.0);
+    if (hitNormalLength > 1e-4)
+    {
+        float3 hitNormal = mul((float3x3)vc.View, hitWorldNormal / hitNormalLength);
+        float2 texel = 1.0 / float2(g_PC.Extent);
+        spreadX = TapSpread(NeighbourLanding(vc, uv + float2(texel.x, 0.0), depth, viewPos, N, hitPos,
+                                             hitNormal, hitUV, sceneSize));
+        spreadY = TapSpread(NeighbourLanding(vc, uv + float2(0.0, texel.y), depth, viewPos, N, hitPos,
+                                             hitNormal, hitUV, sceneSize));
+    }
+    float3 reflected;
+    if (all(spreadX == 0.0) && all(spreadY == 0.0))
+    {
+        reflected = sceneColor.SampleLevel(samp, hitUV, 0.0).rgb;
+    }
+    else
+    {
+        float2 offsetA = (spreadX + spreadY) / sceneSize;
+        float2 offsetB = (spreadX - spreadY) / sceneSize;
+        reflected = 0.25 * (sceneColor.SampleLevel(samp, hitUV + offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, hitUV - offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, hitUV + offsetB, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, hitUV - offsetB, 0.0).rgb);
+    }
 
     // Fade the contribution as the hit nears the screen border (the reflected detail
     // runs off-screen there) so reflections vanish smoothly rather than clipping.
