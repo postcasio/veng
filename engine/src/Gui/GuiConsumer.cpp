@@ -280,6 +280,11 @@ namespace Veng::Gui
             }
             for (Renderer::Viewport* viewport : m_Viewports)
             {
+                // A hidden panel's field is on no screen, so it takes none of the keyboard.
+                if (!viewport->IsShown())
+                {
+                    continue;
+                }
                 const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
@@ -298,6 +303,10 @@ namespace Veng::Gui
             const auto& typed = static_cast<const KeyTypedEvent&>(event);
             for (Renderer::Viewport* viewport : m_Viewports)
             {
+                if (!viewport->IsShown())
+                {
+                    continue;
+                }
                 const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {

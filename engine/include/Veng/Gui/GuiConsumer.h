@@ -42,7 +42,8 @@ namespace Veng::Gui
     /// A key press or its platform **repeat** reaches the documents only as text editing: the
     /// focused text field takes its editing keys (accepting one claims the key against role
     /// navigation until release), so a held key walks the caret or erases the way any text field
-    /// does. A key no field takes falls through unconsumed.
+    /// does. A key no field takes falls through unconsumed. A viewport its owner has stopped
+    /// showing (Renderer::Viewport::IsShown) takes no key and no typed text.
     ///
     /// **Focus navigation arrives as roles, never as keys** (ForwardRole): the application's input
     /// map binds the navigation roles, the engine resolves them per seat each frame, and this

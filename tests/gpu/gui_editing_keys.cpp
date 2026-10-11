@@ -23,7 +23,8 @@
 //       walks the caret;
 //   (g) a held arrow on a focused field never moves focus, past the role's repeat delay as well;
 //   (h) a platform repeat never walks focus; a held direction walks it only through the role's own
-//       repeat, at its delay and rate.
+//       repeat, at its delay and rate;
+//   (i) a field on a viewport its owner stopped showing takes neither editing keys nor typed text.
 
 #include <doctest/doctest.h>
 
@@ -504,4 +505,46 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     route.Release(Key::Tab);
     CHECK(document.GetFocused() == buttons[1]);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui editing keys: a hidden panel's field takes neither keys nor text")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    KeyRoute route(Context, assets, Types);
+    Gui::Document document;
+    const Gui::Element& field = AttachFocusedField(route, document, "ab");
+
+    // A tool panel's viewport ahead of the route's in the drive list, holding its own focused field.
+    const Unique<Renderer::Viewport> panel = Renderer::Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = {128, 128}},
+        .Settings = {},
+        .Role = Renderer::ViewportRole::Offscreen,
+        .RenderOnDemand = true,
+    });
+    route.Viewports.insert(route.Viewports.begin(), panel.get());
+    Gui::Document hiddenDocument;
+    InstallMeasurer(hiddenDocument);
+    hiddenDocument.SetInteractive(true);
+    Gui::Element& hidden = hiddenDocument.Add(hiddenDocument.Root(), Gui::ElementKind::TextInput);
+    hiddenDocument.SetText(hidden, "xy");
+    hiddenDocument.InitWidget(hidden);
+    hiddenDocument.SetFocus(&hidden);
+    panel->AttachDocument(hiddenDocument);
+
+    // A whole frame with no view pushed hides the panel; the keyboard reaches the field on screen.
+    panel->Render(Context.BeginFrame());
+    Context.EndFrame();
+    REQUIRE_FALSE(panel->IsShown());
+    route.Press(Key::Backspace);
+    KeyTypedEvent typed('c');
+    route.Router.Dispatch(typed);
+    CHECK(field.Text == "ac");
+    CHECK(hidden.Text == "xy");
+
+    route.Viewports.erase(route.Viewports.begin());
 }
