@@ -109,7 +109,7 @@ float3 YCoCgToRgb(float3 c)
     return float3(t + c.y, c.x + c.z, t - c.y);
 }
 
-// Five-tap Catmull-Rom read of the history at uv (as taa_resolve.frag reads its own), so a moving
+// Catmull-Rom read of the history at uv (as taa_resolve.frag reads its own), so a moving
 // pixel's reprojected read does not blur the history as a bilinear one would.
 float3 SampleHistoryCatmullRom(Texture2D t, SamplerState s, float2 uv, float2 texelSize)
 {

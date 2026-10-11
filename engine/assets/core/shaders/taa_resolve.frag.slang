@@ -109,10 +109,9 @@ float3 ClipToAabb(float3 boxMin, float3 boxMax, float3 history)
     return history;
 }
 
-// Five-tap Catmull-Rom sampling of a bilinearly-filtered texture: reconstructs a
-// sharp history sample from the 3×3 footprint around uv, collapsing the nine taps
-// into five bilinear fetches. Counters the per-frame blur a bilinear history
-// accumulates.
+// Catmull-Rom sampling of a bilinearly-filtered texture: reconstructs a sharp history
+// sample from the 4×4 texels around uv, collapsing the sixteen taps into nine bilinear
+// fetches. Counters the per-frame blur a bilinear history accumulates.
 float3 SampleHistoryCatmullRom(uint texture, uint samp, float2 uv, float2 texelSize)
 {
     const float2 resolution = float2(g_PC.Extent);
