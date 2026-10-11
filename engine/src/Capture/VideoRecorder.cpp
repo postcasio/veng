@@ -53,7 +53,7 @@ namespace Veng::Capture
 
         // The subscription has no removal, so it is made once here rather than per capture — and
         // only where there is a swap chain to be invalidated at all.
-        if (m_Context.IsSwapChainCaptureSupported())
+        if (!m_Context.IsHeadless())
         {
             m_Context.AddSwapChainInvalidationCallback([this] { Abort("swap chain changed"); });
         }
@@ -196,7 +196,7 @@ namespace Veng::Capture
         m_Imports.clear();
         m_NeedsDetach = false;
 
-        m_Compositor.SetCaptureSink(this);
+        m_Compositor.AddCaptureSink(*this);
         m_SinkInstalled = true;
 
         if (resolved.Audio != AudioTrack::None)
@@ -230,7 +230,7 @@ namespace Veng::Capture
     {
         if (m_SinkInstalled)
         {
-            m_Compositor.SetCaptureSink(nullptr);
+            m_Compositor.RemoveCaptureSink(*this);
             m_SinkInstalled = false;
         }
         if (m_TapInstalled)

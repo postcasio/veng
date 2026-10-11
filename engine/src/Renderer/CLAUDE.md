@@ -2362,34 +2362,25 @@ no immediate-mode UI in (`Application::IsImGuiFrameWanted`) goes further and run
 all — `ImGuiLayer::SkipFrame` stands in for NewFrame and Render, and reports no drawn output the
 same way.
 
-**A presented frame is read back through a mirror, never off the swap chain.** The finished
-composite — scene plus whatever overlay was drawn over it — exists only in the swap chain image, and
-`vkQueuePresentKHR` hands that image to the presentation engine: it is not the application's again
-until it is re-acquired, so transitioning it for a readback afterwards is a **write-after-present
-hazard** the synchronization validation layer reports as an error (and, on MoltenVK, a readback that
-can stall on the held drawable). So `Context::RequestPresentedFrameCapture()` asks for a mirror
-instead: the next `EndFrame` blits the composite into an engine-owned image **immediately before the
-present transition**, the last point at which the frame still owns the swap chain image, and
-`GetPresentedFrameMirror()` hands that copy back to be downloaded as an ordinary owned image. A
-request is **one-shot** — serviced by one frame end, with any requests before it coalescing into it
-(`IsPresentedFrameCapturePending()` is true until then) — so the full-window blit is paid only by a
-frame something asked to read, never by every frame once some consumer exists. The mirror follows
-the swap chain's format and extent (rebuilt when either moves), needs the surface to have granted
-transfer-source usage (`IsSwapChainCaptureSupported()`), and is inert headless. `veng::mcp`'s
-`render.screenshot_window` is the consumer: it requests at the pump that receives the call and reads
-at the next (`McpTool::BeforeFrame`).
+**A presented frame is never read back off the swap chain.** The finished composite exists in the
+swap chain image, and `vkQueuePresentKHR` hands that image to the presentation engine: it is not the
+application's again until it is re-acquired, so transitioning it for a readback afterwards is a
+**write-after-present hazard** (and, on MoltenVK, a readback that can stall on the held drawable).
+The swap chain images therefore carry colour-attachment usage alone. A consumer that wants the
+finished frame asks for the composite to be run again into an image it owns, below.
 
-**A `CaptureSink` composites the frame a second time, into an image somebody else owns.** The mirror
-above copies the display's pixels; a consumer that wants the *frame* — at its own encoding, without
-the app's overlay, into memory a platform encoder reads — wants the composite run again rather than a
-copy of its result. `ViewportCompositor::SetCaptureSink(CaptureSink*)`
-(`Veng/Renderer/CaptureSink.h`) installs that consumer: each `Composite`, after the presented
-composite, the sink is asked for a `CaptureTarget` (`{ Ref<Image>, DisplayColorSpace,
-IncludeOverlay }`) for this frame's in-flight slot, and a supplied one is written by a **second
-`SwapChainCompositePass`** the compositor owns — the same scene source as the presented composite,
-the target's format and colour space, the overlay bound only when the target asks for it. So the
-file's encoding is a setting rather than a consequence of the display, and the presented frame is
-untouched: the mirror and `render.screenshot_window` keep working during a capture.
+**A `CaptureSink` composites the frame again, into an image somebody else owns.** A consumer that
+wants the *frame* — at its own encoding, with or without the app's overlay, into memory a platform
+encoder reads or a picture is read back from — installs itself with
+`ViewportCompositor::AddCaptureSink(CaptureSink&)` (`Veng/Renderer/CaptureSink.h`;
+`RemoveCaptureSink` uninstalls it). Each `Composite`, after the presented composite, every installed
+sink is asked for a `CaptureTarget` (`{ Ref<Image>, DisplayColorSpace, IncludeOverlay }`) for this
+frame's in-flight slot, and a supplied one is written by a further `SwapChainCompositePass` **that
+sink owns** — the same scene source as the presented composite, the target's format and colour
+space, the overlay bound only when the target asks for it. So a file's encoding is a setting rather
+than a consequence of the display, the presented frame is untouched, and several sinks coexist — the
+video recorder and a one-off `Capture::FrameCapture` screenshot each keep their own pass rather than
+rebuilding one another's every frame (see [../Capture/CLAUDE.md](../Capture/CLAUDE.md)).
 
 Four properties of the seam:
 
@@ -2398,21 +2389,24 @@ Four properties of the seam:
   per target image, so a recycled pool of targets is viewed once each rather than per frame.
 - **Extent is a contract, not a resample.** The sink is handed the presented extent; a target of any
   other extent is a fatal assert and the composite is skipped rather than stretched into.
-- **The pass is rebuilt only when its shape moves** — the overlay choice changing, or a swap-chain
-  invalidation (which re-sources the presented composite the same way). A format or colour-space
+- **A sink's pass is rebuilt only when its shape moves** — its overlay choice changing, or a
+  swap-chain invalidation (which re-sources the presented composite the same way). A format or colour-space
   change is a `SetSwapChainTarget` on the existing pass, and every change of the presented
   composite's scene or overlay source is applied to it too, so it never samples a source the
   display has moved off.
 - **Readability rides the frame fence.** The capture composite is recorded into the frame's command
   buffer, so its target is readable when that slot's fence has been waited —
-  `GetMaxFramesInFlight()` frames later, the contract `AsyncReadback` already rides. With a sink
-  installed the compositor registers `Context::AddFrameRetiredCallback` and forwards it as
-  `CaptureSink::OnSlotRetired`; the engine never waits a fence on the sink's behalf.
+  `GetMaxFramesInFlight()` frames later, the contract `AsyncReadback` already rides. While any sink
+  is installed the compositor registers one `Context::AddFrameRetiredCallback` and forwards it as
+  `CaptureSink::OnSlotRetired` to every installed sink; a sink may add or remove sinks — itself
+  included — from that call, and one removed mid-dispatch hears nothing more. The engine never waits
+  a fence on a sink's behalf.
 
 **The composite into a sink cannot run in the test band.** Every context in the `gpu` tier is
 headless and the compositor's tail exists only windowed, so what the band proves is the import
-(`tests/gpu/external_texture_import.mm`) and the retirement contract
-(`tests/gpu/frame_retired.cpp`); that the second composite writes the right pixels is a live look.
+(`tests/gpu/external_texture_import.mm`), the retirement contract (`tests/gpu/frame_retired.cpp`) and
+its dispatch to several sinks (`tests/gpu/frame_capture.cpp`); that a capture composite writes the
+right pixels is a live look.
 
 **An externally-owned platform texture can be the image a sink hands over.**
 `Renderer::Backend::ImportExternalTexture` (`Veng/Renderer/Backend/MetalInterop.h`) wraps one as a

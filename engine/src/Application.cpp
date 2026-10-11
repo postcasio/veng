@@ -324,6 +324,9 @@ namespace Veng
                 .Name = m_Info.Name,
             });
 
+        // The frame capture, installed on the compositor only while a capture is open.
+        m_FrameCapture = CreateUnique<Capture::FrameCapture>(m_RenderContext, m_Compositor);
+
         // The sim-domain scheduler owning every open world, given the asset manager so it can spawn
         // cooked-level worlds.
         m_WorldRunner = CreateUnique<WorldRunner>(WorldRunnerInfo{

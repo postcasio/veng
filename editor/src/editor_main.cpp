@@ -107,7 +107,7 @@ namespace
                      .ViewportNames = [&host] { return host.GetSceneViewportNames(); },
                      .ApplyMutation = [this](const Mcp::McpMutation& mutation)
                      { return VengEditor::ApplyEditorMutation(m_EditorHost, mutation); },
-                     .RenderContext = [&host] { return &host.GetRenderContext(); }}
+                     .FrameCapture = [&host] { return &host.GetFrameCapture(); }}
         {
         }
 

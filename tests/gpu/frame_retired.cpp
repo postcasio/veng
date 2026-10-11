@@ -64,7 +64,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "frame retirement announces each slot 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "a headless context accepts a swap chain invalidation")
 {
     REQUIRE(Context.IsHeadless());
-    CHECK_FALSE(Context.IsSwapChainCaptureSupported());
 
     bool fired = false;
     Context.AddSwapChainInvalidationCallback([&fired] { fired = true; });

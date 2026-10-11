@@ -55,7 +55,10 @@ namespace Veng::Renderer
 
     ViewportCompositor::~ViewportCompositor()
     {
-        SetCaptureSink(nullptr);
+        while (!m_CaptureSinks.empty())
+        {
+            RemoveCaptureSink(*m_CaptureSinks.back()->Sink);
+        }
 
         // Release the tail's GPU resources while the context is still live. The placement cache retains
         // a Ref to each Presented viewport's output view for change-detection; clearing it here — after
@@ -160,10 +163,16 @@ namespace Veng::Renderer
                 m_GatherGraph = compileGather();
                 m_CompositeGraph = compileComposite();
 
-                // The capture pass renders at the presented extent, so a resize invalidates it
-                // exactly as it does the presented composite. It is rebuilt lazily from the next
-                // target the sink hands over.
-                ReleaseCapturePass();
+                // A capture pass renders at the presented extent, so a resize invalidates it exactly
+                // as it does the presented composite. Each is rebuilt lazily from the next target
+                // its sink hands over.
+                for (const Unique<CaptureSinkSlot>& slot : m_CaptureSinks)
+                {
+                    slot->Graph.reset();
+                    slot->Composite.reset();
+                    slot->Views.clear();
+                    slot->TargetFormat = Format::Undefined;
+                }
             });
 
         m_GatherGraph = compileGather();
@@ -534,7 +543,7 @@ namespace Veng::Renderer
 
         m_Composite->Execute(cmd, *m_CompositeGraph, m_Context.GetCurrentSwapChainImageView());
 
-        CompositeToSink(cmd);
+        CompositeToSinks(cmd);
     }
 
     void ViewportCompositor::ApplySceneSource(const Ref<ImageView>& source)
@@ -548,9 +557,12 @@ namespace Veng::Renderer
         // composite or it would keep sampling a source that may since have been retired.
         m_SceneSource = source;
         m_Composite->SetSceneSource(m_SceneSource);
-        if (m_CaptureComposite)
+        for (const Unique<CaptureSinkSlot>& slot : m_CaptureSinks)
         {
-            m_CaptureComposite->SetSceneSource(m_SceneSource);
+            if (slot->Composite)
+            {
+                slot->Composite->SetSceneSource(m_SceneSource);
+            }
         }
     }
 
@@ -564,51 +576,83 @@ namespace Veng::Renderer
         m_OverlayTransparent = transparent;
         const Ref<ImageView> overlay = transparent ? m_TransparentView : nullptr;
         m_Composite->SetOverlaySource(overlay);
-        if (m_CaptureComposite)
+        for (const Unique<CaptureSinkSlot>& slot : m_CaptureSinks)
         {
-            m_CaptureComposite->SetOverlaySource(overlay);
+            if (slot->Composite)
+            {
+                slot->Composite->SetOverlaySource(overlay);
+            }
         }
     }
 
-    void ViewportCompositor::SetCaptureSink(CaptureSink* sink)
+    void ViewportCompositor::AddCaptureSink(CaptureSink& sink)
     {
-        if (sink == m_CaptureSink)
+        if (HasCaptureSink(sink))
         {
             return;
         }
 
-        if (m_CaptureRetiredHandle != 0)
+        auto slot = CreateUnique<CaptureSinkSlot>();
+        slot->Sink = &sink;
+        m_CaptureSinks.emplace_back(std::move(slot));
+
+        if (m_CaptureRetiredHandle == 0)
+        {
+            m_CaptureRetiredHandle = m_Context.AddFrameRetiredCallback(
+                [this](const u32 frameSlot) { DispatchSlotRetired(frameSlot); });
+        }
+    }
+
+    void ViewportCompositor::RemoveCaptureSink(CaptureSink& sink)
+    {
+        std::erase_if(m_CaptureSinks,
+                      [&sink](const Unique<CaptureSinkSlot>& slot) { return slot->Sink == &sink; });
+
+        if (m_CaptureSinks.empty() && m_CaptureRetiredHandle != 0)
         {
             m_Context.RemoveFrameRetiredCallback(m_CaptureRetiredHandle);
             m_CaptureRetiredHandle = 0;
         }
+    }
 
-        m_CaptureSink = sink;
-        ReleaseCapturePass();
+    bool ViewportCompositor::HasCaptureSink(const CaptureSink& sink) const
+    {
+        return std::ranges::any_of(m_CaptureSinks, [&sink](const Unique<CaptureSinkSlot>& slot)
+                                   { return slot->Sink == &sink; });
+    }
 
-        if (m_CaptureSink != nullptr)
+    void ViewportCompositor::DispatchSlotRetired(const u32 frameSlot)
+    {
+        // A sink may add or remove sinks — itself included — from its own retirement, so the walk
+        // runs over a snapshot and skips any sink no longer installed when its turn comes.
+        vector<CaptureSink*> sinks;
+        sinks.reserve(m_CaptureSinks.size());
+        for (const Unique<CaptureSinkSlot>& slot : m_CaptureSinks)
         {
-            m_CaptureRetiredHandle = m_Context.AddFrameRetiredCallback(
-                [this](const u32 slot)
-                {
-                    if (m_CaptureSink != nullptr)
-                    {
-                        m_CaptureSink->OnSlotRetired(slot);
-                    }
-                });
+            sinks.emplace_back(slot->Sink);
+        }
+        for (CaptureSink* sink : sinks)
+        {
+            if (HasCaptureSink(*sink))
+            {
+                sink->OnSlotRetired(frameSlot);
+            }
         }
     }
 
-    void ViewportCompositor::CompositeToSink(CommandBuffer& cmd)
+    void ViewportCompositor::CompositeToSinks(CommandBuffer& cmd)
     {
-        if (m_CaptureSink == nullptr)
+        for (const Unique<CaptureSinkSlot>& slot : m_CaptureSinks)
         {
-            return;
+            CompositeToSink(cmd, *slot);
         }
+    }
 
+    void ViewportCompositor::CompositeToSink(CommandBuffer& cmd, CaptureSinkSlot& slot)
+    {
         const uvec2 presentedExtent = m_Context.GetSwapChainExtent();
         const optional<CaptureTarget> target =
-            m_CaptureSink->AcquireTarget(m_Context.GetCurrentFrameInFlight(), presentedExtent);
+            slot.Sink->AcquireTarget(m_Context.GetCurrentFrameInFlight(), presentedExtent);
         if (!target || !target->Image)
         {
             return;
@@ -627,20 +671,20 @@ namespace Veng::Renderer
             return;
         }
 
-        if (!m_CaptureComposite || m_CaptureIncludesOverlay != target->IncludeOverlay)
+        if (!slot.Composite || slot.IncludesOverlay != target->IncludeOverlay)
         {
-            BuildCapturePass(target->IncludeOverlay, target->Image->GetFormat(),
+            BuildCapturePass(slot, target->IncludeOverlay, target->Image->GetFormat(),
                              target->ColorSpace);
         }
-        else if (m_CaptureFormat != target->Image->GetFormat() ||
-                 m_CaptureColorSpace != target->ColorSpace)
+        else if (slot.TargetFormat != target->Image->GetFormat() ||
+                 slot.ColorSpace != target->ColorSpace)
         {
-            m_CaptureFormat = target->Image->GetFormat();
-            m_CaptureColorSpace = target->ColorSpace;
-            m_CaptureComposite->SetSwapChainTarget(m_CaptureFormat, m_CaptureColorSpace);
+            slot.TargetFormat = target->Image->GetFormat();
+            slot.ColorSpace = target->ColorSpace;
+            slot.Composite->SetSwapChainTarget(slot.TargetFormat, slot.ColorSpace);
         }
 
-        Ref<ImageView>& view = m_CaptureViews[target->Image.get()];
+        Ref<ImageView>& view = slot.Views[target->Image.get()];
         if (!view)
         {
             view = ImageView::Create(m_Context, {
@@ -649,16 +693,17 @@ namespace Veng::Renderer
                                                 });
         }
 
-        m_CaptureComposite->Execute(cmd, *m_CaptureGraph, view);
+        slot.Composite->Execute(cmd, *slot.Graph, view);
     }
 
-    void ViewportCompositor::BuildCapturePass(const bool includeOverlay, const Format format,
+    void ViewportCompositor::BuildCapturePass(CaptureSinkSlot& slot, const bool includeOverlay,
+                                              const Format format,
                                               const DisplayColorSpace colorSpace)
     {
         VE_ASSERT(m_Gather && m_Assets, "The capture composite needs the gather + composite tail");
 
-        m_CaptureGraph.reset();
-        m_CaptureComposite = SwapChainCompositePass::Create({
+        slot.Graph.reset();
+        slot.Composite = SwapChainCompositePass::Create({
             .Context = m_Context,
             .ImGui = includeOverlay ? m_ImGui : nullptr,
             .Assets = *m_Assets,
@@ -668,25 +713,17 @@ namespace Veng::Renderer
         });
         if (m_OverlayTransparent)
         {
-            m_CaptureComposite->SetOverlaySource(m_TransparentView);
+            slot.Composite->SetOverlaySource(m_TransparentView);
         }
 
         RenderGraph graph(m_Context);
         const ResourceId targetId = graph.Import("CaptureTarget");
-        m_CaptureGraph = m_CaptureComposite->Compile(graph, targetId);
+        slot.Graph = slot.Composite->Compile(graph, targetId);
 
-        m_CaptureIncludesOverlay = includeOverlay;
-        m_CaptureFormat = format;
-        m_CaptureColorSpace = colorSpace;
-        m_CaptureViews.clear();
-    }
-
-    void ViewportCompositor::ReleaseCapturePass()
-    {
-        m_CaptureGraph.reset();
-        m_CaptureComposite.reset();
-        m_CaptureViews.clear();
-        m_CaptureFormat = Format::Undefined;
+        slot.IncludesOverlay = includeOverlay;
+        slot.TargetFormat = format;
+        slot.ColorSpace = colorSpace;
+        slot.Views.clear();
     }
 
     ViewportRegion ViewportCompositor::ResolveLayout(const ViewportLayout& layout) const

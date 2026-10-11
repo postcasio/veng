@@ -7,6 +7,7 @@
 #include <Veng/Mcp/McpTool.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Capture/FrameCapture.h>
 #include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
@@ -568,48 +569,57 @@ namespace Veng::Mcp
             server.RegisterTool(std::move(tool));
         }
 
-        // render.screenshot_window — the presented frame, the only surface carrying the app's
-        // own UI overlay.
+        // render.screenshot_window — the composited frame, the only picture carrying the app's own
+        // overlay, or the frame with that overlay left out.
         {
             McpTool tool;
             tool.Name = "render.screenshot_window";
             tool.Description =
-                "Captures the presented frame as a PNG image — the finished composite of the "
-                "scene and the UI overlay drawn over it, which is what an app's interface looks "
-                "like on screen. render.screenshot captures a viewport instead, which carries the "
-                "scene and any GuiOverlay a world drives into it, but not the app's own overlay "
-                "composited over the frame. Returns an image content block; over the --connect "
-                "CLI it requires --output <file> to write the PNG (an image is never printed to "
-                "stdout). Unavailable headless (no swap chain, and no UI overlay to capture) and "
-                "where the surface did not grant transfer-source usage on its swap chain images.";
-            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+                "Captures the composited frame as a PNG image — the presented viewports with the "
+                "app's own UI overlay drawn over them, which is what an app's interface looks like "
+                "on screen. Optional 'overlay' (default true): false leaves the app's own overlay "
+                "(a debug shell, an editor's panels) out, keeping any GUI a world drives into its "
+                "viewports. render.screenshot captures one viewport instead. The picture is sRGB "
+                "whatever the display. Returns an image content block; over the --connect CLI it "
+                "requires --output <file> to write the PNG (an image is never printed to stdout). "
+                "Unavailable headless, where no frame is composited.";
+            tool.InputSchemaJson =
+                R"({"type":"object","properties":{"overlay":{"type":"boolean"}}})";
             tool.ReturnsContentBlocks = true;
-            // The presented frame is copied out only by a frame end that was asked to, so the call
-            // asks at its first pump and reads the copy at the next, once that frame has ended.
-            tool.BeforeFrame = [&host](string_view) -> VoidResult
+            // The frame is composited into the capture's image by the frame that follows the
+            // request, so the call asks at its first pump and takes the picture at the next.
+            tool.BeforeFrame = [&host](string_view argsJson) -> VoidResult
             {
-                Renderer::Context* const context =
-                    host.RenderContext ? host.RenderContext() : nullptr;
-                if (context == nullptr)
+                Capture::FrameCapture* const capture =
+                    host.FrameCapture ? host.FrameCapture() : nullptr;
+                if (capture == nullptr)
                 {
                     return std::unexpected(
-                        string("presented-frame capture is unavailable: this host exposes no "
-                               "render context"));
+                        string("frame capture is unavailable: this host exposes none"));
                 }
-                context->RequestPresentedFrameCapture();
-                return {};
+
+                const Json args = Json::parse(argsJson, nullptr, false);
+                bool includeOverlay = true;
+                if (args.is_object() && args.contains("overlay"))
+                {
+                    if (!args["overlay"].is_boolean())
+                    {
+                        return std::unexpected(string("'overlay' must be a boolean"));
+                    }
+                    includeOverlay = args["overlay"].get<bool>();
+                }
+                return capture->Request({.IncludeOverlay = includeOverlay});
             };
             tool.Handler = [&host](string_view) -> Result<string>
             {
-                Renderer::Context* const context =
-                    host.RenderContext ? host.RenderContext() : nullptr;
-                if (context == nullptr)
+                Capture::FrameCapture* const capture =
+                    host.FrameCapture ? host.FrameCapture() : nullptr;
+                if (capture == nullptr)
                 {
                     return std::unexpected(
-                        string("presented-frame capture is unavailable: this host exposes no "
-                               "render context"));
+                        string("frame capture is unavailable: this host exposes none"));
                 }
-                return CaptureSwapChainContentBlocks(*context);
+                return TakeFrameContentBlocks(*capture);
             };
             server.RegisterTool(std::move(tool));
         }

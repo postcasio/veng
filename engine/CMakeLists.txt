@@ -91,7 +91,9 @@ add_library(veng SHARED
         src/Behavior/BehaviorSystem.cpp
         src/Behavior/BehaviorTree.cpp
         src/Behavior/BehaviorTreeRegistry.cpp
+        src/Capture/FrameCapture.cpp
         src/Capture/RecorderCore.cpp
+        src/Capture/Screenshot.cpp
         src/Capture/UserMedia.cpp
         src/Capture/VideoRecorder.cpp
         src/Asset/AssetLoader.cpp
@@ -394,6 +396,7 @@ add_library(veng SHARED
         src/Vendor/TinyExr.cpp
         src/Vendor/MiniAudio.cpp
         src/Vendor/StbVorbis.cpp
+        src/Vendor/StbImageWrite.cpp
 )
 add_library(veng::veng ALIAS veng)
 
@@ -470,6 +473,11 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
 # stb_vorbis is third-party code not held to veng's warning bar; -w keeps its own warnings from
 # tripping the debug build's -Werror (the same posture the cooker takes for its vendor TUs).
 set_source_files_properties(src/Vendor/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
+
+# stb_image_write's implementation calls the deprecated sprintf, which the debug build's -Werror (MSVC
+# /WX) would reject; the one warning is demoted for its vendor TU alone (MSVC flags it as C4996).
+set_source_files_properties(src/Vendor/StbImageWrite.cpp PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/wd4996,-Wno-error=deprecated-declarations>")
 
 if (VE_DEBUG)
     target_compile_definitions(veng PUBLIC VE_DEBUG=1)
@@ -593,6 +601,7 @@ set_source_files_properties(
         src/Vendor/TinyExr.cpp
         src/Vendor/MiniAudio.cpp
         src/Vendor/StbVorbis.cpp
+        src/Vendor/StbImageWrite.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # The engine's hot paths: the translation units doing per-entity, per-draw or per-element work, which

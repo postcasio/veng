@@ -1055,7 +1055,6 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_device_driven.cpp
             tests/unit/pure_logic.cpp
             tests/unit/frame_clock.cpp
-            tests/unit/presented_frame_capture.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
             tests/unit/parallel_for_pool.cpp
@@ -1274,6 +1273,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/video_recorder_core.cpp
             tests/unit/video_recorder_audio.cpp
             tests/unit/video_capture_panel_state.cpp
+            # The still-picture helpers: the display encode, the PNG, and a screenshot's name claim.
+            tests/unit/capture_screenshot.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # The committed trace-format fixtures live in the source tree; the
@@ -1929,6 +1930,10 @@ if (VENG_BUILD_TESTS)
             # headless run reports itself unavailable and refuses to start with a reason, and its
             # construction touches no swap chain.
             tests/gpu/video_recorder_unavailable.cpp
+            # frame_capture.cpp pins the still-capture seams a headless context reaches: several
+            # capture sinks served through the retirement dispatch, a frame capture refusing where no
+            # frame is composited, and an image read back into a picture.
+            tests/gpu/frame_capture.cpp
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp

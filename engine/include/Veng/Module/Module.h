@@ -440,10 +440,15 @@ extern "C"
 /// previous frame's direction projection and jitter. A module's shaders read the view block at the
 /// stride, and a module builds views and owns renderers, so a stale module reads every view region
 /// past the first at the wrong offset and lays SceneView and SceneRenderer out short.
+/// Version 104 captures a composited frame on demand: Application grows the FrameCapture it owns, and
+/// ViewportCompositor serves several capture sinks at once — AddCaptureSink and RemoveCaptureSink
+/// replace SetCaptureSink and its single-sink members become a list. A module subclasses Application
+/// and reaches the compositor, so a stale module lays both out short and calls an entry point the
+/// host no longer exports.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 103u
+#define VENG_MODULE_ABI_VERSION 104u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

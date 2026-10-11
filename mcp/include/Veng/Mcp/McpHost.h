@@ -14,12 +14,12 @@ namespace Veng
 
     namespace Renderer
     {
-        class Context;
         class Viewport;
     }
 
     namespace Capture
     {
+        class FrameCapture;
         class VideoRecorder;
     }
 
@@ -174,20 +174,16 @@ namespace Veng::Mcp
         /// passed mutable because routing (InputRouter::Dispatch) may mark it handled.
         function<void(Event&)> InjectInput;
 
-        /// @brief Resolves the render context the presented-frame capture reads, or null.
+        /// @brief Resolves the frame capture the composited-frame screenshot reads, or null.
         ///
-        /// A viewport carries scene colour alone, while the composite writes the scene and the UI
-        /// overlay together straight into the swap chain — so capturing the finished frame, the one
-        /// that shows an app's interface, means reading a presented image. The capture tool
-        /// (render.screenshot_window) reads it through here; a host that leaves it null makes that
-        /// tool report the capture unavailable rather than no-op silently.
-        ///
-        /// A presented image cannot be read back — it belongs to the presentation engine until it
-        /// is acquired again — so the capture asks the context for a presented-frame mirror
-        /// (Context::RequestPresentedFrameCapture) at the pump that receives the call, and reads the
-        /// copy that frame takes, while it still owns the swap chain image, at the next pump. The
-        /// closure is invoked on the render thread during Pump().
-        function<Renderer::Context*()> RenderContext;
+        /// A viewport carries its scene and the GUI a world drives into it, while the application's
+        /// own overlay is composited over the frame afterwards — so capturing the finished frame, the
+        /// one that shows an app's interface, means capturing the composite. render.screenshot_window
+        /// reaches the application's Capture::FrameCapture through here: it requests at the pump that
+        /// receives the call and takes the picture at the next. A host that leaves it null (or
+        /// returns null) makes that tool report the capture unavailable rather than no-op silently.
+        /// The closure is invoked on the render thread during Pump().
+        function<Capture::FrameCapture*()> FrameCapture;
 
         /// @brief Resolves the profiler the capture tools drive, or null when unsupported.
         ///
@@ -208,7 +204,7 @@ namespace Veng::Mcp
         /// The render.capture_* tools reach the application's Capture::VideoRecorder through here.
         /// A host that leaves it null (or returns null) makes render.capture_status report the
         /// capture unavailable rather than dereferencing it, and makes the two write verbs refuse
-        /// with that reason — the same posture a null RenderContext gives the screenshot tool. The
+        /// with that reason — the same posture a null FrameCapture gives the screenshot tool. The
         /// two write verbs are registered only under AllowMutations (a capture writes a file and
         /// drives the frame clock); render.capture_status is read-only and always registered.
         ///

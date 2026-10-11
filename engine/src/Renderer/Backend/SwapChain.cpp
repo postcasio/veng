@@ -192,16 +192,7 @@ namespace Veng::Renderer
         m_Width = extent.width;
         m_Height = extent.height;
 
-        // Transfer-source usage makes a presented image readable, which is the only way to capture
-        // the finished frame: the composite writes the scene and the UI overlay straight into the
-        // swapchain, so no other target holds them together. The surface decides whether it can be
-        // granted, so it is requested only where reported and its absence merely leaves capture
-        // unsupported — a presentable swapchain always outranks a readable one.
-        m_CaptureSupported = static_cast<bool>(swapChainSupport.Capabilities.supportedUsageFlags &
-                                               vk::ImageUsageFlagBits::eTransferSrc);
-        const vk::ImageUsageFlags imageUsage =
-            vk::ImageUsageFlagBits::eColorAttachment |
-            (m_CaptureSupported ? vk::ImageUsageFlagBits::eTransferSrc : vk::ImageUsageFlags{});
+        const vk::ImageUsageFlags imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
 
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{
             .surface = contextNative.Surface,
@@ -244,28 +235,26 @@ namespace Veng::Renderer
         swapChainCreateInfo.oldSwapchain = oldSwapChain;
 
         m_VkSwapChain = contextNative.Device.createSwapchainKHR(swapChainCreateInfo).value;
-        auto images = contextNative.Device.getSwapchainImagesKHR(m_VkSwapChain).value;
+        const auto images = contextNative.Device.getSwapchainImagesKHR(m_VkSwapChain).value;
 
         m_ImageCount = images.size();
         m_ImageViews.reserve(m_ImageCount);
         m_Images.reserve(m_ImageCount);
 
-        for (auto image : images)
+        for (const auto image : images)
         {
             auto native = CreateUnique<Image::Native>();
             native->Image = image;
 
-            m_Images.emplace_back(Ref<Image>(new Image(
-                m_Context,
-                ImageInfo{.Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
-                          .Extent = uvec3{m_Width, m_Height, 1u},
-                          .MipLevels = 1,
-                          .Format = FromVk(m_Format),
-                          .Type = ImageType::Type2D,
-                          .Usage = m_CaptureSupported
-                                       ? (ImageUsage::ColorAttachment | ImageUsage::TransferSrc)
-                                       : ImageUsage::ColorAttachment},
-                std::move(native), false)));
+            m_Images.emplace_back(Ref<Image>(
+                new Image(m_Context,
+                          ImageInfo{.Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
+                                    .Extent = uvec3{m_Width, m_Height, 1u},
+                                    .MipLevels = 1,
+                                    .Format = FromVk(m_Format),
+                                    .Type = ImageType::Type2D,
+                                    .Usage = ImageUsage::ColorAttachment},
+                          std::move(native), false)));
 
             // Swapchain images come from vkAcquireNextImageKHR, whose
             // image-available semaphore is waited at AcquireWaitStage on submit.
@@ -303,7 +292,7 @@ namespace Veng::Renderer
 
     void SwapChain::ResolveSurfaceFormat()
     {
-        auto& contextNative = m_Context.GetNative();
+        const auto& contextNative = m_Context.GetNative();
         const auto support = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
         const FormatCandidate selected = SelectSurfaceFormat(m_RequestedMode, support.Formats);
 
@@ -373,7 +362,7 @@ namespace Veng::Renderer
     vk::Extent2D SwapChain::GetSurfaceExtent(Window& window,
                                              SwapChainSupportDetails& swapChainSupport)
     {
-        auto capabilities = swapChainSupport.Capabilities;
+        const auto capabilities = swapChainSupport.Capabilities;
 
         if (capabilities.currentExtent.width != std::numeric_limits<u32>::max())
         {

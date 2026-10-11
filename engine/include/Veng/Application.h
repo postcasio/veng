@@ -37,6 +37,7 @@
 #include <Veng/Render/DisplayCapabilities.h>
 #include <Veng/Render/FrameRateLimiter.h>
 #include <Veng/Audio/AudioResolve.h>
+#include <Veng/Capture/FrameCapture.h>
 #include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Localization/Localization.h>
 #include <Veng/Render/GraphicsResolve.h>
@@ -897,6 +898,21 @@ namespace Veng
             VE_ASSERT(m_VideoRecorder, "GetVideoRecorder before Run(): the video recorder exists "
                                        "only once Run() has initialized the engine");
             return *m_VideoRecorder;
+        }
+
+        /// @brief Returns the frame capture: one composited frame on demand, with or without the overlay.
+        ///
+        /// The still counterpart of the video recorder, and what a screenshot reads — the frame as the
+        /// window shows it, or with the application's own overlay (a debug shell, an editor's panels)
+        /// left out. Always present; unavailable (Capture::FrameCapture::IsAvailable()) on a headless
+        /// run or without an ImGui overlay, where no frame is composited and Request refuses with a
+        /// reason.
+        /// @pre Run() has initialized the engine — the capture exists only inside Run().
+        [[nodiscard]] Capture::FrameCapture& GetFrameCapture()
+        {
+            VE_ASSERT(m_FrameCapture, "GetFrameCapture before Run(): the frame capture exists "
+                                      "only once Run() has initialized the engine");
+            return *m_FrameCapture;
         }
 
         /// @brief Returns whether the frame clock is currently driven.
@@ -2389,6 +2405,12 @@ namespace Veng
         /// all three and destructs before them — a running capture is drained and its file committed
         /// while the compositor it is installed on and the device it taps are still alive.
         Unique<Capture::VideoRecorder> m_VideoRecorder;
+
+        /// @brief The frame capture, compositing one frame into an image of its own on request.
+        ///
+        /// Borrows the render context and the compositor it installs itself on, so it is declared
+        /// after both and destructs before them.
+        Unique<Capture::FrameCapture> m_FrameCapture;
 
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         ///

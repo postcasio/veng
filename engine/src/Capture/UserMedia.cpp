@@ -36,4 +36,9 @@ namespace Veng::Capture
     {
         return EnsureMediaFolder(application, VideosFolder);
     }
+
+    Result<path> ScreenshotDirectory(const string_view application)
+    {
+        return EnsureMediaFolder(application, ScreenshotsFolder);
+    }
 }

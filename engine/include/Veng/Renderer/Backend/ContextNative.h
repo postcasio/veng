@@ -10,7 +10,6 @@
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/CommandPool.h>
 #include <Veng/Renderer/Backend/DescriptorPool.h>
-#include <Veng/Renderer/Backend/PresentedFrameCapture.h>
 #include <Veng/Renderer/Backend/SwapChain.h>
 #include <Veng/Renderer/Backend/SwapChainSupport.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
@@ -68,20 +67,6 @@ namespace Veng::Renderer
         Unique<CommandPool> CommandPool;
         Unique<DescriptorPool> DescriptorPool;
         Unique<BindlessRegistry> Bindless;
-
-        /// @brief Which frame ends blit their finished composite into PresentedFrameMirror.
-        ///
-        /// Set by Context::RequestPresentedFrameCapture and taken by the EndFrame that services
-        /// it: a presented image cannot be read back, so a consumer that wants the finished frame
-        /// needs the copy taken while the frame still owns the image, and only that frame pays it.
-        Backend::PresentedFrameCaptureLatch PresentedFrameCapture;
-
-        /// @brief Engine-owned copy of the most recently presented composite, or null.
-        ///
-        /// Created on the first mirrored frame and replaced whenever the swap chain's format or
-        /// extent moves. Released in ReleaseFrameResources so its retire lands while the device
-        /// is alive.
-        Ref<Image> PresentedFrameMirror;
 
         /// @brief One transfer command pool per worker, indexed by worker index.
         ///

@@ -134,8 +134,8 @@ of the wiring.
 
 ## A pumped tool may read what the next frame produces
 
-Some state exists only once a frame has *ended* — the presented-frame mirror is the case: a frame
-copies its finished composite out as it ends, and only when asked. A pumped `Handler` runs inside a
+Some state exists only once a frame has *ended* — a frame capture is the case: the frame composites
+into the capture's image only when asked, and the picture is readable once that frame has ended. A pumped `Handler` runs inside a
 frame that has not ended, so it cannot both ask and read. **`McpTool::BeforeFrame`** splits such a
 call across two pumps: the server runs the step at the pump that receives the call (it asks), keeps
 the request queued, and runs `Handler` at the next `Pump()` (it reads). A host pumps once per frame,
@@ -143,7 +143,7 @@ so a frame ends between the two; both pumps fall inside the call's one `RequestT
 that fails is the call's result with `Handler` never run. It is a pumped-path feature only —
 `RegisterTool` refuses it beside `RunsOffPump` — and a `Handler` reading frame-end state still
 checks that the frame it asked for has ended rather than trusting the cadence
-(`render.screenshot_window` checks `Context::IsPresentedFrameCapturePending()`).
+(`render.screenshot_window` checks `Capture::FrameCapture::IsPending()`).
 
 ## A tool may declare it runs off the pump
 
@@ -312,19 +312,16 @@ family registers from the editor side.
 - **`render.*`** (`src/RenderTools.cpp`) — `render.screenshot` (viewport `Download` → PNG → an
   image content block, the smoke capture's `Download` path plus a PNG encode; the `--connect`
   CLI requires `--output <file>` to write the PNG and never prints it to stdout),
-  **`render.screenshot_window`** (the *presented* frame — the composite of the scene and the UI
-  overlay drawn over it, which is what the app looks like on screen; a viewport carries scene
-  colour alone and no UI, so this is the capture an agent drives an interface by. **A presented
-  image is not readable** — it belongs to the presentation engine until it is acquired again, so
-  transitioning it for a readback after the present is a write-after-present hazard the
-  synchronization validation layer reports as an error. So the tool **requests the context's
-  presented-frame mirror** (`Context::RequestPresentedFrameCapture`) in its `BeforeFrame` step, at the
-  pump that receives the call, and its `Handler` reads the copy at the next pump: an engine-owned
-  image the requested frame blits its finished composite into at its end, the last point at which
-  the frame still owns the swap chain image. The request is one-shot, so only the frame a call asked
-  for pays the full-window blit. Requires the surface to grant
-  transfer-source usage on its swap chain images, and is unavailable headless — where there is
-  no swap chain and, because ImGui needs a window, no UI overlay to capture),
+  **`render.screenshot_window`** (the *composited* frame — the presented viewports with the app's
+  own overlay drawn over them, which is what the app looks like on screen; a viewport carries its
+  scene and the GUI a world drives into it but not the app's overlay, so this is the capture an agent
+  drives an interface by. A presented image is never read back — it belongs to the presentation
+  engine once presented — so the tool goes through the application's **`Capture::FrameCapture`**
+  (`McpHost::FrameCapture`): its `BeforeFrame` step requests a capture at the pump that receives the
+  call, the next frame composites into the capture's own image, and its `Handler` takes the picture
+  at the next pump, cancelling a request no frame served. Optional `overlay` (default true) leaves
+  the app's overlay out when false. The picture is sRGB whatever the display's colour space.
+  Unavailable headless, where no frame is composited),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
   `GetLastGpuFrameTimeMs`), `render.pass_times` (the last frame's per-pass GPU timings over
   `Context::GetLastGpuPassTimings` — the per-pass breakdown of the single number `render.stats`
@@ -521,7 +518,7 @@ struct McpHost
     function<vector<string>()>                        ViewportNames;  // the viewport names to expose
     function<bool(const McpMutation&)>                ApplyMutation;  // optional editor routing hook
     function<void(Event&)>                            InjectInput;   // optional synthetic-input sink
-    function<Renderer::Context*()>                    RenderContext; // optional presented-frame capture source
+    function<Capture::FrameCapture*()>                FrameCapture;  // optional frame capture (render.screenshot_window)
     function<Diagnostics::Profiler*()>                Profiler;      // optional profiler source (profile.*)
     function<Capture::VideoRecorder*()>               VideoRecorder; // optional recorder (render.capture_*)
     function<Audio::AudioEngine*()>                   Audio;         // optional audio engine (audio.list_voices)
@@ -686,16 +683,16 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   --mcp` against the hello-triangle project and drive it with `veng-editor --connect` (`--list`,
   `editor.list_panels`, both error paths), exercising the editor exe's gated `--connect` seam end
   to end. `gpu`-labelled, skips 77 with no device/display.
-- **`render.screenshot_window` has no automated coverage, deliberately.** The presented frame exists
-  only where there is a swap chain, so every headless test — the whole `gpu` band and the
-  `validation_gate`, which runs display-free binaries only — is structurally unable to reach it. The
-  one *windowed* server in the band is `editor_mcp_cli_conformance`'s editor, and driving the capture
-  there is **not reliably assertable** for the reason below: at a real window's size the capture can
-  miss its reply window, an outcome that flips run to run with machine load. A test written over it
-  either flakes or passes vacuously, so it is verified by hand: run a windowed consumer under
-  `VE_DEBUG` (`HT_MCP=<port> hello_triangle-launcher`), drive `--connect=<port>
-  render.screenshot_window --output <file>`, and read the consumer's log — a regression prints
-  `WRITE_AFTER_PRESENT hazard detected` at `[ERROR]`.
+- **`render.screenshot_window`'s composite has no automated coverage, deliberately.** The capture
+  composite runs only where there is a composite tail, which only a windowed run has, so every
+  headless test — the whole `gpu` band and the `validation_gate`, which runs display-free binaries
+  only — is structurally unable to reach it; `tests/gpu/frame_capture.cpp` proves the seams on either
+  side (the sink dispatch, the headless refusal, the readback). The one *windowed* server in the band
+  is `editor_mcp_cli_conformance`'s editor, and driving the capture there is **not reliably
+  assertable** for the reason below: at a real window's size the capture can miss its reply window,
+  an outcome that flips run to run with machine load. So it is verified by hand: run a windowed
+  consumer (`HT_MCP=<port> hello_triangle-launcher`) and drive `--connect=<port>
+  render.screenshot_window --output <file>`, with and without `--json '{"overlay":false}'`.
 - **Either screenshot tool can exceed the 5 s reply window at a real window's size.** The PNG encode
   runs inside the handler, on the render thread, and a debug build encoding a HiDPI frame (2560×1440
   is an ordinary 1280×720 window at 2×) can outlast `RequestTimeout` — so the client reports host-busy

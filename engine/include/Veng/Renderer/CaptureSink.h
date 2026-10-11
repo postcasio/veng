@@ -41,7 +41,8 @@ namespace Veng::Renderer
     ///
     /// Implemented by whatever owns the images being composited into — a video recorder's buffer
     /// pool, a streaming encoder. Installed on the compositor with
-    /// ViewportCompositor::SetCaptureSink; the compositor never owns the sink.
+    /// ViewportCompositor::AddCaptureSink; the compositor never owns the sink, and several may be
+    /// installed at once.
     class CaptureSink
     {
     public:

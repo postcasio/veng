@@ -3,41 +3,46 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
+namespace Veng::Capture
+{
+    class FrameCapture;
+    struct RgbImage;
+}
+
 namespace Veng::Renderer
 {
-    class Context;
     class Viewport;
 }
 
 namespace Veng::Mcp
 {
-    /// @brief Captures a viewport's rendered output as an MCP image content-block array (JSON string).
+    /// @brief Encodes a picture as an MCP image content-block array (JSON string).
     ///
-    /// The shared Download() -> tonemap -> PNG -> base64 path behind both render.screenshot and
-    /// the editor's editor.screenshot_panel: it downloads the viewport's output image, tonemaps the
-    /// RGBA16F scene color to 8-bit RGB (dropping alpha), PNG-encodes it, base64-encodes that, and
-    /// returns the two-element `content` array (an `image` block plus a `text` block carrying the
-    /// pixel dimensions) a ReturnsContentBlocks tool hands back. Runs on the render thread (a
-    /// Download() blocks in lockstep with the frame), so the caller must invoke it at the Pump()
-    /// point.
+    /// PNG-encodes it (Capture::EncodePng), base64-encodes that, and returns the two-element
+    /// `content` array — an `image` block plus a `text` block carrying the pixel dimensions — a
+    /// ReturnsContentBlocks tool hands back.
+    /// @param image  The picture to encode.
+    /// @return The content-array JSON string, or the PNG encode's error.
+    Result<string> PictureContentBlocks(const Capture::RgbImage& image);
+
+    /// @brief Captures a viewport's rendered output as an MCP image content-block array.
+    ///
+    /// The path behind both render.screenshot and the editor's editor.screenshot_panel: it reads the
+    /// viewport's output image back (Capture::ReadImageRgb8, which encodes its linear half-float to
+    /// sRGB) and hands the picture to PictureContentBlocks. Runs on the render thread (the download
+    /// blocks in lockstep with the frame), so the caller must invoke it at the Pump() point.
     /// @param viewport  The viewport to capture; must have an output image.
     /// @return The content-array JSON string on success, or a located error (no output image, an
-    ///         unexpected download size, or a PNG-encode failure).
-    Result<string> CaptureViewportContentBlocks(Renderer::Viewport& viewport);
+    ///         unencodable download, or a PNG-encode failure).
+    Result<string> CaptureViewportContentBlocks(const Renderer::Viewport& viewport);
 
-    /// @brief Captures the presented frame off the swap chain as an MCP image content-block array.
+    /// @brief Takes a composited frame off @p capture as an MCP image content-block array.
     ///
-    /// The counterpart of CaptureViewportContentBlocks for the *finished* frame: a viewport carries
-    /// scene color alone, while the composite writes the scene and the UI overlay together straight
-    /// into the swap chain, so a presented image is the only surface holding both. It downloads the
-    /// context's presented-frame mirror and encodes it to 8-bit RGB, reading its display encoding off
-    /// the swap chain format rather than assuming the viewport's linear half-float.
-    ///
-    /// Runs on the render thread at the Pump() point (the Download() blocks in lockstep with the
-    /// frame), a frame after Context::RequestPresentedFrameCapture asked for the copy.
-    /// @param context  The render context whose presented frame is captured.
-    /// @return The content-array JSON string on success, or a located error (capture unsupported,
-    ///         no frame ended since the request, an unhandled swap chain format, an unexpected
-    ///         download size, or a PNG-encode failure).
-    Result<string> CaptureSwapChainContentBlocks(Renderer::Context& context);
+    /// The read half of render.screenshot_window: the request was made a pump earlier
+    /// (Capture::FrameCapture::Request), so the frame it asked for has ended by now. A capture still
+    /// pending — a window with no presentable size composites nothing — is cancelled and reported, so
+    /// a failed call leaves no request open.
+    /// @param capture  The application's frame capture, holding a request made at the previous pump.
+    /// @return The content-array JSON string on success, or why there is no frame to return.
+    Result<string> TakeFrameContentBlocks(Capture::FrameCapture& capture);
 }

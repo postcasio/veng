@@ -63,9 +63,11 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   `HapticsEngine` — a per-pad maximum mixer, written once per frame as the motors' only writer. Every
   rumble belongs to its scene's presentation scope, so it holds with a pause, is silent while the
   scene is unpresented, and ends with the scene.
-- **[src/Capture/CLAUDE.md](src/Capture/CLAUDE.md)** — `Veng/Capture/`, the video recorder:
-  `VideoRecorder` as the compositor's `CaptureSink`, taking a fresh encoder-owned buffer per frame and
-  appending it at the frame slot's retirement; the device-free `RecorderCore` (slot map, both
+- **[src/Capture/CLAUDE.md](src/Capture/CLAUDE.md)** — `Veng/Capture/`, the video recorder and the
+  on-demand frame capture: `VideoRecorder` as a compositor `CaptureSink`, taking a fresh encoder-owned
+  buffer per frame and appending it at the frame slot's retirement; `FrameCapture`, the one-shot sink a
+  screenshot reads, with the picture helpers (display encode, PNG, a screenshot's claimed name) and the
+  per-user `videos`/`screenshots` directories; the device-free `RecorderCore` (slot map, both
   timestamp modes, the bounded never-drop wait, the drain that needs no future frame); the platform
   backend seam and its Apple implementation over AVAssetWriter and VideoToolbox; the SDR/HDR10
   encoding table; and what the headless band proves versus what only a windowed recording can.
@@ -174,7 +176,9 @@ shareable surface, or the run is headless and presents no frame, `IsAvailable()`
 `Start` refuses with a reason. A running capture is stopped and its file finalized before the
 engine's services tear down. See [src/Capture/CLAUDE.md](src/Capture/CLAUDE.md) — which also carries
 the engine-owned control panel (`Veng::UI::VideoCapturePanel`) and the `render.capture_*` tools a
-host reaches the recorder through.
+host reaches the recorder through. **`GetFrameCapture()`** is its still counterpart: one composited
+frame on demand, with or without the application's overlay, which a host's screenshot key and the
+`render.screenshot_window` tool both read.
 
 **`Application` is a composition root that delegates to collaborators.** It owns the services
 above and three collaborators it drives each frame:
@@ -695,7 +699,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 103** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 104** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -740,7 +744,9 @@ and calls `Run()`.
   (`ViewConstantsStride` 720 → 800, the temporal-AA jitter and the background's direction
   reprojection — see [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md), "TAA"), `SceneView`
   (`JitterNdc`) and `SceneRenderer`: a module's shaders index view regions by the stride, so a stale
-  one reads every region past the first at the wrong offset.
+  one reads every region past the first at the wrong offset. **Version 104** grows `Application`
+  (the `Capture::FrameCapture` it owns) and the compositor's capture-sink list (`AddCaptureSink` /
+  `RemoveCaptureSink` replacing the single `SetCaptureSink`): a module subclasses `Application`.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

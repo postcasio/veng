@@ -27,7 +27,6 @@ add_library(veng_mcp SHARED
         src/InputTools.cpp
         src/ProfileTools.cpp
         src/Vendor/HttpLib.cpp
-        src/Vendor/StbImageWrite.cpp
 )
 add_library(veng::mcp ALIAS veng_mcp)
 
@@ -79,20 +78,6 @@ endif ()
 # -fno-exceptions contract (parse errors are checked, not thrown).
 target_link_libraries(veng_mcp PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_mcp PRIVATE JSON_NOEXCEPTION)
-
-# stb_image_write (header-only) is vendored into the dedicated src/Vendor/StbImageWrite.cpp
-# TU so the render tools' PNG encode does not reach into libveng's private vendor symbols.
-# The include dir is PRIVATE — the encode is confined to RenderTools.cpp and the vendor TU,
-# never a public header. ${stb_SOURCE_DIR} is the FetchContent-populated stb checkout.
-target_include_directories(veng_mcp PRIVATE ${stb_SOURCE_DIR})
-
-# stb_image_write's implementation calls the deprecated sprintf, which the VE_DEBUG build's
-# inherited warning-as-error (-Werror / MSVC /WX) would reject. Vendored code is not held to
-# veng's warning bar, so the vendor TU demotes that one warning — scoped to this TU, leaving
-# veng's own code strict. MSVC flags the deprecation as C4996, disabled here; other compilers
-# take the -W form.
-set_source_files_properties(src/Vendor/StbImageWrite.cpp PROPERTIES
-        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/wd4996,-Wno-error=deprecated-declarations>")
 
 # httplib needs threads and (on some platforms) the socket libraries; find_package
 # supplies the portable Threads::Threads target.

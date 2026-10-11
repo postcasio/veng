@@ -498,10 +498,6 @@ namespace Veng::Renderer
         // Held setup work holds Refs to what it would have initialized; drop them the same way.
         m_PendingSetupCommands.clear();
 
-        // The capture mirror retires like any owned image, so it must be dropped ahead of the
-        // drain below rather than with Native, which outlives the Disposed tripwire.
-        m_Native->PresentedFrameMirror.reset();
-
         // Same for the frame-amortized services: their targets, views and staging buffers retire,
         // and their bindless slots release, so both must go while the registry and bins are alive.
         m_GeneratedTextures.reset();
@@ -1156,10 +1152,6 @@ namespace Veng::Renderer
         // Headless has no swapchain image to transition for presentation.
         if (!IsHeadless())
         {
-            // The capture copy is taken here, before the present hands the image to the
-            // presentation engine — after that the image is no longer the frame's to read.
-            MirrorPresentedFrame(*commandBuffer);
-
             Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
                                      ImageLayout::PresentSrc);
         }
@@ -1310,77 +1302,10 @@ namespace Veng::Renderer
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
         return m_Native->SwapChain->GetCurrentImageIndex();
     }
-    bool Context::IsSwapChainCaptureSupported() const
-    {
-        // Queried rather than asserted: headless is a legitimate caller and simply cannot capture.
-        return m_Native->SwapChain && m_Native->SwapChain->IsCaptureSupported();
-    }
-
-    void Context::RequestPresentedFrameCapture()
-    {
-        // Never taken where no frame end could service it, so a pending request always resolves.
-        if (IsSwapChainCaptureSupported())
-        {
-            m_Native->PresentedFrameCapture.Request();
-        }
-    }
-
-    bool Context::IsPresentedFrameCapturePending() const
-    {
-        return m_Native->PresentedFrameCapture.IsPending();
-    }
-
-    Ref<Image> Context::GetPresentedFrameMirror() const
-    {
-        return m_Native->PresentedFrameMirror;
-    }
-
-    void Context::MirrorPresentedFrame(CommandBuffer& commandBuffer)
-    {
-        // Taken first, so a request a recreated swap chain can no longer service still clears.
-        if (!m_Native->PresentedFrameCapture.TakeForFrame() || !IsSwapChainCaptureSupported())
-        {
-            return;
-        }
-        VE_PROFILE_SCOPE("Render/MirrorFrame");
-
-        const Ref<Image> presented = GetCurrentSwapChainImage();
-        Ref<Image>& mirror = m_Native->PresentedFrameMirror;
-
-        // A resize recreates the swapchain at a new extent (and a display change can move its
-        // format), so the mirror is rebuilt whenever it stops matching.
-        if (mirror == nullptr || mirror->GetExtent() != presented->GetExtent() ||
-            mirror->GetFormat() != presented->GetFormat())
-        {
-            mirror =
-                Image::Create(*this, {
-                                         .Name = "Presented Frame Mirror",
-                                         .Extent = presented->GetExtent(),
-                                         .Format = presented->GetFormat(),
-                                         .Usage = ImageUsage::TransferSrc | ImageUsage::TransferDst,
-                                     });
-        }
-
-        Backend::TransitionImage(commandBuffer, *presented, ImageLayout::TransferSrc);
-        Backend::TransitionImage(commandBuffer, *mirror, ImageLayout::TransferDst);
-
-        const auto extent = ivec3(presented->GetExtent());
-        commandBuffer.BlitImage({
-            .SourceImage = presented,
-            .DestinationImage = mirror,
-            .SourceMipLevel = 0,
-            .DestinationMipLevel = 0,
-            .SourceOffset = {0, 0, 0},
-            .DestinationOffset = {0, 0, 0},
-            .SourceExtent = extent,
-            .DestinationExtent = extent,
-        });
-    }
-
     void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
     {
         // Headless has no swap chain, so nothing can invalidate one; registering is a no-op rather
-        // than a null dereference, matching IsSwapChainCaptureSupported's headless answer.
+        // than a null dereference.
         if (!m_Native->SwapChain)
         {
             return;

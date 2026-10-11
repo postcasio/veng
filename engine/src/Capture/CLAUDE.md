@@ -1,8 +1,16 @@
-# Capture — recording the presented frame to a video file
+# Capture — recording the presented frame, and capturing one on demand
 
-`Veng::Capture` is one service: **`VideoRecorder`**, an `Application` member that records what the
-application presents to a video file through the platform's hardware encoder, with **no CPU copy**.
-Its public surface is `Veng/Capture/VideoRecorder.h`; everything else in this directory is internal.
+`Veng::Capture` is two services, both `Application` members and both compositor capture sinks:
+
+- **`VideoRecorder`** records what the application presents to a video file through the platform's
+  hardware encoder, with **no CPU copy** (`Veng/Capture/VideoRecorder.h`). Most of this file is its.
+- **`FrameCapture`** composites one frame on demand into an image of its own, with or without the
+  application's overlay, for a screenshot (`Veng/Capture/FrameCapture.h`) — see
+  [One frame on demand](#one-frame-on-demand) below.
+
+Beside them, `Veng/Capture/Screenshot.h` turns an image into a picture file (the readback, the display
+encode, the PNG, and a saved screenshot's name), and `Veng/Capture/UserMedia.h` names where a user's
+recordings and screenshots land. Everything else in this directory is internal.
 
 The recorder exists in **every build configuration and on every platform**. Where the platform has
 no encoder behind a shareable surface, the class is unchanged and `IsAvailable()` is false — no
@@ -139,8 +147,8 @@ cannot serve both. `BitrateMbps` overrides it outright.
 A recreation at a new extent changes the frame size under the writer, which a file cannot carry; a
 same-extent recreation can move the **format or colour space**, which would change the capture
 composite's input semantics under it. So the recorder subscribes to `AddSwapChainInvalidationCallback`
-**once, in its constructor**, and only when `IsSwapChainCaptureSupported()` — the callback list has no
-removal, and a headless context has no swap chain. The callback ends a running capture with
+**once, in its constructor**, and only on a windowed run — the callback list has no removal, and a
+headless context has no swap chain. The callback ends a running capture with
 `swap chain changed`, draining the file intact.
 
 ## Output is the user's, under the per-user data directory
@@ -156,6 +164,39 @@ A capture is named, never pathed: `VideoCaptureSettings::Name` is resolved under
 only the name's final path component is taken, so a name carrying separators cannot escape. An empty
 name yields `<app>-<yyyymmdd-hhmmss>`. This is the profiler's rule, for the profiler's reason: **no
 capture path is ever a tool argument.**
+
+## One frame on demand
+
+`FrameCapture` is the still counterpart of the recorder, and what a screenshot reads — the MCP
+`render.screenshot_window` tool and any host's own screenshot key alike. It is a **one-shot
+`CaptureSink`**: `Request({IncludeOverlay})` installs it on the compositor, the next composited frame
+runs a further composite into a `BGRA8Srgb` image it creates at the presented extent, and it
+uninstalls itself when that frame's slot retires. So nothing is read off the swap chain (which the
+presentation engine owns once presented — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)), a frame
+nobody asked about pays nothing, and the recorder's sink and this one coexist on the compositor.
+
+- **The picture is sRGB whatever the display.** The composite targets `SrgbNonlinear` into an `_SRGB`
+  image, so an HDR10 or extended-linear display still yields an ordinary picture — the composite does
+  the conversion the display would.
+- **Two readiness questions, two answers.** `IsPending()` is false once the requested frame has
+  *ended* (its command buffer submitted): `Take()` may then read, its download ordered after that
+  frame and blocking on it — what an MCP handler one pump later wants. `IsComplete()` is true once the
+  frame's slot has *retired*: `Take()` then reads with no stall — what a host polling each frame wants.
+- **One capture is open at a time.** A second `Request` is refused until the first is taken or
+  `Cancel`led; a window with no presentable size composites nothing, so a request made while
+  minimized stays pending until a frame is composited or it is cancelled.
+- **`IncludeOverlay` is the application's chrome, not the game's GUI.** A world's HUD and menus are
+  driven into the viewports, so they are in the picture either way; off, a debug shell or an editor's
+  panels are left out.
+
+**The picture side is device-free.** `ConvertToRgb8` encodes a download by its format (a linear
+`RGBA16Sfloat` viewport output takes the sRGB transfer function; the 8-bit formats only lose alpha and
+reorder), refusing any other format rather than writing a PQ-encoded HDR image into an sRGB PNG.
+`ReadImageRgb8` is the download plus that encode, `EncodePng` / `WritePng` are stb_image_write
+compiled into libveng, and `ReserveScreenshotPath(directory, localTime)` claims
+`yyyy-mm-dd_hh-mm-ss.png` — `_2`, `_3`, … when taken — by **exclusive creation**, so two shots in one
+second, or two processes saving at once, never share a file. `ScreenshotDirectory(<app>)` is
+`UserDataDir(<app>)/screenshots`, beside the recordings' `videos`.
 
 ## The panel is the engine's, the window is the host's
 
@@ -270,6 +311,14 @@ line is the whole of what the band can and cannot reach, so it is worth being ex
 - `tests/unit/video_capture_panel_state.cpp` — the panel's two pure helpers: a typed name (trimmed,
   and empty when blank) is the name a Start receives, and the megabit figure is `DeriveBitsPerSecond`
   at every extent. Nothing is asserted about layout or draw.
+- `tests/unit/capture_screenshot.cpp` — the display encode by format (the sRGB curve on a linear
+  download, the byte reorder of the 8-bit ones, a short download and an unencodable format refused),
+  a PNG's signature and dimensions, the screenshot name, and that claiming a name never reuses one —
+  a file already present is skipped untouched.
+- `tests/unit/platform_userpaths.cpp` — the recordings directory is `videos` under the user data
+  directory, and exists after the call.
+- `tests/gpu/frame_capture.cpp` — several sinks each hearing every retirement and a removed one none,
+  a headless frame capture refusing with a reason, and a real image read back as its picture.
 - `tests/mcp_capture.cpp` — the tools over a host with no recorder, which is what a headless run is:
   the write gate both ways, `capture_status` answering with `available` false and every state field,
   the start schema naming no directory, both write verbs refusing with the reason, and the handler's
@@ -277,13 +326,13 @@ line is the whole of what the band can and cannot reach, so it is worth being ex
 
 **Only the live look can prove:**
 
-- That the **capture composite actually runs into the sink** — `ViewportCompositor::CompositeToSink`
+- That the **capture composite actually runs into a sink** — `ViewportCompositor::CompositeToSink`
   needs a presented frame, and there is none headless. The band proves the import and the encode on
   either side of it; the pass itself is unproven until a window has recorded.
 - That a **lockstep capture of a slow scene plays back smooth**, and that its sound track stays locked
   to the picture through a whole recording rather than a hundred and twenty synthetic pumps.
-- That `IncludeOverlay` does what it says, and that the recording's brightness and colour match what
-  the window showed.
+- That `IncludeOverlay` does what it says, and that a recording's or a frame capture's brightness and
+  colour match what the window showed.
 - That the **panel drives a real capture** — its Start and Stop, its live figures moving, and the
   settings it edits reaching the file — since the panel needs both a window and a recorder that can
   record.

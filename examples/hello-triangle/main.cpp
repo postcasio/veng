@@ -1433,7 +1433,7 @@ private:
             },
             .ViewportNames = [] { return vector<string>{"primary"}; },
             .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
-            .RenderContext = [this] { return &GetRenderContext(); },
+            .FrameCapture = [this] { return &GetFrameCapture(); },
             .Profiler = [this] { return &GetProfiler(); },
             .VideoRecorder = [this] { return &GetVideoRecorder(); },
             .Audio = [this] { return &GetAudioEngine(); },
