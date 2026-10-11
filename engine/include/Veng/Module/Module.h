@@ -464,9 +464,9 @@ extern "C"
 /// module reads every later context field at a shifted offset and lays SeatInput out short.
 /// Version 108 adds mesh levels of detail: Mesh, MeshInfo and MeshData grow the level table,
 /// VisibleMesh grows ForcedLod, SceneRendererSettings grows LodBias, LodHysteresis and ForcedLod
-/// after Cull, SceneView grows ForcedLod and MeshLods after CaptureFace, and the LodOverride
-/// component registers. A module builds meshes and views, so a stale module lays them out short and
-/// reads every later field at a shifted offset.
+/// after Cull, SceneView grows ForcedLod and MeshLods after CaptureFace, ModelPortrait grows
+/// ForcedLod, and the LodOverride component registers. A module builds meshes and views and spawns
+/// portraits, so a stale module lays them out short and reads every later field at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION

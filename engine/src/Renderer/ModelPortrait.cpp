@@ -427,6 +427,7 @@ namespace Veng::Renderer
         const SceneView view{
             .World = *runtime.Stage,
             .Camera = runtime.Camera,
+            .ForcedLod = ForcedLod,
             .AmbientFloor = Lighting.Ambient,
         };
         runtime.Renderer->Render(cmd, view);

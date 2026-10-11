@@ -194,6 +194,14 @@ namespace Veng::Renderer
 
         /// @brief Whether the portrait re-renders every driven frame, or once until MarkDirty.
         CaptureRefresh Refresh = CaptureRefresh::EveryFrame;
+        /// @brief The level of detail the model's meshes draw at.
+        ///
+        /// CoarsestLod (the default) draws each mesh's lowest detail, since a portrait is a small
+        /// UI render; 0 draws full detail, a level between picks that level (clamped to each mesh's
+        /// coarsest), and AutomaticLod selects by each mesh's projected size in the portrait's own
+        /// camera, as a scene view does. A mesh with a single level is unaffected, and a
+        /// LodOverride an entity of the model carries wins.
+        i32 ForcedLod = CoarsestLod;
 
         /// @brief Runtime state, materialized on the first drive (or SetOnPopulate); empty until then.
         mutable Unique<ModelPortraitRuntime> Runtime;
@@ -377,4 +385,7 @@ VE_FIELD(Framing, .DisplayName = "Framing")
 VE_FIELD(ModelPose, .DisplayName = "Model Pose")
 VE_FIELD(Lighting, .DisplayName = "Lighting")
 VE_FIELD(Refresh, .DisplayName = "Refresh")
+VE_FIELD(ForcedLod, .DisplayName = "Forced LOD",
+         .Tooltip = "Level of detail drawn: -1 selects by size, 0 is full detail, 7 the coarsest",
+         .Display = {.Min = -1.0, .Max = 7.0})
 VE_REFLECT_END();
