@@ -1280,7 +1280,9 @@ renderer from the compositor's pool, and it is driven exactly as a `CaptureSurfa
 compositor pre-pass, for the scenes its viewports render, ahead of every viewport — so a driver reading
 `GetOutput()` in that frame's drive paints this frame's render. `SetOnPopulate` attaches parts to the
 model in the private scene after each instantiation, and `Repopulate()` destroys every entity a
-populate created and runs it again without re-instantiating the model. The output carries the colour
+populate created and runs it again without re-instantiating the model. Its meshes draw at their
+coarsest level of detail unless `ForcedLod` says otherwise (`0` for full detail, `AutomaticLod` to
+select from the portrait's camera). The output carries the colour
 (tonemapped, coverage in alpha) or the depth and normal (`PortraitOutput::GeometryDepthNormal`), the
 camera, the model transform, and two bounds — `Bounds` over everything, `ModelBounds` over the model
 alone. Showing one is a driver calling `Document::SetImageTexture` with it each frame (and

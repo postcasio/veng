@@ -115,7 +115,14 @@ the format and its serialization — neither importer nor loader.
   decoration: a socket's local **-Z is forward** and **+Y is up**, matching the glTF camera/node
   convention and the engine's y-up scene. The loader rejects a `Version` mismatch — the header is
   read by a fixed-offset `memcpy`, so an added field would otherwise be misread as garbage rather
-  than tolerated.
+  than tolerated. **`CookedMeshVersion` is 2**: the header carries a `LodCount` (levels of detail,
+  level 0 included, at least 1) and a `BaseVertexCount` (the leading vertices level 0 draws, which
+  the mesh's bound folds over — an authored level's vertices follow them), and after the index bytes
+  come `CookedMeshLod[LodCount - 1]` (each coarser level's `ScreenSize` threshold and `Error`) and
+  `CookedMeshLodRange[(LodCount - 1) · SubMeshCount]` (each level's index range per submesh, level
+  after level). Level 0 is the submesh table; every range indexes the one index buffer with a vertex
+  offset of zero, and an empty range drops that submesh at that level. The table is appended, so a
+  reader walking the earlier regions by the header's counts is unaffected by it.
 - **`AssetTypes::Skeleton` and `AssetTypes::Animation` carry skinned-character rigs.** A
   **`CookedSkeletonHeader`** (`CookedSkeletonVersion`) is a `BoneCount` plus a column-major
   `GlobalInverse` mat4, followed by `CookedBone[BoneCount]` in topological (parent-before-child)

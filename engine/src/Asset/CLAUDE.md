@@ -353,6 +353,17 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   own SSBO slot, seeded from the source's current block — and `Adopt`s it into the override. The
   engine's own consumer is the capture path, which clones the sibling material so a `CaptureSurface`
   probe reaches only the capturing entity ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).
+- **A mesh may carry coarser levels of detail.** `Mesh::GetLodCount()` (level 0 included),
+  `GetLods()` (levels 1 and up: each a `ScreenSize` threshold, a simplification `Error`, and one
+  `MeshLodRange` per submesh), `GetLodScreenSizes()` (the thresholds, contiguous) and
+  `GetLodRange(level, subMesh)` (level 0 answers from the submesh table) are the whole surface; a
+  level indexes the mesh's one index buffer, keeps its submesh's material, and leaves the bound and
+  the sockets level 0's. `MeshLoader` decodes the cooked level table and rejects a range overrunning
+  the index buffer or thresholds that do not descend as `Corrupt`; a runtime-built mesh carries
+  levels through `MeshData::Lods`. The cook is [cooker/CLAUDE.md](../../../cooker/CLAUDE.md); the
+  selection, bias and overrides are the renderer's ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md),
+  "Level of detail"); the entity inspector lists a drawn mesh's levels read-only beneath its
+  `MeshRenderer`.
 - **A mesh carries the model's named attachment points.** `Mesh::GetSockets()` is the cooked
   `MeshSocket` list — name plus a mesh-space TRS — sorted by name, and `Mesh::FindSocket(name)`
   binary-searches it, returning `nullptr` for a name the model does not carry (a content error the

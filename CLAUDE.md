@@ -626,7 +626,8 @@ imnodes, zstd) — no system install needed beyond Vulkan, GLFW, glm, and zlib
   hidden so `libveng` does not re-export the SDL API. SDL enables OBJC in its own directory, so the
   root project enables it on Apple too, giving GLFW's Cocoa sources their compile rule.
 - **Cooker-only deps** (assimp, Slang, stb, the `bc7enc_rdo` / `astc-encoder` texture
-  encoders) are linked into `vengc` alone, never into `libveng` or its consumers.
+  encoders, the meshoptimizer level-of-detail simplifier) are linked into `vengc` alone, never into
+  `libveng` or its consumers.
 - **`veng::mcp`** adds one pinned dep of its own — cpp-httplib, vendored, PRIVATE.
 
 ### Build configurations — role on the asset, format on the platform
