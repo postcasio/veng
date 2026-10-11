@@ -169,36 +169,39 @@ namespace Veng
         }
     }
 
-    void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, const u64 clientTick)
+    void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, const u64 clientTick,
+                             const bool presented)
     {
         // The local input seat is a (SeatInput, PlayerInput) entity — the one InputMappingSystem
         // resolves from local devices. Prefer the locally-owned one when a peer holds several, and
         // fall back to the first so a single-seat client is unchanged. A client with none (a
         // spectator) stamps nothing.
-        const optional<f64> viewTick = RemotePlaybackTick(world);
-        bool stamped = false;
-        const PlayerInput* firstInput = nullptr;
+        const SeatInput* devices = nullptr;
+        const PlayerInput* input = nullptr;
+        bool local = false;
         world.Each<SeatInput, PlayerInput>(
-            [&](const Entity seat, const SeatInput&, const PlayerInput& input)
+            [&](const Entity seat, const SeatInput& seatDevices, const PlayerInput& seatInput)
             {
-                if (stamped)
+                if (local)
                 {
                     return;
                 }
-                if (IsLocallyOwned(world, seat))
+                local = IsLocallyOwned(world, seat);
+                if (local || input == nullptr)
                 {
-                    send.Stamp(clientTick, input.State, viewTick);
-                    stamped = true;
-                    return;
-                }
-                if (firstInput == nullptr)
-                {
-                    firstInput = &input;
+                    devices = &seatDevices;
+                    input = &seatInput;
                 }
             });
-        if (!stamped && firstInput != nullptr)
+        if (input == nullptr)
         {
-            send.Stamp(clientTick, firstInput->State, viewTick);
+            return;
         }
+        if (!presented && !devices->ReceivesInputWhileUnpresented)
+        {
+            send.Clear();
+            return;
+        }
+        send.Stamp(clientTick, input->State, RemotePlaybackTick(world));
     }
 }

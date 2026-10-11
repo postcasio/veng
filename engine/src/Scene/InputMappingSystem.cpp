@@ -64,6 +64,14 @@ namespace Veng
                     return;
                 }
 
+                // A seat whose world nothing presents is not the one the player is driving, so it
+                // reads at rest rather than taking the devices the presented world's seat is reading.
+                if (!context.Presented && !devices.ReceivesInputWhileUnpresented)
+                {
+                    input.State = NeutralActionState(input.State);
+                    return;
+                }
+
                 // A not-yet-resident context contributes no actions until it streams in — the
                 // ordinary async-load contract; skip it and resolve the rest. A focus-gated context
                 // is excluded while the seat is not gameplay-focused (IsContextActiveUnderFocus) —

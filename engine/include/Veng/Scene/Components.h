@@ -686,7 +686,8 @@ namespace Veng
     /// assignments resolve to distinct PlayerInputs. Authorable in a level and serialized through
     /// the reflection path. A seat with no SeatInput takes no local device input:
     /// InputMappingSystem skips it, so its PlayerInput is synthesized or replicated (the AI/remote
-    /// path).
+    /// path). A seat whose world no viewport presents reads neutral input (NeutralActionState)
+    /// unless it sets ReceivesInputWhileUnpresented.
     struct SeatInput
     {
         /// @brief Whether this seat reads the keyboard (and, region-gated elsewhere, the pointer).
@@ -699,6 +700,14 @@ namespace Veng
         /// keyboard and an auto-assigned pad. The flag fills a None Gamepad slot on connect; a
         /// level-authored slot is left untouched.
         bool WantsGamepad = false;
+        /// @brief Whether the seat keeps reading its devices while no viewport presents its world.
+        ///
+        /// Off by default: a seat takes input only while its world is on screen, so a world ticking
+        /// unseen — a destination loading behind the one presented, a world a hidden tab shows — is
+        /// never driven by controls the player is aiming at another. Set it for a seat that is
+        /// meant to be steered unseen, such as a remotely piloted drone or a picture-in-picture view
+        /// whose world is not registered as presented.
+        bool ReceivesInputWhileUnpresented = false;
     };
 
     /// @brief Per-pawn movement tuning the movement system scales its integration by.
@@ -2016,6 +2025,7 @@ VE_REFLECT(::Veng::SeatInput, 0x2D178569EDDBC215ULL)
 VE_FIELD(UsesKeyboardMouse, .DisplayName = "Uses Keyboard/Mouse")
 VE_FIELD(Gamepad, .DisplayName = "Gamepad")
 VE_FIELD(WantsGamepad, .DisplayName = "Wants Gamepad")
+VE_FIELD(ReceivesInputWhileUnpresented, .DisplayName = "Receives Input While Unpresented")
 VE_REFLECT_END();
 // Not VE_REPLICATED: SeatInput is a client-local device assignment (which keyboard/pad feeds a
 // seat) — meaningless on another peer, never sent.

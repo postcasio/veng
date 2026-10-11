@@ -397,7 +397,9 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
 
     InputMappingSystem mapping;
     TestSupport::TestServices services;
-    mapping.OnUpdate(*scene, 0.016f, services.Make());
+    SystemContext context = services.Make();
+    context.Presented = true;
+    mapping.OnUpdate(*scene, 0.016f, context);
 
     const PlayerInput& resolved = scene->Get<PlayerInput>(seat);
     // Both declared actions get a sample even with no active binding.
@@ -405,6 +407,77 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
     CHECK(VecApprox(vec3(resolved.GetValue(Move), 0.0f), vec3(0.0f)));
     CHECK_FALSE(resolved.IsHeld(Jump));
     CHECK_FALSE(resolved.WasTriggered(Jump));
+}
+
+TEST_CASE("A seat whose world is unpresented reads at rest unless it opts out")
+{
+    // Two seats with the same held keys: one arriving in a world that is ticking unseen, and one meant
+    // to be driven unseen. W holds Move, Space holds Jump, through every tick.
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+    const ResolvedContext context{
+        .Actions = {InputAction{.Id = Move, .Name = "Move", .Kind = ActionKind::Axis2D},
+                    InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard,
+                                        .Control = static_cast<u32>(Key::W)},
+                             .Action = Move,
+                             .Axis = AxisComponent::Y,
+                             .Scale = 1.0f},
+                     Binding{.Source = {.Device = InputDeviceType::Keyboard,
+                                        .Control = static_cast<u32>(Key::Space)},
+                             .Action = Jump,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f}}};
+    const auto makeSeat = [&](const bool drivenUnseen)
+    {
+        const Entity seat = scene->CreateEntity();
+        scene->Add<Viewer>(seat, Viewer{});
+        scene->Add<PlayerInput>(seat, PlayerInput{});
+        scene->Add<InputContextStack>(seat,
+                                      InputContextStack{.Active = {MakeResidentContext(context)}});
+        scene->Add<SeatInput>(seat, SeatInput{.ReceivesInputWhileUnpresented = drivenUnseen});
+        return seat;
+    };
+    const Entity arriving = makeSeat(false);
+    const Entity drone = makeSeat(true);
+
+    InputMappingSystem mapping;
+    TestSupport::TestServices services;
+    Input& input = services.GetInput();
+    input.BeginFrame(true);
+    input.ApplyEvent(KeyPressedEvent(Key::W, 0, 0));
+    input.ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
+    const auto tick = [&](const bool presented)
+    {
+        input.BeginFrame(true);
+        SystemContext tickContext = services.Make();
+        tickContext.Presented = presented;
+        tickContext.FirstStepThisFrame = true;
+        mapping.OnUpdate(*scene, 0.016f, tickContext);
+    };
+    const PlayerInput& seat = scene->Get<PlayerInput>(arriving);
+
+    // Unseen, the arriving seat takes nothing the player is holding; the opted-out seat does.
+    tick(false);
+    tick(false);
+    CHECK(seat.GetValue(Move) == vec2(0.0f));
+    CHECK_FALSE(seat.IsHeld(Jump));
+    CHECK(scene->Get<PlayerInput>(drone).GetValue(Move).y == doctest::Approx(1.0f));
+    CHECK(scene->Get<PlayerInput>(drone).IsHeld(Jump));
+
+    // On screen, it reads the keys, and a key held all along is a press it has not yet seen.
+    tick(true);
+    CHECK(seat.GetValue(Move).y == doctest::Approx(1.0f));
+    CHECK(seat.WasTriggered(Jump));
+
+    // Leaving the screen lets go without a release: no Completed edge, the layout kept.
+    tick(true);
+    tick(false);
+    CHECK(seat.State.Actions.size() == 2);
+    CHECK(seat.GetValue(Move) == vec2(0.0f));
+    CHECK_FALSE(seat.IsHeld(Jump));
+    CHECK_FALSE(seat.WasReleased(Jump));
+    CHECK_FALSE(seat.WasReleasedThisFrame(Jump));
 }
 
 TEST_CASE("InputMappingSystem accumulates a release edge across a multi-step frame")
@@ -439,6 +512,7 @@ TEST_CASE("InputMappingSystem accumulates a release edge across a multi-step fra
     const auto tick = [&](const bool firstStep)
     {
         SystemContext context = services.Make();
+        context.Presented = true;
         context.FirstStepThisFrame = firstStep;
         mapping.OnUpdate(*scene, 0.016f, context);
     };
@@ -522,7 +596,14 @@ namespace
             FrameEdgeProbe::Triggered = 0;
             Systems.Register<InputMappingSystem>();
             Systems.Register<FrameEdgeProbe>();
-            Runner.SetContextFactory(Services.Factory());
+            // The world is the one on screen, so its seat reads the keyboard.
+            Runner.SetContextFactory(
+                [this](const SystemContextRequest& request)
+                {
+                    SystemContext context = Services.Make(request);
+                    context.Presented = true;
+                    return context;
+                });
             Id = Runner.OpenWorld(WorldOpenInfo{
                 .SimTickRate = 60,
                 .StartSimulation = true,

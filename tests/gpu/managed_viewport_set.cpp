@@ -906,8 +906,10 @@ TEST_CASE(
         const Scene& scene = *a.Scene;
         if (frame == 0)
         {
-            // Bound but never pushed: the viewport retains no scene, so it gives the world no view.
+            // Bound but never pushed: the viewport retains no scene, so it gives the world no view,
+            // and the world's seats take no input.
             CHECK_FALSE(contextFor(app).View.has_value());
+            CHECK_FALSE(contextFor(app).Presented);
             viewport->SetViewState({.World = a.Scene, .Camera = own, .Delta = 0.016f});
         }
         else if (frame == 2)
@@ -918,6 +920,7 @@ TEST_CASE(
 
             const SystemContext context = contextFor(app);
             CHECK(context.View.has_value());
+            CHECK(context.Presented);
             CHECK(context.Debug == &viewport->GetDebugDraw());
             CHECK(app.GetManagedViewports().FindPresentingViewport(a.World, scene) ==
                   viewport.get());
@@ -931,6 +934,7 @@ TEST_CASE(
         {
             // Unbound, the Offscreen viewport presents the world to none of its systems or seats.
             CHECK_FALSE(contextFor(app).View.has_value());
+            CHECK_FALSE(contextFor(app).Presented);
             CHECK(scene.TryGet<LocalControl>(pawn) == nullptr);
             viewport.reset();
         }

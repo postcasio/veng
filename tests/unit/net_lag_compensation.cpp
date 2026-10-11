@@ -187,7 +187,7 @@ TEST_CASE("A client stamps the tick its remote-interpolation clock is drawing")
 
     // No simulation, so nothing is drawn in the past: the view is the present.
     InputSendBuffer send;
-    StampLocalSeatInput(send, *scene, 10);
+    StampLocalSeatInput(send, *scene, 10, /*presented=*/true);
     REQUIRE(send.GetWindow().size() == 1);
     CHECK(send.GetWindow().back().ViewDelayTicks == 0.0f);
 
@@ -208,7 +208,7 @@ TEST_CASE("A client stamps the tick its remote-interpolation clock is drawing")
     const optional<f64> drawn = RemotePlaybackTick(*scene);
     REQUIRE(drawn.has_value());
 
-    StampLocalSeatInput(send, *scene, 11);
+    StampLocalSeatInput(send, *scene, 11, /*presented=*/true);
     CHECK(11.0 - send.GetWindow().back().ViewDelayTicks == doctest::Approx(*drawn));
 }
 

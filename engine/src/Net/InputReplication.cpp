@@ -260,6 +260,7 @@ namespace Veng
         InputPacket result;
         result.AckedServerTick = *ackedServerTick;
         result.AckedStateSequence = *ackedStateSequence;
+        result.NoInput = *count == 0;
         for (u32 i = 0; i < *count; ++i)
         {
             const Result<u16> viewDelay = ReadU16(packet, cursor);
@@ -346,6 +347,7 @@ namespace Veng
         InputPacket result;
         result.AckedServerTick = *ackedServerTick;
         result.AckedStateSequence = *ackedStateSequence;
+        result.NoInput = *count == 0;
 
         const TypeInfo& info = ActionStateInfo(registry);
         for (u32 i = 0; i < *count; ++i)
@@ -407,6 +409,9 @@ namespace Veng
 
     void InputJitterBuffer::Ingest(const InputPacket& packet)
     {
+        // The channel is sequenced, so the newest packet speaks for the stream: one with no records
+        // stops it and the next carrying any resumes it.
+        m_Stopped = packet.NoInput;
         for (const TickedInput& input : packet.Inputs)
         {
             if (m_Started && input.ClientTick <= m_LastConsumedTick)
@@ -440,11 +445,17 @@ namespace Veng
             return std::move(oldest.mapped().State);
         }
 
-        // Underrun: coast on the last input with edge phases decayed (a held action persists, an edge
-        // never repeats). nullopt only before the first input has ever arrived.
+        // Underrun: a stopped sender's seat comes to rest; otherwise the input was lost, so coast on
+        // the last with edge phases decayed (a held action persists, an edge never repeats). nullopt
+        // only before the first input has ever arrived.
         if (m_Started)
         {
             ++m_ConsumeCount;
+            if (m_Stopped)
+            {
+                m_Last = NeutralActionState(*m_Last);
+                return m_Last;
+            }
             ++m_UnderrunCount;
             m_Last = DecayInputPhases(*m_Last);
             return m_Last;
@@ -474,13 +485,19 @@ namespace Veng
             return std::move(node.mapped().State);
         }
 
-        // Underrun: the input for this tick has not arrived (the client is not far enough ahead, or the
-        // packet was lost). Coast on the last input with edge phases decayed, exactly as Consume does.
+        // Underrun: the input for this tick has not arrived. A stopped sender's seat comes to rest;
+        // otherwise the client is not far enough ahead or the packet was lost, so coast on the last
+        // input with edge phases decayed, exactly as Consume does.
         if (m_Started)
         {
             ++m_ConsumeCount;
-            ++m_UnderrunCount;
             m_LastConsumedTick = tick;
+            if (m_Stopped)
+            {
+                m_Last = NeutralActionState(*m_Last);
+                return m_Last;
+            }
+            ++m_UnderrunCount;
             m_Last = DecayInputPhases(*m_Last);
             return m_Last;
         }

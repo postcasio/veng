@@ -747,6 +747,13 @@ namespace Veng
         u64 AckedStateSequence = 0;
         /// @brief The decoded inputs in ascending client-tick order; a per-record decode failure drops that record.
         vector<TickedInput> Inputs;
+        /// @brief Whether the sender carried no records at all — it has no live input for this world.
+        ///
+        /// Read off the header's record count, so a packet whose every record failed to decode is
+        /// not mistaken for one. A sender stops carrying records when nothing presents its world
+        /// (InputSendBuffer::Clear), and the receiving InputJitterBuffer then feeds neutral input
+        /// once what it holds is spent.
+        bool NoInput = false;
     };
 
     /// @brief Decays a duplicated input's edge phases so a coasted (underrun) tick repeats no edges.
@@ -927,6 +934,14 @@ namespace Veng
         [[nodiscard]] vector<u8> Encode(u64 ackedServerTick, u64 ackedStateSequence,
                                         const TypeRegistry& registry) const;
 
+        /// @brief Discards the retained window, so the next Encode carries no records.
+        ///
+        /// The sender's way of saying its seat has no live input — its world is not presented — as
+        /// opposed to a packet lost in transit: a packet with no records tells the receiving jitter
+        /// buffer to feed neutral input rather than coast on the last it received. The next Stamp
+        /// starts a fresh window.
+        void Clear() { m_Window.clear(); }
+
         /// @brief The number of ticks currently retained (at most Redundancy).
         [[nodiscard]] usize Size() const { return m_Window.size(); }
 
@@ -947,6 +962,11 @@ namespace Veng
     /// decayed on underrun (a held action persists, an edge never repeats). The consumed ActionState is
     /// written into the connection's seat PlayerInput before the Sim systems run, and the control system
     /// re-derives Intent from it unchanged.
+    ///
+    /// An underrun is read two ways. With no packet arriving the input was lost in transit, so the
+    /// buffer coasts. A packet arriving with no records (InputPacket::NoInput) says the sender has no
+    /// live input for this world, so once the buffered ticks are spent the buffer feeds the last
+    /// input's NeutralActionState instead, until a packet carrying records resumes the stream.
     class VE_API InputJitterBuffer
     {
     public:
@@ -972,7 +992,8 @@ namespace Veng
         ///
         /// Drops the oldest buffered ticks when the depth exceeds the target (overrun), then pops the
         /// oldest remaining tick; when nothing is buffered (underrun) it duplicates the last consumed
-        /// input with edge phases decayed. nullopt only before any input has ever arrived.
+        /// input with edge phases decayed, or returns it neutral when the sender has stopped
+        /// (IsStopped). nullopt only before any input has ever arrived.
         /// @return The input to feed the seat this tick, or nullopt before the first input arrives.
         [[nodiscard]] optional<ActionState> Consume();
 
@@ -981,7 +1002,8 @@ namespace Veng
         /// Drops any buffered client tick older than @p tick (the server has advanced past it), then
         /// returns the input stamped at @p tick when it has arrived. When it has not (the client is
         /// not running far enough ahead, or the packet was lost), it underruns — duplicating the last
-        /// consumed input with its edge phases decayed, exactly as Consume does. Future ticks stay
+        /// consumed input with its edge phases decayed, or returning it neutral when the sender has
+        /// stopped, exactly as Consume does. Future ticks stay
         /// buffered for their own server tick. nullopt only before any input has ever arrived.
         /// @param tick  The server tick whose matching client input is consumed.
         /// @return The input to feed the seat this tick, or nullopt before the first input arrives.
@@ -1000,7 +1022,13 @@ namespace Veng
         [[nodiscard]] u64 ConsumeCount() const { return m_ConsumeCount; }
 
         /// @brief Consume calls that underran — coasted on the last input rather than a fresh one.
+        ///
+        /// A consume that fed neutral input because the sender stopped is not counted: nothing was
+        /// missing.
         [[nodiscard]] u64 UnderrunCount() const { return m_UnderrunCount; }
+
+        /// @brief Whether the newest packet carried no records, so a drained buffer feeds neutral input.
+        [[nodiscard]] bool IsStopped() const { return m_Stopped; }
 
         /// @brief The view delay, in ticks, of the input the last consume returned.
         ///
@@ -1017,5 +1045,6 @@ namespace Veng
         u64 m_ConsumeCount = 0;
         u64 m_UnderrunCount = 0;
         bool m_Started = false;
+        bool m_Stopped = false;
     };
 }

@@ -166,7 +166,7 @@ TEST_CASE("StampLocalSeatInput stamps the locally-owned seat, else the first")
     // No marker: the first (SeatInput, PlayerInput) seat is stamped — today's behavior.
     {
         InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 1});
-        StampLocalSeatInput(send, *scene, 1);
+        StampLocalSeatInput(send, *scene, 1, /*presented=*/true);
         const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, 0, types), types);
         REQUIRE(packet.has_value());
         REQUIRE(packet->Inputs.size() == 1);
@@ -177,7 +177,7 @@ TEST_CASE("StampLocalSeatInput stamps the locally-owned seat, else the first")
     {
         scene->Add<LocalSeat>(seatB);
         InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 1});
-        StampLocalSeatInput(send, *scene, 1);
+        StampLocalSeatInput(send, *scene, 1, /*presented=*/true);
         const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, 0, types), types);
         REQUIRE(packet.has_value());
         REQUIRE(packet->Inputs.size() == 1);

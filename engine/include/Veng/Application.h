@@ -2146,7 +2146,8 @@ namespace Veng
         ///
         /// Client-only: records the local input seat's resolved PlayerInput for @p clientTick into the
         /// redundant send buffer (drained once per frame by PumpNet). A no-op with no local input seat
-        /// in the scene.
+        /// in the scene. While no viewport presents the world the window is emptied instead, so the
+        /// host reads the seat's input as stopped (see StampLocalSeatInput).
         /// @param world       The joined world whose local seat input is stamped.
         /// @param clientTick  The client sim tick being stamped.
         void StampClientInput(WorldInstanceId world, u64 clientTick);
@@ -2182,12 +2183,22 @@ namespace Veng
         /// (RoleForWorld), the tick, alpha and step edges from the request, GameplayFocused from the
         /// router, and IsReplay for a Replay request. Pointer is this frame's routing scoped to the
         /// request's scene for a live Sim step or View pass, and empty otherwise. View and Debug
-        /// resolve from the scene's primary presenting viewport — the first registered Presented
-        /// viewport whose retained scene is the request's — and are nullopt and null for a view-less
-        /// scene.
+        /// resolve from the scene's primary presenting viewport (FindScenePresenter), and are nullopt
+        /// and null for a view-less scene; Presented says which.
         /// @param request  The world, scene, phase and step the context is for.
         /// @return The assembled context.
         [[nodiscard]] SystemContext MakeSystemContext(const SystemContextRequest& request) const;
+
+        /// @brief Returns the viewport presenting a world's scene, or null when nothing presents it.
+        ///
+        /// A managed or bound viewport registered for the world (FindPresentingViewport), else a
+        /// Presented viewport a consumer drives itself; either only once its retained scene is
+        /// @p scene. The one presentation answer a world's view, its seats' input and its sound share.
+        /// @param world  The world whose scene is asked about.
+        /// @param scene  The world's live scene.
+        /// @return The presenting viewport, or null.
+        [[nodiscard]] const Renderer::Viewport* FindScenePresenter(WorldInstanceId world,
+                                                                   const Scene& scene) const;
 
         ApplicationInfo m_Info;
 

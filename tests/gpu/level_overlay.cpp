@@ -247,7 +247,9 @@ namespace
 
         TestSupport::TestServices services({.Assets = &assets, .Input = &input});
         InputMappingSystem mapping;
-        mapping.OnUpdate(scene, 0.016f, services.Make());
+        SystemContext context = services.Make();
+        context.Presented = true;
+        mapping.OnUpdate(scene, 0.016f, context);
 
         const InputSeat seat = ResolveInputSeat(&scene, {});
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;

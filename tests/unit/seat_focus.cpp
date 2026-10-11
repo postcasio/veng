@@ -475,9 +475,16 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     InputRouter router(nullptr, input, viewportRegistry);
     InputMappingSystem mapping;
     TestSupport::TestServices services({.Input = &input});
+    // The seats' world is on screen, so they read their devices.
+    const auto presented = [&services]
+    {
+        SystemContext context = services.Make();
+        context.Presented = true;
+        return context;
+    };
 
     // Baseline: both seats resolve Move.y = 1 from the held W.
-    mapping.OnUpdate(*scene, 0.016f, services.Make());
+    mapping.OnUpdate(*scene, 0.016f, presented());
     CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(1.0f));
     CHECK(scene->Get<PlayerInput>(seatB).GetValue(Move).y == doctest::Approx(1.0f));
 
@@ -489,7 +496,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
 
         input.BeginFrame();
         input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
-        mapping.OnUpdate(*scene, 0.016f, services.Make());
+        mapping.OnUpdate(*scene, 0.016f, presented());
 
         // Seat A swapped to the empty UI context, so its Move no longer resolves; seat B still does.
         CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(0.0f));
@@ -500,7 +507,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     // The scope closed: seat A's gameplay context is restored, so it resolves Move again.
     input.BeginFrame();
     input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
-    mapping.OnUpdate(*scene, 0.016f, services.Make());
+    mapping.OnUpdate(*scene, 0.016f, presented());
     CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(1.0f));
 }
 

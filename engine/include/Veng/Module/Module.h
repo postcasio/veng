@@ -457,10 +457,15 @@ extern "C"
 /// picker. A module spawns looks, builds views and calls the editor, so a stale module lays the
 /// structs out short, reads every later field at a shifted offset and calls an entry point the host
 /// no longer exports.
+/// Version 107 gives a seat neutral input while no viewport presents its world: SystemContext grows
+/// Presented after Debug, SeatInput grows ReceivesInputWhileUnpresented, InputPacket grows NoInput,
+/// InputJitterBuffer grows its stopped state, and StampLocalSeatInput takes whether the world is
+/// presented. A module's systems read the context every tick and its prefabs spawn seats, so a stale
+/// module reads every later context field at a shifted offset and lays SeatInput out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 106u
+#define VENG_MODULE_ABI_VERSION 107u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

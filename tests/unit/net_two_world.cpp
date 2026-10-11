@@ -302,7 +302,7 @@ namespace
                 {
                     world->Get<PlayerInput>(LocalSeat).State = *scripted;
                 }
-                StampLocalSeatInput(Send, *world, clientTick);
+                StampLocalSeatInput(Send, *world, clientTick, /*presented=*/true);
             }
 
             if (Client->State() == ClientState::Connected && Host->CurrentJoinId() != ControlJoinId)

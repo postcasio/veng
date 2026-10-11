@@ -692,7 +692,7 @@ namespace
             ctx.Role = NetRole::Client;
             Movement.OnUpdate(*world, delta, ctx.Make());
             Host->RecordPrediction(clientTick);
-            StampLocalSeatInput(Send, *world, clientTick);
+            StampLocalSeatInput(Send, *world, clientTick, /*presented=*/true);
         }
 
         void Frame(f64 now, u64 clientTick, f32 delta, const optional<ActionState>& scripted)

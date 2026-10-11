@@ -58,7 +58,7 @@ TEST_CASE("StampLocalSeatInput records the first local seat's resolved input, or
     InputSendBuffer send;
 
     // No local input seat: the window stays empty (a header-only ack) — the spectator path.
-    StampLocalSeatInput(send, *scene, /*clientTick=*/1);
+    StampLocalSeatInput(send, *scene, /*clientTick=*/1, /*presented=*/true);
     CHECK(send.Size() == 0);
 
     // A local input seat (SeatInput + PlayerInput) is stamped.
@@ -67,8 +67,41 @@ TEST_CASE("StampLocalSeatInput records the first local seat's resolved input, or
     scene->Add<SeatInput>(seat);
     scene->Add<PlayerInput>(seat).State = MoveState(vec2(1.0f, -1.0f));
 
-    StampLocalSeatInput(send, *scene, /*clientTick=*/2);
+    StampLocalSeatInput(send, *scene, /*clientTick=*/2, /*presented=*/true);
     CHECK(send.Size() == 1);
+}
+
+TEST_CASE("An unpresented client world sends no input records unless its seat opts out")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const Entity seat = scene->CreateEntity();
+    scene->Add<Viewer>(seat);
+    scene->Add<SeatInput>(seat);
+    scene->Add<PlayerInput>(seat).State = MoveState(vec2(1.0f, 0.0f));
+
+    InputSendBuffer send;
+    StampLocalSeatInput(send, *scene, /*clientTick=*/1, /*presented=*/true);
+    StampLocalSeatInput(send, *scene, /*clientTick=*/2, /*presented=*/true);
+    REQUIRE(send.Size() == 2);
+
+    // Unpresented, the window empties rather than re-sending what the seat held while on screen, so
+    // the packet carries no records and the host reads the stream as stopped.
+    StampLocalSeatInput(send, *scene, /*clientTick=*/3, /*presented=*/false);
+    CHECK(send.Size() == 0);
+    const Result<InputPacket> stopped = DecodeInputPacket(send.Encode(0, 0, types), types);
+    REQUIRE(stopped.has_value());
+    CHECK(stopped->NoInput);
+
+    // A seat meant to be driven unseen keeps sending.
+    scene->Get<SeatInput>(seat).ReceivesInputWhileUnpresented = true;
+    StampLocalSeatInput(send, *scene, /*clientTick=*/4, /*presented=*/false);
+    CHECK(send.Size() == 1);
+    const Result<InputPacket> driven = DecodeInputPacket(send.Encode(0, 0, types), types);
+    REQUIRE(driven.has_value());
+    CHECK_FALSE(driven->NoInput);
 }
 
 TEST_CASE("The world-drive input feed carries a client's input into the server seat")

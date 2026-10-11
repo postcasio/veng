@@ -71,8 +71,8 @@ request carries the protocol version, so it must stay readable by a peer of any 
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**9**, the
-version that added the reliable component-state message below) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**10**,
+the version that gave an input packet with no records its meaning — see "Input replication") + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -402,6 +402,20 @@ duplicated input's), and `FeedSeatInputs` writes it onto the seat as the runtime
 absolute tick, and a seat with none — a listen host's own, fed locally — views the present. The send
 window holds one contiguous run of ticks, so a stamp that does not follow the newest retained tick
 (a clock re-seed or resync) starts a fresh window rather than relabelling the old records.
+
+**An unpresented world's seat stops sending, and the host tells that from loss.** A seat takes input
+only while its world is presented ([../Scene/CLAUDE.md](../Scene/CLAUDE.md)), so for a joined world
+no viewport presents, `StampLocalSeatInput` (told so by `Application`, from the same presenting
+viewport the context factory uses) **clears** the send window instead of stamping
+(`InputSendBuffer::Clear`), and every packet for that join goes out with no records — the acks still
+flow. `DecodeInputPacket` marks such a packet `InputPacket::NoInput`, read off the header's record
+count so a packet whose records all failed to decode is not mistaken for one, and the jitter buffer
+takes the newest packet as speaking for the stream (the channel is sequenced): after a `NoInput`
+packet it feeds what it already holds, then the last input's `NeutralActionState` until a packet
+carrying records resumes it. An underrun with no packet arriving is still loss and still coasts on
+the last input, edges decayed. The neutral feed counts as a consume, not an underrun. A seat whose
+`SeatInput` sets `ReceivesInputWhileUnpresented` keeps stamping. Giving a record-less packet this
+meaning bumped `Net::ProtocolVersion` to 10.
 
 ## Lag compensation — judging a query against the world as a client saw it
 

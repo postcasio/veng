@@ -201,6 +201,14 @@ namespace Veng
         /// debug lines/billboards into the scene's own view. Null for a view-less sim and headless (a
         /// value SystemViewInfo cannot carry a mutable sink, so it rides SystemContext directly).
         Renderer::DebugDraw* Debug = nullptr;
+        /// @brief Whether a viewport presents this sim's scene, and so whether its seats take input.
+        ///
+        /// Resolved by the engine from the same presenting viewport View is, so it is true exactly
+        /// when View is set: the scene's sound and rumble play under the same answer. While it is
+        /// false InputMappingSystem gives every local seat neutral input (NeutralActionState) unless
+        /// the seat's SeatInput opts out, and a joining client sends its host no input for the
+        /// world. False for a context a caller assembles without the engine, which presents nothing.
+        bool Presented = false;
         /// @brief The fixed simulation tick number.
         ///
         /// In the Sim phase this is the tick being advanced (monotonic, +1 per fixed step); in the

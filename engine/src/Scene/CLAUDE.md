@@ -384,6 +384,10 @@ on screen keeps its rank — which is how the audio engine's music arbitration t
 scene (eligible) from a paused one nothing shows (not), and breaks priority ties toward the primary
 viewport ([../Audio/CLAUDE.md](../Audio/CLAUDE.md), "The code API and the music director").
 
+**Seat input follows the same answer.** `SystemContext::Presented` is set exactly when the factory
+resolves `View`, and a local seat in a world it is false for reads neutral input ("Input → actions →
+PlayerInput → Intent" below).
+
 Two device engines file under scopes: the **audio engine** — every voice, started through the
 `ScopedAudio` facade a scene's `SystemContext::Audio` (or a Gui driver's frame) is, with a listener per
 scope ([../Audio/CLAUDE.md](../Audio/CLAUDE.md)) — and the **haptics engine** — every rumble one-shot
@@ -580,6 +584,21 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `WantsGamepad` seat with a `None` slot, a disconnected slot is cleared, a level-authored slot is
   respected. **A seat with no `SeatInput` is skipped** — its `PlayerInput` is synthesized or
   replicated (the AI/remote path) — so every local human seat must author one.
+- **A seat takes input only while its world is presented.** The context factory sets
+  `SystemContext::Presented` from the same presenting viewport `View` is resolved from — the answer a
+  scene's sound and rumble already follow (see "Presentation scopes" above) — and while it is false
+  `InputMappingSystem` reads no device for any local seat in that world: it writes
+  **`NeutralActionState`** (`Veng/Input/Actions.h`) over the seat's previous state — every axis zero,
+  nothing held, no edges, the action layout kept. A world ticking unseen (a destination loading
+  behind the presented one, a hidden editor Play tab) is therefore never driven by controls the
+  player is aiming at the world on screen. Going to rest lets go rather than releases — no
+  `Completed` edge fires — and a control still down when the world is presented again reads as a
+  fresh press, exactly as after popping a seat's contexts to empty. A seat meant to be steered
+  unseen (a remotely piloted drone, a picture-in-picture view not registered as presenting) sets
+  **`SeatInput::ReceivesInputWhileUnpresented`**. A joining client carries the rule to its host:
+  it sends no input records for an unpresented world, and the host's seat comes to rest (see
+  [../Net/CLAUDE.md](../Net/CLAUDE.md), "Input replication"). Which unseen-world state a game still
+  counts — whether an unpresented arrival is "there" for its NPCs or zones — stays the game's.
 
 A game-specific **control** system reads `PlayerInput` by action id and writes the abstract
 **`Intent`** command (local-frame move, a three-axis rotational command — yaw, pitch, roll, of

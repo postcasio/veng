@@ -2417,8 +2417,9 @@ namespace Veng
         if (m_Net && resolved != nullptr)
         {
             // Stamp into this world's own send window; a multiplexed client keeps one per joined world.
-            StampLocalSeatInput(m_Net->ClientWorlds[world.Value].Send, resolved->GetScene(),
-                                clientTick);
+            const Scene& scene = resolved->GetScene();
+            StampLocalSeatInput(m_Net->ClientWorlds[world.Value].Send, scene, clientTick,
+                                FindScenePresenter(world, scene) != nullptr);
         }
     }
 
@@ -2603,25 +2604,13 @@ namespace Veng
             .LastStepThisFrame = request.LastStep,
             .IsReplay = request.Phase == SystemContextPhase::Replay};
 
-        // The world's presenting viewport supplies the view descriptor and debug-draw sink: a managed
-        // or bound one registered for this world, of any role, else a Presented viewport a consumer
-        // registered and drives itself. Either matches on its retained scene — last frame's push,
-        // since view pushes run after ticks — so a never-pushed viewport leaves View nullopt.
-        const Renderer::Viewport* presenting =
-            m_ManagedViewports->FindPresentingViewport(request.World, request.Scene);
-        if (presenting == nullptr)
-        {
-            const auto selfDriven = std::ranges::find_if(
-                m_Compositor.GetViewports(),
-                [&request](const Renderer::Viewport* viewport)
-                {
-                    return viewport->GetRole() == Renderer::ViewportRole::Presented &&
-                           viewport->GetPresentedScene() == &request.Scene;
-                });
-            presenting = selfDriven != m_Compositor.GetViewports().end() ? *selfDriven : nullptr;
-        }
+        // The presenting viewport supplies the view descriptor and debug-draw sink, and its presence
+        // is what lets the world's seats take input. It matches on its retained scene — last frame's
+        // push, since view pushes run after ticks — so a never-pushed viewport presents nothing yet.
+        const Renderer::Viewport* presenting = FindScenePresenter(request.World, request.Scene);
         if (presenting != nullptr)
         {
+            context.Presented = true;
             context.View = SystemViewInfo{
                 .Camera = presenting->GetPresentedCamera(),
                 .Region = presenting->GetRegion(),
@@ -2631,6 +2620,25 @@ namespace Veng
             context.Debug = &presenting->GetDebugDraw();
         }
         return context;
+    }
+
+    const Renderer::Viewport* Application::FindScenePresenter(const WorldInstanceId world,
+                                                              const Scene& scene) const
+    {
+        if (const Renderer::Viewport* managed =
+                m_ManagedViewports->FindPresentingViewport(world, scene);
+            managed != nullptr)
+        {
+            return managed;
+        }
+        const auto selfDriven = std::ranges::find_if(
+            m_Compositor.GetViewports(),
+            [&scene](const Renderer::Viewport* viewport)
+            {
+                return viewport->GetRole() == Renderer::ViewportRole::Presented &&
+                       viewport->GetPresentedScene() == &scene;
+            });
+        return selfDriven != m_Compositor.GetViewports().end() ? *selfDriven : nullptr;
     }
 
     void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)

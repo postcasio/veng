@@ -322,7 +322,7 @@ namespace
             ctx.Role = NetRole::Client;
             Movement.OnUpdate(*world, delta, ctx.Make());
             Host->RecordPrediction(clientTick);
-            StampLocalSeatInput(Send, *world, clientTick);
+            StampLocalSeatInput(Send, *world, clientTick, /*presented=*/true);
         }
 
         // The full client frame: apply the stream + promote (Pump), predict (Sim), interpolate remotes

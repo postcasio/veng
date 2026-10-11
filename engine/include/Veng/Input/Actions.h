@@ -400,6 +400,17 @@ namespace Veng
     /// @return The resolved ActionState this tick.
     [[nodiscard]] ActionState ResolveActions(std::span<const ResolvedContext> active,
                                              const RawInputView& raw, const ActionState& previous);
+
+    /// @brief Returns a seat's action state at rest: every axis zero, nothing held, no edges.
+    ///
+    /// Keeps each of @p layout's samples, in order, with its value zeroed, its phase None and both
+    /// frame edges cleared. This is what a seat reads while it is not taking input — its world
+    /// unpresented, or its remote sender stopped — so a held action is simply let go rather than
+    /// released: no Completed edge fires on the way to rest, and a control still down when input
+    /// returns reads as a fresh press.
+    /// @param layout  The state whose samples to keep (typically the seat's previous state).
+    /// @return The neutral state over @p layout's actions.
+    [[nodiscard]] ActionState NeutralActionState(const ActionState& layout);
 }
 
 VE_LEAF(::Veng::ActionId, 0x5ED22C7AFCDD1E13ULL, ::Veng::FieldClass::Scalar);

@@ -119,10 +119,18 @@ namespace Veng
     /// (RemotePlaybackTick; the present when the scene draws nothing in the past). A scene with no
     /// local input seat stamps nothing (a spectator/observer client), so the window stays empty and
     /// the send is a header-only ack.
+    ///
+    /// While @p presented is false the seat takes no input (InputMappingSystem left it neutral), so
+    /// instead of stamping it the window is cleared (InputSendBuffer::Clear): the next send carries
+    /// no records, which the host reads as the seat's input stopping rather than as loss, and its
+    /// seat comes to rest. A seat whose SeatInput sets ReceivesInputWhileUnpresented is stamped as
+    /// usual.
     /// @param send        The client's input send window.
     /// @param world       The client scene holding the local input seat.
     /// @param clientTick  The client sim tick being stamped.
-    VE_API void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, u64 clientTick);
+    /// @param presented   Whether a viewport presents @p world this frame (SystemContext::Presented).
+    VE_API void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, u64 clientTick,
+                                    bool presented);
 }
 
 VE_TYPE(::Veng::InputViewDelay, 0xA9C8B5ADD5402283ULL);

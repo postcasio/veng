@@ -51,8 +51,11 @@ namespace Veng
     /// reader sees an edge that a later step of a multi-step frame would erase from Phase; a frame
     /// that runs no step is cleared by its driver through ResetFrameActionEdges instead. Because
     /// the query includes SeatInput, a seat lacking it is skipped — its PlayerInput is synthesized or
-    /// replicated (the AI/remote path). Registered first in RegisterBuiltinSystems so it runs ahead
-    /// of any control system; in headless the neutral snapshot resolves to all-None with no guard.
+    /// replicated (the AI/remote path). A seat in a world no viewport presents
+    /// (SystemContext::Presented false) reads no device at all: its PlayerInput is set to
+    /// NeutralActionState, unless its SeatInput sets ReceivesInputWhileUnpresented. Registered
+    /// first in RegisterBuiltinSystems so it runs ahead of any control system; in headless the
+    /// neutral snapshot resolves to all-None with no guard.
     class InputMappingSystem final : public SceneSystem
     {
     public:

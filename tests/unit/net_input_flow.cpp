@@ -1,4 +1,4 @@
-// Plan 05's client→server input flow, exercised device-free: the redundant per-tick input packet
+// The client→server input flow, exercised device-free: the redundant per-tick input packet
 // codec, the server jitter buffer's feed-at-matching-tick under seeded loss/reorder (the control
 // system re-derives the same Intent through the unchanged pipeline), the buffer's slew and phase
 // decay, and the authority filter the builtin Sim advancers consult. Pure CPU — no window, no
@@ -273,6 +273,55 @@ TEST_CASE("The jitter buffer duplicates the last input with decayed phases on un
     // A fresh buffer coasts nothing — nullopt until the first input arrives.
     InputJitterBuffer empty;
     CHECK_FALSE(empty.Consume().has_value());
+}
+
+TEST_CASE("A stopped sender's seat comes to rest, while a lost packet still coasts")
+{
+    const TypeRegistry registry = MakeRegistry();
+    InputSendBuffer send;
+    InputJitterBuffer jitter(InputJitterBuffer::Settings{.TargetDepth = 100});
+    const auto deliver = [&]
+    {
+        const Result<InputPacket> decoded =
+            DecodeInputPacket(send.Encode(0, 0, registry), registry);
+        REQUIRE(decoded.has_value());
+        jitter.Ingest(*decoded);
+    };
+    const auto moveAt = [&](const u64 tick)
+    {
+        const optional<ActionState> consumed = jitter.ConsumeForTick(tick);
+        REQUIRE(consumed.has_value());
+        return *consumed;
+    };
+
+    // Two held ticks arrive, then the sender stops before the second is consumed: what was sent is
+    // still fed, and only then does the seat come to rest.
+    send.Stamp(1, MakeState(vec2(1.0f, 0.0f), ActionPhase::Ongoing));
+    send.Stamp(2, MakeState(vec2(1.0f, 0.0f), ActionPhase::Ongoing));
+    deliver();
+    send.Clear();
+    deliver();
+    CHECK(jitter.IsStopped());
+    CHECK(moveAt(1).Actions[0].Value.x == doctest::Approx(1.0f));
+    CHECK(moveAt(2).Actions[0].Value.x == doctest::Approx(1.0f));
+
+    PlayerInput rest;
+    rest.State = moveAt(3);
+    CHECK(rest.GetValue(MoveAction) == vec2(0.0f));
+    CHECK_FALSE(rest.IsHeld(MoveAction));
+    CHECK_FALSE(rest.IsHeld(JumpAction));
+    CHECK_FALSE(rest.WasReleased(JumpAction));
+    CHECK(jitter.UnderrunCount() == 0);
+
+    // Records resume the stream, and a gap after them is loss again: the seat coasts on the last.
+    send.Stamp(4, MakeState(vec2(1.0f, 0.0f), ActionPhase::Ongoing));
+    deliver();
+    CHECK_FALSE(jitter.IsStopped());
+    CHECK(moveAt(4).Actions[0].Value.x == doctest::Approx(1.0f));
+    const ActionState coasted = moveAt(5);
+    CHECK(coasted.Actions[0].Value.x == doctest::Approx(1.0f));
+    CHECK(coasted.Actions[1].Phase == ActionPhase::Ongoing);
+    CHECK(jitter.UnderrunCount() == 1);
 }
 
 TEST_CASE("ConsumeCount counts only consumes that yield an input, not empty polls")

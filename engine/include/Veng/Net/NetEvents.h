@@ -37,8 +37,10 @@ namespace Veng::Net
     /// travels as ordered fragments flagged on the packet's channel byte, while an unfragmented
     /// message keeps the framing every version shares. Version 9 added the reliable
     /// component-state message, for a component too large for one snapshot packet, and grew every
-    /// input packet with the acknowledgement of that stream.
-    inline constexpr u32 ProtocolVersion = 9;
+    /// input packet with the acknowledgement of that stream. Version 10 gave an input packet with no
+    /// records a meaning: the sender has no live input for that world, so the host brings its seat
+    /// to rest rather than coasting on the last input as it does across a lost packet.
+    inline constexpr u32 ProtocolVersion = 10;
 
     /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
     ///

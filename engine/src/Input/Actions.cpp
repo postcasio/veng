@@ -272,4 +272,17 @@ namespace Veng
 
         return result;
     }
+
+    ActionState NeutralActionState(const ActionState& layout)
+    {
+        ActionState neutral = layout;
+        for (ActionSample& sample : neutral.Actions)
+        {
+            sample.Value = vec2{0.0f};
+            sample.Phase = ActionPhase::None;
+            sample.StartedThisFrame = false;
+            sample.ReleasedThisFrame = false;
+        }
+        return neutral;
+    }
 }
