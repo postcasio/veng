@@ -1957,7 +1957,8 @@ if (VENG_BUILD_TESTS)
             # ssr_jitter.cpp drives reflections under TAA: through a jitter period a mirror's side and
             # far edges keep to where a supersampled render puts them and a normal-mapped mirror's
             # converged reflection holds still, a moving camera's reflection keeps to the reflected
-            # depth, and a converged reflection follows its source going and returning.
+            # depth and leaves no smear behind it once it stops, and a converged reflection follows
+            # its source going and returning.
             tests/gpu/ssr_jitter.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a

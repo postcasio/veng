@@ -1527,7 +1527,13 @@ the reflection is kept out of the resolve's history and resolved by one of its o
   alike — up to 64 samples, where a period-long swing moves the average by about its size over 64
   each frame. A history moving a quarter of a pixel a frame or more is held to 4 samples and also
   clipped to the resolve's own tight YCoCg box: a reprojected read filters the history a little each
-  frame, and a moving reflection decorrelates from what it showed.
+  frame, and a moving reflection decorrelates from what it showed. **The moving clip is what stops
+  smear, and the validation below cannot stand in for it.** The validation compares luminance alone,
+  so a reprojection that lands the wrong colour or structure at the same luminance passes it; and it
+  learns its tolerance from how far the fast luminance strays from the history, so an error that
+  persists is learnt into the tolerance and accepted. A moving history kept long and unclipped
+  therefore carries whatever an imperfect reprojection — a normal-mapped or curved surface, reflected
+  content at several depths — left behind, for seconds after the camera stops.
 - **It validates against a fast history, not against this frame's neighbourhood alone.** On a
   normal-mapped surface the 3×3 texels swing together from phase to phase, so a history clipped to
   them follows the swing — which is what left the resolve its pulse. Beside the history runs a fast
@@ -1552,7 +1558,12 @@ scene-colour intermediate, and the two history pairs at the output allocation.
 reflected colour borders keep to a fraction of a pixel of where a render supersampled four times per
 axis puts them; a glossy normal-mapped floor's converged reflection changes by under 1 % of its
 level per frame (0.3 % at landing); a camera moving sideways 0.1 m a frame over a mirror floor shows,
-at the last pose, a reflection within 9 % of what a camera converged still there shows (7.7 %); and
+at the last pose, a reflection within 9 % of what a camera converged still there shows (7.7 %); a
+glossy normal-mapped floor reflecting panels of several colours at several depths, under a camera
+moving sideways 0.05 m a frame and then turning 1° a frame, keeps every 8×8 tile within 25 % of the
+brightest tile of a still converged render at that pose while it moves (15 %) and within 4 % through
+the second jitter period after it stops (2.1 %) — measured in RGB per tile, since a smear is local
+and may keep its luminance, and failed by a long unclipped moving history (51 % and 8.7 %); and
 a still floor's converged reflection of emissive bars keeps under 1 % of them (5 % normal-mapped) a
 frame after they go and is back at their level a frame after they return; and with no anti-aliasing
 a flat mirror's reflection is identical with geometric specular anti-aliasing on and off, where a

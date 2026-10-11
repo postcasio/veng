@@ -15,6 +15,10 @@
 //  - A mirror floor reflecting the bars under a camera moving sideways shows, at each pose, close to
 //    what a camera converged still there shows: its reflected image moves with the bars' reflected
 //    depth, not with the floor.
+//  - A glossy normal-mapped floor reflecting panels of several colours at several depths, under a
+//    camera that moves sideways and then turns at a few pixels a frame and stops: every region of
+//    the floor stays close to what a camera converged still at that pose shows while it moves, and
+//    is back at it within a jitter period of stopping.
 //  - A still floor's converged reflection of the bars keeps almost nothing of them a frame after
 //    they go, and is at their full level a frame after they return.
 //
@@ -479,6 +483,160 @@ namespace
         }
         return sum / static_cast<f64>((band.LastRow - band.FirstRow + 1) * (Extent.x - 4));
     }
+
+    // The linear RGB of an RGBA16F target at Extent.
+    vector<vec3> DecodeRgb(const vector<u8>& rgba16f)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
+        vector<vec3> rgb(static_cast<usize>(Extent.x) * Extent.y);
+        for (usize i = 0; i < rgb.size(); ++i)
+        {
+            rgb[i] =
+                vec3(glm::unpackHalf1x16(halves[i * 4 + 0]), glm::unpackHalf1x16(halves[i * 4 + 1]),
+                     glm::unpackHalf1x16(halves[i * 4 + 2]));
+        }
+        return rgb;
+    }
+
+    // A glossy normal-mapped metal floor reflecting emissive panels hung above the camera's height
+    // in front of a dark wall 8 m away, with no light and no ambient term. A red and a green panel
+    // of one luminance, a grating of three thin white bars and a wide cyan panel stand at four
+    // depths, overlapping on screen, so a camera's translation moves their reflections apart.
+    struct PanelsScene
+    {
+        Unique<Scene> World;
+        vector<Ref<Mesh>> Meshes;
+    };
+
+    PanelsScene BuildPanelsScene(Context& context, AssetManager& assets, TypeRegistry& types)
+    {
+        PanelsScene built{.World = Scene::Create(types)};
+        const AssetResult<AssetHandle<MaterialInstance>> floor =
+            assets.LoadSync<MaterialInstance>(NormalMappedInstanceId);
+        REQUIRE(floor.has_value());
+        auto& floorMaterial = const_cast<MaterialInstance&>(*floor->Get());
+        floorMaterial.SetParam("MetallicFactor", 1.0f);
+        floorMaterial.SetParam("RoughnessFactor", 0.05f);
+        // The bars floor's normal-map texel size across a floor three times as wide.
+        floorMaterial.SetParam("UVScale", 1.5f);
+        floorMaterial.SetParam("NormalStrength", 0.3f);
+
+        const auto place = [&](const Ref<Mesh>& mesh, const vec3& position, const quat& rotation)
+        {
+            built.Meshes.push_back(mesh);
+            const Entity entity = built.World->CreateEntity();
+            auto& transform = built.World->Add<Transform>(entity);
+            transform.Position = position;
+            transform.Rotation = rotation;
+            built.World->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+        };
+        place(Mesh::BuildSync(context, Primitives::Plane(vec2(24.0f), uvec2(1), *floor), "Floor"),
+              vec3(0.0f, 0.0f, -4.0f), quat(1.0f, 0.0f, 0.0f, 0.0f));
+        const quat upright = glm::angleAxis(glm::radians(90.0f), vec3(1.0f, 0.0f, 0.0f));
+        place(Mesh::BuildSync(
+                  context,
+                  Primitives::Plane(vec2(16.0f, 6.0f), uvec2(1),
+                                    MakeBrick(context, assets, "Wall", vec3(0.02f), vec3(0.0f))),
+                  "Wall"),
+              vec3(0.0f, 3.0f, -8.0f), upright);
+
+        struct Panel
+        {
+            vec3 Centre;
+            vec2 Size;
+            vec3 Emissive;
+        };
+        for (const Panel& panel : {
+                 Panel{.Centre = vec3(-0.9f, 1.1f, -3.0f),
+                       .Size = vec2(0.5f, 0.6f),
+                       .Emissive = vec3(2.0f, 0.0f, 0.0f)},
+                 Panel{.Centre = vec3(-0.45f, 1.0f, -5.0f),
+                       .Size = vec2(0.7f, 0.5f),
+                       .Emissive = vec3(0.0f, 0.5945f, 0.0f)},
+                 Panel{.Centre = vec3(0.5f, 1.1f, -4.0f),
+                       .Size = vec2(0.06f, 0.6f),
+                       .Emissive = vec3(0.6f)},
+                 Panel{.Centre = vec3(0.68f, 1.1f, -4.0f),
+                       .Size = vec2(0.06f, 0.6f),
+                       .Emissive = vec3(0.6f)},
+                 Panel{.Centre = vec3(0.86f, 1.1f, -4.0f),
+                       .Size = vec2(0.06f, 0.6f),
+                       .Emissive = vec3(0.6f)},
+                 Panel{.Centre = vec3(0.3f, 1.2f, -6.5f),
+                       .Size = vec2(1.2f, 0.8f),
+                       .Emissive = vec3(0.0f, 0.3f, 0.3f)},
+             })
+        {
+            place(Mesh::BuildSync(context,
+                                  Primitives::Plane(panel.Size, uvec2(1),
+                                                    MakeBrick(context, assets, "Panel", vec3(0.0f),
+                                                              panel.Emissive)),
+                                  "Panel"),
+                  panel.Centre, upright);
+        }
+        return built;
+    }
+
+    // The panels scene's camera, 0.6 m up and pitched 10 degrees down, moved `shift` along X and
+    // turned `yawDegrees` about the vertical.
+    CameraView PanelsCamera(const f32 shift, const f32 yawDegrees)
+    {
+        CameraView camera;
+        camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.05f, 100.0f);
+        const vec3 eye(shift, 0.6f, 0.0f);
+        const vec3 ahead = glm::angleAxis(glm::radians(yawDegrees), vec3(0.0f, 1.0f, 0.0f)) *
+                           vec3(0.0f, -std::tan(glm::radians(10.0f)), -1.0f);
+        camera.SetView(eye, eye + ahead, vec3(0.0f, 1.0f, 0.0f));
+        return camera;
+    }
+
+    // One frame of `renderer` over `scene` from `camera`, as linear RGB.
+    vector<vec3> RenderRgb(const Context& context, SceneRenderer& renderer, const Scene& scene,
+                           const CameraView& camera)
+    {
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(cmd, Renderer::SceneView{.World = scene,
+                                                          .Camera = camera,
+                                                          .Delta = 0.0f,
+                                                          .AmbientFloor = vec3(0.0f),
+                                                          .SsrMaxDistance = 20.0f});
+            });
+        return DecodeRgb(renderer.GetHdrView()->GetImage()->Download());
+    }
+
+    // The largest mean absolute RGB difference over any 8x8 tile of rows `firstRow` onward, relative
+    // to the brightest tile of `reference`: a smear a few pixels across stands out of its tile where
+    // a mean over the whole floor would dilute it, and a colour smear of unchanged luminance counts.
+    f64 WorstTile(const vector<vec3>& image, const vector<vec3>& reference, const u32 firstRow)
+    {
+        constexpr u32 Tile = 8;
+        f64 worst = 0.0;
+        f64 level = 0.0;
+        for (u32 ty = firstRow; ty + Tile <= Extent.y - 2; ty += Tile)
+        {
+            for (u32 tx = 0; tx + Tile <= Extent.x; tx += Tile)
+            {
+                f64 error = 0.0;
+                f64 brightness = 0.0;
+                for (u32 y = ty; y < ty + Tile; ++y)
+                {
+                    for (u32 x = tx; x < tx + Tile; ++x)
+                    {
+                        const usize i = static_cast<usize>(y) * Extent.x + x;
+                        const vec3 delta = glm::abs(image[i] - reference[i]);
+                        error += delta.r + delta.g + delta.b;
+                        brightness += reference[i].r + reference[i].g + reference[i].b;
+                    }
+                }
+                worst = std::max(worst, error);
+                level = std::max(level, brightness);
+            }
+        }
+        REQUIRE(level > 0.0);
+        return worst / level;
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -667,6 +825,96 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The bars seen directly differ from their still-converged image by 7 to 9 % under the frame's
     // own resolve, and a reflection reprojected by the floor's motion by 40 % (7.7 % at landing).
     CHECK(deviation < 0.09);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr jitter: a normal-mapped mirror's reflection leaves no smear behind a moving "
+                  "camera")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_smear.vengpack");
+    const PanelsScene built = BuildPanelsScene(Context, assets, Types);
+
+    // Still for two periods, then sideways 0.05 m a frame for eight frames and turning 1 degree a
+    // frame for eight more: the panels' reflections cross one to two pixels a frame, the floor's
+    // contact with the camera's view several.
+    constexpr u32 StillFrames = 2 * TaaJitterSampleCount;
+    constexpr u32 MoveFrames = 8;
+    constexpr u32 TurnFrames = 8;
+    const auto pose = [](const u32 frame)
+    {
+        const auto ramp = [&](const u32 start, const u32 frames)
+        {
+            return static_cast<f32>(std::clamp(static_cast<i32>(frame) - static_cast<i32>(start), 0,
+                                               static_cast<i32>(frames)));
+        };
+        return PanelsCamera(0.05f * ramp(StillFrames - 1, MoveFrames),
+                            ramp(StillFrames + MoveFrames - 1, TurnFrames));
+    };
+    constexpr u32 LastMoving = StillFrames + MoveFrames + TurnFrames - 1;
+
+    // Measured on the floor in front of the wall's foot at every pose, which is all reflection.
+    u32 firstRow = 0;
+    for (u32 frame = 0; frame <= LastMoving; ++frame)
+    {
+        const vec4 clip = pose(frame).ViewProjection() * vec4(0.0f, 0.0f, -7.5f, 1.0f);
+        const f32 row = (0.5f * clip.y / clip.w + 0.5f) * static_cast<f32>(Extent.y);
+        firstRow = std::max(firstRow, static_cast<u32>(std::ceil(row)) + 2);
+    }
+    REQUIRE(firstRow + 48 < Extent.y);
+
+    // What a camera converged still at a pose shows: two periods average every phase alike.
+    const auto converged = [&](const CameraView& camera, const u32 frames)
+    {
+        const Unique<SceneRenderer> still =
+            MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+        vector<vec3> image;
+        for (u32 frame = 0; frame < frames; ++frame)
+        {
+            image = RenderRgb(Context, *still, *built.World, camera);
+        }
+        return image;
+    };
+    const vector<vec3> stopped = converged(pose(LastMoving), 4 * TaaJitterSampleCount);
+
+    const Unique<SceneRenderer> moving = MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+    f64 whileMoving = 0.0;
+    for (u32 frame = 0; frame <= LastMoving; ++frame)
+    {
+        const vector<vec3> image = RenderRgb(Context, *moving, *built.World, pose(frame));
+        // Halfway through and at the end of each motion.
+        if (frame == StillFrames + 3 || frame == StillFrames + MoveFrames - 1 ||
+            frame == StillFrames + MoveFrames + 3)
+        {
+            whileMoving = std::max(whileMoving,
+                                   WorstTile(image, converged(pose(frame), StillFrames), firstRow));
+        }
+        else if (frame == LastMoving)
+        {
+            whileMoving = std::max(whileMoving, WorstTile(image, stopped, firstRow));
+        }
+    }
+    // The second period after the camera stops.
+    f64 afterStopping = 0.0;
+    for (u32 frame = 1; frame < 2 * TaaJitterSampleCount; ++frame)
+    {
+        const vector<vec3> image = RenderRgb(Context, *moving, *built.World, pose(LastMoving));
+        if (frame >= TaaJitterSampleCount)
+        {
+            afterStopping = std::max(afterStopping, WorstTile(image, stopped, firstRow));
+        }
+    }
+    CAPTURE(whileMoving);
+    CAPTURE(afterStopping);
+    // A history that is neither short nor clipped while it moves carries what an imperfect
+    // reprojection left behind for seconds: its worst tile strays by 51 % of the brightest one
+    // while moving and by 8.7 % through the second period after stopping, against 15 % and 2.1 %
+    // at landing.
+    CHECK(whileMoving < 0.25);
+    CHECK(afterStopping < 0.04);
 
     std::filesystem::remove(archive);
 }
