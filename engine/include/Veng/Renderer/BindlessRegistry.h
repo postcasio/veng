@@ -259,7 +259,8 @@ namespace Veng::Renderer
     /// while a live handle still names it, and returns a typed handle. Release()
     /// defers reclaiming the slot until Context::AcquireNextFrame() has cycled past
     /// every frame-in-flight that could still be sampling it (the same window used
-    /// for per-frame deferred GPU resource destruction).
+    /// for per-frame deferred GPU resource destruction), or until an out-of-frame
+    /// ImmediateCommands recording completes with no frame in flight (ReclaimAllReleased).
     ///
     /// Bind() binds set 0 once per pipeline bind (a pass binds its pipeline, then
     /// the registry's set 0, then issues draws) — not once per draw. Draws select
@@ -430,7 +431,8 @@ namespace Veng::Renderer
         ///
         /// Every Release defers the reclaim until the fence of the last frame that could reference
         /// the slot has been waited: the recording frame's while one records, otherwise the frame
-        /// submitted last. Until then the slot is neither reused nor rewritten.
+        /// submitted last, or until no frame is in flight once an out-of-frame ImmediateCommands
+        /// recording completes. Until then the slot is neither reused nor rewritten.
         void Release(TextureHandle handle);
 
         /// @brief Deferred release of a volume handle. A default-constructed (invalid) handle is a no-op.
@@ -640,6 +642,22 @@ namespace Veng::Renderer
         /// @param frameInFlight The frame-in-flight index now being made current.
         void OnFrameAcquired(u32 frameInFlight);
 
+        /// @brief Reclaims every slot and material range waiting out a release window, whichever
+        ///        frame-in-flight bucket holds it.
+        ///
+        /// Called by the context once no submitted graphics work can still read set 0 or the typed
+        /// sets: after an ImmediateCommands recording made outside any frame, and not nested in
+        /// another, has completed, and every frame slot's fence has signalled. A release is made
+        /// only after the last command using the slot was recorded, and at that point every such
+        /// command is in a command buffer that has completed, so the window every bucket was
+        /// waiting out has already elapsed. This is what reclaims released slots in a process that
+        /// never begins a frame, where OnFrameAcquired never runs. Reclaimed buckets are left
+        /// empty, so a later acquire of their slot finds nothing to reclaim twice.
+        ///
+        /// Runs on the thread that drives the registry. Unlike OnFrameAcquired it neither starts a
+        /// view budget nor flushes owed material bytes; it only frees.
+        void ReclaimAllReleased();
+
         /// @brief Called by Context::ImmediateCommands() before a recording made outside any frame,
         /// once the fence of frame-in-flight slot `frameInFlight` has been waited.
         ///
@@ -839,7 +857,7 @@ namespace Veng::Renderer
         /// A slot freed while frame-in-flight index i is current goes into PendingRelease[i]
         /// and is only returned to the free list the next time AcquireNextFrame makes index i
         /// current (i.e. after its fence has been waited), by which point no in-flight draw
-        /// can still be sampling it.
+        /// can still be sampling it — or sooner, by ReclaimAllReleased, once nothing is in flight.
         struct SlotArray
         {
             /// @brief Per-slot resource Ref keeping the resource alive.
@@ -858,6 +876,10 @@ namespace Veng::Renderer
             /// @brief Reclaims all slots whose deferred window has expired for `frameInFlight`.
             void OnFrameAcquired(u32 frameInFlight);
         };
+
+        /// @brief Returns frame-in-flight bucket @p frameInFlight of every slot array and the
+        ///        material arena to their free lists, dropping the reclaimed slots' resources.
+        void ReclaimBucket(u32 frameInFlight);
 
         /// @brief Writes a 2D sampled image view into the descriptor set at the given texture slot.
         void WriteTexture(u32 index, const Ref<ImageView>& view) const;

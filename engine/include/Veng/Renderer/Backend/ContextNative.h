@@ -301,16 +301,22 @@ namespace Veng::Renderer
         /// after the drain), and marks the frame as recording so subsequent retires bin directly.
         void AdoptPendingRetires();
 
-        /// @brief Destroys PendingRetire's handles when no submitted work can still reference them.
+        /// @brief Whether every frame slot's in-flight fence has signalled. Does not block.
+        [[nodiscard]] bool AreFramesComplete() const;
+
+        /// @brief Destroys PendingRetire's handles, and reclaims released bindless slots, when no
+        ///        submitted work can still reference them.
         ///
         /// Called once an ImmediateCommands recording made outside any frame, and not nested in
-        /// another, has completed. The bin is detached under RetireMutex first, so it holds only
+        /// another, has completed. Released bindless slots are reclaimed first
+        /// (BindlessRegistry::ReclaimAllReleased) when every frame slot's fence has signalled, so
+        /// the resources they held retire into the bin this drain then examines. The bin is detached under RetireMutex first, so it holds only
         /// handles retired before the checks that follow. Those checks do not block: every frame
         /// slot's in-flight fence must be signaled and the transfer timeline must have reached
         /// its last submitted value. When both hold the detached handles are destroyed; otherwise
         /// they return to PendingRetire for the next BeginFrame or a later call. This is what
-        /// bounds the pending bin, and the descriptor pool behind it, in a process that submits
-        /// only one-off work and never begins a frame.
+        /// bounds the pending bin, the descriptor pool behind it, and the bindless arrays, in a
+        /// process that submits only one-off work and never begins a frame.
         void DrainPendingRetiresIfIdle();
 
         /// @brief Defers destruction of a handle into the current frame's retire bin.

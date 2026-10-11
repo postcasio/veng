@@ -570,9 +570,10 @@ namespace Veng::Renderer
         /// shares the frame's budget.
         ///
         /// Once such a recording has completed, the resources dropped outside a frame up to that
-        /// point are destroyed, provided no frame and no async transfer is still in flight; until
-        /// then they wait for the next BeginFrame. So a process that submits only through here
-        /// and never begins a frame does not accumulate them.
+        /// point are destroyed, provided no frame and no async transfer is still in flight, and
+        /// every released bindless slot is reclaimed, provided no frame is; until then they wait
+        /// for the next BeginFrame. So a process that submits only through here and never begins a
+        /// frame accumulates neither.
         /// @param function  Records the work into the one-shot command buffer it is handed.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
 

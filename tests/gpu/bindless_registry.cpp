@@ -16,6 +16,10 @@
 //      the array by the distinct descriptions in play rather than by how many
 //      resources sample through them, and that a description differing in a
 //      field the GPU acts on still takes a slot of its own.
+//   4. Release slots in a context that never begins a frame — proves an
+//      ImmediateCommands recording made outside a frame reclaims every pending
+//      bucket once no frame is in flight, keeps them while one is, and that a
+//      recording nested in a frame reclaims nothing.
 
 #include <array>
 #include <string>
@@ -24,11 +28,15 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Renderer/Backend/SynchronizationFrame.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -49,6 +57,57 @@ namespace
         u32 TextureIndex;
         u32 SamplerIndex;
     };
+
+    // One slot in each slot-keyed array a release defers, plus a material range, all released at
+    // once — the drops a renderer resize or teardown makes between frames.
+    struct SlotSet
+    {
+        TextureHandle Texture;
+        SamplerHandle Sampler;
+        StorageBufferHandle StorageBuffer;
+        MaterialHandle Material;
+    };
+
+    SlotSet RegisterSlotSet(Context& context)
+    {
+        BindlessRegistry& bindless = context.GetBindlessRegistry();
+        const Ref<Image> image = Image::Create(context, {
+                                                            .Name = "Reclaim Texture",
+                                                            .Extent = {Size, Size, 1},
+                                                            .Format = Format::RGBA8Unorm,
+                                                            .Usage = ImageUsage::Sampled,
+                                                        });
+        const Ref<Sampler> sampler = Sampler::Create(context, {.Name = "Reclaim Sampler"});
+        const Ref<Buffer> buffer = Buffer::Create(context, {
+                                                               .Name = "Reclaim Buffer",
+                                                               .Size = 256,
+                                                               .Usage = BufferUsage::Storage,
+                                                           });
+        constexpr std::array<std::byte, 16> block{};
+        return SlotSet{
+            .Texture = bindless.Register(
+                ImageView::Create(context, {.Name = "Reclaim Texture View", .Image = image})),
+            .Sampler = bindless.Register(sampler),
+            .StorageBuffer = bindless.Register(buffer),
+            .Material = bindless.RegisterMaterial(block),
+        };
+    }
+
+    void ReleaseSlotSet(const Context& context, const SlotSet& set)
+    {
+        BindlessRegistry& bindless = context.GetBindlessRegistry();
+        bindless.Release(set.Texture);
+        bindless.Release(set.Sampler);
+        bindless.Release(set.StorageBuffer);
+        bindless.Release(set.Material);
+    }
+
+    bool SameFreeSlots(const BindlessCapacity& a, const BindlessCapacity& b)
+    {
+        return a.Textures == b.Textures && a.Samplers == b.Samplers &&
+               a.StorageBuffers == b.StorageBuffers && a.Materials == b.Materials &&
+               a.MaterialBlocks == b.MaterialBlocks;
+    }
 
     // Builds a pipeline that draws a fullscreen triangle sampling a single
     // bindless-registered texture/sampler pair selected by push constants.
@@ -85,7 +144,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Exactly representable in RGBA8Unorm: blue, fully opaque.
     constexpr std::array<u8, 4> expected = {0, 0, 255, 255};
 
-    auto sourceImage =
+    const auto sourceImage =
         Image::Create(Context, {
                                    .Name = "Bindless Source",
                                    .Extent = {Size, Size, 1},
@@ -95,7 +154,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     auto sourceView =
         ImageView::Create(Context, {.Name = "Bindless Source View", .Image = sourceImage});
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Bindless Output",
                                    .Extent = {Size, Size, 1},
@@ -105,12 +164,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     auto outputView =
         ImageView::Create(Context, {.Name = "Bindless Output View", .Image = outputImage});
 
-    auto sampler = Sampler::Create(Context, {
-                                                .Name = "Bindless Test Sampler",
-                                                .AddressModeU = AddressMode::ClampToEdge,
-                                                .AddressModeV = AddressMode::ClampToEdge,
-                                                .AddressModeW = AddressMode::ClampToEdge,
-                                            });
+    const auto sampler = Sampler::Create(Context, {
+                                                      .Name = "Bindless Test Sampler",
+                                                      .AddressModeU = AddressMode::ClampToEdge,
+                                                      .AddressModeV = AddressMode::ClampToEdge,
+                                                      .AddressModeW = AddressMode::ClampToEdge,
+                                                  });
 
     AssetManager assets(Context, Tasks, Types);
     const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
@@ -192,22 +251,22 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: released slots are
 {
     auto& bindless = Context.GetBindlessRegistry();
 
-    auto MakeView = [&](string_view name)
+    const auto MakeView = [&](string_view name)
     {
-        auto image = Image::Create(Context, {
-                                                .Name = string(name),
-                                                .Extent = {Size, Size, 1},
-                                                .Format = Format::RGBA8Unorm,
-                                                .Usage = ImageUsage::Sampled,
-                                            });
+        const auto image = Image::Create(Context, {
+                                                      .Name = string(name),
+                                                      .Extent = {Size, Size, 1},
+                                                      .Format = Format::RGBA8Unorm,
+                                                      .Usage = ImageUsage::Sampled,
+                                                  });
 
         return ImageView::Create(Context, {.Name = string(name) + " View", .Image = image});
     };
 
-    auto viewA = MakeView("Slot A");
-    auto viewB = MakeView("Slot B");
-    auto viewC = MakeView("Slot C");
-    auto viewD = MakeView("Slot D");
+    const auto viewA = MakeView("Slot A");
+    const auto viewB = MakeView("Slot B");
+    const auto viewC = MakeView("Slot C");
+    const auto viewD = MakeView("Slot D");
 
     const TextureHandle handleA = bindless.Register(viewA);
     const TextureHandle handleB = bindless.Register(viewB);
@@ -416,4 +475,67 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     bindless.Release(volume);
     bindless.Release(cube);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: a context that never begins a frame reclaims released slots")
+{
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+    const BindlessCapacity before = bindless.GetFreeSlots();
+
+    ReleaseSlotSet(Context, RegisterSlotSet(Context));
+    CHECK_FALSE(SameFreeSlots(bindless.GetFreeSlots(), before));
+
+    // The recording completes before it returns and no frame was ever submitted, so nothing can
+    // still read the released slots.
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(SameFreeSlots(bindless.GetFreeSlots(), before));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: an immediate submit keeps released slots while a frame "
+                  "slot is in flight")
+{
+    // Unsignaling a slot other than the current one stands in for a submitted frame still
+    // executing, without stalling the immediate submit, which waits only the current slot.
+    Context::Native& native = Context.GetNative();
+    REQUIRE(native.MaxFramesInFlight >= 2);
+    const u32 inFlightSlot = (native.CurrentFrameInFlight + 1) % native.MaxFramesInFlight;
+    const vk::Fence fence =
+        GetVkFence(native.SynchronizationFrames[inFlightSlot].GetInFlightFence());
+    VK_ASSERT(GetVkDevice(Context).resetFences(fence), "failed to reset fence");
+
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+    const BindlessCapacity before = bindless.GetFreeSlots();
+    ReleaseSlotSet(Context, RegisterSlotSet(Context));
+    const BindlessCapacity released = bindless.GetFreeSlots();
+
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(SameFreeSlots(bindless.GetFreeSlots(), released));
+
+    native.LockedSubmit(native.GraphicsQueue, vk::SubmitInfo{}, fence);
+    native.SynchronizationFrames[inFlightSlot].GetInFlightFence().Wait();
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(SameFreeSlots(bindless.GetFreeSlots(), before));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: an immediate submit inside a frame reclaims nothing")
+{
+    // The frame's own command buffer is open and unsubmitted, and may already have recorded a draw
+    // through a slot released after it; only that frame's fence can retire the slot.
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    Context.BeginFrame();
+    const BindlessCapacity before = bindless.GetFreeSlots();
+    ReleaseSlotSet(Context, RegisterSlotSet(Context));
+    const BindlessCapacity released = bindless.GetFreeSlots();
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(SameFreeSlots(bindless.GetFreeSlots(), released));
+    Context.EndFrame();
+
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    Context.WaitIdle();
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(SameFreeSlots(bindless.GetFreeSlots(), before));
 }

@@ -1398,10 +1398,11 @@ namespace Veng::Renderer
         commandBuffer->End();
         SubmitImmediateCommands(*commandBuffer);
 
-        // What was dropped outside a frame waits in the pending bin for a BeginFrame, which a
-        // process submitting only one-off work never reaches. This submit has completed, so once
-        // nothing else is in flight, everything retired before it is released here instead. A
-        // nested recording is skipped: the outer buffer, not yet submitted, may still use it.
+        // What was dropped outside a frame waits in the pending bin, and a released bindless slot
+        // in its frame bucket, for a BeginFrame, which a process submitting only one-off work never
+        // reaches. This submit has completed, so once nothing else is in flight, both are released
+        // here instead. A nested recording is skipped: the outer buffer, not yet submitted, may
+        // still use them.
         if (outsideFrame)
         {
             native.DrainPendingRetiresIfIdle();
@@ -2073,8 +2074,25 @@ namespace Veng::Renderer
         FrameRecording = true;
     }
 
+    bool Context::Native::AreFramesComplete() const
+    {
+        return std::ranges::all_of(SynchronizationFrames, [](const SynchronizationFrame& frame)
+                                   { return frame.GetInFlightFence().IsSignaled(); });
+    }
+
     void Context::Native::DrainPendingRetiresIfIdle()
     {
+        // Released bindless slots first, so the resources their reclaim lets go of retire into the
+        // bin detached below and are destroyed by this same drain. The caller's recording has
+        // completed and no frame is open, so with every frame fence signalled no submitted command
+        // can still read a descriptor in the bindless sets. The transfer queue binds none, so its
+        // timeline does not hold the slots back; what they kept alive retires through the bin,
+        // which it does.
+        if (Bindless && AreFramesComplete())
+        {
+            Bindless->ReclaimAllReleased();
+        }
+
         // Detached before anything in flight is examined. A handle is retired only after every
         // submit using it was made, so whatever the detached bin holds was in use by work
         // submitted before this point at the latest, and the checks below see all of it. A handle
@@ -2100,9 +2118,7 @@ namespace Veng::Renderer
         // dropped since its EndFrame, and an unreached transfer value may still be writing an
         // upload's destination. While either holds, the handles go back to pending, where the next
         // BeginFrame adopts them or a later immediate submit retries.
-        const bool framesComplete =
-            std::ranges::all_of(SynchronizationFrames, [](const SynchronizationFrame& frame)
-                                { return frame.GetInFlightFence().IsSignaled(); });
+        const bool framesComplete = AreFramesComplete();
         const bool transferComplete = TransferTimeline->GetValue() >= transferSubmitted;
         if (framesComplete && transferComplete)
         {

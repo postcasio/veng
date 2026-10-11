@@ -1124,7 +1124,7 @@ namespace Veng::Renderer
         return GetCurrentViewConstantsIndex() * MaxAreaVertices;
     }
 
-    void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
+    void BindlessRegistry::ReclaimBucket(const u32 frameInFlight)
     {
         // A reclaimed texture slot lets go of its companion with it.
         for (const u32 index : m_Textures.PendingRelease[frameInFlight])
@@ -1138,6 +1138,19 @@ namespace Veng::Renderer
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_StorageBuffers.OnFrameAcquired(frameInFlight);
         m_MaterialArena->OnFrameAcquired(frameInFlight);
+    }
+
+    void BindlessRegistry::ReclaimAllReleased()
+    {
+        for (u32 frameInFlight = 0; frameInFlight < m_FramesInFlight; ++frameInFlight)
+        {
+            ReclaimBucket(frameInFlight);
+        }
+    }
+
+    void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
+    {
+        ReclaimBucket(frameInFlight);
 
         // Reset the per-frame view slot: the first Viewport::Render this frame takes slot 0.
         m_ViewsThisFrame = 0;

@@ -2024,6 +2024,28 @@ that frame's fence has been waited.** How each kind of state keeps it:
   outside one. Between `EndFrame` and the next `BeginFrame` (asset finalizes, the world tick,
   `OnUpdate`) `GetCurrentFrameInFlight()` already names the slot about to be waited, whose frame is
   the *older* one; filing a release there reclaimed the slot while the newest frame could still read it.
+  A bucket is reclaimed at its slot's next acquire, or — every bucket at once — by the same drain that
+  follows an outermost out-of-frame `ImmediateCommands`, when every frame fence has signalled
+  (`BindlessRegistry::ReclaimAllReleased`, ahead of the retire-bin detach so what the slots held
+  retires into that drain). Without it a process that never begins a frame never gets a slot back.
+  Why the early reclaim is safe:
+  - A release follows the last *recording* of a use of the slot. At the drain no frame command buffer
+    is open, the recording has completed (held setup work recorded at its head, nested recordings
+    synchronous), and every submitted frame has finished — so no pending command buffer can index
+    the slot, which is what `UPDATE_UNUSED_WHILE_PENDING` asks of the rewrite a re-`Register` makes.
+    Descriptor writes are immediate `vkUpdateDescriptorSets` calls, never batched, so no queued write
+    is left to order against.
+  - The transfer queue binds no descriptor set, so the transfer timeline does not hold a slot back;
+    the resources a reclaimed slot let go of retire through the pending bin, which it does gate.
+  - Inside a frame the drain does not run: the frame's open command buffer may already hold a draw
+    through a slot released after it, and only that frame's fence retires the slot. In a process that
+    does run frames, an out-of-frame recording between `EndFrame` and `BeginFrame` reclaims only
+    when the last submitted frame has finished, and each slot sits in exactly one bucket that the
+    reclaim empties, so the next acquire finds nothing to free twice.
+  - There is no off-thread release. The registry is unsynchronized and driven from one thread, the
+    one that registers — which is also the one an out-of-frame `ImmediateCommands` runs on (it
+    already resets the registry's view budget there). A worker's drops reach the drain through the
+    retire bin, under `RetireMutex`, never through a slot release.
 - **Host-written per-frame rings** write only the recording slot's slice, from inside the frame. A
   material update outside a frame skips the direct write while the current slot's frame may still run
   (`IsSlotWritable`) and lands at that slot's acquire instead, or at an `ImmediateCommands` recording
@@ -3155,7 +3177,7 @@ The engine provides a global `BindlessRegistry` (owned by `Context`, reachable v
 bindings (sampled images, samplers, storage images, and the per-material parameter-block SSBO)
 living in **set 0**. `Register(...)` allocates a free-list slot and returns a typed `u32` handle
 (`TextureHandle`, `SamplerHandle`, `StorageImageHandle`, `MaterialHandle`); `Release` defers the
-slot reclaim through the same per-frame retire window. **`PipelineLayout` reserves set 0 in every
+slot reclaim through the same per-frame retire window (see "Slot-keyed deferrals"). **`PipelineLayout` reserves set 0 in every
 pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`), not per draw —
 draws select array elements via push-constant indices. Sets 1 and 2 are the registry's volume and
 cube arrays, so author-declared descriptor sets shift to **set 3+** (`BindlessRegistry::FirstUserSet`).
