@@ -76,7 +76,8 @@ namespace Veng::Gui
                 if (i + extra >= text.size())
                 {
                     codepoints.push_back(0xFFFD);
-                    break;
+                    ++i;
+                    continue;
                 }
 
                 bool valid = true;
