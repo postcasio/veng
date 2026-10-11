@@ -1511,9 +1511,9 @@ the reflection is kept out of the resolve's history and resolved by one of its o
   so each texel's surface is its own (`ssr_surface.slang`), the ray marches through the jittered
   projection, and the hit is read where the march found it. The composite (`ssr_composite` `fsTerm`)
   writes the reflection term rather than the lit scene, and beside it the **reflected image's
-  motion**: the hit, unfolded through the surface along the pixel's ray (a plane mirror's image of a
-  point is exactly there), projected through this frame's unjittered projection and the previous
-  frame's. The previous projection is taken camera-relative — the view block's
+  motion** and view depth: the hit, unfolded through the surface along the pixel's ray (a plane
+  mirror's image of a point is exactly there), projected through this frame's unjittered projection
+  and the previous frame's. The previous projection is taken camera-relative — the view block's
   `PrevFromCurDirection` plus the clip offset of the camera's move, composed in double on the CPU
   (`SsrChain::SetCamera`) — so no world-space translation enters the shader.
 - **The temporal pass (`ssr_temporal.frag`) runs after the resolve's history copy** and adds its
@@ -1522,12 +1522,22 @@ the reflection is kept out of the resolve's history and resolved by one of its o
   position with the resolve's own Gaussian over the 3×3 render texels, narrowed the same way under
   upscaling, so its history is unjittered and covers the resolve's output allocation: a still camera
   reads it back from exactly the pixel it writes, and TAAU composes with it.
+- **It reprojects by the nearest reflected image's motion**, of the 3×3 render texels, as the resolve
+  takes its nearest surface's. A thin reflected feature's energy spreads into texels whose own rays
+  reflect what lies behind it, which moves slower under a camera translation, so a history moved by
+  the texel under the pixel trails the feature by a fraction of a pixel each frame and a long history
+  accumulates it. Measured at landing on a mirror reflecting bars 0.1 m in front of a wall, moving
+  sideways about 3 pixels a frame: the history trailed by 0.05 px a frame, and with the nearest
+  image's motion by 0.02.
 - **It counts its samples.** The history (`RGBA16F`, ping-ponged) carries the term and a sample
-  count, and each frame takes one share in that count, so a still pixel averages every jitter phase
-  alike — up to 64 samples, where a period-long swing moves the average by about its size over 64
-  each frame. A history moving a quarter of a pixel a frame or more is held to 4 samples and also
-  clipped to the resolve's own tight YCoCg box: a reprojected read filters the history a little each
-  frame, and a moving reflection decorrelates from what it showed.
+  count, and each frame takes one share in that count, so a pixel averages every jitter phase alike
+  — up to 64 samples, where a period-long swing moves the average by about its size over 64 each
+  frame. While the reflected image moves, the count is held to the samples spanning 64 pixels of its
+  travel, never fewer than 16: two periods, so a moving history weights every phase alike too, and a
+  slow pan keeps all 64. A reflection on a curved or normal-mapped surface changes with the viewpoint,
+  and each reprojected read filters the history a little, so how long a history stays right depends
+  on how far its image has travelled. A moving history is not clipped to this frame's neighbourhood:
+  that box swings with the phase, and a history clipped to it follows the swing.
 - **It validates against a fast history, not against this frame's neighbourhood alone.** On a
   normal-mapped surface the 3×3 texels swing together from phase to phase, so a history clipped to
   them follows the swing — which is what left the resolve its pulse. Beside the history runs a fast
@@ -1540,31 +1550,40 @@ the reflection is kept out of the resolve's history and resolved by one of its o
   starts at half its level, wide enough for a jitter swing and narrow enough for a source appearing.
   A read off-screen, a pixel that reflects nothing, and the first frame after a `Recreate` keep no
   history at all. A reflected object's own motion is not reprojected — the reflected scene is taken
-  as still — and is left to this validation.
+  as still — and is left to this validation. Clipping a moving history to the neighbourhood widened
+  by how far a single frame strays from it buys little: on a normal-mapped floor moving sideways
+  0.1 m a frame it takes the last pose's deviation from 40 to 36 % only as it brings the moving pulse
+  back to 1 %.
 
 With no temporal resolve none of this runs: there is no jitter to integrate, the composite folds
 the reflection into the scene as it always did, and a reflection is exactly what one frame traced.
 The cost under a temporal resolve is one fullscreen pass at the output allocation and five targets
-— the term (`RGBA16F`) and motion (`RG16F`) at the render allocation in place of the
+— the term and the motion with its depth (both `RGBA16F`) at the render allocation in place of the
 scene-colour intermediate, and the two history pairs at the output allocation.
 
 `tests/gpu/ssr_jitter.cpp` pins the result under TAA: through a whole jitter period a mirror's
 reflected colour borders keep to a fraction of a pixel of where a render supersampled four times per
 axis puts them; a glossy normal-mapped floor's converged reflection changes by under 1 % of its
-level per frame (0.3 % at landing); a camera moving sideways 0.1 m a frame over a mirror floor shows,
-at the last pose, a reflection within 9 % of what a camera converged still there shows (7.7 %); and
-a still floor's converged reflection of emissive bars keeps under 1 % of them (5 % normal-mapped) a
-frame after they go and is back at their level a frame after they return; and with no anti-aliasing
-a flat mirror's reflection is identical with geometric specular anti-aliasing on and off, where a
-normal-mapped one's is not.
+level per frame (0.3 % at landing); under a camera panning half a pixel a frame or moving sideways
+0.02 m a frame, its change keeps under 1 % of its level that repeats with the jitter period (0.1 and
+0.5 %; a history held to four samples while it moves, 2.7 and 4.1 %), and through the second period
+after the camera stops it changes by under 1 % a frame (0.9 %; it is under 1 % from the first frame
+after a pan and the sixth after a sideways move); a camera moving sideways 0.1 m a frame over a
+mirror floor shows, at the last pose, a reflection within 9 % of what a camera converged still there
+shows (7.7 %); a still floor's converged reflection of emissive bars keeps under 1 % of them (5 %
+normal-mapped) a frame after they go and is back at their level a frame after they return; and with
+no anti-aliasing a flat mirror's reflection is identical with geometric specular anti-aliasing on and
+off, where a normal-mapped one's is not.
 
 Measured at landing on a glossy floor reflecting thin emissive bars at 128², as the mean deviation
 of a moving camera's reflection from one converged still at each pose, relative to the reflection's
 level (the bars seen directly, through the frame's resolve, in brackets): on a mirror, turns of 1,
-3 and 6° a frame 3.6, 5.0 and 8.6 % (4.7, 6.2, 8.8), sideways moves of 0.02 and 0.1 m a frame 6.1
-and 6.6 % (8.7, 7.4); on the same floor normal-mapped, turns 7.1, 9.0 and 12 %, moves 11 and 18 %.
-A normal-mapped floor's reflection under translation is where history helps least: each facet's
-reflected content changes with the viewpoint, so the moving history is short and tightly clipped.
+3 and 6° a frame 3.5, 5.6 and 9.8 % (4.7, 6.2, 8.8), sideways moves of 0.02 and 0.1 m a frame 5.5
+and 6.4 % (8.7, 7.4); on the same floor normal-mapped, turns 7.8, 9.9 and 13 %, moves 16 and 32 %.
+A normal-mapped floor's reflection under translation is where history helps least, and is the price
+of a history that keeps no jitter pulse: each facet's reflected content changes with the viewpoint,
+and a history of 16 samples or more trails it, where one of 4 clipped to this frame's box followed
+it to within 11 and 18 % — and followed the swing with it.
 
 ### Depth of field and the physical camera
 

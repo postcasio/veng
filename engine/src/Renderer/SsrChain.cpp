@@ -72,8 +72,9 @@ namespace Veng::Renderer
         // Single-channel float for the max-Z pyramid; under reverse-Z the reduction stores
         // the nearest surface, which is the max depth.
         constexpr Format HiZFormat = Format::R32Sfloat;
-        // The reflected image's screen motion, a UV delta like the g-buffer's velocity channel.
-        constexpr Format MotionFormat = Format::RG16Sfloat;
+        // The reflected image's screen motion, a UV delta like the g-buffer's velocity channel, and
+        // its view depth, by which the temporal pass picks the nearest image's motion.
+        constexpr Format MotionFormat = Format::RGBA16Sfloat;
         // The history's fast luminance and that luminance's squared spread about the history.
         constexpr Format FastFormat = Format::RG16Sfloat;
 
