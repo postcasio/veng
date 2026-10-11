@@ -4,7 +4,9 @@
 // two targets, both premultiplied by the hit's confidence (the screen-edge fade) so the
 // blur chain filters them linearly: the reflected radiance with the confidence in alpha,
 // and the view-space length of the reflected ray to its hit, which the composite reads
-// to size the reflected cone's footprint.
+// to size the reflected cone's footprint. A third target holds the surface the ray left from —
+// its device depth, that squared, and a coverage of one — for every texel with a surface, whatever
+// its ray did, so the composite can tell which surfaces a coarse level's texel averaged.
 //
 // The ray is a straight segment in view space, projected to a straight line in screen space
 // (uv + NDC depth) and marched along that line at one texel per step, with a binary-search
@@ -103,9 +105,10 @@ struct TraceOutput
 {
     float4 Reflection : SV_Target0;  // reflected radiance x confidence, confidence
     float HitDistance : SV_Target1;  // view-space ray length to the hit x confidence
+    float4 Surface : SV_Target2;     // the ray's surface device depth and its square x coverage, coverage
 };
 
-static const TraceOutput Miss = { float4(0.0, 0.0, 0.0, 0.0), 0.0 };
+static const TraceOutput Miss = { float4(0.0, 0.0, 0.0, 0.0), 0.0, float4(0.0, 0.0, 0.0, 0.0) };
 
 // Project a view-space position to a screen UV through the projection matrix.
 float2 ViewToScreenUV(float4x4 proj, float3 viewPos)
@@ -177,18 +180,26 @@ TraceOutput fsMain(VSOutput input)
     if (!surface.Valid)
         return Miss;
 
+    // The ray's start in the rasterized frame's screen space (uv.xy + NDC depth).
+    float3 viewPos = mul((float3x3)vc.View, surface.Position);
+    float4 startClip = mul(vc.Proj, float4(viewPos, 1.0));
+    float3 startNdc = startClip.xyz / startClip.w;
+    float2 startUV = startNdc.xy * 0.5 + 0.5;
+    float depth = startNdc.z;
+    TraceOutput missed = Miss;
+    missed.Surface = float4(depth, depth * depth, 1.0, 0.0);
+
     float roughness =
         g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0)).g;
     // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
     // reflection out smoothly below this cutoff).
     if (roughness > g_PC.MaxRoughness)
-        return Miss;
+        return missed;
 
     float3 N = mul((float3x3)vc.View, surface.Normal);
 
     // The camera is at the view-space origin, so the surface's view position is also the view ray
     // to it; reflect that about the surface normal.
-    float3 viewPos = mul((float3x3)vc.View, surface.Position);
     float3 R = normalize(reflect(normalize(viewPos), N));
 
     // Clamp the ray end so it never crosses the camera plane (view space looks down -Z,
@@ -201,15 +212,11 @@ TraceOutput fsMain(VSOutput input)
         endDistance = min(endDistance, (NearClip - viewPos.z) / R.z);
     }
     if (endDistance <= 0.0)
-        return Miss;
+        return missed;
     float3 endPos = viewPos + R * endDistance;
 
-    // Project the ray's start and end into the rasterized frame's screen space (uv.xy + NDC
-    // depth). A straight view-space segment projects to a straight segment in (uv, depth).
-    float4 startClip = mul(vc.Proj, float4(viewPos, 1.0));
-    float3 startNdc = startClip.xyz / startClip.w;
-    float2 startUV = startNdc.xy * 0.5 + 0.5;
-    float depth = startNdc.z;
+    // Project the ray's end the same way. A straight view-space segment projects to a straight
+    // segment in (uv, depth).
     float4 endClip = mul(vc.Proj, float4(endPos, 1.0));
     float3 endNdc = endClip.xyz / endClip.w;
     float3 p0 = float3(startUV, depth);
@@ -347,7 +354,7 @@ TraceOutput fsMain(VSOutput input)
     }
 
     if (!hit)
-        return Miss;
+        return missed;
 
     // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span and
     // read where the scene colour holds the hit: unjittered, as the temporal resolve wrote it.
@@ -397,7 +404,7 @@ TraceOutput fsMain(VSOutput input)
     float2 edge = smoothstep(0.0, 0.15, resolvedUV) * (1.0 - smoothstep(0.85, 1.0, resolvedUV));
     float confidence = edge.x * edge.y;
 
-    TraceOutput output;
+    TraceOutput output = missed;
     output.Reflection = float4(reflected * confidence, confidence);
     output.HitDistance = min(hitDistance, MaxStoredHitDistance) * confidence;
     return output;

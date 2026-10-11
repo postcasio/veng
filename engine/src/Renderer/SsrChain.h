@@ -28,9 +28,10 @@ namespace Veng::Renderer
     ///
     /// The reflection vertical the renderer wires between lighting and the bloom/tonemap tail: the lit
     /// scene-color intermediate the trace samples (lighting/TAA writes it, the composite reflects into it
-    /// and writes the HDR target), two mip chains the trace writes level 0 of and the blur low-passes
+    /// and writes the HDR target), three mip chains the trace writes level 0 of and the blur low-passes
     /// down — the reflected radiance and the hit distance, both premultiplied by the trace's
-    /// confidence — the min-Z depth pyramid the hi-Z trace marches, and the four pipelines: min-Z
+    /// confidence, and the surface each texel's ray left from, premultiplied by its coverage — the
+    /// min-Z depth pyramid the hi-Z trace marches, and the four pipelines: min-Z
     /// reduction, trace, blur, composite. Recreate allocates the whole chain at the SsrResolution scale
     /// when SSR runs (the toggle or the Reflections debug arm), releasing it otherwise; Declare
     /// contributes min-Z reduction → trace → blur → composite into the graph.
@@ -86,8 +87,9 @@ namespace Veng::Renderer
         /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into level 0
         /// of the reflection and hit-distance chains, low-passes both chains for rough reflections,
         /// then composites the reflection into the HDR target the bloom/tonemap tail reads. Declared
-        /// between the lighting pass and the bloom sweep. Imports the hit-distance chain into the
-        /// graph itself; its per-mip views bind through GetHitDistanceChainId.
+        /// between the lighting pass and the bloom sweep. Imports the hit-distance and surface chains
+        /// into the graph itself; their per-mip views bind through GetHitDistanceChainId and
+        /// GetSurfaceChainId.
         /// @param graph              The renderer's internal graph being rebuilt.
         /// @param sceneId            The lit scene-color intermediate import (trace + composite sample).
         /// @param reflectionChainId  The per-mip reflection pyramid import (trace + blur).
@@ -140,6 +142,15 @@ namespace Veng::Renderer
 
         /// @brief The hit-distance chain's per-mip import, declared by the last Declare.
         [[nodiscard]] MipChainId GetHitDistanceChainId() const { return m_HitDistanceChainId; }
+
+        /// @brief The per-level surface storage views, bound to their per-mip import slots each Execute.
+        [[nodiscard]] const std::vector<Ref<ImageView>>& GetSurfaceMipViews() const
+        {
+            return m_SurfaceMips;
+        }
+
+        /// @brief The surface chain's per-mip import, declared by the last Declare.
+        [[nodiscard]] MipChainId GetSurfaceChainId() const { return m_SurfaceChainId; }
 
         /// @brief The per-level min-Z storage views, bound to their per-mip import slots each Execute.
         [[nodiscard]] const std::vector<Ref<ImageView>>& GetHiZMipViews() const
@@ -208,12 +219,27 @@ namespace Veng::Renderer
         TextureHandle m_HitDistanceSampleHandle;
         /// @brief The hit-distance chain's per-mip import, declared by Declare.
         MipChainId m_HitDistanceChainId;
+        /// @brief Surface mip chain (RGBA32F): each texel's surface device depth and its square, times its coverage, and the coverage.
+        ///
+        /// Level 0 the trace writes for every texel with a surface, whatever its ray did; the blur
+        /// low-passes it with the reflection's own weights, so over its coverage a coarse texel
+        /// holds the mean and spread of the surfaces its reflection averaged, which the composite
+        /// weights it by.
+        Ref<Image> m_SurfaceImage;
+        /// @brief One single-mip view per surface level (mip 0 a color target, deeper mips storage dests).
+        std::vector<Ref<ImageView>> m_SurfaceMips;
+        /// @brief Whole-chain sampled view of the surface chain; the composite loads it by level.
+        Ref<ImageView> m_SurfaceSampleView;
+        /// @brief Bindless slot for m_SurfaceSampleView.
+        TextureHandle m_SurfaceSampleHandle;
+        /// @brief The surface chain's per-mip import, declared by Declare.
+        MipChainId m_SurfaceChainId;
         /// @brief Trilinear clamp-to-edge sampler over both chains,
         /// shared out of the bindless registry with every other consumer of the same settings.
         Ref<Sampler> m_ReflectionSampler;
         /// @brief Bindless slot for m_ReflectionSampler; the registry's, so it stays valid.
         SamplerHandle m_ReflectionSamplerHandle;
-        /// @brief One blur-downsample set per produced level k (reads both chains' mip k-1, writes their mip k).
+        /// @brief One blur-downsample set per produced level k (reads the chains' mip k-1, writes their mip k).
         std::vector<Ref<DescriptorSet>> m_BlurSets;
 
         /// @brief Min-Z depth pyramid: the closest-surface mip chain the trace marches.

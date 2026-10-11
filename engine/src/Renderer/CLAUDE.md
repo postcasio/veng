@@ -1305,6 +1305,13 @@ only ever an improvement on top.
   plain 2×2 box it replaces, which let a small bright reflection step from one coarse texel to the
   next. A separable Gaussian would cost two dispatches a level for the same band limit. The kernel's
   variance is 1.75 source texels² per axis.
+- **A third chain carries the surfaces each level averaged.** The trace writes, for every texel with
+  a surface whatever its ray did, the device depth of the surface its ray left from, that squared,
+  and a coverage of one (`RGBA32F` — reverse-Z depth of distant geometry sits below half-float's
+  normal range); the blur filters it with the same kernel (by hand, from loads, since 32-bit float
+  is not guaranteed filterable). Over its coverage, a coarse texel holds the mean and variance of
+  the surfaces its reflection averaged, which is what lets the coarse levels stop at silhouettes
+  (below).
 - **The cone is GGX's half-maximum.** With `α = roughness²`, the half-vector distribution falls to
   half its peak at `tan θh = α·√((√2 − 1)/(1 − √2·α²))`; the reflected cone's half-angle is `2θh`
   (held at its widest once `α² ≥ 1/√2`, where the lobe never halves). Its diameter at the hit is
@@ -1323,9 +1330,10 @@ only ever an improvement on top.
 - **The hit distance is read at the pixel**, from the finest level whose confidence clears 0.02, so a
   pixel whose own ray missed takes its neighbourhood's mean and a rough reflection blurs past the
   edge of what it reflects; a pixel with nothing hit at any level adds nothing.
-- **Levels are reconstructed with a cubic B-spline** from four bilinear taps, so a coarse level
-  magnifies without drawing its texel grid, and the two levels either side of `lod` are blended by
-  its fraction. Level 0 is read by how far it is magnified (below).
+- **Levels are reconstructed with a cubic B-spline** over the 3×3 texels nearest the pixel, so a
+  coarse level magnifies without drawing its texel grid, and the two levels either side of `lod` are
+  blended by its fraction. Each coarse texel is weighted by its surfaces' agreement with the pixel's
+  (below); level 0 is read by how far it is magnified.
 - **The chains stop where their short axis reaches two texels** (`bit_width(min(w, h)) − 1` levels):
   the smooth reconstruction makes the coarsest levels usable, so a wide cone reads a smooth average
   of the screen, and a cone wider still clamps there.
@@ -1369,8 +1377,8 @@ ratio, taken from the depth target's and the chain's own sizes:
 - **The weights renormalize over the agreeing taps**, so a reflection keeps its full strength up
   to a silhouette and adds nothing past it, from either side, and the confidence in alpha fades with
   the same weights. A pixel no tap agrees with — a feature thinner than a texel — reflects nothing
-  rather than its neighbour's reflection. The coarse levels a rough surface blends in stay
-  unweighted: they are wide blurs by design.
+  rather than its neighbour's reflection. The coarse levels a rough surface blends in are weighted
+  too, by the surfaces their blur averaged (below).
 - **Every g-buffer read in the trace and the composite is a point load or names level 0.** Those
   reads sit past early returns, or at per-lane ray positions in the march, where implicit
   derivatives are undefined and the g-buffer sampler, which is anisotropic, blends texels along
@@ -1384,6 +1392,38 @@ fourth difference along every row and column of floor stays a small, steady frac
 at every quarter-texel camera offset — a bilinear read leaves about a quarter of a reflected step's
 height there, moving with the grid phase), and a polished panel on a polished floor takes none of
 the floor's reflection beside its edges while the floor keeps all of it.
+
+#### A rough reflection stops at silhouettes too
+
+A coarse level is a blur of every trace texel under its kernel, so read plainly it carries a floor's
+reflection onto the object standing on it and dilutes the floor's with the object's empty one.
+Weighting coarse texels by a surface needs to know which surfaces each one averaged, which is what
+the surface chain carries: over its coverage, a texel's mean device depth and its variance.
+
+- **A coarse texel agrees when its surfaces lie on the pixel's tangent plane.** Its mean depth,
+  reconstructed at the texel's centre, must lie on the plane — device depth is affine in screen
+  position across a plane, so a plane's mean is a point on it at any level — and its spread about
+  that mean, beyond the plane's own (the pixel plane's device-depth gradient times the level's
+  kernel variance, `1.75·(4^L − 1)/3` level-0 texels² per axis), must be within the plane
+  tolerance. A mean alone barely moves for a texel holding a little of a second surface, while the
+  spread grows with the depth step between them, so the spread is what rejects a straddling texel.
+  Both are held to level 0's tolerance at the pixel, not a level-scaled one: a plane's mean lies on
+  the plane at any level, and at coarse levels a floor seen beside an object's lower half lies within
+  a few texel widths of the object's plane. No normal is carried down, so only position is tested;
+  a curved surface's coarse texels drift off its tangent plane, and it reads finer levels.
+- **The weights renormalize over the agreeing texels, and a level is trusted by its agreeing
+  share.** From up to three levels below the one the footprint asks for, each coarser level
+  replaces the read beneath it by how much of its kernel agrees (none below a quarter, all above
+  three quarters), and the `lod` fraction's blend is scaled the same way. Near a silhouette, where
+  a coarse level's texels straddle it, the read leans on finer levels whose texels do not: the
+  reflection blurs less there rather than across it.
+
+It costs up to five coarse reads, each nine chain loads, nine surface loads and two unprojections
+per tap, only on surfaces rough enough to need them. `tests/gpu/ssr_upsample.cpp` pins it on a rough
+panel standing on a rough floor at Half SSR: the panel takes none of the floor's reflection beside
+its edges, and the floor keeps over nine tenths of it — read plainly, the panel takes half and the
+floor keeps half. What it does not change is the trace's own screen-space occlusion: a floor ray
+that passes behind the panel on screen still misses.
 
 #### Under a temporal resolve, a reflection stands at unjittered positions
 

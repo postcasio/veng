@@ -26,9 +26,18 @@
 // whose own ray missed takes its neighbourhood's mean from a coarser level, so a rough reflection
 // blurs past the edge of what it reflects.
 //
-// Each coarse level is reconstructed with a cubic B-spline built from four bilinear taps, so it
-// magnifies smoothly instead of drawing its texel grid, and two adjacent levels are blended by the
-// LOD's fraction so the blur grows without popping.
+// Each coarse level is reconstructed with the cubic B-spline over the 3x3 texels nearest the pixel,
+// so it magnifies smoothly instead of drawing its texel grid, and two adjacent levels are blended by
+// the LOD's fraction so the blur grows without popping. The read is joint-bilateral like level 0's
+// (below), so a rough reflection does not blur across a silhouette. The surface chain carries, down
+// the same blur, the mean and variance of the device depth of the surfaces each coarse texel's
+// reflection averaged, and a texel agrees when that mean lies on the pixel's tangent plane and its
+// spread is no more than the plane's own across the level's kernel; a texel holding any of a
+// second surface spreads by the depth step between them. No normal is carried down, so only
+// position is tested. The weights are renormalized over the agreeing texels, and each level
+// replaces the one beneath it by the share of its kernel that agrees, so near a silhouette, where
+// the coarse texels straddle it, the read leans on finer levels whose texels do not: it blurs less
+// there rather than across it.
 //
 // The composite runs at full render resolution (SSR disables the dynamic-resolution sub-rect), and
 // the chain may be at a lower resolution than the target. Every surface it reads — the pixel's own
@@ -45,9 +54,10 @@
 //    carries at most 1/48 of the weight; it is folded out of the far tap, so the window moves to
 //    the next texel without a jump. Between ratios 1 and 2 the weights blend from bilinear to the
 //    B-spline, so the read is continuous in the ratio.
-//  - A tap's surface is the one the trace took for that texel. It agrees in position when it lies near the pixel's tangent plane, within about an
-//    SSR texel's width there, and in orientation when its normal is within about 25 degrees of the
-//    pixel's, falling to nothing by 45; a background tap traced nothing and never agrees. The
+//  - A tap's surface is the one the trace took for that texel. It agrees in position when it lies
+//    near the pixel's tangent plane, within about an SSR texel's width there, and in orientation
+//    when its normal is within about 25 degrees of the pixel's, falling to nothing by 45; a
+//    background tap traced nothing and never agrees. The
 //    weights are renormalized over the agreeing taps, so a reflection keeps its full strength up to
 //    a silhouette and adds nothing past it, and confidence, carried in alpha, fades the same way.
 //    A pixel no tap agrees with (a feature thinner than a texel) reflects nothing rather than its
@@ -72,9 +82,9 @@ struct PushConstants
     float Intensity;          // reflection mix scale
     float MaxRoughness;       // the trace's roughness cutoff, which the reflection fades out toward
     uint MipCount;            // chain levels
+    uint SurfaceTexture;      // the SSR surface chain, premultiplied by coverage
     uint Pad0;
     uint Pad1;
-    uint Pad2;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -111,6 +121,17 @@ static const float NormalAgreementNone = 0.7;
 // The least agreeing weight the joint read renormalizes to; below it the reflection fades out.
 static const float AgreementFloor = 1e-3;
 
+// The least coverage a coarse surface texel must carry to hold a surface at all.
+static const float CoverageFloor = 1e-3;
+
+// The share of a coarse level's kernel agreeing with the pixel's surface below which the read
+// keeps the finer level beneath it, and above which it takes the coarse level whole.
+static const float LevelTrustNone = 0.25;
+static const float LevelTrustFull = 0.75;
+
+// How many levels below the one the footprint asks for the read starts from, bounding its cost.
+static const uint FallbackLevels = 3u;
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -132,39 +153,6 @@ float ReflectedConeHalfAngle(float roughness)
         return MaxConeHalfAngle;
     float tanHalfVector = sqrt(HalfMaximumScale * alpha2 / falloff);
     return min(2.0 * atan(tanHalfVector), MaxConeHalfAngle);
-}
-
-// A cubic B-spline sample of one level from four bilinear taps: the B-spline's 4x4 weights are
-// separable, and each adjacent pair along an axis folds into one bilinear tap placed by the pair's
-// weight ratio.
-float4 SampleBSpline(Texture2D chain, SamplerState samp, float2 uv, uint level)
-{
-    uint width;
-    uint height;
-    uint levels;
-    chain.GetDimensions(level, width, height, levels);
-    float2 size = float2(width, height);
-
-    float2 coord = uv * size - 0.5;
-    float2 base = floor(coord);
-    float2 f = coord - base;
-    float2 f2 = f * f;
-    float2 f3 = f2 * f;
-    float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-    float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-    float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-    float2 w3 = f3 / 6.0;
-
-    float2 g0 = w0 + w1;
-    float2 g1 = w2 + w3;
-    float2 uv0 = (base - 0.5 + w1 / g0) / size;
-    float2 uv1 = (base + 1.5 + w3 / g1) / size;
-
-    float4 t00 = chain.SampleLevel(samp, float2(uv0.x, uv0.y), float(level));
-    float4 t10 = chain.SampleLevel(samp, float2(uv1.x, uv0.y), float(level));
-    float4 t01 = chain.SampleLevel(samp, float2(uv0.x, uv1.y), float(level));
-    float4 t11 = chain.SampleLevel(samp, float2(uv1.x, uv1.y), float(level));
-    return g0.y * (g0.x * t00 + g1.x * t10) + g1.y * (g0.x * t01 + g1.x * t11);
 }
 
 // The cubic B-spline at distance d in [0, 2] texels.
@@ -190,10 +178,32 @@ float3 AxisWeights(float t, float spline)
 // The surface a composite pixel reflects from, which a chain tap must agree with.
 struct Surface
 {
-    float3 Position;  // camera-relative position
-    float3 Normal;    // world-space unit normal
-    float Tolerance;  // one level-0 texel's width at the pixel, in world units
+    float3 Position;        // camera-relative position
+    float3 Normal;          // world-space unit normal
+    float Tolerance;        // one level-0 texel's width at the pixel, in world units
+    float DepthGradient2;   // squared device-depth gradient of the pixel's plane, per level-0 texel
 };
+
+// The device depth at which the pixel's tangent plane crosses the ray through rasterized screen UV
+// `rasterUV`, or the pixel's own depth where the ray runs along the plane.
+float PlaneDepthAt(ViewConstants vc, float3 position, float3 normal, float depth, float2 rasterUV)
+{
+    float3 onRay = RelativePosition(vc, rasterUV, depth);
+    float3 direction = RelativePosition(vc, rasterUV, depth * 0.5) - onRay;
+    float facing = dot(normal, direction);
+    if (abs(facing) < 1e-6 * length(direction))
+        return depth;
+    float3 crossing = onRay + direction * (dot(normal, position - onRay) / facing);
+    float4 clip = mul(vc.Proj, float4(mul((float3x3)vc.View, crossing), 1.0));
+    return clip.z / clip.w;
+}
+
+// The per-axis variance, in level-0 texels squared, of chain level L's blur kernel: the downsample's
+// 1.75 source texels squared a level, summed down the chain.
+float ChainKernelVariance(uint level)
+{
+    return 1.75 * (float(1u << (2u * level)) - 1.0) / 3.0;
+}
 
 // How well the surface level-0 texel `texel`'s ray left from agrees with the pixel's, in [0, 1].
 // The surface is taken at the texel's centre exactly as the trace took it there.
@@ -244,16 +254,99 @@ float4 SampleLevelZeroJoint(Texture2D chain, ViewConstants vc, Surface pixel, fl
     return sum / max(total, AgreementFloor);
 }
 
-// One chain level: level 0 bilinearly at one composite pixel per texel, through the joint read
-// when magnified; every coarser one through the B-spline.
-float4 SampleLevel(Texture2D chain, SamplerState samp, ViewConstants vc, Surface pixel, float2 uv,
-                   float2 spline, uint level)
+// How well the surfaces coarse texel `texel` of `level` averaged agree with the pixel's, in [0, 1].
+// Their mean, at the texel's centre, must lie on the pixel's tangent plane, and their spread about
+// it must be no more than the plane's own across the level's kernel — a texel straddling a
+// silhouette, however little of the other surface it holds, spreads by the depth step between
+// them. Both are held to the level-0 tolerance at the pixel, since a plane's mean lies on the
+// plane at any level. No normal is carried down the chain, so only position is tested.
+float CoarseAgreement(ViewConstants vc, Surface pixel, int2 texel, uint level, float2 size)
 {
-    if (level != 0u)
-        return SampleBSpline(chain, samp, uv, level);
+    float4 surface =
+        g_Textures[NonUniformResourceIndex(g_PC.SurfaceTexture)].Load(int3(texel, int(level)));
+    if (surface.z < CoverageFloor)
+        return 0.0;
+    float2 rasterUV = (float2(texel) + 0.5) / size + vc.JitterNdc.xy * 0.5;
+    float mean = surface.x / surface.z;
+    float3 position = RelativePosition(vc, rasterUV, mean);
+    float planeDistance = abs(dot(pixel.Normal, position - pixel.Position));
+
+    float variance = max(surface.y / surface.z - mean * mean, 0.0);
+    float excess = sqrt(max(variance - pixel.DepthGradient2 * ChainKernelVariance(level), 0.0));
+    float spread = length(RelativePosition(vc, rasterUV, min(mean + excess, 1.0)) - position);
+
+    return (1.0 - smoothstep(PlaneAgreementFull, PlaneAgreementNone, planeDistance / pixel.Tolerance)) *
+           (1.0 - smoothstep(PlaneAgreementFull, PlaneAgreementNone, spread / pixel.Tolerance));
+}
+
+// A coarse level: the B-spline over the 3x3 texels nearest the pixel, each weighted by how well
+// the surfaces its blur averaged agree with the pixel's and renormalized over the agreeing ones.
+// `agreed` is the share of the B-spline's weight that agrees.
+float4 SampleCoarseJoint(Texture2D chain, ViewConstants vc, Surface pixel, float2 uv, uint level,
+                         out float agreed)
+{
+    uint width;
+    uint height;
+    uint levels;
+    chain.GetDimensions(level, width, height, levels);
+    float2 size = float2(width, height);
+    float2 coord = uv * size - 0.5;
+    float2 nearest = round(coord);
+    float3 wx = AxisWeights(coord.x - nearest.x, 1.0);
+    float3 wy = AxisWeights(coord.y - nearest.y, 1.0);
+
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+    float total = 0.0;
+    [unroll]
+    for (int j = 0; j < 3; ++j)
+    {
+        [unroll]
+        for (int i = 0; i < 3; ++i)
+        {
+            int2 texel = clamp(int2(nearest) + int2(i - 1, j - 1), int2(0, 0), int2(size) - 1);
+            float weight = wx[i] * wy[j] * CoarseAgreement(vc, pixel, texel, level, size);
+            sum += chain.Load(int3(texel, int(level))) * weight;
+            total += weight;
+        }
+    }
+    agreed = total;
+    return sum / max(total, AgreementFloor);
+}
+
+// Level 0: bilinearly at one composite pixel per texel, through the joint read when magnified.
+float4 SampleLevelZero(Texture2D chain, SamplerState samp, ViewConstants vc, Surface pixel, float2 uv,
+                       float2 spline)
+{
     if (all(spline <= 0.0))
         return chain.SampleLevel(samp, uv, 0.0);
     return SampleLevelZeroJoint(chain, vc, pixel, uv, spline);
+}
+
+// The reflection at `lod`. From a few levels below it upward, each coarser level replaces the
+// read beneath it by how much of its kernel agrees with the pixel's surface, so where a coarse
+// level's texels straddle a silhouette the read leans on the finer levels whose texels do not,
+// and blurs less there rather than across it.
+float4 SampleAtLod(Texture2D chain, SamplerState samp, ViewConstants vc, Surface pixel, float2 uv,
+                   float2 spline, float lod, uint mipCount)
+{
+    uint fine = uint(lod);
+    uint coarse = min(fine + 1u, mipCount - 1u);
+    uint first = fine > FallbackLevels ? fine - FallbackLevels : 0u;
+    float agreed;
+    float4 value = first == 0u ? SampleLevelZero(chain, samp, vc, pixel, uv, spline)
+                               : SampleCoarseJoint(chain, vc, pixel, uv, first, agreed);
+    for (uint level = first + 1u; level <= fine; ++level)
+    {
+        float4 coarser = SampleCoarseJoint(chain, vc, pixel, uv, level, agreed);
+        value = lerp(value, coarser, smoothstep(LevelTrustNone, LevelTrustFull, agreed));
+    }
+    float blend = lod - float(fine);
+    if (blend > 0.0 && coarse != fine)
+    {
+        float4 coarser = SampleCoarseJoint(chain, vc, pixel, uv, coarse, agreed);
+        value = lerp(value, coarser, blend * smoothstep(LevelTrustNone, LevelTrustFull, agreed));
+    }
+    return value;
 }
 
 [shader("fragment")]
@@ -336,15 +429,18 @@ float4 fsMain(VSOutput input) : SV_Target
     uint compositeLevels;
     depthTexture.GetDimensions(0u, compositeWidth, compositeHeight, compositeLevels);
     float2 spline = saturate(float2(compositeWidth, compositeHeight) / float2(chainWidth, chainHeight) - 1.0);
-    Surface pixel = { relative, N, 1.0 / texelsPerUnit };
+    // The pixel plane's device-depth gradient, one level-0 texel along each axis.
+    float2 rasterUV = uv + vc.JitterNdc.xy * 0.5;
+    float4 pixelClip = mul(vc.Proj, float4(viewPos, 1.0));
+    float pixelDepth = pixelClip.z / pixelClip.w;
+    float2 chainTexel = 1.0 / float2(chainWidth, chainHeight);
+    float gradientX =
+        PlaneDepthAt(vc, relative, N, pixelDepth, rasterUV + float2(chainTexel.x, 0.0)) - pixelDepth;
+    float gradientY =
+        PlaneDepthAt(vc, relative, N, pixelDepth, rasterUV + float2(0.0, chainTexel.y)) - pixelDepth;
+    Surface pixel = { relative, N, 1.0 / texelsPerUnit, gradientX * gradientX + gradientY * gradientY };
 
-    uint fine = uint(lod);
-    uint coarse = min(fine + 1u, mipCount - 1u);
-    float blend = lod - float(fine);
-    float4 reflection = SampleLevel(reflectionChain, reflSamp, vc, pixel, uv, spline, fine);
-    if (blend > 0.0 && coarse != fine)
-        reflection =
-            lerp(reflection, SampleLevel(reflectionChain, reflSamp, vc, pixel, uv, spline, coarse), blend);
+    float4 reflection = SampleAtLod(reflectionChain, reflSamp, vc, pixel, uv, spline, lod, mipCount);
 
     // Metallic workflow base reflectance: dielectrics reflect a flat 0.04, metals tint
     // the reflection by albedo.

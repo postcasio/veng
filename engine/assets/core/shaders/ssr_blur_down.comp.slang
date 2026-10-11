@@ -12,14 +12,23 @@
 // therefore fades where few rays hit, and its distance divided by its alpha is the
 // confidence-weighted mean hit distance over its footprint.
 //
+// The surface chain — the device depth of the surface each texel's ray left from and its square,
+// each times its coverage, and the coverage — is filtered by the same kernel, so over its coverage
+// a coarse texel holds the mean and variance of the surfaces its reflection averaged. On a plane
+// the mean is a point on the plane, since device depth is affine in screen position across one,
+// and the variance is the plane's own gradient across the kernel. Thirty-two-bit float is not
+// guaranteed filterable, so its bilinear taps are taken by hand from four loads each.
+//
 // Set 0 is reserved for the bindless registry; this closed producer->consumer chain binds its own
-// resources on set 3: each target's sampled source mip and storage destination mip, and one
-// clamp-to-edge linear sampler.
+// resources on set 3: each target's source mip and storage destination mip, and one clamp-to-edge
+// linear sampler.
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;
 [[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 [[vk::binding(3, 3)]] Texture2D<float> g_DistanceSource;
 [[vk::binding(4, 3)]] [format("r16f")] RWTexture2D<float> g_DistanceDest;
+[[vk::binding(5, 3)]] Texture2D<float4> g_SurfaceSource;
+[[vk::binding(6, 3)]] [format("rgba32f")] RWTexture2D<float4> g_SurfaceDest;
 
 struct PushConstants
 {
@@ -46,6 +55,21 @@ static const float TapWeights[13] = {
     0.125,   0.125,  0.125,   0.125,
 };
 
+// A clamp-to-edge bilinear tap of the surface chain at source texel coordinate `coord`.
+float4 LoadSurfaceBilinear(float2 coord, int2 size)
+{
+    float2 position = coord - 0.5;
+    float2 base = floor(position);
+    float2 f = position - base;
+    int2 low = clamp(int2(base), int2(0, 0), size - 1);
+    int2 high = clamp(int2(base) + 1, int2(0, 0), size - 1);
+    float4 top = lerp(g_SurfaceSource.Load(int3(low.x, low.y, 0)),
+                      g_SurfaceSource.Load(int3(high.x, low.y, 0)), f.x);
+    float4 bottom = lerp(g_SurfaceSource.Load(int3(low.x, high.y, 0)),
+                         g_SurfaceSource.Load(int3(high.x, high.y, 0)), f.x);
+    return lerp(top, bottom, f.y);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void csMain(uint3 id : SV_DispatchThreadID)
@@ -61,14 +85,18 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     float4 colour = float4(0.0, 0.0, 0.0, 0.0);
     float distance = 0.0;
+    float4 surface = float4(0.0, 0.0, 0.0, 0.0);
+    int2 sourceSize = int2(sourceWidth, sourceHeight);
     [unroll]
     for (uint tap = 0; tap < 13; ++tap)
     {
         float2 tapUV = uv + TapOffsets[tap] * sourceTexel;
         colour += g_Source.SampleLevel(g_Sampler, tapUV, 0.0) * TapWeights[tap];
         distance += g_DistanceSource.SampleLevel(g_Sampler, tapUV, 0.0) * TapWeights[tap];
+        surface += LoadSurfaceBilinear(tapUV * float2(sourceSize), sourceSize) * TapWeights[tap];
     }
 
     g_Dest[int2(id.xy)] = colour;
     g_DistanceDest[int2(id.xy)] = distance;
+    g_SurfaceDest[int2(id.xy)] = surface;
 }

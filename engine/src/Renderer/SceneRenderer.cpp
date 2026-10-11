@@ -3095,6 +3095,12 @@ namespace Veng::Renderer
                 bindings.push_back({.Id = m_Ssr->GetHitDistanceChainId().Level(level),
                                     .View = distanceMips[level]});
             }
+            const std::vector<Ref<ImageView>>& surfaceMips = m_Ssr->GetSurfaceMipViews();
+            for (u32 level = 0; level < surfaceMips.size(); level++)
+            {
+                bindings.push_back(
+                    {.Id = m_Ssr->GetSurfaceChainId().Level(level), .View = surfaceMips[level]});
+            }
             const std::vector<Ref<ImageView>>& hiZMips = m_Ssr->GetHiZMipViews();
             for (u32 level = 0; level < hiZMips.size(); level++)
             {

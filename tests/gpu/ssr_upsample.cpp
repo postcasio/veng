@@ -1,7 +1,7 @@
 // Screen-space reflections magnified past the SSR resolution stay smooth and stop at silhouettes.
 // Each renderer here has a render allocation of half its output and traces at Half SSR, so the
 // trace runs at a quarter of the output per axis and one SSR texel spans two composite pixels.
-// Two properties:
+// Three properties:
 //
 //  - a glossy floor's reflection of a lit sphere carries no structure at the SSR texel period:
 //    along every row and column of floor, how far each pixel's second difference departs from its
@@ -10,7 +10,9 @@
 //    camera offset across a whole texel;
 //  - a reflection stops at a silhouette: a polished panel standing on a polished floor, whose own
 //    rays reflect nothing, takes none of the floor's reflection beside its edges, and the floor
-//    keeps its whole reflection up to them rather than averaging in the panel's empty one.
+//    keeps its whole reflection up to them rather than averaging in the panel's empty one;
+//  - so does a rough one, read from the chain's coarse levels: the rough panel takes none of the
+//    rough floor's reflection, and the floor keeps nearly all of it.
 //
 // Every measure is on the linear HDR target the SSR composite writes, as the difference between a
 // renderer with SSR and one without, so each surface's own shading cancels. The polished surfaces
@@ -62,6 +64,9 @@ namespace
 
     // The polished surfaces' roughness: glossy enough that the composite reads level 0 alone.
     constexpr f32 GlossyRoughness = 0.05f;
+
+    // A rough surface's: its reflection of anything a metre or more away reads the coarse levels.
+    constexpr f32 RoughRoughness = 0.3f;
 
     // What a composite pixel's g-buffer normal says it is.
     enum class Surface : u8
@@ -141,14 +146,15 @@ namespace
                              vec3(0.0f, 1.0f, 0.0f));
     }
 
-    GlossyScene BuildFloor(Context& context, AssetManager& assets, TypeRegistry& types)
+    GlossyScene BuildFloor(Context& context, AssetManager& assets, TypeRegistry& types,
+                           const f32 roughness = GlossyRoughness)
     {
         GlossyScene built{.World = Scene::Create(types)};
         Place(built, assets,
               Mesh::BuildSync(context,
                               Primitives::Plane(vec2(40.0f), uvec2(1),
                                                 MakeMaterial(context, assets, "Floor", vec3(1.0f),
-                                                             GlossyRoughness, 1.0f)),
+                                                             roughness, 1.0f)),
                               "Glossy Floor"),
               vec3(0.0f), quat(1.0f, 0.0f, 0.0f, 0.0f));
 
@@ -284,6 +290,92 @@ namespace
         }
         return true;
     }
+
+    // What a silhouette lets through: the most of the floor's reflection a polished panel standing
+    // on it takes beside its edges, and the least the floor keeps there, each against the floor's
+    // reflection well clear of the panel.
+    struct SilhouetteBleed
+    {
+        f32 PanelMost = 0.0f;
+        f32 FloorLeast = 0.0f;
+    };
+
+    // The panel rows a silhouette is measured over.
+    enum class Band : u8
+    {
+        // The panel's lower half, clear of the floor's view past its top corners (where the floor's
+        // rays pass behind the panel on screen and miss) and of the crease where it meets the floor.
+        LowerHalf,
+        // The panel's middle rows, clear of its top corners and of its own mirror image below its
+        // base, which a rough floor beside the base legitimately blurs in.
+        Middle,
+    };
+
+    // A bright matte backdrop for the floor to reflect, and in front of it a panel facing the
+    // camera, whose reflected rays head back toward the camera and hit nothing on screen; floor and
+    // panel are white metal of one roughness.
+    SilhouetteBleed MeasureSilhouette(Context& context, AssetManager& assets, TypeRegistry& types,
+                                      const f32 roughness, const Band band)
+    {
+        GlossyScene built = BuildFloor(context, assets, types, roughness);
+        PlaceUpright(built, context, assets, "Backdrop", vec2(12.0f, 6.0f), vec3(0.0f, 3.0f, -5.0f),
+                     vec3(0.9f), 1.0f, 0.0f);
+        PlaceUpright(built, context, assets, "Panel", vec2(0.6f, 0.8f), vec3(0.0f, 0.4f, -0.5f),
+                     vec3(1.0f), roughness, 1.0f);
+        ReflectionProbe probe(context, assets);
+        const Reflection frame = probe.Render(context, built);
+
+        // The rows where floor flanks the panel on both sides.
+        u32 top = RenderExtent.y;
+        u32 bottom = 0;
+        for (u32 y = 0; y < RenderExtent.y; ++y)
+        {
+            if (frame.SurfaceAt(0, y) == Surface::Floor &&
+                frame.SurfaceAt(RenderExtent.x / 2, y) == Surface::Upright)
+            {
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+        REQUIRE(bottom > top + 12);
+
+        // Both edges of every row of the band.
+        constexpr u32 Reach = 3;
+        const u32 middle = (top + bottom) / 2;
+        const u32 first = band == Band::LowerHalf ? middle : middle - 2;
+        const u32 last = band == Band::LowerHalf ? bottom - 3 : middle + 3;
+        f32 panelMost = 0.0f;
+        f32 floorLeast = 1e30f;
+        u32 rows = 0;
+        for (u32 y = first; y <= last; ++y)
+        {
+            u32 left = RenderExtent.x / 2;
+            while (frame.SurfaceAt(left - 1, y) == Surface::Upright)
+            {
+                --left;
+            }
+            u32 right = RenderExtent.x / 2;
+            while (frame.SurfaceAt(right + 1, y) == Surface::Upright)
+            {
+                ++right;
+            }
+            REQUIRE(left > 16);
+            REQUIRE(right + 16 < RenderExtent.x);
+            // The floor's reflection here, well clear of the panel.
+            const f32 plateau = 0.5f * (frame.AddedAt(left - 12, y) + frame.AddedAt(right + 12, y));
+            REQUIRE(plateau > 0.0f);
+            for (u32 k = 0; k < Reach; ++k)
+            {
+                panelMost = std::max({panelMost, frame.AddedAt(left + k, y) / plateau,
+                                      frame.AddedAt(right - k, y) / plateau});
+                floorLeast = std::min({floorLeast, frame.AddedAt(left - 1 - k, y) / plateau,
+                                       frame.AddedAt(right + 1 + k, y) / plateau});
+            }
+            ++rows;
+        }
+        REQUIRE(rows >= 4);
+        return {.PanelMost = panelMost, .FloorLeast = floorLeast};
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -364,66 +456,29 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
     const path archive = MountPack(assets, "veng_gpu_ssr_upsample_silhouette.vengpack");
-    GlossyScene built = BuildFloor(Context, assets, Types);
-    // A bright matte backdrop for the floor to reflect, and in front of it a polished panel facing
-    // the camera, whose reflected rays head back toward the camera and hit nothing on screen.
-    PlaceUpright(built, Context, assets, "Backdrop", vec2(12.0f, 6.0f), vec3(0.0f, 3.0f, -5.0f),
-                 vec3(0.9f), 1.0f, 0.0f);
-    PlaceUpright(built, Context, assets, "Panel", vec2(0.6f, 0.8f), vec3(0.0f, 0.4f, -0.5f),
-                 vec3(1.0f), GlossyRoughness, 1.0f);
-    ReflectionProbe probe(Context, assets);
-    const Reflection frame = probe.Render(Context, built);
+    const SilhouetteBleed bleed =
+        MeasureSilhouette(Context, assets, Types, GlossyRoughness, Band::LowerHalf);
+    CHECK(bleed.PanelMost < 0.02f);
+    CHECK(bleed.FloorLeast > 0.95f);
 
-    // The rows where floor flanks the panel on both sides.
-    u32 top = RenderExtent.y;
-    u32 bottom = 0;
-    for (u32 y = 0; y < RenderExtent.y; ++y)
-    {
-        if (frame.SurfaceAt(0, y) == Surface::Floor &&
-            frame.SurfaceAt(RenderExtent.x / 2, y) == Surface::Upright)
-        {
-            top = std::min(top, y);
-            bottom = std::max(bottom, y);
-        }
-    }
-    REQUIRE(bottom > top + 12);
+    std::filesystem::remove(archive);
+}
 
-    // Through the panel's lower half, clear of the floor's own reflection of the panel's top
-    // corners and of the crease where it meets the floor, both edges of every row.
-    constexpr u32 Reach = 3;
-    f32 panelMost = 0.0f;
-    f32 floorLeast = 1e30f;
-    u32 rows = 0;
-    for (u32 y = (top + bottom) / 2; y + 3 <= bottom; ++y)
-    {
-        u32 left = RenderExtent.x / 2;
-        while (frame.SurfaceAt(left - 1, y) == Surface::Upright)
-        {
-            --left;
-        }
-        u32 right = RenderExtent.x / 2;
-        while (frame.SurfaceAt(right + 1, y) == Surface::Upright)
-        {
-            ++right;
-        }
-        REQUIRE(left > 16);
-        REQUIRE(right + 16 < RenderExtent.x);
-        // The floor's reflection here, well clear of the panel.
-        const f32 plateau = 0.5f * (frame.AddedAt(left - 12, y) + frame.AddedAt(right + 12, y));
-        REQUIRE(plateau > 0.0f);
-        for (u32 k = 0; k < Reach; ++k)
-        {
-            panelMost = std::max({panelMost, frame.AddedAt(left + k, y) / plateau,
-                                  frame.AddedAt(right - k, y) / plateau});
-            floorLeast = std::min({floorLeast, frame.AddedAt(left - 1 - k, y) / plateau,
-                                   frame.AddedAt(right + 1 + k, y) / plateau});
-        }
-        ++rows;
-    }
-    REQUIRE(rows >= 4);
-
-    CHECK(panelMost < 0.02f);
-    CHECK(floorLeast > 0.95f);
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr upsample: a rough reflection stops at a silhouette, from either side")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = MountPack(assets, "veng_gpu_ssr_upsample_rough_silhouette.vengpack");
+    // Rough enough that both surfaces read coarse levels: the floor's reflection of the backdrop
+    // travels metres, and the panel, whose own rays miss, takes the floor's hit distance.
+    const SilhouetteBleed bleed =
+        MeasureSilhouette(Context, assets, Types, RoughRoughness, Band::Middle);
+    CHECK(bleed.PanelMost < 0.02f);
+    // The floor's cone beside the panel takes in a little of the panel's dark mirror image below
+    // it, so it keeps nearly all its reflection rather than all of it; blurred across the
+    // silhouette, the panel would take half the floor's reflection and the floor keep half.
+    CHECK(bleed.FloorLeast > 0.9f);
 
     std::filesystem::remove(archive);
 }

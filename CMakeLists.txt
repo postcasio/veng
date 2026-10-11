@@ -1944,7 +1944,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/ssr_rough.cpp
             # ssr_upsample.cpp drives a reflection magnified past a Half trace at half render scale:
             # no SSR texel grid in a glossy reflection at any sub-texel camera offset, and nothing
-            # carried across a silhouette from either side.
+            # carried across a silhouette from either side, by a glossy reflection or a rough one.
             tests/gpu/ssr_upsample.cpp
             # ssr_jitter.cpp drives a mirror's reflection through a TAA jitter period: every frame,
             # its side and far edges keep to where the unjittered render puts them.
