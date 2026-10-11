@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <fstream>
 #include <span>
 #include <sstream>
@@ -21,6 +22,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "ImportOrientation.h"
+#include "MeshLod.h"
 #include "SkeletonSource.h"
 
 namespace Veng::Cook
@@ -67,6 +69,10 @@ namespace Veng::Cook
         };
 
         static_assert(sizeof(SkinnedVertex) == 72, "skinned vertex must be tightly packed");
+
+        // A generated level keeps at most this share of its predecessor's triangles; one that
+        // reduces less is dropped rather than cooked.
+        constexpr f32 MinLodTriangleShare = 0.95f;
 
         // Reads a bool field from `import`, returning `fallback` when absent.
         bool ImportFlag(const json& import, const char* key, bool fallback)
@@ -214,6 +220,108 @@ namespace Veng::Cook
             }
             return parsed->Value;
         }
+        // The name of the material an assimp mesh is drawn with, or empty when it names none.
+        std::string MaterialName(const aiScene* scene, const aiMesh* mesh)
+        {
+            if (mesh->mMaterialIndex >= scene->mNumMaterials)
+            {
+                return {};
+            }
+            return scene->mMaterials[mesh->mMaterialIndex]->GetName().C_Str();
+        }
+
+        // Imports an authored level's model, appends its vertices to `vertices`, and returns its
+        // indices per base submesh. Each of the model's meshes maps to one base submesh — by
+        // `level.SubMeshes` when given, else by material name — and several may map to one.
+        Result<vector<vector<u32>>> ImportAuthoredLevel(
+            const path& modelPath, const MeshLodLevelSource& level, const unsigned int flags,
+            const f32 scale, const ImportOrientation& orientation,
+            const vector<std::string>& baseMaterialNames, vector<CanonicalVertex>& vertices)
+        {
+            Assimp::Importer importer;
+            importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
+                                        aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+            const aiScene* scene = importer.ReadFile(modelPath.string(), flags);
+            if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
+                scene->mRootNode == nullptr || scene->mNumMeshes == 0)
+            {
+                return std::unexpected(fmt::format("assimp failed to import level model '{}': {}",
+                                                   modelPath.string(), importer.GetErrorString()));
+            }
+            if (level.SubMeshes.has_value() && level.SubMeshes->size() != scene->mNumMeshes)
+            {
+                return std::unexpected(
+                    fmt::format("'submeshes' lists {} entries but level model '{}' has {} meshes",
+                                level.SubMeshes->size(), modelPath.string(), scene->mNumMeshes));
+            }
+
+            vector<vector<u32>> indices(baseMaterialNames.size());
+            for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+            {
+                const aiMesh* mesh = scene->mMeshes[meshIndex];
+
+                u32 target = 0;
+                if (level.SubMeshes.has_value())
+                {
+                    target = (*level.SubMeshes)[meshIndex];
+                    if (target >= baseMaterialNames.size())
+                    {
+                        return std::unexpected(fmt::format(
+                            "'submeshes[{}]' names submesh {} but the mesh has {} submeshes",
+                            meshIndex, target, baseMaterialNames.size()));
+                    }
+                }
+                else
+                {
+                    const std::string name = MaterialName(scene, mesh);
+                    usize matches = 0;
+                    for (usize b = 0; b < baseMaterialNames.size(); ++b)
+                    {
+                        if (baseMaterialNames[b] == name)
+                        {
+                            target = static_cast<u32>(b);
+                            ++matches;
+                        }
+                    }
+                    if (matches != 1)
+                    {
+                        std::string known;
+                        for (const std::string& baseName : baseMaterialNames)
+                        {
+                            known += fmt::format("{}'{}'", known.empty() ? "" : ", ", baseName);
+                        }
+                        return std::unexpected(fmt::format(
+                            "level model '{}' mesh {} uses material '{}', which {} of the base "
+                            "submeshes use (base materials: {}); map it with 'submeshes'",
+                            modelPath.string(), meshIndex, name, matches == 0 ? "none" : "several",
+                            known));
+                    }
+                }
+
+                const u32 vertexBase = static_cast<u32>(vertices.size());
+                for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+                {
+                    CanonicalVertex vertex{};
+                    FillCommonAttributes(vertex, mesh, v, scale, orientation);
+                    vertices.push_back(vertex);
+                }
+                for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
+                {
+                    const aiFace& face = mesh->mFaces[f];
+                    if (face.mNumIndices != 3)
+                    {
+                        return std::unexpected(
+                            fmt::format("non-triangle face after triangulation in level model '{}'",
+                                        modelPath.string()));
+                    }
+                    for (unsigned int k = 0; k < 3; ++k)
+                    {
+                        indices[target].push_back(vertexBase + face.mIndices[k]);
+                    }
+                }
+            }
+            return indices;
+        }
     }
 
     Result<vector<u8>> MeshImporter::Cook(const CookContext& context, const json& entry) const
@@ -261,6 +369,20 @@ namespace Veng::Cook
                                 sourcePath.string(), meshJson["skeleton"].get<string>()));
             }
             skeletonId = parsed->Value;
+        }
+
+        const Result<MeshLodSource> lodSource = ParseMeshLodSource(meshJson);
+        if (!lodSource)
+        {
+            return std::unexpected(
+                fmt::format("mesh importer: '{}': {}", sourcePath.string(), lodSource.error()));
+        }
+        // A skinned mesh's levels would each need their own bone influences; it cooks level 0 alone.
+        if (skinned && lodSource->Enabled)
+        {
+            return std::unexpected(
+                fmt::format("mesh importer: '{}': 'lod' is not supported on a skinned mesh",
+                            sourcePath.string()));
         }
 
         // Import settings -> assimp post-process flags. Defaults: generate normals +
@@ -384,6 +506,7 @@ namespace Veng::Cook
         vector<SkinnedVertex> skinnedVertices;
         vector<u32> indices;
         vector<CookedSubMesh> subMeshes;
+        vector<std::string> baseMaterialNames;
 
         for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
         {
@@ -412,7 +535,8 @@ namespace Veng::Cook
                         const aiVertexWeight& weight = bone->mWeights[w];
                         if (weight.mWeight > 0.0f)
                         {
-                            influences[weight.mVertexId].push_back({boneIndex, weight.mWeight});
+                            influences[weight.mVertexId].push_back(
+                                {.Bone = boneIndex, .Weight = weight.mWeight});
                         }
                     }
                 }
@@ -492,6 +616,7 @@ namespace Veng::Cook
                 .IndexCount = indexCount,
                 .MaterialId = *materialId,
             });
+            baseMaterialNames.push_back(MaterialName(scene, mesh));
         }
 
         const CookedVertexAttribute staticAttributes[] = {
@@ -559,6 +684,108 @@ namespace Veng::Cook
             sockets.push_back(socket);
         }
 
+        // Levels of detail: further index ranges per submesh appended after level 0's indices, an
+        // authored level's vertices appended after level 0's.
+        const u32 baseVertexCount =
+            static_cast<u32>(skinned ? skinnedVertices.size() : staticVertices.size());
+        vector<CookedMeshLod> lods;
+        vector<CookedMeshLodRange> lodRanges;
+        if (lodSource->Enabled)
+        {
+            vec3 lo(std::numeric_limits<f32>::max());
+            vec3 hi(std::numeric_limits<f32>::lowest());
+            for (const CanonicalVertex& vertex : staticVertices)
+            {
+                const vec3 p(vertex.Position[0], vertex.Position[1], vertex.Position[2]);
+                lo = glm::min(lo, p);
+                hi = glm::max(hi, p);
+            }
+            const f32 diameter = staticVertices.empty() ? 0.0f : glm::length(hi - lo);
+
+            vector<MeshLodSubMeshRange> baseRanges;
+            baseRanges.reserve(subMeshes.size());
+            u32 previousTriangles = 0;
+            for (const CookedSubMesh& subMesh : subMeshes)
+            {
+                baseRanges.push_back(
+                    {.IndexOffset = subMesh.IndexOffset, .IndexCount = subMesh.IndexCount});
+                previousTriangles += subMesh.IndexCount / 3;
+            }
+
+            vector<BuiltMeshLod> built;
+            for (usize i = 0; i < lodSource->Levels.size(); ++i)
+            {
+                const MeshLodLevelSource& level = lodSource->Levels[i];
+                if (level.IsAuthored())
+                {
+                    const path levelPath = sourcePath.parent_path() / level.Model;
+                    context.RecordDependency(levelPath);
+                    Result<vector<vector<u32>>> authored =
+                        ImportAuthoredLevel(levelPath, level, flags, scale, orientation,
+                                            baseMaterialNames, staticVertices);
+                    if (!authored)
+                    {
+                        return std::unexpected(fmt::format("mesh importer: '{}': lod level {}: {}",
+                                                           sourcePath.string(), i + 1,
+                                                           authored.error()));
+                    }
+                    BuiltMeshLod lod{.SubMeshIndices = std::move(*authored),
+                                     .Error = 0.0f,
+                                     .ScreenSize = level.ScreenSize,
+                                     .Authored = true};
+                    previousTriangles = CountTriangles(lod);
+                    built.push_back(std::move(lod));
+                    continue;
+                }
+                if (diameter <= 0.0f)
+                {
+                    continue;
+                }
+
+                // Simplified from level 0's own vertices; an authored level's appended ones are
+                // never referenced by these indices.
+                BuiltMeshLod lod = SimplifyMeshLod(
+                    MeshLodGeometry{
+                        .Positions = staticVertices.data()->Position,
+                        .Normals = staticVertices.data()->Normal,
+                        .VertexCount = baseVertexCount,
+                        .Stride = sizeof(CanonicalVertex),
+                        .Indices = indices,
+                        .SubMeshes = baseRanges,
+                        .Diameter = diameter,
+                    },
+                    level, lodSource->NormalWeight);
+                // A level that barely reduces its predecessor costs a level and buys nothing.
+                const u32 triangles = CountTriangles(lod);
+                if (static_cast<f32>(triangles) >
+                    MinLodTriangleShare * static_cast<f32>(previousTriangles))
+                {
+                    continue;
+                }
+                previousTriangles = triangles;
+                built.push_back(std::move(lod));
+            }
+
+            const Result<vector<f32>> screenSizes =
+                ResolveMeshLodScreenSizes(built, lodSource->ScreenError);
+            if (!screenSizes)
+            {
+                return std::unexpected(fmt::format("mesh importer: '{}': lod: {}",
+                                                   sourcePath.string(), screenSizes.error()));
+            }
+
+            for (usize i = 0; i < built.size(); ++i)
+            {
+                lods.push_back({.ScreenSize = (*screenSizes)[i], .Error = built[i].Error});
+                for (const vector<u32>& subMeshIndices : built[i].SubMeshIndices)
+                {
+                    lodRanges.push_back({.IndexOffset = static_cast<u32>(indices.size()),
+                                         .IndexCount = static_cast<u32>(subMeshIndices.size())});
+                    indices.insert(indices.end(), subMeshIndices.begin(), subMeshIndices.end());
+                }
+            }
+        }
+
         const usize vertexCount = skinned ? skinnedVertices.size() : staticVertices.size();
         const usize vertexStride = skinned ? sizeof(SkinnedVertex) : sizeof(CanonicalVertex);
         const usize vertexBytes = vertexCount * vertexStride;
@@ -578,14 +805,18 @@ namespace Veng::Cook
         header.AttributeCount = static_cast<u32>(attributes.size());
         header.SocketCount = static_cast<u32>(sockets.size());
         header.SkeletonId = skeletonId;
+        header.LodCount = static_cast<u32>(lods.size()) + 1;
+        header.BaseVertexCount = baseVertexCount;
 
         const usize attributeBytes = attributes.size() * sizeof(CookedVertexAttribute);
         const usize subMeshBytes = subMeshes.size() * sizeof(CookedSubMesh);
         const usize socketBytes = sockets.size() * sizeof(CookedMeshSocket);
         const usize indexBytes = indices.size() * sizeof(u32);
+        const usize lodBytes = lods.size() * sizeof(CookedMeshLod);
+        const usize lodRangeBytes = lodRanges.size() * sizeof(CookedMeshLodRange);
 
         vector<u8> blob(sizeof(CookedMeshHeader) + attributeBytes + subMeshBytes + socketBytes +
-                        vertexBytes + indexBytes);
+                        vertexBytes + indexBytes + lodBytes + lodRangeBytes);
         usize cursor = 0;
         std::memcpy(blob.data() + cursor, &header, sizeof(header));
         cursor += sizeof(header);
@@ -601,6 +832,13 @@ namespace Veng::Cook
         std::memcpy(blob.data() + cursor, vertexSource, vertexBytes);
         cursor += vertexBytes;
         std::memcpy(blob.data() + cursor, indices.data(), indexBytes);
+        cursor += indexBytes;
+        if (lodBytes > 0)
+        {
+            std::memcpy(blob.data() + cursor, lods.data(), lodBytes);
+            cursor += lodBytes;
+            std::memcpy(blob.data() + cursor, lodRanges.data(), lodRangeBytes);
+        }
 
         return blob;
     }

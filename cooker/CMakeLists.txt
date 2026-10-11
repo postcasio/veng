@@ -60,6 +60,21 @@ if (TARGET pugixml-static)
             CXX_EXTENSIONS OFF)
 endif ()
 
+# meshoptimizer — the MeshImporter's level-of-detail simplifier and index-buffer optimizer,
+# cooker-only (the runtime draws the cooked index ranges and never simplifies). A self-contained C++
+# library; built EXCLUDE_FROM_ALL as a static lib so only what the cooker links compiles.
+set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        meshoptimizer
+        GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+        GIT_TAG v1.0.1
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(meshoptimizer)
+# The simplifier is a third-party hot loop nobody step-debugs; optimize it in a Debug build too.
+target_compile_options(meshoptimizer PRIVATE ${VENG_DEBUG_OPT})
+
 # bc7enc_rdo — BC7 block encoder for the TextureImporter, cooker-only (like
 # stb/assimp/Slang; never linked into libveng, which uploads the cooked blocks and
 # never encodes). The repo's CMakeLists builds a standalone
@@ -298,6 +313,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/TextureImporter.cpp
         src/Importers/NormalVariance.cpp
         src/Importers/MeshImporter.cpp
+        src/Importers/MeshLod.cpp
         src/Importers/ShaderImporter.cpp
         src/Importers/MaterialFieldEntry.cpp
         src/Importers/MaterialImporter.cpp
@@ -353,6 +369,7 @@ target_include_directories(veng_cook_objs PRIVATE
         $<TARGET_PROPERTY:${VENG_ASTCENC_TARGET},INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:meshoptimizer,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 # tinyexr defaults to exceptions; veng_cook_objs builds -fno-exceptions like the
@@ -473,7 +490,7 @@ add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_interface veng::veng veng::assetpack veng::graph)
 target_link_libraries(libveng_cook PRIVATE veng_cook_objs
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
-        msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml)
+        msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml meshoptimizer)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 target_precompile_headers(libveng_cook PRIVATE <Veng/Veng.h>)
 # libveng_cook.dylib / .so, exported as veng::cook — the spelling in-tree consumers already use.
@@ -527,6 +544,6 @@ install(TARGETS vengc
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
         veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB
-        ${VENG_ASTCENC_TARGET} msdf-atlas-gen::msdf-atlas-gen)
+        ${VENG_ASTCENC_TARGET} msdf-atlas-gen::msdf-atlas-gen meshoptimizer)
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

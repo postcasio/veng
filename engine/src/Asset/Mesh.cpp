@@ -45,6 +45,21 @@ namespace Veng
                           "Mesh::Create: '{}' submesh MaterialIndex {} out of range ({} materials)",
                           name, subMesh.MaterialIndex, data.Materials.size());
             }
+
+            const usize subMeshCount = data.SubMeshes.empty() ? 1 : data.SubMeshes.size();
+            for (const MeshLod& lod : data.Lods)
+            {
+                VE_ASSERT(lod.Ranges.size() == subMeshCount,
+                          "Mesh::Create: '{}' level carries {} ranges for {} submeshes", name,
+                          lod.Ranges.size(), subMeshCount);
+                for (const MeshLodRange& range : lod.Ranges)
+                {
+                    VE_ASSERT(static_cast<usize>(range.IndexOffset) + range.IndexCount <=
+                                  data.Indices.size(),
+                              "Mesh::Create: '{}' level range overruns its {} indices", name,
+                              data.Indices.size());
+                }
+            }
         }
 
         // Resolves the submesh table — synthesizing one unassigned whole-range submesh when the
@@ -103,6 +118,7 @@ namespace Veng
                 .Materials = data.Materials,
                 .Bounds = Mesh::ComputeBounds(std::span<const CanonicalVertex>(data.Vertices)),
                 .Sockets = data.Sockets,
+                .Lods = data.Lods,
             };
         }
     }
@@ -153,6 +169,35 @@ namespace Veng
             };
         }
         return sockets;
+    }
+
+    Mesh::Mesh(const MeshInfo& info)
+        : m_Name(info.Name), m_VertexBuffer(info.VertexBuffer), m_IndexBuffer(info.IndexBuffer),
+          m_Layout(info.Layout), m_SubMeshes(info.SubMeshes), m_Materials(info.Materials),
+          m_Bounds(info.Bounds), m_Skeleton(info.Skeleton), m_Sockets(info.Sockets),
+          m_Lods(info.Lods)
+    {
+        VE_ASSERT(m_Lods.size() < MaxLods,
+                  "Mesh '{}': {} levels of detail exceed the {} a mesh holds", m_Name,
+                  m_Lods.size() + 1, MaxLods);
+        m_LodScreenSizes.reserve(m_Lods.size());
+        for (const MeshLod& lod : m_Lods)
+        {
+            VE_ASSERT(lod.Ranges.size() == m_SubMeshes.size(),
+                      "Mesh '{}': a level of detail carries {} ranges for {} submeshes", m_Name,
+                      lod.Ranges.size(), m_SubMeshes.size());
+            m_LodScreenSizes.push_back(lod.ScreenSize);
+        }
+    }
+
+    u32 Mesh::GetLodTriangleCount(const u32 level) const
+    {
+        u32 indices = 0;
+        for (u32 subMesh = 0; subMesh < m_SubMeshes.size(); ++subMesh)
+        {
+            indices += GetLodRange(level, subMesh).IndexCount;
+        }
+        return indices / 3;
     }
 
     const MeshSocket* Mesh::FindSocket(std::string_view name) const

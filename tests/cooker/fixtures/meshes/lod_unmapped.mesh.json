@@ -1,0 +1,8 @@
+{
+  "model": "lod_sphere.gltf",
+  "lod": {
+    "levels": [
+      { "model": "lod_sphere_unmapped.gltf" }
+    ]
+  }
+}
