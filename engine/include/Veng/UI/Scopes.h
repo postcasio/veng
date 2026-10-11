@@ -626,6 +626,20 @@ namespace Veng::UI
     [[nodiscard]] ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor,
                                                vec2 padding = {8, 8});
 
+    /// @brief Pins a translucent, auto-sized panel to the screen, outside any window.
+    ///
+    /// The free-standing sibling of ViewportOverlay: the same borderless, non-moving, auto-sized
+    /// panel, anchored to an edge or corner of the application window's work area (below a main
+    /// menu bar) rather than of the current window. It takes no input — the pointer passes through
+    /// to whatever lies under it — so it suits a transient note: a saved file, a toggled mode.
+    /// Call it at the top level, outside any window; the returned guard's destructor calls `End`.
+    /// @param id       ImGui id string for the panel.
+    /// @param anchor   Which edge or corner of the work area the panel pins to.
+    /// @param padding  Offset from the anchored edge/corner, in pixels.
+    /// @return A scope guard; true inside it when the panel body should be drawn.
+    [[nodiscard]] ScopedWindow ScreenOverlay(string_view id, OverlayAnchor anchor,
+                                             vec2 padding = {16, 16});
+
     /// @brief Fades the widgets drawn inside the returned scope until the pointer hovers them.
     ///
     /// Wrap a group of widgets — a HUD toolbar, an overlay panel, a row of gizmo buttons — so they
