@@ -127,7 +127,7 @@ namespace Veng::Renderer
         vector<vk::RenderingAttachmentInfo> colorAttachments;
         colorAttachments.reserve(info.ColorAttachments.size());
 
-        for (auto attachment : info.ColorAttachments)
+        for (const auto& attachment : info.ColorAttachments)
         {
             colorAttachments.push_back(BeginRendering_CreateAttachment(attachment));
         }
