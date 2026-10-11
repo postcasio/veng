@@ -79,13 +79,20 @@ if [ "$TIDY_DB_EXPLICIT" -eq 0 ]; then
     tidy_note "is the tree your work is built against."
 fi
 
-# Reject a file the DB carries no entry for. The arguments were named explicitly, so skipping
-# one would be misleading and linting it would report nonsense. A source excluded from every
-# target (a disabled test, or one built only out of tree) lands here.
+# Skip vendored code by name — its .clang-tidy disables every check, so there is nothing to lint and
+# clang-tidy would refuse it — and reject a file the DB carries no entry for. The arguments were
+# named explicitly, so skipping an unbuilt one would be misleading and linting it would report
+# nonsense. A source excluded from every target (a disabled test, or one built only out of tree)
+# lands there.
+files=()
 for f in "$@"; do
     if [ ! -f "$f" ]; then
         tidy_say "no such file: $f"
         exit 1
+    fi
+    if tidy_is_vendored "$f"; then
+        tidy_say "skipping $f: vendored — $(tidy_governing_config "$f") disables every check."
+        continue
     fi
     if ! tidy_db_has_entry "$TIDY_DB" "$f"; then
         tidy_say "$f is in no target, so $TIDY_DB has no flags for it — skipping it would be"
@@ -93,7 +100,13 @@ for f in "$@"; do
         tidy_note "from the argument list."
         exit 1
     fi
+    files+=("$f")
 done
+
+if [ ${#files[@]} -eq 0 ]; then
+    echo "tidy: every named file is vendored, so nothing was checked."
+    exit 0
+fi
 
 if ! tidy_db_has_sysroot "$TIDY_DB"; then
     tidy_say "$TIDY_DB was configured without CMAKE_OSX_SYSROOT, so its compile DB records no"
@@ -111,7 +124,7 @@ fi
 tidy_export_toolchain_env "$TIDY_DB"
 tidy_make_filtered_db "$TIDY_DB"
 
-out=$(clang-tidy -p "$TIDY_FILTERED_DB" --quiet "${TIDY_EXTRA_ARGS[@]}" "$@" 2>&1 || true)
+out=$(clang-tidy -p "$TIDY_FILTERED_DB" --quiet "${TIDY_EXTRA_ARGS[@]}" "${files[@]}" 2>&1 || true)
 
 if tidy_run_failed "$out"; then
     tidy_say "clang-tidy could not run, so nothing was checked."
@@ -126,4 +139,4 @@ if tidy_has_findings "$out"; then
     exit 1
 fi
 
-echo "tidy: clean (${#} file(s) checked against $TIDY_DB)."
+echo "tidy: clean (${#files[@]} file(s) checked against $TIDY_DB)."

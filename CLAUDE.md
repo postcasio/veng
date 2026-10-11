@@ -245,11 +245,14 @@ Three ways to run it, all opt-in:
   the invocation and reported by name: clang-tidy lints an unknown file against default
   flags rather than declining it, and that failure poisons the rest of the batch, so
   filtering is what keeps the run meaningful. A commit whose every staged TU is out of
-  tree therefore lints nothing, says so, and is allowed through.
+  tree therefore lints nothing, says so, and is allowed through. A staged **vendored** TU —
+  one whose governing `.clang-tidy` carries `Checks: '-*'` — is set aside and named the same
+  way, since there is nothing to lint and clang-tidy refuses a run with no checks.
 - **By hand:** `scripts/tidy.sh --db <build-dir> <sources>` checks the named files against
   that tree's compile DB — no separate lint build tree, and no rebuild between edits
   (clang-tidy reads the source from disk; the DB supplies only flags). Use it to check
-  a file you are working on without a tidy-enabled rebuild.
+  a file you are working on without a tidy-enabled rebuild. A vendored file among the
+  arguments is skipped with a message rather than linted.
 
 ```sh
 scripts/tidy.sh --db build-debug engine/src/Gui/Document.cpp
@@ -325,7 +328,8 @@ things in an ordinary build's compile DB break it, and the script exists to hand
   ```
 
 **Confirm a run actually ran before believing a clean result.** A toolchain or compile
-failure prints `error:` / `Error while processing` **and no findings**, which is
+failure prints `error:` / `Error while processing` / `Error: …` (`Error: no checks enabled.`,
+a compilation database it could not load) **and no findings**, which is
 indistinguishable from a clean tree if you only grep for warnings — as is a run whose
 file argument does not exist. `scripts/tidy.sh` and `.githooks/pre-commit` both gate on
 exactly that ("could not run, so nothing was checked"); preserve it in anything that

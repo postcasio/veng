@@ -141,12 +141,45 @@ tidy_db_has_entry() {
 
 # True when the output shows a run that never evaluated a check. A toolchain or compile failure
 # prints no findings, which is indistinguishable from a clean tree if only warnings are grepped.
+# clang-tidy reports its own failures in both cases — `error: ...` from the driver, and
+# `Error: ...` / `Error while processing` / `Error reading configuration` from the tool — and LLVM a
+# fatal one as `LLVM ERROR:`, so the gate takes every line starting with either spelling.
+TIDY_RUN_FAILURE_PATTERN='^([Ee]rror|LLVM ERROR)'
+
 tidy_run_failed() {
-    printf '%s\n' "$1" | grep -qE '^error:|Error while processing'
+    printf '%s\n' "$1" | grep -qE "$TIDY_RUN_FAILURE_PATTERN"
 }
 
 tidy_run_failure_lines() {
-    printf '%s\n' "$1" | grep -E '^error:|Error while processing'
+    printf '%s\n' "$1" | grep -E "$TIDY_RUN_FAILURE_PATTERN"
+}
+
+# The .clang-tidy that governs a source: the nearest one at or above its directory, up to the
+# checkout's root. Empty when none does.
+tidy_governing_config() {
+    local dir root
+    dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd)" || return 0
+    root=$(tidy_repo_root)
+    while [ -n "$dir" ]; do
+        if [ -f "$dir/.clang-tidy" ]; then
+            echo "$dir/.clang-tidy"
+            return 0
+        fi
+        [ "$dir" = "$root" ] || [ "$dir" = "/" ] && return 0
+        dir=$(dirname "$dir")
+    done
+}
+
+# True when a source is vendored code: the .clang-tidy governing it disables every check
+# (`Checks: '-*'`), as the thin aggregation TUs that compile a third-party implementation do.
+# Linting one checks nothing — clang-tidy refuses with `Error: no checks enabled.` — so a caller
+# skips it, by name, rather than tripping on it. The marker is read rather than a path list kept,
+# so a new vendor directory needs nothing here.
+tidy_is_vendored() {
+    local config
+    config=$(tidy_governing_config "$1")
+    [ -n "$config" ] || return 1
+    grep -qE "^Checks:[[:space:]]*['\"]?-\*['\"]?[[:space:]]*\$" "$config"
 }
 
 tidy_has_findings() {

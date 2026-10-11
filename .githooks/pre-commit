@@ -68,16 +68,26 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$staged_tus" ]; then
     # TUs that are clean on their own report "Error while processing" merely for following it.
     # Partition the staged list instead: a source that belongs to no in-tree target (the
     # out-of-tree-only template) is not lintable here and is reported by name, never silently.
+    # A vendored TU — its .clang-tidy disables every check — has nothing to lint, and clang-tidy
+    # refuses it, so it is set aside by name too.
     tidy_tus=""
     skipped_tus=""
+    vendored_tus=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        if tidy_db_has_entry "$TIDY_DB" "$f"; then
+        if tidy_is_vendored "$f"; then
+            vendored_tus="${vendored_tus}${f}"$'\n'
+        elif tidy_db_has_entry "$TIDY_DB" "$f"; then
             tidy_tus="${tidy_tus}${f}"$'\n'
         else
             skipped_tus="${skipped_tus}${f}"$'\n'
         fi
     done <<< "$staged_tus"
+
+    if [ -n "$vendored_tus" ]; then
+        echo "pre-commit: vendored, so their .clang-tidy disables every check — not linted:" >&2
+        printf '%s' "$vendored_tus" | sed 's/^/  /' >&2
+    fi
 
     if [ -n "$skipped_tus" ]; then
         echo "pre-commit: not in $TIDY_DB, so clang-tidy has no flags for them — not linted:" >&2
@@ -89,7 +99,7 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$staged_tus" ]; then
     # legitimate state, not a broken tool, so it reports what it did not check and lets the
     # commit through rather than demanding --no-verify (which would skip the format stage too).
     if [ -z "$tidy_tus" ]; then
-        echo "pre-commit: no staged TU is in $TIDY_DB, so clang-tidy checked nothing." >&2
+        echo "pre-commit: no staged TU is lintable against $TIDY_DB, so clang-tidy checked nothing." >&2
         exit 0
     fi
 
