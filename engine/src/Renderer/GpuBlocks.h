@@ -62,6 +62,11 @@ namespace Veng::Renderer
         // no tile cull ran for the view; y the tile grid's row stride in tiles; z this frame's
         // first mask word; w unused.
         uvec4 LightTiles;
+        // The projection jitter as an NDC translation: xy this frame's, zw the previous frame's.
+        vec4 JitterNdc;
+        // The previous frame's unjittered (projection x rotation-only view) times the inverse of
+        // this frame's: reprojects the direction behind a pixel with no finite depth.
+        mat4 PrevFromCurDirection;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

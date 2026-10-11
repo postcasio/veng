@@ -16,6 +16,7 @@
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/PointField.h>
+#include <Veng/Renderer/TaaJitter.h>
 #include <Veng/Scene/Camera.h>
 
 #include <algorithm>
@@ -78,6 +79,11 @@ namespace Veng::Renderer
             f32 ViewportHeight;
             f32 Opacity;
             f32 Spikes;
+            // The projection jitter as an NDC translation, which the direct sprite and aggregate
+            // vertex stages add to their unjittered clip positions: the view's jitter ahead of a
+            // temporal resolve, zero after one.
+            f32 JitterNdcX;
+            f32 JitterNdcY;
         };
 
         // An occluded point fades to this fraction rather than vanishing (matches the sprite frag).
@@ -555,8 +561,11 @@ namespace Veng::Renderer
         }
 
         const SceneView& view = ctx.View();
-        const mat4 viewProj = view.Camera.ViewProjection();
-        const Frustum frustum = Frustum::FromViewProjection(viewProj);
+        const Frustum frustum = Frustum::FromViewProjection(view.Camera.ViewProjection());
+        // Ahead of the resolve the field rasterizes through the scene's jittered projection, as
+        // the geometry it composites over does, so the resolve that takes the jitter out of the
+        // scene takes it out of the field too.
+        const mat4 viewProj = JitterProjection(view.Camera.ViewProjection(), JitterFor(view));
         const u32 region = m_Context.GetCurrentFrameInFlight();
         const uvec2 renderExtent = m_PreResolve ? view.RenderExtent : view.SceneColorExtent;
         // Pixels per world unit at depth w is |Proj[1][1]|*H/(2w) — the projection is
@@ -964,6 +973,8 @@ namespace Veng::Renderer
                 .ViewportHeight = static_cast<f32>(renderExtent.y),
                 .Opacity = lod.Opacity,
                 .Spikes = lod.SpriteSpikes,
+                .JitterNdcX = JitterFor(view).x,
+                .JitterNdcY = JitterFor(view).y,
             };
 
             if (!runs.empty() && state.DrewCompute)

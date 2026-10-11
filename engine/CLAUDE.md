@@ -695,7 +695,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 102** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 103** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -736,7 +736,11 @@ and calls `Run()`.
   **Version 102** grows `Viewport` (its configured settings and the debug override layer that wins
   over them — see [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md), "The debug override layer") and
   `RenderLook` (the specular anti-aliasing pair, mid-struct): a module owns viewports and spawns
-  looks, so a stale one lays both out short.
+  looks, so a stale one lays both out short. **Version 103** grows the view-constants block
+  (`ViewConstantsStride` 720 → 800, the temporal-AA jitter and the background's direction
+  reprojection — see [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md), "TAA"), `SceneView`
+  (`JitterNdc`) and `SceneRenderer`: a module's shaders index view regions by the stride, so a stale
+  one reads every region past the first at the wrong offset.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

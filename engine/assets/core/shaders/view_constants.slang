@@ -3,10 +3,11 @@
 // World-position/view-position reconstruction (InvViewProj, Proj), the camera
 // position, the view matrix for view-space depth and the SSAO hemisphere, and the
 // previous and current unjittered view-projections (PrevViewProj / CurViewProj) the
-// TAA resolve reprojects through and the surface stage writes its g-buffer velocity
-// channel from, plus the view's light state (LightState onward) the shared lighting core
-// (Veng/lighting.slang) reads, and where this view's per-tile light masks live. The shadow system
-// rides its own ShadowConstants block, not here.
+// surface stage writes its g-buffer velocity channel from, plus the view's light state (LightState
+// onward) the shared lighting core (Veng/lighting.slang) reads, where this view's per-tile light
+// masks live, and the projection jitter and direction reprojection the TAA resolve undoes the
+// jitter and reprojects the background through. The shadow system rides its own ShadowConstants
+// block, not here.
 //
 // Ring-buffered across frames-in-flight, byte-addressed at index * ViewConstantsStride;
 // mirrors BindlessRegistry::ViewConstantsStride and the CPU ViewConstantsBlock exactly.
@@ -102,9 +103,24 @@ struct ViewConstants
     // the mask buffer, or LightTilesNone when no cull ran for this view; y the tile grid's row
     // stride in tiles; z this frame's first mask word in that buffer; w unused.
     uint4 LightTiles;
+
+    // The temporal-AA projection jitter as an NDC translation: xy this frame's, zw the previous
+    // frame's; zero without a temporal resolve. Proj, InvViewProj and InvViewRotProj carry it
+    // (left-multiplied, so every depth moves by exactly this much); CurViewProj and PrevViewProj
+    // do not. A texel rendered through Proj holds the scene at its unjittered screen position plus
+    // JitterNdc / 2 in UV, so a pass reading a jittered target at an unjittered position offsets
+    // its read by that much, and a pass drawing into the scene colour ahead of the resolve
+    // projects through Proj (or adds JitterNdc * clip.w to an unjittered clip position).
+    float4 JitterNdc;
+    // Reprojects a direction rather than a point: the previous frame's unjittered (projection x
+    // rotation-only view) times the inverse of this frame's. A pixel with nothing at a finite depth
+    // behind it (the sky, a backdrop) maps its unjittered NDC (x, y, 0, 1) through this to the clip
+    // position the same direction had last frame. It carries no translation to cancel, so it stays
+    // exact far from the world origin, and it is the identity under a camera that has not turned.
+    float4x4 PrevFromCurDirection;
 };
 
-static const uint ViewConstantsStride = 720;
+static const uint ViewConstantsStride = 800;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

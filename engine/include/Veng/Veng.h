@@ -184,6 +184,8 @@ namespace Veng
     using uvec4 = glm::uvec4;
     /// @brief 3-component double vector, for positions whose extent outruns f32 precision.
     using dvec3 = glm::dvec3;
+    /// @brief 4x4 double matrix, for a composition whose f32 rounding would not cancel exactly.
+    using dmat4 = glm::dmat4;
 
     /// @brief Unsigned size type.
     using usize = std::size_t;

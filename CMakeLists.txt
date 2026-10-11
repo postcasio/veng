@@ -1914,6 +1914,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/post_process_effect.cpp
             tests/gpu/debug_draw.cpp
             tests/gpu/point_field.cpp
+            # taa_stability.cpp holds a static camera under TAA and TAAU at full and half render scale
+            # and asserts the converged resolve stands still: zero motion, sub-quantum frame-to-frame
+            # change inside the cube and the open sky, and an edge and a star that keep their place.
+            tests/gpu/taa_stability.cpp
             tests/gpu/viewport.cpp
             tests/gpu/viewport_id.cpp
             # viewport_compositor.cpp proves the ViewportCompositor's render-order drive-list

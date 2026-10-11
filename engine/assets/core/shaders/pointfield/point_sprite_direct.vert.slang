@@ -51,6 +51,10 @@ struct PushConstants
     float ViewportHeight;
     float Opacity;
     float Spikes;
+    // The projection jitter as an NDC translation: the scene's ahead of a temporal resolve, zero
+    // after one. CurViewProj is unjittered, so the clip position takes it here.
+    float JitterNdcX;
+    float JitterNdcY;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -130,6 +134,7 @@ VSOutput vsMain()
     float4 clipRight = mul(view.CurViewProj, float4(right, 0.0));
     float4 clipUp = mul(view.CurViewProj, float4(up, 0.0));
     float4 clip = clipCenter + worldSize * (corner.x * clipRight + corner.y * clipUp);
+    clip.xy += float2(g_PC.JitterNdcX, g_PC.JitterNdcY) * clip.w;
 
     // Hoist the dynamic-resolution sub-rect remap here: the depth-fade fragment samples the
     // g-buffer depth at this interpolated sub-rect UV rather than re-fetching the view constants

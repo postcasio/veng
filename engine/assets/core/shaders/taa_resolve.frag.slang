@@ -2,29 +2,34 @@
 // reprojected history of previous frames so the jitter sequence integrates into a
 // supersampled, edge-stable image. Runs in linear HDR before bloom and tonemap.
 //
-// The current frame is rendered into a sub-rect of the allocation (the render scale — static,
-// dynamic-resolution, or a TAAU upscale factor), while the history and this pass's output are the
-// full allocation. So the current, depth, and velocity reads map the full-resolution output UV into
-// the current frame's valid sub-rect through ScaledSampleUV (RenderScaleUV.xy / MaxValidUV.xy), while
-// the history reads and the neighborhood output grid are full resolution. At render scale 1.0 the
-// sub-rect is the whole allocation and every map is the identity, so a native frame is unchanged. This
-// is what makes the resolve a temporal upscaler: TAAU renders a cheaper low-resolution frame and the
-// history reconstructs the native image from the jitter sequence.
+// The current frame is rasterized through a jittered projection into a sub-rect of the render
+// allocation (the render scale — static, dynamic-resolution, or a TAAU upscale factor), while the
+// history and this pass's output are unjittered and cover the whole output allocation. So each
+// output pixel reconstructs the current frame at its own unjittered position: it finds the render
+// texels around that position, offset by the jitter the view block publishes (JitterNdc), and
+// weights each by its sample's distance from the pixel centre, measured in output pixels — a
+// Gaussian fit of the Blackman-Harris window. At render scale 1 that is a one-pixel-wide filter
+// centred where the pixel's own sample would have been without the jitter; under upscaling the
+// window narrows to the output pixel, so a texel contributes to the output pixels its sample landed
+// near, and the summed weight scales how much of this frame the pixel takes (a pixel no sample
+// landed near this frame leans on its history). The neighborhood clip box is built from the same
+// texels.
 //
-// Motion is per-object: geometry reads the screen-space motion vector the surface pass
-// wrote into the g-buffer velocity channel (which combines camera and object movement),
-// so both a moving camera and a moving object reproject correctly. The background, which
-// the surface pass leaves cleared, reprojects by reconstructing its far-plane world
-// position from depth and projecting through the previous frame's unjittered view-projection.
+// Motion is per-object: geometry reads the screen-space motion vector the surface pass wrote into
+// the g-buffer velocity channel (camera and object movement combined, measured between unjittered
+// clip positions), at the nearest-depth texel of the 3x3 so a silhouette pixel follows the
+// foreground. The background, which the surface pass leaves at the cleared depth, reprojects as a
+// direction through PrevFromCurDirection, unjittered on both sides, so a camera that has not turned
+// fetches its history from exactly the pixel it writes.
 //
 // History is rejected where it cannot be trusted — offscreen reprojection or an
 // invalid history frame (the first frame, or the frame after a resize) fall back to
 // the current color. Where it is trusted, the history is constrained to the local
 // neighborhood with YCoCg variance clipping (suppressing ghosting at disocclusions
 // and moving silhouettes) and sampled with a Catmull-Rom filter (countering the
-// blur a bilinear history accumulates). The blend is luminance-weighted to damp
-// fireflies (the Karis weighting), the stability mechanism the bloom bright-pass's
-// per-tap ceiling complements.
+// blur a bilinear history accumulates). The blend is luminance-weighted on the exposed
+// luminance to damp fireflies (the Karis weighting), the stability mechanism the bloom
+// bright-pass's per-tap ceiling complements.
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -34,12 +39,12 @@ struct PushConstants
 {
     uint CurrentTexture;  // this frame's jittered HDR color (bindless index)
     uint HistoryTexture;  // previous resolved HDR (bindless index)
-    uint DepthTexture;    // depth for background reprojection (bindless index)
+    uint DepthTexture;    // depth for the nearest-depth search (bindless index)
     uint VelocityTexture; // per-object motion vectors for geometry (bindless index)
-    uint Sampler;         // shared linear clamp sampler
+    uint Sampler;         // shared linear clamp sampler (the history's Catmull-Rom taps)
     uint ViewConstantsIndex; // current frame-in-flight's view-constants region
     uint HistoryValid;    // 0 on the first frame / after a resize → ignore history
-    uint Pad0;            // pads to an even uint count so uint2 Extent is 8-byte aligned
+    float Exposure;       // the exposure the tonemap applies this frame (the Karis weights' scale)
     uint2 Extent;         // full output/history pixel dimensions (Catmull-Rom + output grid)
 };
 
@@ -59,6 +64,15 @@ static const float BlendAlpha = 0.1;
 // Variance-clip width in standard deviations. A wider box keeps more history
 // (less ghosting rejection); 1.25 is the common robust setting.
 static const float ClipGamma = 1.25;
+
+// The reconstruction weight's falloff, exp(-KernelFalloff * d^2) with d in output pixels: the
+// Gaussian fit of a Blackman-Harris window one pixel wide.
+static const float KernelFalloff = 2.29;
+
+// How far the reconstruction window may narrow under upscaling, as a ratio of output to render
+// pixels. Past it the jitter period's samples no longer land within the window of every output
+// pixel, so the window stops at this width rather than leave pixels the current frame never reaches.
+static const float MaxKernelSharpening = 2.5;
 
 float3 RgbToYCoCg(float3 c)
 {
@@ -140,82 +154,88 @@ float3 SampleHistoryCatmullRom(uint texture, uint samp, float2 uv, float2 texelS
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
-    // uv is the full-resolution output UV; the current/depth/velocity reads map it into the current
-    // frame's rendered sub-rect through ScaledSampleUV, while the history and output grid are full
-    // resolution.
+    // uv is the output pixel's centre: unjittered, in the full output/history allocation.
     const float2 uv = input.v_UV;
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
-    const float2 currentScaleUV = vc.RenderScaleUV.xy;
-    const float2 currentMaxUV = vc.MaxValidUV.xy;
-    // The current frame's rendered sub-rect extent (for the neighborhood's texel spacing); Extent is
-    // the full output/history extent (for the Catmull-Rom history fetch and the output grid).
+    // The current frame's rendered sub-rect extent; Extent is the full output/history extent.
     const float2 renderExtent = vc.ExtentParams.xy;
-    const float2 currentTexel = 1.0 / renderExtent;
     const float2 outputTexel = 1.0 / float2(g_PC.Extent);
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    const float2 kernelScale =
+        clamp(float2(g_PC.Extent) / renderExtent, 1.0, MaxKernelSharpening);
     Texture2D current = g_Textures[NonUniformResourceIndex(g_PC.CurrentTexture)];
+    Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
 
-    const float3 color = current.Sample(samp, ScaledSampleUV(uv, currentScaleUV, currentMaxUV)).rgb;
+    // Where this pixel's unjittered position fell in the jittered render: the scene moved by
+    // JitterNdc, which is JitterNdc / 2 of the extent in UV.
+    const float2 samplePos = (uv + 0.5 * vc.JitterNdc.xy) * renderExtent;
+    const int2 centerTexel = int2(floor(samplePos));
+    const int2 maxTexel = int2(renderExtent) - 1;
 
-    // The 3×3 current neighborhood in YCoCg: its mean and variance bound the history (variance
-    // clipping), and its min/max widen the box for thin features. The taps step one current-frame
-    // texel apart (1/renderExtent) in output UV, then map into the sub-rect.
+    // One pass over the 3×3 render texels around it: the weighted reconstruction, the YCoCg
+    // neighborhood statistics (mean and variance bound the history, min/max widen the box for thin
+    // features), and the nearest depth (reverse-Z: the largest) with the texel holding it.
+    float3 colorSum = 0.0;
+    float weightSum = 0.0;
     float3 m1 = 0.0;
     float3 m2 = 0.0;
     float3 neighborMin = 1e9;
     float3 neighborMax = -1e9;
+    float nearestDepth = 0.0;
+    int2 nearestTexel = clamp(centerTexel, int2(0), maxTexel);
     [unroll]
     for (int y = -1; y <= 1; ++y)
     {
         [unroll]
         for (int x = -1; x <= 1; ++x)
         {
-            const float2 tapUv =
-                ScaledSampleUV(uv + float2(x, y) * currentTexel, currentScaleUV, currentMaxUV);
-            const float3 tap = current.Sample(samp, tapUv).rgb;
+            const int2 texel = clamp(centerTexel + int2(x, y), int2(0), maxTexel);
+            const float3 tap = current.Load(int3(texel, 0)).rgb;
+            const float2 offset = (float2(texel) + 0.5 - samplePos) * kernelScale;
+            const float weight = exp(-KernelFalloff * dot(offset, offset));
+            colorSum += tap * weight;
+            weightSum += weight;
+
             const float3 ycc = RgbToYCoCg(tap);
             m1 += ycc;
             m2 += ycc * ycc;
             neighborMin = min(neighborMin, ycc);
             neighborMax = max(neighborMax, ycc);
+
+            const float depth = depthTexture.Load(int3(texel, 0)).r;
+            if (depth > nearestDepth)
+            {
+                nearestDepth = depth;
+                nearestTexel = texel;
+            }
         }
     }
 
+    const float3 color = colorSum / max(weightSum, 1e-6);
     const float3 mean = m1 / 9.0;
     const float3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
     const float3 boxMin = max(mean - ClipGamma * sigma, neighborMin);
     const float3 boxMax = min(mean + ClipGamma * sigma, neighborMax);
 
-    // Find this pixel's previous-frame screen position. Geometry uses the per-object motion vector the
-    // surface pass wrote into the g-buffer (camera + object motion), sampled from the current sub-rect;
-    // the motion vector itself is in full-frame UV, so prevUv is full-resolution. The background
-    // (reverse-Z cleared depth 0) has no velocity, so it reprojects by reconstructing the far-plane
-    // world position from depth and projecting through last frame's view-projection.
-    const float2 currentUv = ScaledSampleUV(uv, currentScaleUV, currentMaxUV);
-    const float depth =
-        g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, currentUv).r;
-
+    // Find this pixel's previous-frame screen position. Geometry anywhere in the 3×3 reprojects by
+    // the nearest one's motion vector (full-frame UV, so prevUv is full-resolution); with only the
+    // cleared depth around, the pixel reprojects as a direction.
     float2 prevUv;
-    if (depth > 0.0)
+    bool reprojected = true;
+    if (nearestDepth > 0.0)
     {
         const float2 velocity =
-            g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Sample(samp, currentUv).rg;
+            g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Load(int3(nearestTexel, 0)).rg;
         prevUv = uv - velocity;
     }
     else
     {
-        const float2 ndc = uv * 2.0 - 1.0;
-        // Reproject the homogeneous point without the intermediate world-space divide — the
-        // 1/w scale cancels in the final perspective division, and the far-plane w collapses
-        // to zero in f32 at extreme Far/Near (see Veng/sky.slang SkyViewDirection), which
-        // would send every background pixel's history UV to NaN.
-        const float4 worldH = mul(vc.InvViewProj, float4(ndc, depth, 1.0));
-        const float4 prevClip = mul(vc.PrevViewProj, worldH);
+        const float4 prevClip = mul(vc.PrevFromCurDirection, float4(uv * 2.0 - 1.0, 0.0, 1.0));
+        reprojected = prevClip.w > 0.0;
         prevUv = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
     }
 
     // History is untrustworthy when it does not exist yet or reprojects offscreen.
-    const bool offscreen = any(prevUv < 0.0) || any(prevUv > 1.0);
+    const bool offscreen = !reprojected || any(prevUv < 0.0) || any(prevUv > 1.0);
     if (g_PC.HistoryValid == 0 || offscreen)
     {
         return float4(color, 1.0);
@@ -225,10 +245,14 @@ float4 fsMain(VSOutput input) : SV_Target0
         SampleHistoryCatmullRom(g_PC.HistoryTexture, g_PC.Sampler, prevUv, outputTexel);
     history = YCoCgToRgb(ClipToAabb(boxMin, boxMax, RgbToYCoCg(history)));
 
-    // Luminance-weighted blend: a brighter sample carries less weight, so a transient
-    // firefly cannot dominate the accumulated history.
-    const float currentWeight = BlendAlpha / (1.0 + Luminance(color));
-    const float historyWeight = (1.0 - BlendAlpha) / (1.0 + Luminance(history));
+    // This frame's share: the full blend where a sample landed on the pixel, less where the nearest
+    // one fell between output pixels (only under upscaling; at scale 1 the sum never drops below 1).
+    const float alpha = BlendAlpha * saturate(weightSum);
+
+    // Luminance-weighted blend on the luminance the tonemap will see: a brighter sample carries less
+    // weight, so a transient firefly cannot dominate the accumulated history, at every exposure.
+    const float currentWeight = alpha / (1.0 + Luminance(color) * g_PC.Exposure);
+    const float historyWeight = (1.0 - alpha) / (1.0 + Luminance(history) * g_PC.Exposure);
     const float3 resolved =
         (color * currentWeight + history * historyWeight) / (currentWeight + historyWeight);
 

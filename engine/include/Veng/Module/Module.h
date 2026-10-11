@@ -434,10 +434,16 @@ extern "C"
 /// SpecularAntiAliasingThreshold, inserted after SsrMaxSteps. A module owns viewports and spawns
 /// looks, so a stale module lays both out short and reads every later RenderLook field at a shifted
 /// offset.
+/// Version 103 publishes the temporal-AA jitter and reconstructs it out: the view-constants block
+/// (BindlessRegistry::ViewConstantsStride, 720 → 800 bytes) grows JitterNdc and
+/// PrevFromCurDirection, SceneView grows JitterNdc, and SceneRenderer grows ClampSettings and the
+/// previous frame's direction projection and jitter. A module's shaders read the view block at the
+/// stride, and a module builds views and owns renderers, so a stale module reads every view region
+/// past the first at the wrong offset and lays SceneView and SceneRenderer out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 102u
+#define VENG_MODULE_ABI_VERSION 103u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

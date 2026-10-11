@@ -12,7 +12,7 @@ namespace Veng::Renderer
         const TextureHandle hdrHandle = io.HdrHandle;
         const SamplerHandle samplerHandle = io.SamplerHandle;
 
-        // Resolve: read the lit color (current), the reprojected history, and depth;
+        // Resolve: read the lit color (current), the reprojected history, depth and velocity;
         // write the resolved color into the HDR target downstream passes sample.
         graph.AddPass("TAA Resolve")
             .Color({
@@ -45,6 +45,7 @@ namespace Veng::Renderer
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                         .HistoryValid = *m_HistoryResetPtr ? 0u : 1u,
+                        .Exposure = *m_ExposurePtr,
                         .Extent = m_Extent,
                     });
                     cmd.DrawFullscreenTriangle();

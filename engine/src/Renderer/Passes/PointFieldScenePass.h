@@ -151,17 +151,25 @@ namespace Veng::Renderer
         /// @param force True to draw every field direct; false to restore automatic selection.
         void SetForceDirect(bool force) { m_ForceDirect = force; }
 
-        /// @brief Selects which target extent the pass sizes its viewport and point scale to.
+        /// @brief Selects which target extent and projection the pass draws with.
         ///
         /// The two placements write different targets: a SceneColor-placed pass accumulates into
-        /// the lit target the scene rasterized, so it runs at SceneView::RenderExtent, while an
-        /// HdrTail-placed pass accumulates into the scene colour at the tail anchor, so it runs at
-        /// SceneView::SceneColorExtent. They coincide unless the frame renders below its
-        /// post-resolve allocation.
+        /// the lit target the scene rasterized, so it runs at SceneView::RenderExtent through the
+        /// scene's jittered projection (SceneView::JitterNdc), while an HdrTail-placed pass
+        /// accumulates into the scene colour at the tail anchor, so it runs at
+        /// SceneView::SceneColorExtent, unjittered. The extents coincide unless the frame renders
+        /// below its post-resolve allocation.
         /// @param preResolve True for a SceneColor-placed pass (the rasterized sub-rect).
         void SetPreResolve(bool preResolve) { m_PreResolve = preResolve; }
 
     private:
+        /// @brief The projection jitter this pass draws with: the view's ahead of the resolve, else
+        ///        zero.
+        [[nodiscard]] vec2 JitterFor(const SceneView& view) const
+        {
+            return m_PreResolve ? view.JitterNdc : vec2(0.0f);
+        }
+
         /// @brief Per-field GPU state and hysteresis latch, cached across frames per drawn field.
         ///
         /// Each live field draws through its own descriptor sets and aggregate ring so concurrent

@@ -197,6 +197,16 @@ namespace Veng::Renderer
         /// with none it is RenderExtent, the rasterized sub-rect. A caller's value is overwritten.
         uvec2 SceneColorExtent = {};
 
+        /// @brief The projection jitter this frame, as an NDC translation; set each Execute.
+        ///
+        /// Zero unless a temporal resolve is wired. Under one, the scene rasterizes through the
+        /// camera's projection with this translation left-multiplied (JitterProjection), and the
+        /// resolve takes it back out. A pass that rasterizes into the scene colour ahead of the
+        /// resolve projects through the same jittered matrix, or what it draws is displaced by the
+        /// jitter once the resolve removes it; a pass after the resolve projects unjittered. A
+        /// caller's value is overwritten.
+        vec2 JitterNdc = {};
+
         /// @brief Live light count this frame; set by the renderer on every Execute.
         ///
         /// The number of (Transform, Light) entities packed, capped at MaxLights; a light that

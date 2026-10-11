@@ -3,7 +3,8 @@
 // Deferred opaque metallic-roughness material fragment stage (gpu fixture): loads
 // the per-draw MaterialParams block, samples base color tinted by BaseColorFactor,
 // and writes the g-buffer — base color into G0, the world-space normal into G1,
-// and the authored occlusion/roughness/metallic/emissive factors into G2. The
+// the authored occlusion/roughness/metallic factors into G2, and the authored emissive
+// factor into G4 (zero by default, so only a case that raises it emits). The
 // deferred-lighting oracle reads back known roughness/metallic values, so this
 // fixture writes the factors directly rather than sampling a packed ORM texture.
 // SurfaceFlags is the g-buffer's ORM alpha authored as a parameter, so a case can drive
@@ -49,6 +50,6 @@ GBufferOutput fsMain(VSOutput input)
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
     output.ORM = float4(1.0, p.RoughnessFactor, p.MetallicFactor, p.SurfaceFlags);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
-    output.Emissive = float3(0.0);
+    output.Emissive = p.EmissiveFactor.rgb;
     return output;
 }

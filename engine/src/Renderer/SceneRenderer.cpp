@@ -901,7 +901,7 @@ namespace Veng::Renderer
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
                     taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
                     m_Taa->GetHistoryHandle(), m_VelocityHandle, m_Taa->GetHistoryResetPointer(),
-                    sceneColorExtent));
+                    m_Taa->GetExposurePointer(), sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
@@ -2278,6 +2278,7 @@ namespace Veng::Renderer
         // luminance, and resolves the exposure the tonemap uses (SceneView::Exposure directly when
         // metering is inactive). The bloom bright-pass later reads the same resolved exposure.
         const f32 exposure = m_AutoExposure->ResolveExposure(view, m_Topology->AutoExposureActive);
+        m_Taa->SetExposure(exposure);
 
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
@@ -2426,22 +2427,22 @@ namespace Veng::Renderer
         // reprojection matrix; the jittered one (TAA only) is what the geometry and
         // lighting actually render through.
         const mat4 viewProj = view.Camera.ViewProjection();
+        // The unjittered projection against the rotation-only view, composed in double so a camera
+        // that has not turned reprojects its background through the identity, to double precision.
+        const dmat4 directionViewProj =
+            dmat4(view.Camera.Projection()) * dmat4(mat4(mat3(view.Camera.View())));
+        // The jitter is a fraction of the rendered (sub-rect) extent, the resolution actually
+        // rasterized; the resolve reads it back from the view block to undo it.
+        const vec2 jitterNdc = m_Topology->TaaActive
+                                   ? TaaJitterNdc(TaaJitterOffset(m_FrameIndex), validExtent)
+                                   : vec2(0.0f);
+        resolvedView.JitterNdc = jitterNdc;
         u32 viewConstantsIndex = 0;
         u32 halfResViewConstantsIndex = 0;
         bool halfResViewReady = false;
         {
             VE_PROFILE_SCOPE("Render/ViewConstants");
-            mat4 renderProj = view.Camera.Projection();
-            if (m_Topology->TaaActive && validExtent.x > 0 && validExtent.y > 0)
-            {
-                // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
-                // symmetric) and cancels between render and reconstruction, which share this
-                // matrix. The reprojection uses the separate unjittered PrevViewProj. The jitter is
-                // a fraction of the rendered (sub-rect) extent, the resolution actually rasterized.
-                const vec2 jitterPixel = TaaJitterOffset(m_FrameIndex);
-                renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
-                renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
-            }
+            const mat4 renderProj = JitterProjection(view.Camera.Projection(), jitterNdc);
             // SH skylight: the lighting pass's second ambient arm reads the sky SH from the
             // view-constants block below. Every SH-tier source projects the one radiance cube it fills —
             // an environment its equirect cube, a baked material or baked atmosphere its bake cube — on
@@ -2505,6 +2506,9 @@ namespace Veng::Renderer
                 // region no frame still on the GPU reads.
                 .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
                                                       m_Context.GetCurrentFrameInFlight()),
+                .JitterNdc = vec4(jitterNdc, m_PreviousJitterNdc),
+                .PrevFromCurDirection =
+                    mat4(m_PreviousDirectionViewProj * glm::inverse(directionViewProj)),
             };
             for (u32 i = 0; i < ShCoefficientCount; ++i)
             {
@@ -2711,7 +2715,7 @@ namespace Veng::Renderer
 
         // Record this frame's view-projection, sub-rect mapping, and per-entity history for the
         // next frame's reprojection and velocity channel.
-        RecordFrameHistory(viewProj, scale);
+        RecordFrameHistory(viewProj, directionViewProj, jitterNdc, scale);
     }
 
     bool SceneRenderer::UpdatePromotionLatch(const bool wanted, bool& active, u32& idleFrames)
@@ -3143,11 +3147,14 @@ namespace Veng::Renderer
         return bindings;
     }
 
-    void SceneRenderer::RecordFrameHistory(const mat4& viewProj, const FrameScale& scale)
+    void SceneRenderer::RecordFrameHistory(const mat4& viewProj, const dmat4& directionViewProj,
+                                           const vec2 jitterNdc, const FrameScale& scale)
     {
         // Capture this frame's camera view-projection for next frame's history comparison and
         // occlusion test (paired with this frame's reduced pyramid).
         m_PreviousViewProj = viewProj;
+        m_PreviousDirectionViewProj = directionViewProj;
+        m_PreviousJitterNdc = jitterNdc;
 
         // Record this frame's sub-rect mapping: GetValidExtent reports it, and the next frame's
         // TAA resolve reprojects the history written at this scale (the zw of RenderScaleUV).

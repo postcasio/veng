@@ -31,6 +31,10 @@ struct PushConstants
     float ViewportHeight;
     float Opacity;
     float Spikes;
+    // The projection jitter as an NDC translation: the scene's ahead of a temporal resolve, zero
+    // after one. CurViewProj is unjittered, so the clip position takes it here.
+    float JitterNdcX;
+    float JitterNdcY;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -67,7 +71,8 @@ VSOutput vsMain()
     // (a pixel is 2/extent of clip width per w). This keeps the splat a constant screen size.
     float4 clip = mul(view.CurViewProj, float4(splat.CenterSize.xyz, 1.0));
     float2 pixelToClip = float2(2.0 / g_PC.ViewportWidth, 2.0 / g_PC.ViewportHeight);
-    clip.xy += corner * splat.CenterSize.w * pixelToClip * clip.w;
+    const float2 jitterNdc = float2(g_PC.JitterNdcX, g_PC.JitterNdcY);
+    clip.xy += (corner * splat.CenterSize.w * pixelToClip + jitterNdc) * clip.w;
 
     VSOutput output;
     output.sv_position = clip;

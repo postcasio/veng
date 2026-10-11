@@ -755,12 +755,16 @@ namespace Veng::Renderer
 
         /// @brief Records this frame's view-projection, sub-rect mapping, and per-entity history.
         ///
-        /// Captures the camera view-projection and sub-rect UVs for next frame's TAA reprojection,
-        /// clears the TAA history-reset gate, advances the jitter frame index, and swaps this
-        /// frame's worlds/palette bases into the previous-frame maps the velocity channel reads.
-        /// @param viewProj  This frame's unjittered camera world→clip matrix.
-        /// @param scale     This frame's resolved sub-rect and UV mapping.
-        void RecordFrameHistory(const mat4& viewProj, const FrameScale& scale);
+        /// Captures the camera view-projections, the jitter and the sub-rect UVs for next frame's
+        /// TAA reprojection, clears the TAA history-reset gate, advances the jitter frame index,
+        /// and swaps this frame's worlds/palette bases into the previous-frame maps the velocity
+        /// channel reads.
+        /// @param viewProj           This frame's unjittered camera world→clip matrix.
+        /// @param directionViewProj  This frame's unjittered projection x rotation-only view.
+        /// @param jitterNdc          This frame's projection jitter as an NDC translation.
+        /// @param scale              This frame's resolved sub-rect and UV mapping.
+        void RecordFrameHistory(const mat4& viewProj, const dmat4& directionViewProj,
+                                vec2 jitterNdc, const FrameScale& scale);
 
         /// @brief Vulkan context for all resource creation.
         Context& m_Context;
@@ -850,6 +854,15 @@ namespace Veng::Renderer
         /// PrevViewProj unconditionally every frame, and passed to the GPU cull subsystem as the
         /// previous-frame matrix the occlusion test screen-bounds candidates with.
         mat4 m_PreviousViewProj{1.0f};
+
+        /// @brief Last Execute's unjittered projection x rotation-only view, in double.
+        ///
+        /// The previous half of the view block's PrevFromCurDirection, which reprojects the
+        /// background. Identity before the first Execute, when the resolve ignores history anyway.
+        dmat4 m_PreviousDirectionViewProj{1.0};
+
+        /// @brief Last Execute's projection jitter as an NDC translation (the view block's zw).
+        vec2 m_PreviousJitterNdc{0.0f};
 
         /// @brief HDR target the deferred lighting pass writes (linear, unbounded range).
         ///

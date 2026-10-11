@@ -331,6 +331,43 @@ projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
 tail already samples) and a **history-copy** pass (HDR → the persisted history for next frame).
+
+**The jitter is an NDC translation, published, and taken back out by the resolve.** Each period's
+offsets have their mean subtracted (`TaaJitterPeriodMean`), so the eight phases sum to zero and the
+integrated image is not displaced. The offset, a fraction of the rasterized sub-rect, becomes an NDC
+translation (`TaaJitterNdc`) that is **left-multiplied** onto the projection (`JitterProjection`):
+every projected point moves by exactly that much at every depth, under a perspective and an
+orthographic camera alike, and depth is untouched. It is published as `SceneView::JitterNdc` and in
+the view block's `JitterNdc` (xy this frame, zw the previous one), with `Proj`, `InvViewProj` and
+`InvViewRotProj` carrying it and `CurViewProj`/`PrevViewProj` not. **Anything rasterized into the
+scene colour ahead of the resolve must project through the jittered matrix** — the surface stage
+(`Proj · View`), the sky (`InvViewRotProj`), the SceneColor-placed point fields (which add the
+pushed jitter to their unjittered clip positions) — because the resolve removes the jitter from
+the whole lit target: an unjittered draw there comes out moving by the jitter. A pass after the
+resolve (the HdrTail point fields, the post-resolve ribbons, debug draw) projects unjittered.
+
+**The resolve reconstructs the current frame at each output pixel's unjittered position.** It finds
+where that position fell in the jittered render (`uv + JitterNdc / 2`, in render pixels), loads the
+3×3 render texels around it, and weights each by `exp(-2.29 · d²)` — the Gaussian fit of a
+one-pixel Blackman-Harris window — with `d` the texel's sample distance from the pixel centre **in
+output pixels**. At render scale 1 that is a symmetric filter about the pixel's own unjittered
+sample. Under upscaling (`TAAU`, or `TAA` over a dynamic-resolution sub-rect) the window narrows
+with the output/render ratio, capped at 2.5 so the period's samples still reach every output pixel,
+and the **summed weight scales this frame's blend share**: an output pixel a sample landed on takes
+the full share, one no sample landed near leans on its history. The same nine texels build the
+YCoCg clip box and give the **nearest depth** (reverse-Z: the largest); a pixel with geometry
+anywhere in the 3×3 reprojects by the motion vector at that texel (point loads throughout — depth
+is never filtered). A pixel with only the cleared depth around it reprojects as a **direction**
+through the view block's `PrevFromCurDirection` — the previous unjittered `Proj × rotation-only
+View` times the inverse of this frame's, composed in double on the CPU — so it is unjittered on
+both sides, carries no translation to lose precision to, and is the identity under a camera that
+has not turned: a static camera fetches the background's history from exactly the pixel it writes.
+The Karis luminance weights are taken on the **exposed** luminance (the tonemap's exposure, pushed),
+so their damping does not depend on the scene's absolute HDR scale.
+
+`tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
+both modes, the converged resolve changes by under a few half-float steps per frame inside geometry
+and in the open sky, and an edge and a star keep their place to 0.05 output px.
 Motion is **per-object** and **folded into the g-buffer pass**: velocity is a fourth g-buffer
 channel (**G3**, `RG16Sfloat`), written by the surface fragment as `SV_Target3` alongside
 G0/G1/G2 — `curUV - prevUV` from the per-vertex current and previous clip positions, computed by
@@ -341,8 +378,8 @@ prior world in `m_PreviousWorlds`, an `EntityFrameTable` swapped each frame) and
 unjittered `CurViewProj`/`PrevViewProj` (both in the set-0 view-constants block); the skinned
 surface vertex stage additionally skins the previous position through the previous-frame palette
 (`PrevPaletteBase`), so deformation motion writes velocity too. The resolve uses the velocity
-vector for geometry (camera **and** object motion) and falls back to depth-based camera
-reprojection for the cleared background. Because velocity is a g-buffer channel it is **always
+vector for geometry (camera **and** object motion) and the direction reprojection above for the
+cleared background. Because velocity is a g-buffer channel it is **always
 written and always allocated** (the cost is one extra `RG16Sfloat` target plus a clip-position
 write, not a second geometry pass); with TAA off it is written but unread, and the `MotionVectors`
 debug arm blits it directly. The opaque material contract is therefore **G0/G1/G2/G3/G4** —
@@ -357,10 +394,10 @@ each frame, so it needs no cross-frame ring or semaphore.
 **The resolve is sub-rect-aware, which is what makes it compose with dynamic resolution and act as an
 upscaler.** The scene renders into the `round(renderAllocExtent · RenderScale)` sub-rect like any
 dynamic-resolution frame, but the resolve **reconstructs its whole output allocation**: it maps the
-output UV into the current frame's sub-rect through `ScaledSampleUV`
-(`RenderScaleUV.xy`/`MaxValidUV.xy`) for the current/depth/velocity reads, while the **history and
-output cover that allocation in full** (so the history read is the plain reprojected UV, and the
-velocity — full-frame motion — needs no remap against it). The history is allocation-sized, so a
+output UV into the current frame's sub-rect in render pixels (`ExtentParams.xy`) for the
+current/depth/velocity loads, while the **history and output cover that allocation in full** (so
+the history read is the plain reprojected UV, and the velocity — full-frame motion — needs no remap
+against it). The history is allocation-sized, so a
 per-frame render-scale change never resets it. The temporal resolve is consequently **not in the
 `drsSupported` exclusion** (`ResolveRenderScale`): `TAA` composes with dynamic resolution, and the
 same reconstruction is what `TAAU` uses to upscale. At render scale 1.0 every map is the identity and

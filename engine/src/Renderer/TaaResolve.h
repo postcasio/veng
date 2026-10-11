@@ -93,6 +93,15 @@ namespace Veng::Renderer
         /// frame's history validity.
         [[nodiscard]] const bool* GetHistoryResetPointer() const { return &m_HistoryReset; }
 
+        /// @brief Records the exposure the tonemap applies this frame, for the resolve's weights.
+        ///
+        /// The resolve damps fireflies by weighting each sample by its luminance as the tone curve
+        /// will see it, so the weights follow exposure rather than the raw HDR scale.
+        void SetExposure(const f32 exposure) { m_Exposure = exposure; }
+
+        /// @brief Pointer to this frame's exposure, which TaaScenePass reads at record time.
+        [[nodiscard]] const f32* GetExposurePointer() const { return &m_Exposure; }
+
     private:
         TaaResolve(Context& context, AssetManager& assets);
 
@@ -123,5 +132,8 @@ namespace Veng::Renderer
 
         /// @brief Forces the next resolve to ignore history (frame 0 and after Resize/Configure).
         bool m_HistoryReset = true;
+
+        /// @brief The exposure the tonemap applies this frame (SetExposure).
+        f32 m_Exposure = 1.0f;
     };
 }

@@ -13,8 +13,9 @@ namespace Veng::Renderer
 
     // The TAA resolve push block, matching taa_resolve.frag PushConstants: the
     // current/history/depth bindless slots, the shared sampler, the view-constants
-    // region, the history-validity flag, and the full output/history extent (the current
-    // frame's sub-rect extent is read from the view-constants block).
+    // region, the history-validity flag, the tonemap's exposure, and the full output/history
+    // extent (the current frame's sub-rect extent and jitter are read from the view-constants
+    // block). Eight 4-byte fields put the trailing uint2 at its 8-byte-aligned offset.
     struct TaaResolvePush
     {
         u32 CurrentTexture;
@@ -24,9 +25,7 @@ namespace Veng::Renderer
         u32 Sampler;
         u32 ViewConstantsIndex;
         u32 HistoryValid;
-        // Pads to an even u32 count so the trailing uint2 lands at its 8-byte-aligned
-        // offset, matching the SPIR-V push block layout.
-        u32 Pad0;
+        f32 Exposure;
         uvec2 Extent;
     };
 
@@ -57,23 +56,25 @@ namespace Veng::Renderer
         /// @param litId            The separate lit target (current frame input).
         /// @param historyId        The persisted history target.
         /// @param hdrId            The HDR target the resolved color is written into.
-        /// @param depthId          The depth target for reprojection fallback.
+        /// @param depthId          The depth target the nearest-depth search reads.
         /// @param velocityId       The per-object velocity target.
         /// @param litHandle        Bindless slot for the lit target.
         /// @param historyHandle    Bindless slot for the history target.
         /// @param velocityHandle   Bindless slot for the velocity target.
         /// @param historyResetPtr  Points at the renderer's history-reset flag, read at record time.
+        /// @param exposurePtr      Points at this frame's tonemap exposure, read at record time.
         /// @param extent           Initial render extent; updated via Resize.
         TaaScenePass(Context& context, Ref<GraphicsPipeline> resolvePipeline,
                      Ref<GraphicsPipeline> copyPipeline, ResourceId litId, ResourceId historyId,
                      ResourceId hdrId, ResourceId depthId, ResourceId velocityId,
                      TextureHandle litHandle, TextureHandle historyHandle,
-                     TextureHandle velocityHandle, const bool* historyResetPtr, uvec2 extent)
+                     TextureHandle velocityHandle, const bool* historyResetPtr,
+                     const f32* exposurePtr, uvec2 extent)
             : m_Context(context), m_ResolvePipeline(std::move(resolvePipeline)),
               m_CopyPipeline(std::move(copyPipeline)), m_LitId(litId), m_HistoryId(historyId),
               m_HdrId(hdrId), m_DepthId(depthId), m_VelocityId(velocityId), m_LitHandle(litHandle),
               m_HistoryHandle(historyHandle), m_VelocityHandle(velocityHandle),
-              m_HistoryResetPtr(historyResetPtr), m_Extent(extent)
+              m_HistoryResetPtr(historyResetPtr), m_ExposurePtr(exposurePtr), m_Extent(extent)
         {
         }
 
@@ -95,7 +96,7 @@ namespace Veng::Renderer
         ResourceId m_HistoryId;
         /// @brief The HDR target the resolved color is written into.
         ResourceId m_HdrId;
-        /// @brief The depth target for reprojection fallback.
+        /// @brief The depth target the nearest-depth search reads.
         ResourceId m_DepthId;
         /// @brief The per-object velocity target.
         ResourceId m_VelocityId;
@@ -105,9 +106,12 @@ namespace Veng::Renderer
         TextureHandle m_HistoryHandle;
         /// @brief Bindless slot for the velocity target.
         TextureHandle m_VelocityHandle;
-        // Points at SceneRenderer::m_TaaHistoryReset, read at record time (the graph
-        // executes before Execute clears the flag, so it reflects this frame's validity).
+        /// @brief Points at the TaaResolve history-reset flag, read at record time.
+        ///
+        /// The graph executes before Execute clears the flag, so it reflects this frame's validity.
         const bool* m_HistoryResetPtr;
+        /// @brief Points at the TaaResolve copy of this frame's tonemap exposure, read at record time.
+        const f32* m_ExposurePtr;
         /// @brief Current render extent.
         uvec2 m_Extent;
     };
