@@ -3,8 +3,10 @@
 // separate submeshes with their own materials, so the equator is a border between submeshes. The
 // properties: generated levels draw strictly fewer triangles each, keep the submesh table and the
 // sockets, and keep every submesh's border exactly where level 0 has it; an authored level replaces
-// its generated slot, maps onto the base submeshes by material, and appends its vertices; a mesh
-// with no "lod" cooks one level; an unmappable authored level and a skinned mesh are cook errors.
+// its generated slot, maps onto the base submeshes by material, and appends its vertices; a
+// generated level below an authored one simplifies the authored model; a faceted mesh reduces only
+// where a level may collapse its seams; a mesh with no "lod" cooks one level; an unmappable authored
+// level and a skinned mesh are cook errors.
 
 #include <algorithm>
 #include <cstring>
@@ -230,6 +232,60 @@ TEST_CASE(
         }
         CHECK(sum * side > 0.0f);
     }
+}
+
+TEST_CASE("Cooker: a generated level below an authored one simplifies the authored model")
+{
+    const Result<ArchiveReader> reader =
+        CookLodPack("lod_pack.json", "veng_cooker_lod_authored_seed.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x3A04});
+    REQUIRE(entry.has_value());
+    const DecodedMesh mesh = Decode(entry->Blob);
+
+    REQUIRE(mesh.Header.LodCount == 3);
+    CHECK(mesh.Lods[0].Error == 0.0f);
+    CHECK(mesh.Triangles(2) < mesh.Triangles(1));
+
+    // Every index the generated level draws addresses the authored model's appended vertices, so
+    // it was built from that model rather than from level 0.
+    u32 lowest = ~0u;
+    for (u32 s = 0; s < mesh.Header.SubMeshCount; ++s)
+    {
+        const auto [offset, count] = mesh.Range(2, s);
+        CHECK(count > 0);
+        for (u32 i = offset; i < offset + count; ++i)
+        {
+            lowest = std::min(lowest, mesh.Indices[i]);
+        }
+        // The seam the authored hemispheres share stays where the authored model put it.
+        CHECK(Border(mesh, 2, s) == Border(mesh, 1, s));
+    }
+    CHECK(lowest >= mesh.Header.BaseVertexCount);
+}
+
+TEST_CASE("Cooker: a faceted mesh reduces only when its level may collapse its seams")
+{
+    // Every corner of a flat-shaded sphere is a position split once per face meeting there, which
+    // the simplifier keeps fixed unless a level lets it collapse across those breaks.
+    const Result<ArchiveReader> reader =
+        CookLodPack("lod_pack.json", "veng_cooker_lod_faceted.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> plain = reader->Find(AssetId{0x3A05});
+    const optional<ArchiveEntry> collapsed = reader->Find(AssetId{0x3A06});
+    REQUIRE(plain.has_value());
+    REQUIRE(collapsed.has_value());
+
+    const DecodedMesh held = Decode(plain->Blob);
+    const u32 full = held.Triangles(0);
+    if (held.Header.LodCount > 1)
+    {
+        CHECK(held.Triangles(1) * 2 > full);
+    }
+
+    const DecodedMesh reduced = Decode(collapsed->Blob);
+    REQUIRE(reduced.Header.LodCount == 2);
+    CHECK(reduced.Triangles(1) * 2 < full);
 }
 
 TEST_CASE("Cooker: a mesh with no 'lod' key cooks a single level")

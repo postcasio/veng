@@ -1,0 +1,12 @@
+{
+  "model": "lod_faceted.gltf",
+  "import": {
+    "generate_normals": false,
+    "generate_tangents": false
+  },
+  "lod": {
+    "levels": [
+      { "ratio": 0.25, "collapse_seams": true }
+    ]
+  }
+}

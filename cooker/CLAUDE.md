@@ -254,22 +254,39 @@ at cook time:
 
   `"levels"` is a count (the default chain's first *n*: target ratios ½, ¼, ⅛, then halving) or an
   array of level objects, at most seven beyond level 0. A **generated** level takes `"ratio"` (its
-  target triangle count as a fraction of level 0's) and an optional `"max_error"` (the simplification
+  target triangle count as a fraction of the level it simplifies) and an optional `"max_error"` (the simplification
   error allowed, as a fraction of the mesh's bounding diameter; default 1, i.e. the ratio governs). An
   **authored** level names a `"model"` (relative to the `*.mesh.json`, imported with the base's
   `import` settings) and replaces the generated level at its index. Any level may pin
   `"screen_size"`, the threshold below which it draws (the diameter of the mesh's level-0 bounding
   sphere as a fraction of the view height — see the renderer's "Level of detail" notes); pinned
-  thresholds must descend. An unknown key, an out-of-range value, or `"ratio"`/`"max_error"` on an
+  thresholds must descend. An unknown key, an out-of-range value, or `"ratio"`/`"max_error"`/`"collapse_seams"` on an
   authored level is a located cook error.
 
   - **Generation is per submesh** (`Importers/MeshLod.{h,cpp}`, meshoptimizer's
     `meshopt_simplifyWithAttributes` in sparse, absolute-error mode, then
     `meshopt_optimizeVertexCache` on the result), so the submesh table and every submesh's material
-    survive, normals weigh in as attributes (`"normal_weight"`), and **each submesh's open borders
-    are locked** — the edges it shares with a neighbouring submesh among them, so two materials meet
-    without a crack at every level (`tests/cooker/mesh_lod_cook.cpp` compares each level's border
-    edges with level 0's). A level simplifies level 0 directly, not its predecessor. A generated
+    survive, normals weigh in as attributes (`"normal_weight"`), and **only the seams are locked** —
+    every vertex at a position another submesh also draws — so two materials meet without a crack at
+    every level (`tests/cooker/mesh_lod_cook.cpp` compares each level's border edges with level 0's).
+    A seam is a position another submesh also draws, or one a submesh draws with vertices that are
+    not bit-equal — the simplifier pairs only bit-equal seam vertices and would part the rest as two
+    free borders. Every other border is free: a model is often an assembly of open panels and
+    thousands of separate greebles, and locking every open border there locks nearly every edge, so a
+    level could not reduce at all. A level that sets `"max_error"` also **prunes**
+    (`meshopt_SimplifyPrune`): a disconnected piece smaller than that bound is dropped outright,
+    which is what takes a greeble field down. The default bound — the whole diameter — prunes
+    nothing, since it would drop all but the largest piece. A position split into more than two
+    vertices — every corner of a flat-shaded or hard-edged model, one vertex per face normal — is
+    otherwise fixed, so such a model hardly reduces; a generated level that sets
+    **`"collapse_seams": true`** lets collapses cross those normal and UV breaks
+    (`meshopt_SimplifyPermissive`), softening its hard edges as it coarsens, which a distant level
+    can afford and a near one may not. Seams between submeshes stay locked either way. **A generated level simplifies the nearest authored level above it**, or
+    level 0 when none is authored above it — never a generated predecessor, so error does not
+    compound. That is what an authored level is for beyond drawing itself: a hand-stripped model
+    (an interior removed, greebles dropped) seeds every generated level below it, which a
+    simplifier working from the full model could only approach by spending its budget on detail
+    the stripped model never had. A generated
     level that keeps more than 95 % of its predecessor's triangles is **dropped** rather than cooked,
     so a mesh the simplifier cannot reduce (a cube) cooks fewer levels than configured — possibly
     one — and an authored level keeps its configured order among the survivors.

@@ -712,6 +712,11 @@ namespace Veng::Cook
                 previousTriangles += subMesh.IndexCount / 3;
             }
 
+            // What a generated level simplifies: level 0 until an authored level is built, then the
+            // most recent authored level, whose appended vertices its indices already address.
+            vector<u32> sourceIndices(indices.begin(), indices.end());
+            vector<MeshLodSubMeshRange> sourceRanges = baseRanges;
+
             vector<BuiltMeshLod> built;
             for (usize i = 0; i < lodSource->Levels.size(); ++i)
             {
@@ -734,6 +739,16 @@ namespace Veng::Cook
                                      .ScreenSize = level.ScreenSize,
                                      .Authored = true};
                     previousTriangles = CountTriangles(lod);
+                    sourceIndices.clear();
+                    sourceRanges.clear();
+                    for (const vector<u32>& subMeshIndices : lod.SubMeshIndices)
+                    {
+                        sourceRanges.push_back(
+                            {.IndexOffset = static_cast<u32>(sourceIndices.size()),
+                             .IndexCount = static_cast<u32>(subMeshIndices.size())});
+                        sourceIndices.insert(sourceIndices.end(), subMeshIndices.begin(),
+                                             subMeshIndices.end());
+                    }
                     built.push_back(std::move(lod));
                     continue;
                 }
@@ -742,16 +757,14 @@ namespace Veng::Cook
                     continue;
                 }
 
-                // Simplified from level 0's own vertices; an authored level's appended ones are
-                // never referenced by these indices.
                 BuiltMeshLod lod = SimplifyMeshLod(
                     MeshLodGeometry{
                         .Positions = staticVertices.data()->Position,
                         .Normals = staticVertices.data()->Normal,
-                        .VertexCount = baseVertexCount,
+                        .VertexCount = staticVertices.size(),
                         .Stride = sizeof(CanonicalVertex),
-                        .Indices = indices,
-                        .SubMeshes = baseRanges,
+                        .Indices = sourceIndices,
+                        .SubMeshes = sourceRanges,
                         .Diameter = diameter,
                     },
                     level, lodSource->NormalWeight);
