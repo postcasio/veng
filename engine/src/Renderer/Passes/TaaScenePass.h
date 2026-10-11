@@ -59,6 +59,7 @@ namespace Veng::Renderer
         /// @param depthId          The depth target the nearest-depth search reads.
         /// @param velocityId       The per-object velocity target.
         /// @param litHandle        Bindless slot for the lit target.
+        /// @param hdrHandle        Bindless slot for hdrId, which the history copy reads back.
         /// @param historyHandle    Bindless slot for the history target.
         /// @param velocityHandle   Bindless slot for the velocity target.
         /// @param historyResetPtr  Points at the renderer's history-reset flag, read at record time.
@@ -67,14 +68,15 @@ namespace Veng::Renderer
         TaaScenePass(Context& context, Ref<GraphicsPipeline> resolvePipeline,
                      Ref<GraphicsPipeline> copyPipeline, ResourceId litId, ResourceId historyId,
                      ResourceId hdrId, ResourceId depthId, ResourceId velocityId,
-                     TextureHandle litHandle, TextureHandle historyHandle,
+                     TextureHandle litHandle, TextureHandle hdrHandle, TextureHandle historyHandle,
                      TextureHandle velocityHandle, const bool* historyResetPtr,
                      const f32* exposurePtr, uvec2 extent)
             : m_Context(context), m_ResolvePipeline(std::move(resolvePipeline)),
               m_CopyPipeline(std::move(copyPipeline)), m_LitId(litId), m_HistoryId(historyId),
               m_HdrId(hdrId), m_DepthId(depthId), m_VelocityId(velocityId), m_LitHandle(litHandle),
-              m_HistoryHandle(historyHandle), m_VelocityHandle(velocityHandle),
-              m_HistoryResetPtr(historyResetPtr), m_ExposurePtr(exposurePtr), m_Extent(extent)
+              m_HdrHandle(hdrHandle), m_HistoryHandle(historyHandle),
+              m_VelocityHandle(velocityHandle), m_HistoryResetPtr(historyResetPtr),
+              m_ExposurePtr(exposurePtr), m_Extent(extent)
         {
         }
 
@@ -102,6 +104,11 @@ namespace Veng::Renderer
         ResourceId m_VelocityId;
         /// @brief Bindless slot for the lit target.
         TextureHandle m_LitHandle;
+        /// @brief Bindless slot for m_HdrId.
+        ///
+        /// Not the pass IO's HDR handle: under SSR or a composited depth of field the resolve writes
+        /// an intermediate ahead of the final HDR target, which a later pass of the frame writes.
+        TextureHandle m_HdrHandle;
         /// @brief Bindless slot for the history target.
         TextureHandle m_HistoryHandle;
         /// @brief Bindless slot for the velocity target.

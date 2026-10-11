@@ -330,7 +330,11 @@ keys on nothing. `Settings::UsesTaaUpscaling()` is `TAAU` alone, read by
 projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`, a pure
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
-tail already samples) and a **history-copy** pass (HDR → the persisted history for next frame).
+tail already samples) and a **history-copy** pass (the resolve's output → the persisted history for
+next frame). Under SSR or a composited depth of field the resolve writes the scene intermediate
+those composite from, not the HDR target, and the copy reads that intermediate by its own bindless
+slot: read back from the HDR target, which the composite writes later in the frame, the history
+would carry the previous frame's composite and the resolve would follow the jitter.
 
 **The jitter is an NDC translation, published, and taken back out by the resolve.** Each period's
 offsets have their mean subtracted (`TaaJitterPeriodMean`), so the eight phases sum to zero and the
@@ -366,8 +370,9 @@ The Karis luminance weights are taken on the **exposed** luminance (the tonemap'
 so their damping does not depend on the scene's absolute HDR scale.
 
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
-both modes, the converged resolve changes by under a few half-float steps per frame inside geometry
-and in the open sky, and an edge and a star keep their place to 0.05 output px.
+both modes and under TAA with SSR compositing after it, the converged resolve changes by under a few
+half-float steps per frame inside geometry and in the open sky, a star keeps its place to 0.05
+output px, and an edge to 0.1.
 Motion is **per-object** and **folded into the g-buffer pass**: velocity is a fourth g-buffer
 channel (**G3**, `RG16Sfloat`), written by the surface fragment as `SV_Target3` alongside
 G0/G1/G2 — `curUV - prevUV` from the per-vertex current and previous clip positions, computed by

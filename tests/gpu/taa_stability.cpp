@@ -1,8 +1,8 @@
 // The temporal resolve under a static camera. TAA and TAAU jitter the projection by a sub-pixel
 // offset each frame, and the resolve has to take that offset back out: with nothing moving, a
 // converged resolve holds still. Each case renders a brick cube with an emissive face over a
-// gradient sky, plus a SceneColor-placed point-field star, at render scale 1 and 0.5, and after
-// three jitter periods asserts that
+// gradient sky, plus a SceneColor-placed point-field star, at render scale 1 and 0.5 (and once
+// under TAA with SSR compositing after the resolve), and after three jitter periods asserts that
 //  - the motion vectors are zero (nothing moved, so nothing may reproject);
 //  - frame to frame, the resolved HDR changes by less than a small bound inside the cube
 //    (depth > 0) and in the open sky (depth == 0);
@@ -243,7 +243,8 @@ namespace
             return worst;
         }
 
-        Stability Measure(const AntiAliasingMode mode, const f32 renderScale)
+        Stability Measure(const AntiAliasingMode mode, const f32 renderScale,
+                          const bool reflections = false)
         {
             const Unique<SceneRenderer> renderer = SceneRenderer::Create({
                 .Context = Gpu.Context,
@@ -255,6 +256,7 @@ namespace
                              .AntiAliasing = mode,
                              .Shadows = false,
                              .PunctualShadows = false,
+                             .SSR = reflections,
                              .AO = false},
             });
 
@@ -451,23 +453,27 @@ namespace
     // keeps its place to within that ripple rather than following the jitter.
     constexpr f32 MaxEdgeWander = 0.1f;
 
+    void CheckStill(const Stability& s)
+    {
+        CAPTURE(s.CubeDelta);
+        CAPTURE(s.SkyDelta);
+        CAPTURE(s.EdgeWander);
+        CAPTURE(s.StarWander);
+        REQUIRE(s.CubePixels > 50);
+        REQUIRE(s.SkyPixels > 500);
+        CHECK(s.CubeDelta < MaxFrameDelta);
+        CHECK(s.SkyDelta < MaxFrameDelta);
+        CHECK(s.EdgeWander < MaxEdgeWander);
+        CHECK(s.StarWander < MaxStarWander);
+    }
+
     void CheckStatic(StabilityScene& scene, const AntiAliasingMode mode)
     {
         CHECK(scene.MaxMotion(mode) == 0.0f);
         for (const f32 renderScale : {1.0f, 0.5f})
         {
             CAPTURE(renderScale);
-            const Stability s = scene.Measure(mode, renderScale);
-            CAPTURE(s.CubeDelta);
-            CAPTURE(s.SkyDelta);
-            CAPTURE(s.EdgeWander);
-            CAPTURE(s.StarWander);
-            REQUIRE(s.CubePixels > 50);
-            REQUIRE(s.SkyPixels > 500);
-            CHECK(s.CubeDelta < MaxFrameDelta);
-            CHECK(s.SkyDelta < MaxFrameDelta);
-            CHECK(s.EdgeWander < MaxEdgeWander);
-            CHECK(s.StarWander < MaxStarWander);
+            CheckStill(scene.Measure(mode, renderScale));
         }
     }
 }
@@ -484,4 +490,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     StabilityScene scene(*this);
     CheckStatic(scene, AntiAliasingMode::TAAU);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "taa stability: a static view converges to a still image with SSR after the resolve")
+{
+    // SSR composites the resolve's output into the HDR target later in the frame, so the history
+    // has to come from the resolve's own target: one read back from the HDR target would carry the
+    // previous frame's composite, and the resolve would follow the jitter.
+    StabilityScene scene(*this);
+    CheckStill(scene.Measure(AntiAliasingMode::TAA, 1.0f, true));
 }

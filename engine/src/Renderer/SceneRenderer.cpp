@@ -617,10 +617,10 @@ namespace Veng::Renderer
 
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
+        const TextureHandle sceneColorHandle =
+            m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle;
         const TextureHandle lightingTargetHandle =
-            m_Topology->TaaActive
-                ? m_Taa->GetLitHandle()
-                : (m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
+            m_Topology->TaaActive ? m_Taa->GetLitHandle() : sceneColorHandle;
 
         ResourceId shadowId{};
         if (m_Topology->ShadowActive)
@@ -900,8 +900,9 @@ namespace Veng::Renderer
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
                     taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
-                    m_Taa->GetHistoryHandle(), m_VelocityHandle, m_Taa->GetHistoryResetPointer(),
-                    m_Taa->GetExposurePointer(), sceneColorExtent));
+                    sceneColorHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
+                    m_Taa->GetHistoryResetPointer(), m_Taa->GetExposurePointer(),
+                    sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color

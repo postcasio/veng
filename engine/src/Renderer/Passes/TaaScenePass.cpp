@@ -9,7 +9,7 @@ namespace Veng::Renderer
     void TaaScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         const TextureHandle depthHandle = io.DepthHandle;
-        const TextureHandle hdrHandle = io.HdrHandle;
+        const TextureHandle hdrHandle = m_HdrHandle;
         const SamplerHandle samplerHandle = io.SamplerHandle;
 
         // Resolve: read the lit color (current), the reprojected history, depth and velocity;
