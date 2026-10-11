@@ -345,8 +345,8 @@ namespace Veng::Renderer
             return;
         }
 
-        // The lit scene color SSR reads: lighting/TAA writes here, the composite reflects into
-        // it and writes the HDR target, so the bloom/tonemap tail is unchanged.
+        // The lit scene color SSR reads: lighting writes here, and the composite reflects into it
+        // and writes the target the temporal anchor reads.
         m_SceneImage = Image::Create(m_Context, {
                                                     .Name = "SceneRenderer SSR Scene",
                                                     .Extent = {m_Extent.x, m_Extent.y, 1},
@@ -726,7 +726,7 @@ namespace Veng::Renderer
         }
 
         // Composite: fold the reflection, blurred by its cone's footprint, into the scene color and
-        // write the HDR target the bloom/tonemap tail reads.
+        // write the target the temporal anchor reads.
         {
             const TextureHandle sceneHandle = m_SceneHandle;
             const TextureHandle reflectionHandle = m_ReflectionSampleHandle;

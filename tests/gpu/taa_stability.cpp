@@ -1,8 +1,9 @@
 // The temporal resolve under a static camera. TAA and TAAU jitter the projection by a sub-pixel
 // offset each frame, and the resolve has to take that offset back out: with nothing moving, a
 // converged resolve holds still. Each case renders a brick cube with an emissive face over a
-// gradient sky, plus a SceneColor-placed point-field star, at render scale 1 and 0.5 (and once
-// under TAA with SSR compositing after the resolve), and after three jitter periods asserts that
+// gradient sky, plus a SceneColor-placed point-field star, at render scale 1 and 0.5 (and with SSR
+// compositing ahead of the resolve, under TAA and under TAAU upscaling a half-size render
+// allocation), and after three jitter periods asserts that
 //  - the motion vectors are zero (nothing moved, so nothing may reproject);
 //  - frame to frame, the resolved HDR changes by less than a small bound inside the cube
 //    (depth > 0) and in the open sky (depth == 0);
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 
 #include <glm/gtc/packing.hpp>
 
@@ -243,8 +245,11 @@ namespace
             return worst;
         }
 
+        // `renderAllocation`, when set, sizes the render allocation below Extent, where SSR (which
+        // holds the per-frame scale at 1) still renders reduced.
         Stability Measure(const AntiAliasingMode mode, const f32 renderScale,
-                          const bool reflections = false)
+                          const bool reflections = false,
+                          const std::optional<uvec2> renderAllocation = std::nullopt)
         {
             const Unique<SceneRenderer> renderer = SceneRenderer::Create({
                 .Context = Gpu.Context,
@@ -259,6 +264,10 @@ namespace
                              .SSR = reflections,
                              .AO = false},
             });
+            if (renderAllocation.has_value())
+            {
+                renderer->Resize(Extent, *renderAllocation);
+            }
 
             for (u32 frame = 0; frame < SettleFrames; ++frame)
             {
@@ -494,11 +503,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "taa stability: a static view converges to a still image with SSR after the resolve")
+    "taa stability: a static view converges to a still image with SSR ahead of the resolve")
 {
-    // SSR composites the resolve's output into the HDR target later in the frame, so the history
-    // has to come from the resolve's own target: one read back from the HDR target would carry the
-    // previous frame's composite, and the resolve would follow the jitter.
+    // SSR composites into the lit target the resolve reads, which under TAAU leaves the resolve
+    // the promotion: it reconstructs the full allocation from the half-size render.
     StabilityScene scene(*this);
     CheckStill(scene.Measure(AntiAliasingMode::TAA, 1.0f, true));
+    CheckStill(scene.Measure(AntiAliasingMode::TAAU, 0.5f, true, Extent / 2u));
 }

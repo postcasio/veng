@@ -41,9 +41,10 @@
 //
 // The composite runs at full render resolution (SSR disables the dynamic-resolution sub-rect), and
 // the chain may be at a lower resolution than the target. Every surface it reads — the pixel's own
-// and each chain tap's — is the one ssr_surface.slang takes on the unjittered ray, exactly as the
-// trace took it, so under a temporal resolve the reflection and the scene it lands on both stand at
-// unjittered positions. How level 0 is read depends on that ratio:
+// and each chain tap's — is the one ssr_surface.slang takes, exactly as the trace took it. It writes
+// the lit scene ahead of any temporal resolve, so the reflection and the scene it lands on stand in
+// the same rasterized frame and the resolve integrates both. How level 0 is read depends on that
+// ratio:
 //
 //  - At one composite pixel per SSR texel, level 0 is read bilinearly, which lands on the pixel's
 //    own texel, so a mirror is exactly as sharp as the trace.
@@ -266,14 +267,14 @@ float CoarseAgreement(ViewConstants vc, Surface pixel, int2 texel, uint level, f
         g_Textures[NonUniformResourceIndex(g_PC.SurfaceTexture)].Load(int3(texel, int(level)));
     if (surface.z < CoverageFloor)
         return 0.0;
-    float2 rasterUV = (float2(texel) + 0.5) / size + vc.JitterNdc.xy * 0.5;
+    float2 texelUV = (float2(texel) + 0.5) / size;
     float mean = surface.x / surface.z;
-    float3 position = RelativePosition(vc, rasterUV, mean);
+    float3 position = RelativePosition(vc, texelUV, mean);
     float planeDistance = abs(dot(pixel.Normal, position - pixel.Position));
 
     float variance = max(surface.y / surface.z - mean * mean, 0.0);
     float excess = sqrt(max(variance - pixel.DepthGradient2 * ChainKernelVariance(level), 0.0));
-    float spread = length(RelativePosition(vc, rasterUV, min(mean + excess, 1.0)) - position);
+    float spread = length(RelativePosition(vc, texelUV, min(mean + excess, 1.0)) - position);
 
     return (1.0 - smoothstep(PlaneAgreementFull, PlaneAgreementNone, planeDistance / pixel.Tolerance)) *
            (1.0 - smoothstep(PlaneAgreementFull, PlaneAgreementNone, spread / pixel.Tolerance));
@@ -430,14 +431,13 @@ float4 fsMain(VSOutput input) : SV_Target
     depthTexture.GetDimensions(0u, compositeWidth, compositeHeight, compositeLevels);
     float2 spline = saturate(float2(compositeWidth, compositeHeight) / float2(chainWidth, chainHeight) - 1.0);
     // The pixel plane's device-depth gradient, one level-0 texel along each axis.
-    float2 rasterUV = uv + vc.JitterNdc.xy * 0.5;
     float4 pixelClip = mul(vc.Proj, float4(viewPos, 1.0));
     float pixelDepth = pixelClip.z / pixelClip.w;
     float2 chainTexel = 1.0 / float2(chainWidth, chainHeight);
     float gradientX =
-        PlaneDepthAt(vc, relative, N, pixelDepth, rasterUV + float2(chainTexel.x, 0.0)) - pixelDepth;
+        PlaneDepthAt(vc, relative, N, pixelDepth, uv + float2(chainTexel.x, 0.0)) - pixelDepth;
     float gradientY =
-        PlaneDepthAt(vc, relative, N, pixelDepth, rasterUV + float2(0.0, chainTexel.y)) - pixelDepth;
+        PlaneDepthAt(vc, relative, N, pixelDepth, uv + float2(0.0, chainTexel.y)) - pixelDepth;
     Surface pixel = { relative, N, 1.0 / texelsPerUnit, gradientX * gradientX + gradientY * gradientY };
 
     float4 reflection = SampleAtLod(reflectionChain, reflSamp, vc, pixel, uv, spline, lod, mipCount);

@@ -262,11 +262,12 @@ namespace Veng::Renderer
     /// @brief Whether a temporal resolve reconstructs the post-resolve allocation directly.
     ///
     /// Temporal upscaling promotes at the temporal anchor, so every pass between that anchor and
-    /// the HDR tail sees allocation-resolution scene colour beside render-resolution depth. The SSR
-    /// composite and a composited depth-of-field chain sit there and read both through one extent,
-    /// so a frame wiring either resolves at the render allocation instead and the spatial promotion
-    /// carries the tail up — a spatial reconstruction rather than a temporal one, with the render
-    /// scale still buying exactly what it buys in every other mode.
+    /// the HDR tail sees allocation-resolution scene colour beside render-resolution depth. A
+    /// composited depth-of-field chain sits there and reads both through one extent, so a frame
+    /// wiring it resolves at the render allocation instead and the spatial promotion carries the
+    /// tail up — a spatial reconstruction rather than a temporal one, with the render scale still
+    /// buying exactly what it buys in every other mode. The SSR composite does not constrain it:
+    /// it writes the lit target ahead of the resolve, at the render allocation.
     ///
     /// A function of the settings alone (no sky input), so the renderer can size its scene-colour
     /// allocation from it before the frame topology is resolved.

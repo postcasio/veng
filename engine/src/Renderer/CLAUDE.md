@@ -359,10 +359,12 @@ projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
 tail already samples) and a **history-copy** pass (the resolve's output → the persisted history for
-next frame). Under SSR or a composited depth of field the resolve writes the scene intermediate
-those composite from, not the HDR target, and the copy reads that intermediate by its own bindless
-slot: read back from the HDR target, which the composite writes later in the frame, the history
-would carry the previous frame's composite and the resolve would follow the jitter.
+next frame). Under a composited depth of field the resolve writes the scene intermediate the chain
+composites from, not the HDR target, and the copy reads that intermediate by its own bindless slot:
+read back from the HDR target, which the composite writes later in the frame, the history would
+carry the previous frame's composite and the resolve would follow the jitter. SSR composites
+*ahead* of the resolve, into the lit target it reads (see "Under a temporal resolve, a reflection
+is resolved with the frame").
 
 **The jitter is an NDC translation, published, and taken back out by the resolve.** Each period's
 offsets have their mean subtracted (`TaaJitterPeriodMean`), so the eight phases sum to zero and the
@@ -398,7 +400,8 @@ The Karis luminance weights are taken on the **exposed** luminance (the tonemap'
 so their damping does not depend on the scene's absolute HDR scale.
 
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
-both modes and under TAA with SSR compositing after it, the converged resolve changes by under a few
+both modes and with SSR compositing ahead of it (under TAA, and under TAAU over a half-size render
+allocation), the converged resolve changes by under a few
 half-float steps per frame inside geometry and in the open sky, a star keeps its place to 0.05
 output px, and an edge to 0.1.
 Motion is **per-object** and **folded into the g-buffer pass**: velocity is a fourth g-buffer
@@ -460,8 +463,8 @@ the tail with the scene. A debug view (`Mode != Final`) pins the render allocati
 post-resolve one: its passes read the g-buffer at full-screen UVs while writing the output, and it
 already forces the per-frame render scale to 1 for the same reason.
 
-Between the two sits the **HDR scene colour** — what the temporal resolve, the SSR composite, the
-HDR-placed point fields and the depth-of-field composite write. It is allocated in the render
+Between the two sits the **HDR scene colour** — what the temporal resolve (or, with none, the SSR
+composite), the HDR-placed point fields and the depth-of-field composite write. It is allocated in the render
 allocation, except under a promoting temporal-upscaling resolve (below), where it is the
 post-resolve one; `SceneView::SceneColorExtent` is its valid extent this frame.
 
@@ -551,12 +554,14 @@ So the render scale is spent the same way in both (it sizes the render allocatio
 sub-rect under dynamic resolution) and the viewport no longer knows the mode at all — the branch that
 pinned its allocation to native under TAAU is gone, along with the `Configure` resize debounce it
 needed. `ResolveTemporalUpscalePromotes` (`FrameTopology.h`, a pure function of the settings) is what
-decides: it is TAAU **unless** the frame also wires SSR or a composited depth-of-field chain. Those
-two sit between the temporal anchor and the tail and read render-resolution depth beside the scene
-colour, so a resolve that promoted at the anchor would hand them allocation-resolution colour; such a
-frame resolves at the render allocation like TAA and takes the spatial promotion instead. That
-degrades the reconstruction from temporal to spatial and keeps every other property, where the same
-combination previously gave up scaling altogether.
+decides: it is TAAU **unless** the frame also wires a composited depth-of-field chain. The chain sits
+between the temporal anchor and the tail and reads render-resolution depth beside the scene colour,
+so a resolve that promoted at the anchor would hand it allocation-resolution colour; such a frame
+resolves at the render allocation like TAA and takes the spatial promotion instead, which degrades
+the reconstruction from temporal to spatial and keeps every other property. SSR does not constrain
+it: its composite writes the lit target ahead of the resolve, at the render allocation, so a TAAU
+frame with SSR still reconstructs the post-resolve allocation directly (SSR holds the per-frame
+render scale at 1, so the reduction is a static render allocation).
 
 #### Spatial anti-aliasing — FXAA and CMAA2
 
@@ -1475,31 +1480,35 @@ its edges, and the floor keeps over nine tenths of it — read plainly, the pane
 floor keeps half. What it does not change is the trace's own screen-space occlusion: a floor ray
 that passes behind the panel on screen still misses.
 
-#### Under a temporal resolve, a reflection stands at unjittered positions
+#### Under a temporal resolve, a reflection is resolved with the frame
 
-SSR composites after the TAA resolve, which reconstructs the scene at unjittered positions, but the
-g-buffer and depth it traces are the jittered raster. Traced from that raster as it lies, a
-reflection follows the jitter frame to frame — a mirror magnifies it, by most of a pixel — and
-nothing after the resolve integrates it. So the trace and the composite meet the two frames at
-their ends (`ssr_surface.slang`), and with no temporal resolve `JitterNdc` is zero and both ends
-reduce to the texel as rasterized:
+SSR composites into the **lit target ahead of the temporal resolve**, not into its output.
+Everything the trace and the composite read — the depth, the g-buffer, the max-Z pyramid, the lit
+scene colour — and the target they write are the jittered raster, so each texel's surface is its
+own (`ssr_surface.slang`, which still carries a point along its tangent plane where a trace below
+the render resolution sits between g-buffer texels), the ray marches through the jittered
+projection, and the hit is read where the march found it. With no temporal resolve the jitter is
+zero and nothing differs. The resolve then reconstructs the reflection at unjittered positions with
+the rest of the frame. A normal-mapped surface is why it is this way round: each jitter phase
+samples the normal map somewhere else and so turns every reflected ray, and a reflection added after
+the resolve took a different direction at each phase of the period, which nothing integrated — a
+strobe on every glossy normal-mapped surface, camera still or moving.
 
-- **The surface is taken on the pixel's unjittered ray.** The texel holding the pixel's unjittered
-  position is the one the jitter moved it into (`uv + JitterNdc / 2`); its depth and normal are
-  point-loaded, and its point is carried along its tangent plane onto the unjittered ray — exact
-  for a plane at any angle. The carry is capped at 16 texel widths: past that the plane is seen
-  edge-on, where the reflected ray runs almost along the view ray and where it starts barely moves
-  what it hits. The trace, the composite's pixel, and every joint tap take the surface this way.
-- **The march stays in the rasterized frame**, through the jittered projection over the jittered
-  depth and max-Z pyramid, where every depth it compares against lies.
-- **The hit is read back where the resolve put it**, `JitterNdc / 2` from where the march found it,
-  since the scene colour the trace reads is the resolve's output.
+**What the resolve does not do is reproject a reflection by its own motion.** It reprojects a pixel
+by its surface's motion, while a reflected image moves with the reflected geometry's virtual depth.
+A camera turn moves both alike (a rotation's reprojection does not depend on depth), but a camera
+translation does not, and the reflection's history then lags behind it, bounded by the variance
+clip. Measured at landing on a glossy floor reflecting thin emissive bars at 128², as the mean
+deviation from a resolve converged still at each pose, relative to the reflection's level: turns of
+1, 3 and 6° a frame 4.4, 6.7 and 14 % (the directly seen bars 4.8, 6.3 and 8.8 %); sideways moves of
+0.02 and 0.1 m a frame 30 and 40 % (the bars 8.6 and 7.5 %). Reprojecting SSR's own history by the
+hit's virtual depth is the step past it.
 
-What this cannot remove is the raster's own coverage: whether a ray grazing a silhouette hits
-depends on which texels the jittered raster covered, and that moves by up to half a texel a frame.
-`tests/gpu/ssr_jitter.cpp` pins the rest: under TAA, through a whole jitter period, a mirror's
-reflected colour borders — inside a surface, where every ray hits — keep to a fraction of a pixel
-of where the render with no anti-aliasing puts them.
+`tests/gpu/ssr_jitter.cpp` pins the result under TAA: through a whole jitter period, a mirror's
+reflected colour borders keep to a fraction of a pixel of where a render supersampled four times per
+axis puts them (the aliased render is itself 0.2 px off on one of them), and a glossy normal-mapped
+floor's converged reflection changes by under 8 % of its level per frame (4 % at landing; composited
+after the resolve it changed by 28 %).
 
 ### Depth of field and the physical camera
 

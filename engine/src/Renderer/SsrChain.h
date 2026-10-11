@@ -26,9 +26,10 @@ namespace Veng::Renderer
 
     /// @brief Owns the screen-space-reflection chain — scene-color intermediate, mip chains, min-Z pyramid, and sweep.
     ///
-    /// The reflection vertical the renderer wires between lighting and the bloom/tonemap tail: the lit
-    /// scene-color intermediate the trace samples (lighting/TAA writes it, the composite reflects into it
-    /// and writes the HDR target), three mip chains the trace writes level 0 of and the blur low-passes
+    /// The reflection vertical the renderer wires between lighting and the temporal resolve (or, with
+    /// none, the bloom/tonemap tail): the lit scene-color intermediate the trace samples (lighting
+    /// writes it, the composite reflects into it and writes the target the temporal anchor reads),
+    /// three mip chains the trace writes level 0 of and the blur low-passes
     /// down — the reflected radiance and the hit distance, both premultiplied by the trace's
     /// confidence, and the surface each texel's ray left from, premultiplied by its coverage — the
     /// min-Z depth pyramid the hi-Z trace marches, and the four pipelines: min-Z
@@ -86,8 +87,9 @@ namespace Veng::Renderer
         ///
         /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into level 0
         /// of the reflection and hit-distance chains, low-passes both chains for rough reflections,
-        /// then composites the reflection into the HDR target the bloom/tonemap tail reads. Declared
-        /// between the lighting pass and the bloom sweep. Imports the hit-distance and surface chains
+        /// then composites the reflection into the target the temporal anchor reads. Declared after
+        /// the last pass writing the lit scene and ahead of the temporal resolve, or of the bloom
+        /// sweep when no resolve runs. Imports the hit-distance and surface chains
         /// into the graph itself; their per-mip views bind through GetHitDistanceChainId and
         /// GetSurfaceChainId.
         /// @param graph              The renderer's internal graph being rebuilt.
@@ -98,7 +100,7 @@ namespace Veng::Renderer
         /// @param normalId           The G1 world-normal import (declared sampled for barrier order).
         /// @param ormId              The G2 packed occlusion/roughness/metallic import.
         /// @param depthId            The depth import.
-        /// @param hdrId              The HDR target the composite writes.
+        /// @param hdrId              The target the composite writes: the temporal resolve's lit input, else the HDR target.
         /// @param depthHandle        Bindless slot for the depth target.
         /// @param normalHandle       Bindless slot for the G1 normal.
         /// @param ormHandle          Bindless slot for the G2 ORM.
@@ -113,7 +115,7 @@ namespace Veng::Renderer
         /// @brief The lit scene-color intermediate view (bound to its import when SSR is active).
         [[nodiscard]] const Ref<ImageView>& GetSceneView() const { return m_SceneView; }
 
-        /// @brief Bindless slot for the scene-color intermediate (the lighting/TAA write target when SSR is on).
+        /// @brief Bindless slot for the scene-color intermediate (the lighting write target when SSR is on).
         [[nodiscard]] TextureHandle GetSceneHandle() const { return m_SceneHandle; }
 
         /// @brief Bindless slot for the reflection sample view (the Reflections debug arm blits it).
@@ -179,7 +181,7 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_TracePipeline;
         /// @brief Layout for m_TracePipeline (the trace push block).
         Ref<PipelineLayout> m_TraceLayout;
-        /// @brief SSR composite pipeline (fullscreen, writes the HDR target).
+        /// @brief SSR composite pipeline (fullscreen, writes the temporal anchor's input).
         Ref<GraphicsPipeline> m_CompositePipeline;
         /// @brief Layout for m_CompositePipeline (the composite push block).
         Ref<PipelineLayout> m_CompositeLayout;

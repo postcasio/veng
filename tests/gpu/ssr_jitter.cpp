@@ -1,17 +1,19 @@
-// Screen-space reflections under a temporal resolve stand where they stand without one. SSR
-// composites after the resolve, which reconstructs the scene at unjittered positions, so a
-// reflection traced from the jittered frame as it lies would follow the jitter from frame to frame.
-// A mirror floor reflects a dark wall carrying two bright patches set checkerwise, rendered once with
-// no anti-aliasing and then through a whole jitter period under TAA: every frame, the reflection's
-// colour edges — the patches' vertical and horizontal borders, where depth is continuous and every
-// ray hits — keep to a small fraction of a pixel of where the unjittered render puts them.
+// Screen-space reflections under a temporal resolve. SSR composites into the lit scene ahead of the
+// resolve, tracing the jittered frame as it lies, so the resolve integrates a reflection with
+// everything else it reconstructs.
+//  - A mirror floor reflects a dark wall carrying two bright patches set checkerwise, through a
+//    whole jitter period under TAA: every frame, the reflection's colour edges — the patches'
+//    vertical and horizontal borders, where depth is continuous and every ray hits — keep to a
+//    small fraction of a pixel of where a render supersampled four times per axis puts them. Each
+//    measure is the difference between a renderer with SSR and one without under the same
+//    anti-aliasing, so the floor's own shading cancels.
+//  - A glossy normal-mapped metal floor reflects emissive bars: through a whole jitter period, the
+//    converged reflection changes by a small fraction of its level each frame. Each jitter phase
+//    samples the normal map somewhere else, and so turns every reflected ray.
 //
 // A reflected silhouette is not measured: whether a ray grazing one hits depends on the depth
-// buffer's rasterized coverage, which the jitter moves each frame and nothing after the resolve
-// integrates. Every measure is on the linear HDR target the SSR composite writes, as the difference
-// between a renderer with SSR and one without under the same anti-aliasing, so the floor's own
-// shading cancels — the temporal history is the resolve's own output, ahead of the composite, so
-// both renderers carry the same one. Skips cleanly (exit 77) on a machine with no Vulkan ICD.
+// buffer's rasterized coverage, which the jitter moves each frame. Skips cleanly (exit 77) on a
+// machine with no Vulkan ICD.
 
 #include <doctest/doctest.h>
 
@@ -55,16 +57,25 @@ namespace
 
     constexpr uvec2 Extent{128, 128};
 
-    vector<f32> DecodeLuma(const vector<u8>& rgba16f)
+    // The luminance of a linear RGBA16F target `scale` times Extent per axis, box-averaged down to
+    // Extent.
+    vector<f32> DecodeLuma(const vector<u8>& rgba16f, const u32 scale = 1)
     {
         const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
-        vector<f32> luma(static_cast<usize>(Extent.x) * Extent.y);
-        for (usize i = 0; i < luma.size(); ++i)
+        const u32 width = Extent.x * scale;
+        vector<f32> luma(static_cast<usize>(Extent.x) * Extent.y, 0.0f);
+        const f32 share = 1.0f / static_cast<f32>(scale * scale);
+        for (u32 y = 0; y < Extent.y * scale; ++y)
         {
-            const vec3 c(glm::unpackHalf1x16(halves[i * 4 + 0]),
-                         glm::unpackHalf1x16(halves[i * 4 + 1]),
-                         glm::unpackHalf1x16(halves[i * 4 + 2]));
-            luma[i] = glm::dot(c, vec3(0.2126f, 0.7152f, 0.0722f));
+            for (u32 x = 0; x < width; ++x)
+            {
+                const usize i = static_cast<usize>(y) * width + x;
+                const vec3 c(glm::unpackHalf1x16(halves[i * 4 + 0]),
+                             glm::unpackHalf1x16(halves[i * 4 + 1]),
+                             glm::unpackHalf1x16(halves[i * 4 + 2]));
+                luma[static_cast<usize>(y / scale) * Extent.x + x / scale] +=
+                    share * glm::dot(c, vec3(0.2126f, 0.7152f, 0.0722f));
+            }
         }
         return luma;
     }
@@ -154,7 +165,12 @@ namespace
         Unique<SceneRenderer> Traced;
         Unique<SceneRenderer> Plain;
 
-        ReflectionProbe(Context& context, AssetManager& assets, const AntiAliasingMode mode)
+        // Renders at `scale` times Extent per axis, read back box-averaged to Extent.
+        u32 Scale = 1;
+
+        ReflectionProbe(Context& context, AssetManager& assets, const AntiAliasingMode mode,
+                        const u32 scale = 1)
+            : Scale(scale)
         {
             SceneRendererSettings settings{.Mode = DebugView::Final,
                                            .Bloom = false,
@@ -165,13 +181,13 @@ namespace
             Traced = SceneRenderer::Create({.Context = context,
                                             .Assets = assets,
                                             .OutputFormat = context.GetOutputFormat(),
-                                            .Extent = Extent,
+                                            .Extent = Extent * scale,
                                             .Settings = settings});
             settings.SSR = false;
             Plain = SceneRenderer::Create({.Context = context,
                                            .Assets = assets,
                                            .OutputFormat = context.GetOutputFormat(),
-                                           .Extent = Extent,
+                                           .Extent = Extent * scale,
                                            .Settings = settings});
         }
 
@@ -188,8 +204,9 @@ namespace
                     Traced->Execute(cmd, view);
                     Plain->Execute(cmd, view);
                 });
-            const vector<f32> traced = DecodeLuma(Traced->GetHdrView()->GetImage()->Download());
-            vector<f32> plain = DecodeLuma(Plain->GetHdrView()->GetImage()->Download());
+            const vector<f32> traced =
+                DecodeLuma(Traced->GetHdrView()->GetImage()->Download(), Scale);
+            vector<f32> plain = DecodeLuma(Plain->GetHdrView()->GetImage()->Download(), Scale);
             vector<f32> added(traced.size());
             for (usize i = 0; i < added.size(); ++i)
             {
@@ -228,7 +245,7 @@ namespace
                         0.5f * (profile[dark] + profile[bright]));
     }
 
-    // The rows and columns the colour edges are measured over, fixed from the unjittered render:
+    // The rows and columns the colour edges are measured over, fixed from the aliased render:
     // the vertical border across the rows reflecting the wall's lower half, and the horizontal one
     // down the columns reflecting its left half, each between a bright and a dark plateau.
     struct Bands
@@ -278,8 +295,184 @@ namespace
     }
 }
 
+namespace
+{
+    // white_plane_pack's normal-mapped metal (normal_mapped.frag): its NormalMap is a field of
+    // independent per-texel tilts, repeated UVScale times across the plane.
+    constexpr AssetId NormalMappedInstanceId{0xBCAE43829219AE51ULL};
+    // The same pack's brick material, the parent of the emissive bars and the dark wall.
+    constexpr AssetId BrickMaterial{0x000000000000232BULL};
+
+    // A glossy normal-mapped metal floor reflecting five emissive bars standing on it in front of
+    // a dark wall, with no light and no ambient term: everything the floor shows is reflection.
+    struct BarsScene
+    {
+        Unique<Scene> World;
+        vector<Ref<Mesh>> Meshes;
+        AssetHandle<MaterialInstance> Floor;
+        CameraView Camera;
+    };
+
+    AssetHandle<MaterialInstance> MakeBrick(Context& context, AssetManager& assets,
+                                            const char* name, const vec3& colour,
+                                            const vec3& emissive)
+    {
+        const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(BrickMaterial);
+        REQUIRE(parent.has_value());
+        const AssetHandle<MaterialInstance> instance = assets.BuildSync<MaterialInstance>(
+            MaterialInstanceInfo{.Name = name, .Context = &context, .Parent = *parent});
+        REQUIRE(instance.IsLoaded());
+        auto& mat = const_cast<MaterialInstance&>(*instance.Get());
+        mat.SetParam("BaseColorFactor", vec4(colour, 1.0f));
+        mat.SetParam("EmissiveFactor", vec4(emissive, 0.0f));
+        return instance;
+    }
+
+    BarsScene BuildBarsScene(Context& context, AssetManager& assets, TypeRegistry& types,
+                             const f32 normalStrength)
+    {
+        BarsScene built{.World = Scene::Create(types)};
+        const AssetResult<AssetHandle<MaterialInstance>> floor =
+            assets.LoadSync<MaterialInstance>(NormalMappedInstanceId);
+        REQUIRE(floor.has_value());
+        built.Floor = *floor;
+        auto& floorMaterial = const_cast<MaterialInstance&>(*built.Floor.Get());
+        floorMaterial.SetParam("MetallicFactor", 1.0f);
+        floorMaterial.SetParam("RoughnessFactor", 0.05f);
+        floorMaterial.SetParam("UVScale", 0.5f);
+        floorMaterial.SetParam("NormalStrength", normalStrength);
+
+        const auto place = [&](const Ref<Mesh>& mesh, const vec3& position, const quat& rotation)
+        {
+            built.Meshes.push_back(mesh);
+            const Entity entity = built.World->CreateEntity();
+            auto& transform = built.World->Add<Transform>(entity);
+            transform.Position = position;
+            transform.Rotation = rotation;
+            built.World->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+        };
+        place(Mesh::BuildSync(context, Primitives::Plane(vec2(8.0f), uvec2(1), built.Floor),
+                              "Normal-Mapped Floor"),
+              vec3(0.0f), quat(1.0f, 0.0f, 0.0f, 0.0f));
+        const quat upright = glm::angleAxis(glm::radians(90.0f), vec3(1.0f, 0.0f, 0.0f));
+        place(Mesh::BuildSync(context,
+                              Primitives::Plane(
+                                  vec2(6.0f, 2.0f), uvec2(1),
+                                  MakeBrick(context, assets, "Dark Wall", vec3(0.02f), vec3(0.0f))),
+                              "Dark Wall"),
+              vec3(0.0f, 1.0f, -2.0f), upright);
+        const AssetHandle<MaterialInstance> bar =
+            MakeBrick(context, assets, "Bar", vec3(0.0f), vec3(2.0f));
+        for (const f32 x : {-0.8f, -0.4f, 0.0f, 0.4f, 0.8f})
+        {
+            place(Mesh::BuildSync(context, Primitives::Plane(vec2(0.12f, 0.8f), uvec2(1), bar),
+                                  "Bar"),
+                  vec3(x, 0.4f, -1.9f), upright);
+        }
+
+        built.Camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.05f, 100.0f);
+        built.Camera.SetView(vec3(0.0f, 0.6f, 1.5f), vec3(0.0f, 0.15f, -2.0f),
+                             vec3(0.0f, 1.0f, 0.0f));
+        return built;
+    }
+
+    Unique<SceneRenderer> MakeRenderer(Context& context, AssetManager& assets,
+                                       const AntiAliasingMode mode, const bool ssr)
+    {
+        return SceneRenderer::Create({.Context = context,
+                                      .Assets = assets,
+                                      .OutputFormat = context.GetOutputFormat(),
+                                      .Extent = Extent,
+                                      .Settings = {.Mode = DebugView::Final,
+                                                   .Bloom = false,
+                                                   .AntiAliasing = mode,
+                                                   .Shadows = false,
+                                                   .PunctualShadows = false,
+                                                   .SSR = ssr,
+                                                   .AO = false}});
+    }
+
+    // One frame of `renderer` over `scene` from `camera`, as luminance.
+    vector<f32> RenderLuma(const Context& context, SceneRenderer& renderer, const Scene& scene,
+                           const CameraView& camera)
+    {
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(cmd, Renderer::SceneView{.World = scene,
+                                                          .Camera = camera,
+                                                          .Delta = 0.0f,
+                                                          .AmbientFloor = vec3(0.0f),
+                                                          .SsrMaxDistance = 20.0f});
+            });
+        return DecodeLuma(renderer.GetHdrView()->GetImage()->Download());
+    }
+
+    path CookWhitePlane(AssetManager& assets, const char* name)
+    {
+        const path archive = Veng::TestSupport::TempDir() / name;
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        REQUIRE(Veng::TestSupport::CookCached(
+                    cooker, path(GPU_GBUFFER_FIXTURE_DIR) / "white_plane_pack.json", archive, {},
+                    nullptr, nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                    .has_value());
+        REQUIRE(assets.Mount(archive).has_value());
+        return archive;
+    }
+
+    // The floor rows the bars' reflection falls on: below the lowest bar pixel the reflection-free
+    // render shows, clear of the image border.
+    struct FloorBand
+    {
+        u32 FirstRow = 0;
+        u32 LastRow = 0;
+    };
+
+    FloorBand LocateFloor(const vector<f32>& plain)
+    {
+        u32 contact = 0;
+        for (u32 y = 0; y < Extent.y; ++y)
+        {
+            for (u32 x = 0; x < Extent.x; ++x)
+            {
+                contact = At(plain, x, y) > 0.5f ? std::max(contact, y) : contact;
+            }
+        }
+        return {.FirstRow = contact + 3, .LastRow = Extent.y - 3};
+    }
+
+    // The band's mean luminance.
+    f64 BandMean(const vector<f32>& image, const FloorBand& band)
+    {
+        f64 sum = 0.0;
+        for (u32 y = band.FirstRow; y <= band.LastRow; ++y)
+        {
+            for (u32 x = 2; x < Extent.x - 2; ++x)
+            {
+                sum += At(image, x, y);
+            }
+        }
+        return sum / static_cast<f64>((band.LastRow - band.FirstRow + 1) * (Extent.x - 4));
+    }
+
+    // The band's mean absolute difference between two images.
+    f64 BandMeanDelta(const vector<f32>& a, const vector<f32>& b, const FloorBand& band)
+    {
+        f64 sum = 0.0;
+        for (u32 y = band.FirstRow; y <= band.LastRow; ++y)
+        {
+            for (u32 x = 2; x < Extent.x - 2; ++x)
+            {
+                sum += std::abs(At(a, x, y) - At(b, x, y));
+            }
+        }
+        return sum / static_cast<f64>((band.LastRow - band.FirstRow + 1) * (Extent.x - 4));
+    }
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "ssr jitter: a reflection under TAA stands where it stands with no anti-aliasing")
+                  "ssr jitter: a reflection under TAA stands where a supersampled render puts it")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -337,7 +530,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(At(stillAdded, bands.Bright, bands.FirstRow) >
             2.0f * At(stillAdded, bands.Dark, bands.FirstRow));
     REQUIRE(At(stillAdded, left, bands.Above) > 2.0f * At(stillAdded, left, bands.Below));
-    const Edges reference = Locate(stillAdded, bands);
+    // The edges where a render supersampled four times per axis puts them: the aliased render
+    // above quantizes a hard reflected edge to its pixel grid, where the resolve integrates it.
+    ReflectionProbe supersampled(Context, assets, AntiAliasingMode::None, 4);
+    const Edges reference = Locate(supersampled.Render(Context, built).first, bands);
 
     // One period settles the history; the next is measured, so every jitter phase is a frame.
     ReflectionProbe temporal(Context, assets, AntiAliasingMode::TAA);
@@ -356,11 +552,50 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     CAPTURE(verticalWorst);
     CAPTURE(horizontalWorst);
-    // Traced from the jittered frame as it lies, the mirror's horizontal border moves by most of a
-    // pixel between frames; folded onto the unjittered ray, both borders keep to the resolve's own
-    // ripple.
+    // The aliased render puts the horizontal border 0.2 px from the supersampled one; the resolve,
+    // integrating the jittered traces, keeps both borders closer than that (0.13 px at landing).
     CHECK(verticalWorst < 0.25f);
     CHECK(horizontalWorst < 0.25f);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr jitter: a normal-mapped mirror's reflection under TAA holds still through "
+                  "a jitter period")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_normal_mapped.vengpack");
+    const BarsScene built = BuildBarsScene(Context, assets, Types, 0.3f);
+
+    const Unique<SceneRenderer> plain =
+        MakeRenderer(Context, assets, AntiAliasingMode::None, false);
+    const FloorBand band = LocateFloor(RenderLuma(Context, *plain, *built.World, built.Camera));
+    REQUIRE(band.LastRow > band.FirstRow + 16);
+
+    const Unique<SceneRenderer> temporal =
+        MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+    vector<f32> previous;
+    for (u32 frame = 0; frame < 3 * TaaJitterSampleCount; ++frame)
+    {
+        previous = RenderLuma(Context, *temporal, *built.World, built.Camera);
+    }
+    const f64 reflected = BandMean(previous, band);
+    REQUIRE(reflected > 0.01);
+    f64 worst = 0.0;
+    for (u32 frame = 0; frame < TaaJitterSampleCount; ++frame)
+    {
+        vector<f32> current = RenderLuma(Context, *temporal, *built.World, built.Camera);
+        worst = std::max(worst, BandMeanDelta(current, previous, band) / reflected);
+        previous = std::move(current);
+    }
+    CAPTURE(reflected);
+    CAPTURE(worst);
+    // Composited after the resolve, the reflection was traced from each frame's own normals and
+    // changed by 28 % of its level between frames; integrated by the resolve it changes by 4 %
+    // (both measured at landing), the resolve's own ripple on a signal that varies with the jitter.
+    CHECK(worst < 0.08);
 
     std::filesystem::remove(archive);
 }

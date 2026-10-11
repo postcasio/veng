@@ -165,7 +165,7 @@ namespace Veng::Renderer
 
     bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings)
     {
-        return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() && !settings.SSR &&
+        return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() &&
                !settings.DepthOfField;
     }
 

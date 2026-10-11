@@ -198,8 +198,8 @@ TEST_CASE("frame topology: the anti-aliasing mode wires exactly one resolve on F
 
 TEST_CASE("frame topology: the temporal predicates separate TAA from its upscaling mode")
 {
-    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only the
-    // viewport's native-allocation routing (TAAU alone).
+    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only
+    // whether the resolve may be the promotion (TAAU alone).
     SceneRendererSettings settings;
 
     settings.AntiAliasing = AntiAliasingMode::None;
@@ -218,6 +218,28 @@ TEST_CASE("frame topology: the temporal predicates separate TAA from its upscali
     settings.AntiAliasing = AntiAliasingMode::FXAA;
     CHECK_FALSE(settings.UsesTaa());
     CHECK_FALSE(settings.UsesTaaUpscaling());
+}
+
+TEST_CASE("frame topology: a temporal-upscaling resolve promotes unless a composited depth of "
+          "field follows it")
+{
+    SceneRendererSettings settings = ModeOnly(DebugView::Final);
+    settings.AntiAliasing = AntiAliasingMode::TAAU;
+    CHECK(ResolveTemporalUpscalePromotes(settings));
+
+    // SSR composites into the lit target ahead of the resolve, so it leaves the promotion alone.
+    settings.SSR = true;
+    CHECK(ResolveTemporalUpscalePromotes(settings));
+    CHECK(ResolveFrameTopology(settings, SkyTopologyInput{}).TaaUpscalePromotes);
+
+    // The depth-of-field chain reads the resolved scene colour beside render-resolution depth.
+    settings.DepthOfField = true;
+    CHECK_FALSE(ResolveTemporalUpscalePromotes(settings));
+
+    // Plain TAA never promotes at the resolve.
+    settings.DepthOfField = false;
+    settings.AntiAliasing = AntiAliasingMode::TAA;
+    CHECK_FALSE(ResolveTemporalUpscalePromotes(settings));
 }
 
 TEST_CASE("frame topology: every sky source selects exactly one display path")

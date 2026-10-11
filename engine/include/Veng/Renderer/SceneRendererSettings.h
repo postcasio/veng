@@ -136,9 +136,10 @@ namespace Veng::Renderer
     /// result up to the post-resolve allocation: the reconstruction is temporal, the upscale
     /// spatial. TAAU resolves at the post-resolve allocation, so its history is allocation-sized and
     /// **the resolve is the promotion** — a jittered sub-native render accumulated straight into the
-    /// native image, with no second resample behind it. A TAAU frame that also wires SSR or a
-    /// composited depth-of-field chain resolves like TAA instead (those read render-resolution depth
-    /// beside the scene colour), degrading the reconstruction to spatial and keeping everything else.
+    /// native image, with no second resample behind it. A TAAU frame that also wires a composited
+    /// depth-of-field chain resolves like TAA instead (the chain reads render-resolution depth beside
+    /// the resolved scene colour), degrading the reconstruction to spatial and keeping everything
+    /// else. SSR composites ahead of the resolve, so it composes with either.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.
@@ -352,8 +353,9 @@ namespace Veng::Renderer
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
-        /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
-        /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
+        /// passes between lighting and the temporal resolve (or, with none, the bloom/tonemap tail)
+        /// and routes the lit scene color through an intermediate the SSR composite reflects into,
+        /// so a temporal resolve integrates the reflection with the rest of the frame. SsrIntensity / SsrMaxDistance
         /// / SsrThickness / SsrMaxRoughness / SsrMaxSteps are per-frame values on SceneView and do
         /// not recompile.
         /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
@@ -510,9 +512,9 @@ namespace Veng::Renderer
 
         /// @brief Whether the temporal resolve is acting as an upscaler (render below native).
         ///
-        /// TAAU-only: the viewport reads this to pin the allocation to native and route the render
-        /// scale into the rendered sub-rect, so the resolve reconstructs the native image. TAA leaves
-        /// the render scale an allocation scale, so it returns false there.
+        /// TAAU-only: the renderer reads this to let the resolve reconstruct the post-resolve
+        /// allocation directly, as the promotion. Under TAA a spatial promotion follows the resolve,
+        /// so it returns false there.
         /// @return True only for AntiAliasingMode::TAAU.
         [[nodiscard]] bool UsesTaaUpscaling() const
         {

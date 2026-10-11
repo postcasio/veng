@@ -464,8 +464,9 @@ namespace Veng::Renderer
         m_EmissiveId = emissiveId;
 
         // With SSR on, the lit scene color lands in an intermediate the SSR composite reflects
-        // into before writing the HDR target — so SSR slots in exactly where TAA does, and the
-        // bloom/tonemap tail still reads the HDR target unchanged.
+        // into before writing what follows the lit scene: the temporal resolve's lit target, so the
+        // resolve integrates the reflection with the rest of the jittered frame, or with no
+        // temporal resolve the HDR target the bloom/tonemap tail reads.
         m_SsrSceneId = ResourceId{};
         if (m_Topology->SsrActive)
         {
@@ -505,10 +506,10 @@ namespace Veng::Renderer
 
         // The id the HDR tail writes before the DoF composite hands the HDR target on.
         const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
-        const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
-        // The scene chain writes whatever the temporal anchor reads: the lit target under a
-        // temporal resolve, else the scene color directly.
-        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
+        // What the temporal anchor reads: the lit target under a temporal resolve, else the scene
+        // color directly. The SSR composite writes it; without SSR the scene chain does.
+        const ResourceId anchorId = m_Topology->TaaActive ? litId : dofTargetId;
+        const ResourceId lightingTargetId = m_Topology->SsrActive ? m_SsrSceneId : anchorId;
 
         // The pre-bloom post-process effect chain ping-pongs between two HDR targets. The finished
         // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, SSR / point
@@ -619,10 +620,10 @@ namespace Veng::Renderer
 
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
-        const TextureHandle sceneColorHandle =
-            m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle;
+        const TextureHandle anchorHandle =
+            m_Topology->TaaActive ? m_Taa->GetLitHandle() : dofTargetHandle;
         const TextureHandle lightingTargetHandle =
-            m_Topology->TaaActive ? m_Taa->GetLitHandle() : sceneColorHandle;
+            m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : anchorHandle;
 
         ResourceId shadowId{};
         if (m_Topology->ShadowActive)
@@ -694,9 +695,12 @@ namespace Veng::Renderer
         m_SkyMaterialPass = nullptr;
         m_IblCubeDebugPass = nullptr;
 
-        // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
-        // before: the tonemap in the Final arm (set below), else the terminal pass.
+        // The pass index the HDR tail (point fields, bloom sweep, and the SSR composite when no
+        // temporal resolve integrates it) is declared before: the tonemap in the Final arm (set
+        // below), else the terminal pass.
         optional<usize> hdrTailAnchor;
+        // The pass index the SSR chain is declared before under a temporal resolve: the resolve.
+        optional<usize> ssrAnchor;
 
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
@@ -894,15 +898,19 @@ namespace Veng::Renderer
             }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
-            // between lighting and the bloom/tonemap tail.
+            // between lighting and the bloom/tonemap tail. The SSR chain is declared ahead of it,
+            // compositing into the lit target, so the reflection is resolved with the jittered
+            // frame it was traced from rather than added fresh at each jitter phase.
             if (m_Topology->TaaActive)
             {
-                // The resolve writes the scene-color target SSR reads (the HDR target directly
-                // when SSR is off); the SSR composite then writes the HDR target.
+                if (m_Topology->SsrActive)
+                {
+                    ssrAnchor = m_Passes.size();
+                }
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
-                    taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
-                    sceneColorHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
+                    taaHistoryId, dofTargetId, depthId, velocityId, m_Taa->GetLitHandle(),
+                    dofTargetHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
                     m_Taa->GetHistoryResetPointer(), m_Taa->GetExposurePointer(),
                     sceneColorExtent));
             }
@@ -911,7 +919,7 @@ namespace Veng::Renderer
             // as part of the HDR tail — after the TAA resolve and SSR composite, before the bloom
             // sweep — so the fields' additive radiance rolls off through the tone curve and
             // blooms. Declared at the tail anchor (not pushed here), since only the anchor point
-            // sits between the SSR composite and the bloom read of the final HDR target.
+            // sits between the last scene-colour writer and the bloom read of the final HDR target.
             if (m_PointFieldActive)
             {
                 m_PointFieldPass = CreateUnique<PointFieldScenePass>(
@@ -1352,8 +1360,8 @@ namespace Veng::Renderer
             m_GpuCull->DeclareCull(graph, &m_Internal->Plan);
         }
 
-        // The HDR tail — SSR composite, point fields, bloom sweep — is declared just before the
-        // pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
+        // The HDR tail — point fields, bloom sweep, and the SSR chain when no temporal resolve
+        // follows it — is declared just before the pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
         // debug arm. Anchoring on that pass (not the list's last) keeps the tail ahead of the
         // tonemap even when a post-tonemap pass (DebugDraw) follows, since execution follows
         // declaration order.
@@ -1363,20 +1371,24 @@ namespace Veng::Renderer
             const Unique<ScenePass>& pass = m_Passes[i];
             pass->Configure(m_Settings);
 
+            // SSR composes the reflected scene color into the target the temporal anchor reads:
+            // ahead of the resolve when one runs, else at the head of the HDR tail.
+            const bool declareSsr = m_Topology->SsrActive &&
+                                    (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
+            if (declareSsr)
+            {
+                m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
+                               m_AlbedoId, m_NormalId, m_OrmId, m_DepthId, anchorId, m_DepthHandle,
+                               m_NormalHandle, m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
+            }
+
             if (i == tailAnchor)
             {
-                // SSR composes the reflected scene color into the HDR target; the point fields
-                // accumulate over that; the bloom sweep then reads the finished HDR.
-                if (m_Topology->SsrActive)
-                {
-                    m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
-                                   m_AlbedoId, m_NormalId, m_OrmId, m_DepthId, dofTargetId,
-                                   m_DepthHandle, m_NormalHandle, m_OrmHandle, m_AlbedoHandle,
-                                   m_SamplerHandle);
-                }
+                // The point fields accumulate over the finished scene color; the bloom sweep then
+                // reads the finished HDR.
                 if (m_PointFieldPass != nullptr)
                 {
-                    // The fields write the last scene-color target of the tail, not the pre-TAA/SSR
+                    // The fields write the last scene-color target of the tail, not the pre-resolve
                     // lit target the in-list passes see as io.Hdr.
                     PassIO fieldIo = io;
                     fieldIo.Hdr = dofTargetId;
