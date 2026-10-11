@@ -1,10 +1,10 @@
 // The GGX lobe is evaluated in full, a light's size widens it, specular anti-aliasing widens it by
-// how far the normal varies across a pixel, and the lighting output is guarded against the
-// half-float overflow a full-strength lobe can reach. A flat white metal plane is framed on a light's
-// mirror reflection — a plane rather than a sphere, so a texel's angle on screen is its angle in
-// reflection and the brightest texel sits on the peak. The lit HDR scene colour is read before
-// tonemap, since the tonemapped output clamps to [0, 1] and can show neither the peak nor an
-// overflow.
+// how far the normal varies across a pixel and by the spread a normal map's mips average away, and
+// the lighting output is guarded against the half-float overflow a full-strength lobe can reach. A
+// flat white metal plane is framed on a light's mirror reflection — a plane rather than a sphere,
+// so a texel's angle on screen is its angle in reflection and the brightest texel sits on the
+// peak. The lit HDR scene colour is read before tonemap, since the tonemapped output clamps to
+// [0, 1] and can show neither the peak nor an overflow.
 
 #include <algorithm>
 #include <array>
@@ -18,6 +18,7 @@
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -53,6 +54,12 @@ namespace
     // The same pack's rippled material: the white metal with its shading normal tilted by a
     // sinusoid along both UV axes (rippled.frag), off until its RippleAmplitude is set.
     constexpr AssetId RippledInstanceId{0x80DA3AB8EEC00A11ULL};
+    // The same pack's normal-mapped material: the white metal with its normal read from NormalMap,
+    // repeated UVScale times, and its roughness widened by the map's normal variance
+    // (normal_mapped.frag). Its NormalMap is a field of independent per-texel tilts.
+    constexpr AssetId NormalMappedInstanceId{0xBCAE43829219AE51ULL};
+    // A flat normal map in the same pack, bound over the noisy one where a case wants no spread.
+    constexpr AssetId FlatNormalMapId{0xC309A32A3DDFD270ULL};
 
     // The largest finite channel value across the lit HDR target, and whether every texel is finite.
     struct HdrScan
@@ -106,6 +113,8 @@ namespace
         Entity Sun;
         // The view's specular anti-aliasing variance scale; unset renders at the view's default.
         std::optional<f32> SpecularAaVariance;
+        // The view's normal-map specular anti-aliasing scale; unset renders at the view's default.
+        std::optional<f32> NormalMapAaScale;
         // The flat ambient arm's floor; zero leaves a metal lit by its reflection of the light alone.
         vec3 AmbientFloor{0.0f};
     };
@@ -159,6 +168,10 @@ namespace
         if (mirror.SpecularAaVariance.has_value())
         {
             view.SpecularAntiAliasingVariance = *mirror.SpecularAaVariance;
+        }
+        if (mirror.NormalMapAaScale.has_value())
+        {
+            view.NormalMapAntiAliasingScale = *mirror.NormalMapAaScale;
         }
         context.ImmediateCommands([&](CommandBuffer& cmd) { mirror.Renderer->Execute(cmd, view); });
         const Ref<ImageView> hdr = mirror.Renderer->GetHdrView();
@@ -585,6 +598,87 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(silhouette > 20u);
     CHECK(silhouetteChanged == 0u);
     CHECK(interiorChanged > 0u);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "normal-map specular anti-aliasing: a flat normal map renders identically with it on "
+    "and off")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_normal_map_aa_flat.vengpack";
+    const AssetHandle<MaterialInstance> material =
+        LoadWhiteMetal(assets, archive, NormalMappedInstanceId);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+    const AssetResult<AssetHandle<Texture>> flat = assets.LoadSync<Texture>(FlatNormalMapId);
+    REQUIRE(flat.has_value());
+    instance.SetTexture("NormalMap", *flat);
+    instance.SetParam("RoughnessFactor", 0.04f);
+    instance.SetParam("UVScale", 64.0f);
+    mirror.World->Get<Light>(mirror.Sun).Intensity = 1.0f / LuminousAnchor;
+
+    // A flat map's normals spread at no level, so its companion stores zero throughout and the
+    // floor-roughness glint is untouched.
+    const vector<u8> on = RenderHdr(Context, mirror);
+    mirror.NormalMapAaScale = 0.0f;
+    const vector<u8> off = RenderHdr(Context, mirror);
+    CHECK(ScanHdr(on).Max > 1.0f);
+    CHECK(on == off);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "normal-map specular anti-aliasing: a minified glossy normal map's highlight "
+                  "holds its energy under sub-pixel moves")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_normal_map_aa_noise.vengpack";
+    const AssetHandle<MaterialInstance> material =
+        LoadWhiteMetal(assets, archive, NormalMappedInstanceId);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material, WideFraming);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+
+    // A glossy metal under a point-sized sun, its normal map of independent per-texel tilts (about
+    // 14 degrees) repeated so that a pixel covers several texels: the mips sampled there have
+    // averaged most of the tilt away, and what each keeps varies texel to texel by more than the
+    // bare lobe is wide, so which pixels catch the light depends on where the texels fall.
+    instance.SetParam("RoughnessFactor", 0.1f);
+    instance.SetParam("UVScale", 88.0f);
+    mirror.World->Get<Light>(mirror.Sun).Intensity = 1.0f / LuminousAnchor;
+
+    // Four quarter-texel moves sideways, as the rippled mirror's case makes.
+    const vec3 eye = glm::normalize(vec3(0.0f, 1.0f, -1.0f)) * 4.0f;
+    const f32 texel = 2.0f * 4.0f * std::tan(0.5f * mirror.Framing.FovY) /
+                      static_cast<f32>(mirror.Framing.Extent.x);
+    f64 lowest = 0.0;
+    f64 highest = 0.0;
+    f64 sum = 0.0;
+    constexpr u32 Steps = 4;
+    for (u32 step = 0; step < Steps; ++step)
+    {
+        const vec3 shift(0.25f * static_cast<f32>(step) * texel, 0.0f, 0.0f);
+        mirror.Camera.SetView(eye + shift, shift, vec3(0.0f, 1.0f, 0.0f));
+        const f64 energy = ReflectedEnergy(
+            DecodeHdr(RenderHdr(Context, mirror), mirror.Framing.Extent), mirror.Framing.FovY);
+        lowest = step == 0 ? energy : std::min(lowest, energy);
+        highest = step == 0 ? energy : std::max(highest, energy);
+        sum += energy;
+    }
+
+    // The lobe widened by what the mips averaged away covers the spread the texels hide, so the
+    // energy the frame catches is the surface's rather than the sample grid's. Measured at landing
+    // swinging 0.008 % across the moves, where the unwidened lobe swung 5.5 %; 0.5 % leaves room for
+    // driver rounding and still fails a lobe that sparkles.
+    REQUIRE(lowest > 0.0);
+    CHECK((highest - lowest) <= 0.005 * (sum / Steps));
 
     std::filesystem::remove(archive);
 }

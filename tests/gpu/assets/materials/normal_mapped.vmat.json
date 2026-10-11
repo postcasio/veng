@@ -1,0 +1,49 @@
+{
+  "defaultInstance": "0xBCAE43829219AE51",
+  "shaders": {
+    "vertex": "0x000000000000238D",
+    "fragment": "0x291DE3AF50597E0E"
+  },
+  "fields": [
+    {
+      "name": "BaseColor",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "BaseColorSampler",
+      "type": "sampler",
+      "texture": "BaseColor"
+    },
+    {
+      "name": "NormalMap",
+      "type": "texture",
+      "id": "0x87C17BCFD385078B"
+    },
+    {
+      "name": "NormalMapSampler",
+      "type": "sampler",
+      "texture": "NormalMap"
+    },
+    {
+      "name": "MetallicFactor",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "RoughnessFactor",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "UVScale",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "NormalStrength",
+      "type": "float",
+      "value": 1.0
+    }
+  ]
+}

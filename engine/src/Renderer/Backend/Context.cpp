@@ -488,6 +488,14 @@ namespace Veng::Renderer
                                                    })
                                                    .value;
         }
+
+        // The setup work the services above recorded while no command buffer was open (the
+        // registry's zero normal-variance image) runs here, so a context hands its first frame or
+        // immediate submit nothing of its own and drops the staging it used.
+        if (!m_PendingSetupCommands.empty())
+        {
+            ImmediateCommands([](CommandBuffer&) {});
+        }
     }
 
     void Context::ReleaseFrameResources()

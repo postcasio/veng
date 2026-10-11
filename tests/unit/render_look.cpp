@@ -52,6 +52,7 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(defaults.AutoExposureHighPercentile));
     CHECK(view.SpecularAntiAliasingVariance == defaults.SpecularAntiAliasingVariance);
     CHECK(view.SpecularAntiAliasingThreshold == defaults.SpecularAntiAliasingThreshold);
+    CHECK(view.NormalMapAntiAliasingScale == defaults.NormalMapAntiAliasingScale);
 }
 
 TEST_CASE("ApplyRenderLook clamps the authored depth-of-field quality knobs")
@@ -136,6 +137,7 @@ namespace
         look.SsrMaxSteps = 640;
         look.SpecularAntiAliasingVariance = 0.45f;
         look.SpecularAntiAliasingThreshold = 0.35f;
+        look.NormalMapAntiAliasingScale = 0.6f;
         look.DofFocusDistance = 4.0f;
         look.DofAperture = 0.03f;
         look.DofMaxCoc = 9.0f;
@@ -186,6 +188,7 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.SsrMaxSteps == direct.SsrMaxSteps);
     CHECK(carried.SpecularAntiAliasingVariance == direct.SpecularAntiAliasingVariance);
     CHECK(carried.SpecularAntiAliasingThreshold == direct.SpecularAntiAliasingThreshold);
+    CHECK(carried.NormalMapAntiAliasingScale == direct.NormalMapAntiAliasingScale);
     CHECK(carried.DofFocusDistance == direct.DofFocusDistance);
     CHECK(carried.DofAperture == direct.DofAperture);
     CHECK(carried.DofMaxCoc == direct.DofMaxCoc);

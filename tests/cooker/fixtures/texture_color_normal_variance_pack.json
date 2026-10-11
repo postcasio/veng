@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xFCAEAA1909082DDF",
+      "type": "Texture",
+      "source": "textures/color_normal_variance.tex.json"
+    }
+  ]
+}

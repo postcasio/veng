@@ -237,6 +237,16 @@ transcode: on a device lacking the cooked codec's feature the loader logs **once
 recoverable `AssetError::Unsupported`, so the affected materials sample their fallback (untextured)
 and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC device) would diverge.
 
+**A normal map loads with its normal-variance companion.** A cooked `Normal`-role texture carries a
+second chain after its own (`CookedTextureHeader::VarianceFormat`), which `TextureLoader` uploads into
+a second image at the same extent and level count — capped by the same mip skip, so the two stay level
+for level — and `Texture::Finalize` registers beside the texture (`BindlessRegistry::Register(view,
+normalVariance)`). A shader then reads it through the normal-variance array at the texture's own
+handle (see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Normal-map specular anti-aliasing"). A
+companion in a codec the device cannot sample is left off with a one-time warning rather than failing
+the texture; a runtime-built `TextureData` may carry one through `NormalVarianceFormat` /
+`NormalVariancePixels`.
+
 **A global texture-quality mip cap drops the top mips at upload.** `AssetManager::SetTextureQualityMipSkip(level)`
 holds a global mip-skip level the `TextureLoader` reads when it builds a texture: a **cappable**
 texture (the cooked `CookedTextureHeader::MipCappable` flag, stamped by the cooker from the

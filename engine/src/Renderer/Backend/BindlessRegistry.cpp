@@ -1,6 +1,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 
@@ -177,6 +178,13 @@ namespace Veng::Renderer
                          .Type = DescriptorType::StorageBuffer,
                          .Count = 1,
                          .Stages = ShaderStage::All},
+                        // The normal-variance array: slot i is the companion of the texture at
+                        // sampled-image slot i, so a shader reaches it with the texture's handle.
+                        {.Binding = NormalVarianceBinding,
+                         .Type = DescriptorType::SampledImage,
+                         .Count = MaxTextures,
+                         .Stages = ShaderStage::All,
+                         .Bindless = true},
                     },
             });
 
@@ -266,6 +274,35 @@ namespace Veng::Renderer
         m_Set->Write(AreaVertexBinding, m_AreaVertexBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
+        m_NormalVariance.resize(MaxTextures);
+
+        // What a texture slot without a companion reads: one texel of zero. Its copy is setup work,
+        // recorded ahead of the first frame or immediate submit, before anything can sample it.
+        const Ref<Image> zeroImage =
+            Image::Create(context, {
+                                       .Name = "Bindless Zero Normal Variance",
+                                       .Extent = {1, 1, 1},
+                                       .Format = Format::R8Unorm,
+                                       .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                   });
+        m_ZeroNormalVariance = ImageView::Create(
+            context, {.Name = "Bindless Zero Normal Variance", .Image = zeroImage});
+        const Ref<Buffer> zeroStaging =
+            Buffer::Create(context, {
+                                        .Name = "Bindless Zero Normal "
+                                                "Variance (Upload)",
+                                        .Size = 4,
+                                        .Usage = BufferUsage::TransferSrc,
+                                    });
+        const std::array<u8, 4> zero{};
+        zeroStaging->UploadSync(zero);
+        context.RecordSetupCommands(
+            [view = m_ZeroNormalVariance, zeroStaging](CommandBuffer& cmd)
+            {
+                cmd.PrepareForAccess(view, AccessKind::TransferDst);
+                cmd.CopyBufferToImage(zeroStaging, view->GetImage());
+                cmd.PrepareForAccess(view, AccessKind::SampleAny);
+            });
         m_Volumes.Init(MaxVolumes, m_FramesInFlight);
         m_Cubes.Init(MaxCubes, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
@@ -288,6 +325,25 @@ namespace Veng::Renderer
         const vk::WriteDescriptorSet write{
             .dstSet = GetVkDescriptorSet(*m_Set),
             .dstBinding = TextureBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::SampledImage),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    void BindlessRegistry::WriteNormalVariance(u32 index, const Ref<ImageView>& view) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = GetVkImageView(*view),
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_Set),
+            .dstBinding = NormalVarianceBinding,
             .dstArrayElement = index,
             .descriptorCount = 1,
             .descriptorType = ToVk(DescriptorType::SampledImage),
@@ -396,6 +452,12 @@ namespace Veng::Renderer
 
     TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled)
     {
+        return Register(sampled, nullptr);
+    }
+
+    TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled,
+                                             const Ref<ImageView>& normalVariance)
+    {
         VE_ASSERT(sampled->GetViewType() == ImageViewType::Type2D,
                   "BindlessRegistry::Register: view '{}' is not Type2D — a 3D view uses "
                   "RegisterVolume and a cube view RegisterCube, so no non-2D descriptor enters "
@@ -403,7 +465,25 @@ namespace Veng::Renderer
                   sampled->GetName());
         const u32 index = m_Textures.Allocate(sampled, "texture");
         WriteTexture(index, sampled);
-        return TextureHandle{index};
+        const TextureHandle handle{index};
+        SetNormalVariance(handle, normalVariance);
+        return handle;
+    }
+
+    void BindlessRegistry::SetNormalVariance(const TextureHandle handle,
+                                             const Ref<ImageView>& normalVariance)
+    {
+        VE_ASSERT(handle.IsValid() && handle.Index < MaxTextures &&
+                      m_Textures.Slots[handle.Index] != nullptr,
+                  "BindlessRegistry::SetNormalVariance: texture slot {} is not registered",
+                  handle.Index);
+        VE_ASSERT(normalVariance == nullptr ||
+                      normalVariance->GetViewType() == ImageViewType::Type2D,
+                  "BindlessRegistry::SetNormalVariance: view '{}' is not Type2D",
+                  normalVariance != nullptr ? normalVariance->GetName() : string());
+        m_NormalVariance[handle.Index] = normalVariance;
+        WriteNormalVariance(handle.Index,
+                            normalVariance != nullptr ? normalVariance : m_ZeroNormalVariance);
     }
 
     VolumeHandle BindlessRegistry::RegisterVolume(const Ref<ImageView>& volume)
@@ -1046,6 +1126,11 @@ namespace Veng::Renderer
 
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
     {
+        // A reclaimed texture slot lets go of its companion with it.
+        for (const u32 index : m_Textures.PendingRelease[frameInFlight])
+        {
+            m_NormalVariance[index].reset();
+        }
         m_Textures.OnFrameAcquired(frameInFlight);
         m_Volumes.OnFrameAcquired(frameInFlight);
         m_Cubes.OnFrameAcquired(frameInFlight);

@@ -148,6 +148,10 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::SpecularAntiAliasingThreshold
         f32 SpecularAntiAliasingThreshold = 0.2f;
+        /// @brief Normal-map specular anti-aliasing's scale; zero turns it off.
+        ///
+        /// @see SceneView::NormalMapAntiAliasingScale
+        f32 NormalMapAntiAliasingScale = 1.0f;
         /// @brief Depth-of-field focus plane distance in metres.
         ///
         /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by
@@ -1441,6 +1445,11 @@ VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA variance",
 VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA threshold",
          .Tooltip = "Ceiling on the roughness (alpha squared) specular anti-aliasing adds",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Anti-aliasing")
+VE_FIELD(NormalMapAntiAliasingScale, .DisplayName = "Normal-map AA scale",
+         .Tooltip = "Scale on the normal variance a normal map's mips average away; zero turns "
+                    "normal-map specular anti-aliasing off",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 2.0},
          .Category = "Anti-aliasing")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF focus distance",
          .Display = {.Min = 0.01, .Max = 1000.0}, .Category = "Depth of field")

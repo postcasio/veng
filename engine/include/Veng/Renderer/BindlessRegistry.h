@@ -253,7 +253,8 @@ namespace Veng::Renderer
     /// torn down — and reachable via Context::GetBindlessRegistry().
     ///
     /// Provides four arrayed, partiallyBound + updateAfterBind bindings (sampled
-    /// images, samplers, storage images, byte-address storage buffers). Register() allocates a free-list slot,
+    /// images, samplers, storage images, byte-address storage buffers), plus a normal-variance
+    /// array that shadows the sampled images slot for slot. Register() allocates a free-list slot,
     /// writes the resource into that slot, keeps a Ref so the resource cannot dangle
     /// while a live handle still names it, and returns a typed handle. Release()
     /// defers reclaiming the slot until Context::AcquireNextFrame() has cycled past
@@ -281,6 +282,27 @@ namespace Veng::Renderer
         /// @pre The view is a Type2D view — the set-0 array is uniformly 2D, and a non-2D view
         /// belongs in RegisterVolume / RegisterCube (asserted).
         [[nodiscard]] TextureHandle Register(const Ref<ImageView>& sampled);
+
+        /// @brief Registers a 2D sampled image view with its normal-variance companion.
+        ///
+        /// The companion is written into the normal-variance array (NormalVarianceBinding) at the
+        /// slot the texture takes, so a shader holding the texture's handle samples both. A null
+        /// @p normalVariance is Register(sampled): the slot's variance reads zero.
+        /// @param sampled         The texture's view.
+        /// @param normalVariance  Its companion: single-channel, the texture's extent and mip
+        ///                        count, encoded as Veng/Asset/NormalVariance.h describes; or null.
+        /// @pre Both views are Type2D (asserted).
+        [[nodiscard]] TextureHandle Register(const Ref<ImageView>& sampled,
+                                             const Ref<ImageView>& normalVariance);
+
+        /// @brief Points a registered texture's slot at a normal-variance companion, or back at
+        ///        zero.
+        ///
+        /// For a texture whose companion is produced after it is registered, or replaced while it
+        /// stays registered (a map recomputed in place).
+        /// @param handle          A live texture handle.
+        /// @param normalVariance  The companion, as for Register; null makes the slot read zero.
+        void SetNormalVariance(TextureHandle handle, const Ref<ImageView>& normalVariance);
 
         /// @brief Registers a 3D sampled image view into the volume set and returns its handle.
         ///
@@ -666,6 +688,13 @@ namespace Veng::Renderer
         static constexpr u32 LightBinding = 6;
         /// @brief Binding index for the area-light polygon-vertex buffer.
         static constexpr u32 AreaVertexBinding = 7;
+        /// @brief Binding index for the normal-variance array, parallel to the sampled-image array.
+        ///
+        /// Slot i holds the normal-variance companion of the texture registered at sampled-image
+        /// slot i, or a one-texel image reading zero when it has none, so a shader samples a
+        /// normal map's variance with the normal map's own handle, sampler and coordinates and
+        /// needs no second handle. MaxTextures entries, written only for registered slots.
+        static constexpr u32 NormalVarianceBinding = 8;
 
         /// @brief Maximum registered sampled images.
         static constexpr u32 MaxTextures = 1024;
@@ -832,6 +861,8 @@ namespace Veng::Renderer
 
         /// @brief Writes a 2D sampled image view into the descriptor set at the given texture slot.
         void WriteTexture(u32 index, const Ref<ImageView>& view) const;
+        /// @brief Writes a normal-variance view into the normal-variance array at the given slot.
+        void WriteNormalVariance(u32 index, const Ref<ImageView>& view) const;
         /// @brief Writes a 3D sampled image view into the volume set at the given slot.
         void WriteVolume(u32 index, const Ref<ImageView>& view) const;
         /// @brief Writes a cube sampled image view into the cube set at the given slot.
@@ -892,6 +923,13 @@ namespace Veng::Renderer
 
         /// @brief Slot allocator for the sampled-image array.
         SlotArray m_Textures;
+        /// @brief The normal-variance companion each texture slot holds, null where it reads zero.
+        ///
+        /// Indexed like m_Textures and kept alive with it; a slot's entry is dropped when the
+        /// texture slot is reclaimed.
+        vector<Ref<ImageView>> m_NormalVariance;
+        /// @brief The one-texel image every texture slot without a companion reads as zero variance.
+        Ref<ImageView> m_ZeroNormalVariance;
         /// @brief Slot allocator for the 3D sampled-image (volume) array.
         SlotArray m_Volumes;
         /// @brief Slot allocator for the cube sampled-image array.

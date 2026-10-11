@@ -153,6 +153,7 @@ set_source_files_properties(
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
         ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
         src/Importers/TextureImporter.cpp
+        src/Importers/NormalVariance.cpp
         # The FontImporter drives the msdfgen MSDF render, another third-party hot loop the cook
         # runs at wall-clock cost; optimize it in Debug for the same reason.
         src/Importers/FontImporter.cpp
@@ -295,6 +296,7 @@ add_library(veng_cook_objs OBJECT
         src/CoreImporters.cpp
         src/Importers/RawImporter.cpp
         src/Importers/TextureImporter.cpp
+        src/Importers/NormalVariance.cpp
         src/Importers/MeshImporter.cpp
         src/Importers/ShaderImporter.cpp
         src/Importers/MaterialFieldEntry.cpp
@@ -371,6 +373,7 @@ set_source_files_properties(
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
         src/Importers/TextureImporter.cpp
+        src/Importers/NormalVariance.cpp
         src/Importers/FontImporter.cpp
         src/Importers/AudioImporter.cpp
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp

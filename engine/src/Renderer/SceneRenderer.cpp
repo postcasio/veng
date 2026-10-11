@@ -2499,10 +2499,10 @@ namespace Veng::Renderer
                     uvec4(m_LtcMatHandle.Index, m_LtcMagHandle.Index, m_SamplerHandle.Index,
                           m_SkyResolver->GetIbl().GetPrefilterMipCount()),
                 .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
-                .AmbientParams =
-                    vec4(resolvedView.SkylightIntensity,
-                         std::max(resolvedView.SpecularAntiAliasingVariance, 0.0f),
-                         std::max(resolvedView.SpecularAntiAliasingThreshold, 0.0f), 0.0f),
+                .AmbientParams = vec4(resolvedView.SkylightIntensity,
+                                      std::max(resolvedView.SpecularAntiAliasingVariance, 0.0f),
+                                      std::max(resolvedView.SpecularAntiAliasingThreshold, 0.0f),
+                                      std::max(resolvedView.NormalMapAntiAliasingScale, 0.0f)),
                 // The renderer executes once per frame, so the frame-in-flight index selects a mask
                 // region no frame still on the GPU reads.
                 .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,

@@ -45,6 +45,14 @@ namespace Veng
         Renderer::SamplerInfo Sampler;
         /// @brief Channel convention of the stored pixels (Direct, or the XY-only normal layout).
         CookedChannelLayout ChannelLayout = CookedChannelLayout::Direct;
+        /// @brief Format of the normal-variance companion; Undefined when the texture has none.
+        Renderer::Format NormalVarianceFormat = Renderer::Format::Undefined;
+        /// @brief The companion's pixels: MipLevels levels at Extent, tightly packed largest-first.
+        ///
+        /// A tangent-space normal map's per-level normal spread (Veng/Asset/NormalVariance.h),
+        /// registered beside the texture so a shader samples it with the texture's own handle.
+        /// Ignored while NormalVarianceFormat is Undefined.
+        std::span<const u8> NormalVariancePixels;
     };
 
     /// @brief An Image + ImageView + Sampler, sampled bindlessly (set 0) after Finalize() registers it.
@@ -90,6 +98,18 @@ namespace Veng
         /// reconstructs (a BC5 two-channel normal or an ASTC XY-packed normal); Direct is
         /// every other texture.
         [[nodiscard]] CookedChannelLayout GetChannelLayout() const { return m_ChannelLayout; }
+
+        /// @brief Returns whether the texture carries a normal-variance companion.
+        ///
+        /// A shader reads it through the normal-variance array at this texture's handle; a texture
+        /// without one reads zero there.
+        [[nodiscard]] bool HasNormalVariance() const { return m_NormalVarianceView != nullptr; }
+
+        /// @brief Returns the normal-variance companion's view, or null when the texture has none.
+        [[nodiscard]] const Ref<Renderer::ImageView>& GetNormalVarianceView() const
+        {
+            return m_NormalVarianceView;
+        }
 
         /// @brief Returns the bindless texture handle (valid after Finalize()).
         [[nodiscard]] Renderer::TextureHandle GetHandle() const { return m_TextureHandle; }
@@ -143,6 +163,10 @@ namespace Veng
 
         Ref<Renderer::Image> m_Image;
         Ref<Renderer::ImageView> m_View;
+        /// @brief The normal-variance companion's image; null when the texture carries none.
+        Ref<Renderer::Image> m_NormalVarianceImage;
+        /// @brief The companion's full-chain view, registered beside m_View.
+        Ref<Renderer::ImageView> m_NormalVarianceView;
 
         /// @brief The sampling settings Finalize() asks the registry's shared cache for.
         Renderer::SamplerInfo m_SamplerInfo;

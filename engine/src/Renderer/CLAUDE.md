@@ -311,6 +311,34 @@ derivatives resolve and is a normal map's to pre-filter. `tests/gpu/specular_lob
 flat mirror renders identically with it on and off, that a rippled mirror's reflected energy holds
 under a half-pixel move, and that a sphere's silhouette texels shade as with it off.
 
+**Normal-map specular anti-aliasing widens the lobe by what a normal map's mips averaged away.** The
+geometric term sees only how the shading normal changes *between* pixels. Minify a finely detailed
+normal map and its mips average the detail inside each texel into one smoother normal, so the normal
+the pixel shades with varies little between pixels while the surface it stands for is rough — a
+glossy lobe narrower than that hidden spread lands on a pixel one frame and misses it the next, and
+the classic runtime repair (Toksvig's, from the shortened length of a mip-averaged normal) is not
+available, since a cooked normal map stores only X/Y. So the spread is measured at cook time: a
+`Normal`-role texture carries a **normal-variance companion**, one single-channel value per texel of
+every level — the alpha² a von Mises-Fisher lobe fitted to the normals that texel averages must gain
+(`Veng/normal_variance.slang`, `Veng/Asset/NormalVariance.h`), stored as its fourth root — and the
+registry writes it into the **normal-variance array** (`g_NormalVariance`, set 0 binding 8) at the
+normal map's own slot. A material samples it with the normal map's handle, sampler and coordinates
+(`SampleNormalVariance` / `SampleNormalVarianceGrad`, `Veng/surface.slang`), so the hardware picks
+the same level, and widens the roughness it writes or shades with once,
+`alpha² += SceneView::NormalMapAntiAliasingScale · variance` (`WidenRoughnessForNormalMap`; default
+1, zero off, carried in `AmbientParams.w`), scaling the variance by the square of any deflection
+strength it applies. **The two widenings sum in alpha² and do not double-count**: the companion holds
+the spread *inside* the sampled texels, the geometric term the variation *across* the pixel, so a
+magnified map (level 0, no companion spread) leaves the geometric term alone and a strongly minified
+one (smooth between pixels) leaves the companion's term carrying the widening; where both see some,
+they are the two halves of the law of total variance. The companion's term is bounded only by a fully
+rough lobe, the geometric one by `κ`. It costs one fetch per normal-mapped surface, and a texture with
+no companion — any non-`Normal` texture, a runtime-built one, a single-level map — reads zero, so its
+material shades exactly as without it. `tests/gpu/specular_lobe.cpp` pins that a flat normal map
+renders identically with it on and off, and that a minified glossy plane under a noisy normal map
+holds its reflected energy across sub-pixel moves (measured at landing: 0.008 % against 5.5 %
+unwidened).
+
 ### Anti-aliasing
 
 **`Settings.AntiAliasing` is one mutually-exclusive `AntiAliasingMode`** — `None` (default), `FXAA`,
@@ -1680,8 +1708,9 @@ buffer rings the same way.
 **Per-frame shading values ride the block, not a recompile.** `AmbientParams.x` carries the SH
 skylight arm's intensity, and `.y` / `.z` the geometric specular anti-aliasing variance scale and
 threshold (`SceneView::SpecularAntiAliasingVariance` / `SpecularAntiAliasingThreshold`, clamped to
-non-negative), read by `MakeLightingSurface`; `.w` is unused. A view block a pass writes without them
-(zero) shades with the widening off.
+non-negative), read by `MakeLightingSurface`; `.w` the normal-map specular anti-aliasing scale
+(`SceneView::NormalMapAntiAliasingScale`, clamped likewise), read by `WidenRoughnessForNormalMap`. A
+view block a pass writes without them (zero) shades with both widenings off.
 
 **The block carries the view's frame count and its temporal resolve.** `FrameIndex` is the
 renderer's executed-frame counter (the one the TAA jitter sequence reads), wrapped to 32 bits; each
@@ -3057,6 +3086,13 @@ slot reclaim through the same per-frame retire window. **`PipelineLayout` reserv
 pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`), not per draw —
 draws select array elements via push-constant indices. Sets 1 and 2 are the registry's volume and
 cube arrays, so author-declared descriptor sets shift to **set 3+** (`BindlessRegistry::FirstUserSet`).
+
+**Binding 8 is the normal-variance array**, a second sampled-image array shadowing the texture array
+slot for slot: `Register(view, normalVariance)` writes a texture's companion there and `Register(view)`
+the registry's one-texel zero image, so a shader reads any texture's normal variance with that
+texture's own handle and a texture without one reads zero. `SetNormalVariance` re-points a registered
+slot (a map recomputed in place). The companion's `Ref` is held per slot and dropped when the texture
+slot is reclaimed.
 
 **The registry reports its occupancy, not only its headroom.** `GetFreeSlots()` gives the seven
 arrays' free counts (`BindlessCapacity`); `DescribeSlots(BindlessArray)` gives one array's slots in

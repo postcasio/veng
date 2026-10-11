@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x468134B04010819A",
+      "type": "Texture",
+      "source": "textures/normal_flat.tex.json"
+    },
+    {
+      "id": "0xCB350F990ECBD4D6",
+      "type": "Texture",
+      "source": "textures/normal_checker.tex.json"
+    },
+    {
+      "id": "0x51143EF89C7B374B",
+      "type": "Texture",
+      "source": "textures/normal_checker_novariance.tex.json"
+    }
+  ]
+}

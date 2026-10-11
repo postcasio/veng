@@ -56,7 +56,7 @@ namespace Veng::Renderer
         uvec4 LightLuts;
         vec4 AmbientFloor; // rgb the flat-arm ambient floor, w the IBL arm's intensity
         // x the SH skylight arm's intensity, y the specular anti-aliasing variance scale, z its
-        // threshold; w unused.
+        // threshold, w the normal-map specular anti-aliasing scale.
         vec4 AmbientParams;
         // x the per-tile light-mask buffer's bindless storage-buffer slot, or LightTilesNone when
         // no tile cull ran for the view; y the tile grid's row stride in tiles; z this frame's

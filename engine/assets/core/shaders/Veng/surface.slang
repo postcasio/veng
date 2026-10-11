@@ -18,6 +18,9 @@
 // The ORM alpha channel's flag values and predicates, shared with the deferred lighting pass.
 #include "surface_flags.slang"
 
+// The normal-variance companion's decode and the roughness widening it drives.
+#include "normal_variance.slang"
+
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 // The byte-address storage-buffer bindless array (set 0, binding 3): each slot a whole
@@ -32,6 +35,11 @@
 // through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
 // a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
 [[vk::binding(0, 1)]] Texture3D g_Volumes[];
+// The normal-variance array (set 0, binding 8), parallel to g_Textures: slot i is the companion of
+// the texture at slot i — a cooked normal map's per-level normal spread — or reads zero when that
+// texture has none. A normal map's handle therefore reaches its own variance, read with the normal
+// map's sampler and coordinates so the hardware picks the same level (SampleNormalVariance).
+[[vk::binding(8, 0)]] Texture2D g_NormalVariance[];
 
 // Per-draw record indexed by the candidate id, std430-identical to the engine's
 // DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
@@ -154,6 +162,35 @@ float3 UnpackNormal(float4 sampled)
     const float2 xy = sampled.xy * 2.0 - 1.0;
     const float z = sqrt(max(0.0, 1.0 - dot(xy, xy)));
     return float3(xy, z);
+}
+
+// The normal variance a normal map's filtering averaged away at uv: the alpha² its sampled level's
+// texels spread over, read beside the normal map with the same handle, sampler and coordinates, so
+// the hardware selects the same level. Zero for a texture with no companion (an uncooked or flat
+// map). A material scaling the map's deflection by a strength s scales this by s² (its slopes'
+// spread scales with their size).
+float SampleNormalVariance(uint normalMap, SamplerState samplerState, float2 uv)
+{
+    return DecodeNormalVariance(
+        g_NormalVariance[NonUniformResourceIndex(normalMap)].Sample(samplerState, uv).r);
+}
+
+// SampleNormalVariance with explicit derivatives, for a material that samples its normal map
+// through SampleGrad (pass it the same ones).
+float SampleNormalVarianceGrad(uint normalMap, SamplerState samplerState, float2 uv, float2 dx,
+                               float2 dy)
+{
+    return DecodeNormalVariance(g_NormalVariance[NonUniformResourceIndex(normalMap)]
+                                    .SampleGrad(samplerState, uv, dx, dy)
+                                    .r);
+}
+
+// Widens a surface's roughness by its normal map's variance (SampleNormalVariance), at the view's
+// normal-map specular anti-aliasing scale (AmbientParams.w; zero turns it off). A material calls it
+// once on the roughness it writes or shades with, ahead of the lighting core's geometric widening.
+float WidenRoughnessForNormalMap(ViewConstants vc, float roughness, float variance)
+{
+    return WidenRoughnessByNormalVariance(roughness, variance, vc.AmbientParams.w);
 }
 
 // The surface push block, used by the vertex stage and read by a Surface fragment's

@@ -445,10 +445,16 @@ extern "C"
 /// replace SetCaptureSink and its single-sink members become a list. A module subclasses Application
 /// and reaches the compositor, so a stale module lays both out short and calls an entry point the
 /// host no longer exports.
+/// Version 105 widens a normal map's specular lobe by the variance its mips average: RenderLook,
+/// SceneView and Viewport::ViewState grow NormalMapAntiAliasingScale after
+/// SpecularAntiAliasingThreshold, TextureData and Texture grow the normal-variance companion, and
+/// BindlessRegistry grows the normal-variance array beside the texture slots. A module spawns looks,
+/// builds views and textures and registers into the registry, so a stale module lays them out short
+/// and reads every later field at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 104u
+#define VENG_MODULE_ABI_VERSION 105u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

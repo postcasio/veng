@@ -1,4 +1,5 @@
 #include "TextureImporter.h"
+#include "NormalVariance.h"
 #include <Veng/Asset/Path.h>
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <tinyexr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/NormalVariance.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Project/CompressionFormat.h>
@@ -448,6 +450,108 @@ namespace Veng::Cook
             }
 
             return blocks;
+        }
+
+        // bc7enc_compress_block_init fills process-wide encode tables, so two concurrent texture
+        // cooks would write them at once; call_once makes the fill happen exactly once and every
+        // later reader see it.
+        void EnsureBc7Tables()
+        {
+            static std::once_flag bc7Init;
+            std::call_once(bc7Init, [] { bc7enc_compress_block_init(); });
+        }
+
+        // rgbcx backs both BC4 and BC5; its init builds shared block-encode tables, likewise
+        // process-wide and likewise filled exactly once.
+        void EnsureRgbcxTables()
+        {
+            static std::once_flag rgbcxInit;
+            std::call_once(rgbcxInit, [] { rgbcx::init(); });
+        }
+
+        // The byte size of one mip level in @p codec: a BC4 4x4 block is 8 bytes; BC7, BC5 and ASTC
+        // are 16-byte 4x4 blocks; Half is w*h*channels half-floats; None is uncompressed RGBA8.
+        // Mirrors the engine's BytesForLevel.
+        usize CodecLevelBytes(TextureCodec codec, u32 halfChannels, u32 levelWidth, u32 levelHeight)
+        {
+            switch (codec)
+            {
+            case TextureCodec::BC7:
+            case TextureCodec::BC5:
+            case TextureCodec::BC4:
+            case TextureCodec::ASTC:
+            {
+                const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
+                const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
+                const usize blockBytes = codec == TextureCodec::BC4 ? Bc4BlockBytes : BlockBytes;
+                return static_cast<usize>(blocksWide) * blocksHigh * blockBytes;
+            }
+            case TextureCodec::Half:
+                return static_cast<usize>(levelWidth) * levelHeight * halfChannels * sizeof(u16);
+            case TextureCodec::None:
+                break;
+            }
+            return static_cast<usize>(levelWidth) * levelHeight * 4;
+        }
+
+        // The linear sibling of an sRGB format: the variance companion is data, never colour.
+        Renderer::Format LinearFormat(Renderer::Format format)
+        {
+            switch (format)
+            {
+            case Renderer::Format::RGBA8Srgb:
+                return Renderer::Format::RGBA8Unorm;
+            case Renderer::Format::BC7Srgb:
+                return Renderer::Format::BC7Unorm;
+            case Renderer::Format::ASTC4x4Srgb:
+                return Renderer::Format::ASTC4x4Unorm;
+            default:
+                return format;
+            }
+        }
+
+        // The codec and format a normal map's variance companion stores in. Under a build
+        // configuration it is the Mask role's format, the platform's single-channel data codec;
+        // otherwise it follows the normal map's own codec to that family's single-channel member.
+        // A float normal map's companion is half-float, like the map.
+        ResolvedFormat ResolveVarianceFormat(const CookContext& context,
+                                             const optional<TextureCodec>& rawCodec,
+                                             TextureCodec normalCodec)
+        {
+            const ResolvedFormat half{.Codec = TextureCodec::Half,
+                                      .Format = Renderer::Format::R16Sfloat};
+            if (normalCodec == TextureCodec::Half)
+            {
+                return half;
+            }
+            if (!rawCodec && context.Config != nullptr)
+            {
+                const Result<ResolvedFormat> lowered = ResolveCompressionFormat(
+                    context.Config->Formats.GetFormat(CompressionRole::Mask),
+                    CompressionRole::Mask);
+                if (!lowered)
+                {
+                    return half;
+                }
+                return ResolvedFormat{.Codec = lowered->Codec,
+                                      .Format = LinearFormat(lowered->Format)};
+            }
+            switch (normalCodec)
+            {
+            case TextureCodec::BC7:
+            case TextureCodec::BC5:
+            case TextureCodec::BC4:
+                return ResolvedFormat{.Codec = TextureCodec::BC4,
+                                      .Format = Renderer::Format::BC4Unorm};
+            case TextureCodec::None:
+                return ResolvedFormat{.Codec = TextureCodec::None,
+                                      .Format = Renderer::Format::RGBA8Unorm};
+            case TextureCodec::ASTC:
+            case TextureCodec::Half:
+                break;
+            }
+            return ResolvedFormat{.Codec = TextureCodec::ASTC,
+                                  .Format = Renderer::Format::ASTC4x4Unorm};
         }
 
         // The largest magnitude a half can represent; a float beyond it clamps here rather than
@@ -1015,6 +1119,50 @@ namespace Veng::Cook
                                   role == CompressionRole::Normal || role == CompressionRole::HDR;
         header.MipCappable = (roleCappable && mipCount > 1) ? 1u : 0u;
 
+        // A tangent-space normal map with a mip chain carries a normal-variance companion: the
+        // spread of the normals each level averages, which a shader widens the specular lobe by
+        // (Veng/Asset/NormalVariance.h). "normal_variance": false drops it from a map no shader
+        // widens by; a single level averages nothing and carries none.
+        bool normalVariance = role == CompressionRole::Normal && mipCount > 1;
+        if (texJson.contains("normal_variance"))
+        {
+            const json& flag = texJson["normal_variance"];
+            if (!flag.is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': \"normal_variance\" must be a boolean",
+                                sourcePath.string()));
+            }
+            if (flag.get<bool>() && role != CompressionRole::Normal)
+            {
+                return std::unexpected(fmt::format(
+                    "texture importer: '{}': \"normal_variance\" applies to a Normal-role "
+                    "texture, and this one's role is '{}'",
+                    sourcePath.string(), ToString(role)));
+            }
+            normalVariance = normalVariance && flag.get<bool>();
+        }
+        const ResolvedFormat variance =
+            normalVariance ? ResolveVarianceFormat(context, rawCodec, codec) : ResolvedFormat{};
+        header.VarianceFormat = normalVariance ? static_cast<u32>(variance.Format) : 0u;
+
+        // Measured from the source before the encode consumes it: a downscaled base level's
+        // texels already average several source normals.
+        vector<vector<f32>> varianceChain;
+        if (normalVariance)
+        {
+            NormalMoments moments =
+                decoded.Float ? NormalMomentsOfFloat(decoded.Texels, static_cast<u32>(width),
+                                                     static_cast<u32>(height))
+                              : NormalMomentsOfRgba8(decoded.Bytes, static_cast<u32>(width),
+                                                     static_cast<u32>(height));
+            if (resizing)
+            {
+                moments = ResampleNormalMoments(moments, baseWidth, baseHeight);
+            }
+            varianceChain = NormalVarianceChain(std::move(moments), mipCount);
+        }
+
         // Sampler defaults mirror Veng::Renderer::SamplerInfo's defaults
         // (Renderer/Sampler.h).
         header.MinFilter = 1;    // Linear
@@ -1032,7 +1180,7 @@ namespace Veng::Cook
 
             // Reads a string field through `parser`, returning `fallback` if the
             // field is absent.
-            auto field = [&](const char* key, auto parser, u32 fallback) -> Result<u32>
+            const auto field = [&](const char* key, auto parser, u32 fallback) -> Result<u32>
             {
                 if (!sampler.contains(key) || !sampler[key].is_string())
                 {
@@ -1105,73 +1253,53 @@ namespace Veng::Cook
             }
         }
 
-        // The byte size of one mip level in the chosen codec: a BC4 4x4 block is 8 bytes; BC7,
-        // BC5, and ASTC are 16-byte 4x4 blocks; Half is w*h*channels half-floats; None is
-        // uncompressed RGBA8 (w*h*4). Mirrors the engine's BytesForLevel.
-        const usize codecBlockBytes = codec == TextureCodec::BC4 ? Bc4BlockBytes : BlockBytes;
-        const bool blockCodec = codec == TextureCodec::BC7 || codec == TextureCodec::ASTC ||
-                                codec == TextureCodec::BC5 || codec == TextureCodec::BC4;
-        const auto levelBytes = [blockCodec, codecBlockBytes, codec,
-                                 storedChannels](u32 levelWidth, u32 levelHeight) -> usize
-        {
-            if (blockCodec)
-            {
-                const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
-                const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
-                return static_cast<usize>(blocksWide) * blocksHigh * codecBlockBytes;
-            }
-            if (codec == TextureCodec::Half)
-            {
-                return static_cast<usize>(levelWidth) * levelHeight * storedChannels * sizeof(u16);
-            }
-            return static_cast<usize>(levelWidth) * levelHeight * 4;
-        };
+        const auto levelBytes = [codec, storedChannels](u32 levelWidth, u32 levelHeight)
+        { return CodecLevelBytes(codec, storedChannels, levelWidth, levelHeight); };
+        const auto varianceLevelBytes = [&variance](u32 levelWidth, u32 levelHeight)
+        { return CodecLevelBytes(variance.Codec, 1, levelWidth, levelHeight); };
 
         // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7/BC5/BC4
         // and ASTC pack 4x4 blocks; None copies the RGBA8 bytes through unchanged. The ASTC profile
         // is the sRGB-aware LDR profile matching the chosen format pair.
         bc7enc_compress_block_params params{};
-        if (codec == TextureCodec::BC7)
+        if (codec == TextureCodec::BC7 || variance.Codec == TextureCodec::BC7)
         {
-            // bc7enc_compress_block_init fills process-wide encode tables, so two concurrent
-            // texture cooks would write them at once; call_once makes the fill happen exactly
-            // once and every later reader see it. params_init writes only the local struct.
-            static std::once_flag bc7Init;
-            std::call_once(bc7Init, [] { bc7enc_compress_block_init(); });
+            EnsureBc7Tables();
+            // params_init writes only the local struct.
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
         }
-        // rgbcx backs both BC4 and BC5; init builds its shared block-encode tables, likewise
-        // process-wide and likewise filled exactly once.
-        if (codec == TextureCodec::BC5 || codec == TextureCodec::BC4)
+        if (codec == TextureCodec::BC5 || codec == TextureCodec::BC4 ||
+            variance.Codec == TextureCodec::BC4)
         {
-            static std::once_flag rgbcxInit;
-            std::call_once(rgbcxInit, [] { rgbcx::init(); });
+            EnsureRgbcxTables();
         }
         const astcenc_profile astcProfile = srgbEncode ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
 
-        const auto packLevel = [&](vector<u8>& blob, usize writeOffset, u8* rgba, u32 lw,
-                                   u32 lh) -> VoidResult
+        // Encodes one RGBA8 level in @p levelCodec at blob[writeOffset].
+        const auto packCodecLevel = [&](TextureCodec levelCodec, astcenc_profile profile,
+                                        vector<u8>& blob, usize writeOffset, u8* rgba, u32 lw,
+                                        u32 lh) -> VoidResult
         {
-            if (codec == TextureCodec::BC7)
+            if (levelCodec == TextureCodec::BC7)
             {
                 const vector<u8> blocks = EncodeBc7Level(rgba, lw, lh, params);
                 std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
             }
-            else if (codec == TextureCodec::BC5)
+            else if (levelCodec == TextureCodec::BC5)
             {
                 const vector<u8> blocks = EncodeBc5Level(rgba, lw, lh);
                 std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
             }
-            else if (codec == TextureCodec::BC4)
+            else if (levelCodec == TextureCodec::BC4)
             {
                 const vector<u8> blocks = EncodeBc4Level(rgba, lw, lh);
                 std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
             }
-            else if (codec == TextureCodec::ASTC)
+            else if (levelCodec == TextureCodec::ASTC)
             {
                 const Result<vector<u8>> blocks =
-                    EncodeAstcLevel(rgba, lw, lh, astcProfile, context.ThreadBudget);
+                    EncodeAstcLevel(rgba, lw, lh, profile, context.ThreadBudget);
                 if (!blocks)
                 {
                     return std::unexpected(blocks.error());
@@ -1184,20 +1312,25 @@ namespace Veng::Cook
             }
             return {};
         };
+        const auto packLevel = [&](vector<u8>& blob, usize writeOffset, u8* rgba, u32 lw,
+                                   u32 lh) -> VoidResult
+        { return packCodecLevel(codec, astcProfile, blob, writeOffset, rgba, lw, lh); };
 
         // Each mip's RGBA8 pixels are generated (level 0 is the decoded base; each successive
         // level is resized from the full-resolution base, sRGB-correct for an sRGB source and
         // linear otherwise, so rounding does not accumulate), then packed largest-first in the
         // chosen codec. Resizing from the base rather than the previous mip keeps quality stable.
         usize totalLevelBytes = 0;
+        usize totalVarianceBytes = 0;
         for (u32 level = 0; level < mipCount; level++)
         {
             const u32 levelWidth = std::max(1u, baseWidth >> level);
             const u32 levelHeight = std::max(1u, baseHeight >> level);
             totalLevelBytes += levelBytes(levelWidth, levelHeight);
+            totalVarianceBytes += normalVariance ? varianceLevelBytes(levelWidth, levelHeight) : 0;
         }
 
-        vector<u8> blob(sizeof(CookedTextureHeader) + totalLevelBytes);
+        vector<u8> blob(sizeof(CookedTextureHeader) + totalLevelBytes + totalVarianceBytes);
         std::memcpy(blob.data(), &header, sizeof(header));
 
         usize writeOffset = sizeof(header);
@@ -1241,49 +1374,89 @@ namespace Veng::Cook
                            "they are clamped to +/-{}\n",
                            sourcePath.string(), imagePath.string(), HalfMax);
             }
-
-            return blob;
         }
-
-        // Level 0 packs from the decoded (possibly downscaled) base pixels directly.
-        if (const VoidResult packed =
-                packLevel(blob, writeOffset, pixelData.data(), baseWidth, baseHeight);
-            !packed)
+        else
         {
-            return std::unexpected(packed.error());
-        }
-        writeOffset += levelBytes(baseWidth, baseHeight);
-
-        for (u32 level = 1; level < mipCount; level++)
-        {
-            const u32 levelWidth = std::max(1u, baseWidth >> level);
-            const u32 levelHeight = std::max(1u, baseHeight >> level);
-
-            vector<u8> levelRgba(static_cast<usize>(levelWidth) * levelHeight * 4);
-
-            const stbir_pixel_layout layout = STBIR_RGBA;
-            const unsigned char* resized =
-                srgbEncode
-                    ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
-                                              levelRgba.data(), static_cast<int>(levelWidth),
-                                              static_cast<int>(levelHeight), 0, layout)
-                    : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
-                                                levelRgba.data(), static_cast<int>(levelWidth),
-                                                static_cast<int>(levelHeight), 0, layout);
-            if (resized == nullptr)
-            {
-                return std::unexpected(
-                    fmt::format("texture importer: '{}': failed to generate mip level {}",
-                                sourcePath.string(), level));
-            }
-
+            // Level 0 packs from the decoded (possibly downscaled) base pixels directly.
             if (const VoidResult packed =
-                    packLevel(blob, writeOffset, levelRgba.data(), levelWidth, levelHeight);
+                    packLevel(blob, writeOffset, pixelData.data(), baseWidth, baseHeight);
                 !packed)
             {
                 return std::unexpected(packed.error());
             }
-            writeOffset += levelBytes(levelWidth, levelHeight);
+            writeOffset += levelBytes(baseWidth, baseHeight);
+
+            for (u32 level = 1; level < mipCount; level++)
+            {
+                const u32 levelWidth = std::max(1u, baseWidth >> level);
+                const u32 levelHeight = std::max(1u, baseHeight >> level);
+
+                vector<u8> levelRgba(static_cast<usize>(levelWidth) * levelHeight * 4);
+
+                const stbir_pixel_layout layout = STBIR_RGBA;
+                const unsigned char* resized =
+                    srgbEncode
+                        ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
+                                                  levelRgba.data(), static_cast<int>(levelWidth),
+                                                  static_cast<int>(levelHeight), 0, layout)
+                        : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
+                                                    levelRgba.data(), static_cast<int>(levelWidth),
+                                                    static_cast<int>(levelHeight), 0, layout);
+                if (resized == nullptr)
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: '{}': failed to generate mip level {}",
+                                    sourcePath.string(), level));
+                }
+
+                if (const VoidResult packed =
+                        packLevel(blob, writeOffset, levelRgba.data(), levelWidth, levelHeight);
+                    !packed)
+                {
+                    return std::unexpected(packed.error());
+                }
+                writeOffset += levelBytes(levelWidth, levelHeight);
+            }
+        }
+
+        // The companion's levels follow the texture's own: each texel its stored variance, the
+        // fourth root an eight-bit channel spends its precision on, replicated across RGB so a
+        // colour codec encodes it as luminance.
+        for (u32 level = 0; level < mipCount && normalVariance; level++)
+        {
+            const u32 levelWidth = std::max(1u, baseWidth >> level);
+            const u32 levelHeight = std::max(1u, baseHeight >> level);
+            const vector<f32>& values = varianceChain[level];
+            if (variance.Codec == TextureCodec::Half)
+            {
+                bool outOfRange = false;
+                auto* out = reinterpret_cast<u16*>(blob.data() + writeOffset);
+                for (usize texel = 0; texel < values.size(); texel++)
+                {
+                    out[texel] = PackHalf(EncodeNormalVariance(values[texel]), outOfRange);
+                }
+            }
+            else
+            {
+                vector<u8> rgba(values.size() * 4);
+                for (usize texel = 0; texel < values.size(); texel++)
+                {
+                    const auto stored =
+                        static_cast<u8>(std::lround(EncodeNormalVariance(values[texel]) * 255.0f));
+                    rgba[(texel * 4) + 0] = stored;
+                    rgba[(texel * 4) + 1] = stored;
+                    rgba[(texel * 4) + 2] = stored;
+                    rgba[(texel * 4) + 3] = 255;
+                }
+                if (const VoidResult packed =
+                        packCodecLevel(variance.Codec, ASTCENC_PRF_LDR, blob, writeOffset,
+                                       rgba.data(), levelWidth, levelHeight);
+                    !packed)
+                {
+                    return std::unexpected(packed.error());
+                }
+            }
+            writeOffset += varianceLevelBytes(levelWidth, levelHeight);
         }
 
         return blob;

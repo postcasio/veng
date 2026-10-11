@@ -309,6 +309,22 @@ at cook time:
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
+- **A `Normal`-role texture with a mip chain cooks a normal-variance companion.** The importer
+  decodes the source's normals as `UnpackNormal` reads them (X/Y unsigned, Z reconstructed),
+  builds a chain of per-texel **moments** in `f32` — the mean normal and the spread about it — by a
+  2×2 box (`Importers/NormalVariance.{h,cpp}`; a halved texel's spread is its parents' mean spread
+  plus the spread of their means, so four equal parents give exactly zero), and stores each level's
+  spread as the GGX alpha² it adds (`Veng/Asset/NormalVariance.h`), encoded as its fourth root, after
+  the texture's own levels at the same dimensions. It is measured from the full-precision source, so a
+  `"max_size"` downscale resamples the moments rather than the encoded normals and the base level
+  keeps the spread its downscale averaged. **Its format is the build configuration's `Mask` role** —
+  the platform's single-channel data codec (BC4 on the desktop configurations, ASTC on macOS) —
+  else the single-channel member of the normal map's own codec family (BC4 for a BC codec, RGBA8 for
+  `"None"`, ASTC by default), and half-float for a float source. `"normal_variance": false` drops it
+  from a map no shader widens by; `true` on a non-`Normal` role is a located error, and a single-level
+  map averages nothing and carries none. Every other role carries no companion, so its slot reads
+  zero. The runtime half is [engine/src/Renderer/CLAUDE.md](../engine/src/Renderer/CLAUDE.md),
+  "Normal-map specular anti-aliasing".
 - **Collision shapes** (`*.collision.json`) turn authored geometry into a collision shape. The
   source names a `"mode"`: `"convex"` reduces a `"model"` to its **convex hull's vertices**,
   `"mesh"` welds its triangles by position into an indexed triangle soup, and `"compound"` builds a

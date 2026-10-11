@@ -78,7 +78,11 @@ the format and its serialization — neither importer nor loader.
   uncompressed format; `assetpack` treats the level bytes as opaque and computes nothing from the
   format. `MipCappable` (cooker-stamped from the compression role) says whether the runtime's
   texture-quality mip cap may drop this texture's top mips at upload. A single-mip texture is the
-  degenerate one-level case. The header is read by a fixed-offset `memcpy` after a size guard, so the
+  degenerate one-level case. A non-zero `VarianceFormat` says a **normal-variance companion** follows
+  the texture's levels: `MipCount` more levels at the same dimensions in that format, each texel the
+  encoded spread of the normals its level averages (`Veng/Asset/NormalVariance.h`, header-only, the
+  encode the cooker writes and the decode and widening the shaders mirror). `CookedTextureVersion` is
+  **2** for the field. The header is read by a fixed-offset `memcpy` after a size guard, so the
   loader rejects a `Version` mismatch — an added field would otherwise be misread as garbage.
 - **`AssetTypes::MaterialInstance` is a parameter override over a parent `Material`.** Its blob is a
   **`CookedMaterialInstanceHeader`** (`CookedMaterialInstanceVersion`, currently `1`) — `ParentId`

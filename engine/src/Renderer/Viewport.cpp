@@ -736,6 +736,7 @@ namespace Veng::Renderer
             .SsrMaxSteps = state.SsrMaxSteps,
             .SpecularAntiAliasingVariance = state.SpecularAntiAliasingVariance,
             .SpecularAntiAliasingThreshold = state.SpecularAntiAliasingThreshold,
+            .NormalMapAntiAliasingScale = state.NormalMapAntiAliasingScale,
             .DofFocusDistance = state.DofFocusDistance,
             .DofAperture = state.DofAperture,
             .DofCocScale = state.DofCocScale,

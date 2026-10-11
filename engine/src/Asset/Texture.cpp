@@ -68,6 +68,24 @@ namespace Veng
                                                 .MipLevels = mipLevels,
                                             });
 
+        if (info.NormalVarianceFormat != Format::Undefined)
+        {
+            m_NormalVarianceImage =
+                Image::Create(context, {
+                                           .Name = m_Name + " Normal Variance",
+                                           .Extent = {info.Extent.x, info.Extent.y, 1},
+                                           .MipLevels = mipLevels,
+                                           .Format = info.NormalVarianceFormat,
+                                           .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                       });
+            m_NormalVarianceView =
+                ImageView::Create(context, {
+                                               .Name = m_Name + " Normal Variance View",
+                                               .Image = m_NormalVarianceImage,
+                                               .MipLevels = mipLevels,
+                                           });
+        }
+
         m_SamplerInfo = info.Sampler;
         m_SamplerInfo.Name = m_Name + " Sampler";
         // The sampler must cover the texture's whole mip chain: SamplerInfo's MaxLod default (1)
@@ -101,6 +119,13 @@ namespace Veng
             texture->m_Image->UploadSync(data.Pixels);
         }
 
+        if (texture->m_NormalVarianceImage != nullptr)
+        {
+            const vector<BufferImageCopyRegion> regions =
+                BuildMipCopyRegions(data.Extent, data.MipLevels, data.NormalVarianceFormat);
+            texture->m_NormalVarianceImage->UploadSync(data.NormalVariancePixels, regions);
+        }
+
         return texture;
     }
 
@@ -119,6 +144,13 @@ namespace Veng
             texture->m_Image->UploadOnWorker(data.Pixels);
         }
 
+        if (texture->m_NormalVarianceImage != nullptr)
+        {
+            const vector<BufferImageCopyRegion> regions =
+                BuildMipCopyRegions(data.Extent, data.MipLevels, data.NormalVarianceFormat);
+            texture->m_NormalVarianceImage->UploadOnWorker(data.NormalVariancePixels, regions);
+        }
+
         return texture;
     }
 
@@ -128,11 +160,15 @@ namespace Veng
         // The caller's TextureData::Pixels is a non-owning span; copy the source bytes into the
         // worker job so they outlive the caller's frame.
         vector<u8> pixels(data.Pixels.begin(), data.Pixels.end());
+        vector<u8> variancePixels(data.NormalVariancePixels.begin(),
+                                  data.NormalVariancePixels.end());
 
         return tasks.Submit(
-            [&context, data = std::move(data), pixels = std::move(pixels)]() mutable
+            [&context, data = std::move(data), pixels = std::move(pixels),
+             variancePixels = std::move(variancePixels)]() mutable
             {
                 data.Pixels = pixels;
+                data.NormalVariancePixels = variancePixels;
 
                 // The upload submits from this worker, so the frame that first samples the view
                 // folds in a timeline wait the image already carries. Finalize (bindless
@@ -179,7 +215,7 @@ namespace Veng
         VE_ASSERT(!m_Registered, "Texture::Finalize: '{}' already registered", m_Name);
 
         auto& bindless = m_Context.GetBindlessRegistry();
-        m_TextureHandle = bindless.Register(m_View);
+        m_TextureHandle = bindless.Register(m_View, m_NormalVarianceView);
 
         // The sampler is taken here rather than alongside the image: the shared cache is the
         // registry's, so it is reached only from the thread Register runs on, and construction is
@@ -193,5 +229,9 @@ namespace Veng
         // sees it and can't transition it. The context acquires it onto the
         // graphics queue at the next frame, before any pass samples it.
         m_Context.EnqueueBindlessAcquire(m_View);
+        if (m_NormalVarianceView != nullptr)
+        {
+            m_Context.EnqueueBindlessAcquire(m_NormalVarianceView);
+        }
     }
 }

@@ -35,6 +35,26 @@
       "id": "0xDD22F87963F21E31",
       "type": "Material",
       "source": "materials/rippled.vmat.json"
+    },
+    {
+      "id": "0x87C17BCFD385078B",
+      "type": "Texture",
+      "source": "textures/normal_noise.tex.json"
+    },
+    {
+      "id": "0xC309A32A3DDFD270",
+      "type": "Texture",
+      "source": "textures/normal_flat.tex.json"
+    },
+    {
+      "id": "0x291DE3AF50597E0E",
+      "type": "Shader",
+      "source": "shaders/normal_mapped.frag.shader.json"
+    },
+    {
+      "id": "0x1017C1A4B2106DC9",
+      "type": "Material",
+      "source": "materials/normal_mapped.vmat.json"
     }
   ]
 }

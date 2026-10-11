@@ -427,6 +427,16 @@ namespace Veng::Renderer
         /// straddles two different surfaces, whose normal difference reads as variance. Written to
         /// the view block each Execute. The default is Filament's.
         f32 SpecularAntiAliasingThreshold = 0.2f;
+        /// @brief Normal-map specular anti-aliasing's scale on the variance a normal map averages.
+        ///
+        /// A cooked normal map carries, per mip level, the spread of the normals its texels average
+        /// (its normal-variance companion), and a material widens its roughness by it,
+        /// alpha² += scale · variance, so a glossy, finely detailed surface stops glinting as its
+        /// mips stand in for detail smaller than a pixel. 1 applies the measured spread; zero turns
+        /// the widening off. It adds to the geometric widening above, which measures the variation
+        /// between pixels where this measures the variation inside a texel. Written to the view
+        /// block each Execute.
+        f32 NormalMapAntiAliasingScale = 1.0f;
 
         /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
         ///

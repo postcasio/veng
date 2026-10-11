@@ -191,8 +191,14 @@ namespace Veng
         const optional<Renderer::AddressMode> addressModeV = BridgeAddressMode(header.AddressModeV);
         const optional<Renderer::AddressMode> addressModeW = BridgeAddressMode(header.AddressModeW);
 
+        // Zero names no companion; any other value must bridge like the texture's own format.
+        const bool hasVariance = header.VarianceFormat != 0;
+        const optional<Renderer::Format> varianceFormat =
+            hasVariance ? BridgeFormat(header.VarianceFormat)
+                        : optional<Renderer::Format>{Renderer::Format::Undefined};
+
         if (!format || !channelLayout || !minFilter || !magFilter || !mipmapMode || !addressModeU ||
-            !addressModeV || !addressModeW)
+            !addressModeV || !addressModeW || !varianceFormat)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
@@ -250,7 +256,15 @@ namespace Veng
             pixelBytes += Renderer::BytesForLevel(*format, levelWidth, levelHeight);
         }
 
-        if (cooked.size() < sizeof(header) + pixelBytes)
+        usize varianceBytes = 0;
+        for (u32 level = 0; level < header.MipCount && hasVariance; level++)
+        {
+            const u32 levelWidth = std::max(1u, header.Width >> level);
+            const u32 levelHeight = std::max(1u, header.Height >> level);
+            varianceBytes += Renderer::BytesForLevel(*varianceFormat, levelWidth, levelHeight);
+        }
+
+        if (cooked.size() < sizeof(header) + pixelBytes + varianceBytes)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
@@ -258,6 +272,24 @@ namespace Veng
                 .Detail = "texture: cooked blob smaller than header + mip-level data",
             });
         }
+
+        // A companion in a codec the device cannot sample is left off rather than failing a
+        // texture that otherwise loads: the slot's variance then reads zero, the unwidened lobe.
+        const CompressedCodec varianceCodec = CodecOf(*varianceFormat);
+        const bool varianceSupported =
+            !(varianceCodec == CompressedCodec::BC && !context.IsBlockCompressionSupported()) &&
+            !(varianceCodec == CompressedCodec::ASTC && !context.IsAstcSupported());
+        if (hasVariance && !varianceSupported)
+        {
+            static bool s_VarianceWarned = false;
+            if (!s_VarianceWarned)
+            {
+                Log::Warn("TextureLoader: a normal-variance companion was cooked in a codec the "
+                          "device cannot sample; normal maps load without it.");
+                s_VarianceWarned = true;
+            }
+        }
+        const bool loadVariance = hasVariance && varianceSupported;
 
         // The texture-quality mip cap drops the top N cooked levels of a cappable texture at upload,
         // so a lower tier uploads a genuinely smaller image from a recomputed base offset. The whole
@@ -269,6 +301,11 @@ namespace Veng
         const Renderer::MipSkipLayout layout =
             Renderer::ComputeMipSkip(*format, header.Width, header.Height, header.MipCount, skip);
         const usize retainedBytes = pixelBytes - layout.BaseOffset;
+        // The companion drops the same levels, so it keeps the texture's extent level for level.
+        const Renderer::MipSkipLayout varianceLayout =
+            loadVariance ? Renderer::ComputeMipSkip(*varianceFormat, header.Width, header.Height,
+                                                    header.MipCount, skip)
+                         : Renderer::MipSkipLayout{};
 
         const TextureData info{
             .Name = fmt::format("Texture {}", id.Value),
@@ -288,6 +325,12 @@ namespace Veng
                     .MaxAnisotropy = header.MaxAnisotropy,
                 },
             .ChannelLayout = *channelLayout,
+            .NormalVarianceFormat = loadVariance ? *varianceFormat : Renderer::Format::Undefined,
+            .NormalVariancePixels =
+                loadVariance
+                    ? cooked.subspan(sizeof(header) + pixelBytes + varianceLayout.BaseOffset,
+                                     varianceBytes - varianceLayout.BaseOffset)
+                    : std::span<const u8>{},
         };
 
         // On an asynchronous load this runs on a worker, where both the image creation and the

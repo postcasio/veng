@@ -97,7 +97,8 @@ struct ViewConstants
     // intensity.
     float4 AmbientFloor;
     // x the SH skylight arm's intensity; y the geometric specular anti-aliasing variance scale and
-    // z its threshold (MakeLightingSurface; a zero y turns it off); w unused.
+    // z its threshold (MakeLightingSurface; a zero y turns it off); w the normal-map specular
+    // anti-aliasing scale (WidenRoughnessForNormalMap; zero turns it off).
     float4 AmbientParams;
     // The view's per-tile light masks (Veng/light_tiles.slang): x the bindless g_Buffers slot of
     // the mask buffer, or LightTilesNone when no cull ran for this view; y the tile grid's row

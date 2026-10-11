@@ -52,7 +52,7 @@ namespace Veng
     /// Version != this. The header is read by a fixed-offset memcpy after a size guard, so a
     /// field added without a version bump would be misread as garbage — the version turns that
     /// into a loud reject, the discipline every other cooked header already follows.
-    inline constexpr u32 CookedTextureVersion = 1u;
+    inline constexpr u32 CookedTextureVersion = 2u;
 
     /// @brief Cooked header for a texture asset.
     ///
@@ -70,6 +70,13 @@ namespace Veng
     /// pack cooked before they existed is shorter than this header and rejected as Corrupt until
     /// re-cooked (the loader guards the size and checks the version). MipCappable carries whether
     /// the texture-quality mip cap may drop this texture's top mips at upload.
+    ///
+    /// A tangent-space normal map may carry a **normal-variance companion**: when VarianceFormat is
+    /// non-zero, a second chain of MipCount levels follows the texture's own, in that format, at
+    /// the same dimensions level for level. Each texel stores the spread of the normals its level
+    /// averages, encoded as Veng/Asset/NormalVariance.h describes, so a shader widens the specular
+    /// lobe of a minified normal map by what its mips filtered away. The two chains share the
+    /// header's sampler and MipCappable, so a capped upload drops the same levels from each.
     struct CookedTextureHeader
     {
         /// @brief Pixel format; underlying Renderer::Format integer.
@@ -106,6 +113,12 @@ namespace Veng
         /// only where this is non-zero, so a UI atlas or a mask/data texture keeps every level
         /// regardless of the chosen texture-quality tier.
         u32 MipCappable = 0;
+        /// @brief The normal-variance companion's format; underlying Renderer::Format integer.
+        ///
+        /// Zero (Renderer::Format::Undefined) when the texture carries no companion. Otherwise the
+        /// companion's MipCount levels follow the texture's own, single-channel data in the first
+        /// channel of this format.
+        u32 VarianceFormat = 0;
         /// @brief Must equal CookedTextureVersion; the loader rejects a mismatch.
         u32 Version = 0;
     };

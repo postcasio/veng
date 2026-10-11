@@ -88,6 +88,7 @@ namespace Veng
         view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(look.SsrMaxSteps);
         view.SpecularAntiAliasingVariance = look.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = look.SpecularAntiAliasingThreshold;
+        view.NormalMapAntiAliasingScale = look.NormalMapAntiAliasingScale;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -120,6 +121,7 @@ namespace Veng
         view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(resolved.SsrMaxSteps);
         view.SpecularAntiAliasingVariance = resolved.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = resolved.SpecularAntiAliasingThreshold;
+        view.NormalMapAntiAliasingScale = resolved.NormalMapAntiAliasingScale;
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;

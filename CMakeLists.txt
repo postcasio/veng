@@ -1231,6 +1231,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_driver_registry.cpp
             tests/unit/gui_component_driver.cpp
             tests/unit/render_look.cpp
+            tests/unit/normal_variance_math.cpp
             tests/unit/viewport_debug_overrides.cpp
             tests/unit/graphics_resolve.cpp
             tests/unit/audio_resolve.cpp
@@ -1984,7 +1985,8 @@ if (VENG_BUILD_TESTS)
             # specular_lobe.cpp frames a white metal plane on a directional light's mirror reflection
             # and reads the lit HDR target: the GGX peak rises to the roughness floor, a very bright
             # light's peak stays finite and under the lighting output guard, and specular
-            # anti-aliasing steadies a rippled surface while leaving flat ones and silhouettes alone.
+            # anti-aliasing steadies a rippled surface and a minified normal map while leaving flat
+            # ones and silhouettes alone.
             tests/gpu/specular_lobe.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
@@ -2364,6 +2366,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_cache.cpp
             tests/cooker/cook_timing.cpp
             tests/cooker/texture_cook.cpp
+            tests/cooker/normal_variance.cpp
             tests/cooker/flipbook_cook.cpp
             tests/cooker/font_variations.cpp
             tests/cooker/font_charset.cpp
