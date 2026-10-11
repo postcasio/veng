@@ -208,6 +208,7 @@ add_library(veng SHARED
         src/Physics/Queries.cpp
         src/Physics/RemoteCharacterBodySystem.cpp
         src/Platform/CrashReport.cpp
+        src/Platform/FileBrowser.cpp
         src/Platform/GamepadBackend.cpp
         src/Platform/GamepadSlots.cpp
         src/Platform/SystemStats.cpp
