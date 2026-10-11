@@ -22,7 +22,8 @@ editor preview and the offline cook generate identical text by construction. The
 ## Toolchain isolation
 
 The cooker's heavy/toolchain deps — **stb, assimp, Slang** (shader compile +
-reflection), and **nlohmann/json** — are **cooker-only**: linked into `vengc`
+reflection), **meshoptimizer** (the mesh level-of-detail simplifier), and **nlohmann/json** — are
+**cooker-only**: linked into `vengc`
 alone, never into `libveng` or its consumers, which load the *binary* archive and
 never parse a source asset. The split is the whole point — the runtime gains no
 importer, no source parser, no Slang, and no re-cook path.
@@ -233,6 +234,77 @@ at cook time:
   geometry. Two sockets sharing a name (or
   sharing a name after truncation to the cooked 64-byte capacity) is a located cook error: a lookup
   by name has to resolve to one place. The table is emitted sorted by name.
+- **A mesh cooks levels of detail when its `*.mesh.json` asks for them.** The `"lod"` key is
+  absent (or `false`) by default, which cooks the single level every mesh cooked before levels
+  existed — the same geometry and index order, with only the header's version and level fields
+  added — so turning levels on is a per-mesh decision that moves no existing render or golden. `"lod": true` asks for the default chain; an
+  object configures it:
+
+  ```json
+  "lod": {
+    "levels": [
+      { "ratio": 0.5 },
+      { "ratio": 0.2, "max_error": 0.02 },
+      { "model": "hull_lod3.glb", "screen_size": 0.04 }
+    ],
+    "screen_error": 0.001,
+    "normal_weight": 0.5
+  }
+  ```
+
+  `"levels"` is a count (the default chain's first *n*: target ratios ½, ¼, ⅛, then halving) or an
+  array of level objects, at most seven beyond level 0. A **generated** level takes `"ratio"` (its
+  target triangle count as a fraction of the level it simplifies) and an optional `"max_error"` (the simplification
+  error allowed, as a fraction of the mesh's bounding diameter; default 1, i.e. the ratio governs). An
+  **authored** level names a `"model"` (relative to the `*.mesh.json`, imported with the base's
+  `import` settings) and replaces the generated level at its index. Any level may pin
+  `"screen_size"`, the threshold below which it draws (the diameter of the mesh's level-0 bounding
+  sphere as a fraction of the view height — see the renderer's "Level of detail" notes); pinned
+  thresholds must descend. An unknown key, an out-of-range value, or `"ratio"`/`"max_error"`/`"collapse_seams"` on an
+  authored level is a located cook error.
+
+  - **Generation is per submesh** (`Importers/MeshLod.{h,cpp}`, meshoptimizer's
+    `meshopt_simplifyWithAttributes` in sparse, absolute-error mode, then
+    `meshopt_optimizeVertexCache` on the result), so the submesh table and every submesh's material
+    survive, normals weigh in as attributes (`"normal_weight"`), and **only the seams are locked** —
+    every vertex at a position another submesh also draws — so two materials meet without a crack at
+    every level (`tests/cooker/mesh_lod_cook.cpp` compares each level's border edges with level 0's).
+    A seam is a position another submesh also draws, or one a submesh draws with vertices that are
+    not bit-equal — the simplifier pairs only bit-equal seam vertices and would part the rest as two
+    free borders. Every other border is free: a model is often an assembly of open panels and
+    thousands of separate greebles, and locking every open border there locks nearly every edge, so a
+    level could not reduce at all. A level that sets `"max_error"` also **prunes**
+    (`meshopt_SimplifyPrune`): a disconnected piece smaller than that bound is dropped outright,
+    which is what takes a greeble field down. The default bound — the whole diameter — prunes
+    nothing, since it would drop all but the largest piece. A position split into more than two
+    vertices — every corner of a flat-shaded or hard-edged model, one vertex per face normal — is
+    otherwise fixed, so such a model hardly reduces; a generated level that sets
+    **`"collapse_seams": true`** lets collapses cross those normal and UV breaks
+    (`meshopt_SimplifyPermissive`), softening its hard edges as it coarsens, which a distant level
+    can afford and a near one may not. Seams between submeshes stay locked either way. **A generated level simplifies the nearest authored level above it**, or
+    level 0 when none is authored above it — never a generated predecessor, so error does not
+    compound. That is what an authored level is for beyond drawing itself: a hand-stripped model
+    (an interior removed, greebles dropped) seeds every generated level below it, which a
+    simplifier working from the full model could only approach by spending its budget on detail
+    the stripped model never had. A generated
+    level that keeps more than 95 % of its predecessor's triangles is **dropped** rather than cooked,
+    so a mesh the simplifier cannot reduce (a cube) cooks fewer levels than configured — possibly
+    one — and an authored level keeps its configured order among the survivors.
+  - **A derived threshold** (no `"screen_size"`): a generated level's is the size at which its error
+    projects to `"screen_error"` of the view height (default 0.001, about a pixel at 1080 lines) —
+    `screen_error / error`, capped at 1 so a mesh as tall as the view draws level 0 — and an authored
+    level's is half its predecessor's; a derived threshold never exceeds the one before it.
+  - **An authored level maps onto the base submeshes by material name**: each of its model's meshes
+    lands on the one base submesh drawn with the same source material, and several may land on one.
+    A material no base submesh uses, or one several use, is a located cook error naming the model,
+    the material and the base materials and suggesting `"submeshes"` — an explicit array giving each
+    of the model's meshes (in model order) its base submesh index, checked against both counts. A
+    base submesh the level gives no geometry draws nothing at that level. The model's vertices are
+    appended after level 0's and its indices carry their base-vertex offset, so every range draws
+    with a vertex offset of zero; the mesh's bound stays level 0's.
+  - **Sockets are the mesh's**, identical at every level — they come from the base model alone.
+  - **A skinned mesh is refused** (`'lod' is not supported on a skinned mesh`): a skinned level would
+    need its own bone influences, and the cook gives it none rather than a level that tears.
 - **A source authored in another forward convention is reconciled at import, by
   `import.orientation`.** veng's model space is **-Z forward, +Y up** — the convention a socket's
   orientation, a gameplay heading and a vehicle's thrust axis are all stated in — and a source file

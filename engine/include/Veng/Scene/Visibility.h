@@ -4,6 +4,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/RenderLayer.h>
@@ -51,6 +52,11 @@ namespace Veng
         /// @brief Mirrors MeshRenderer::SortPriority: added to a Translucent submesh's material
         ///        priority when its draws are ordered.
         i32 SortPriority = 0;
+        /// @brief The level of detail every view draws this mesh at, or AutomaticLod to select one.
+        ///
+        /// Mirrors the entity's LodOverride::Level when it carries one; it wins over a view's own
+        /// forced level and clamps to the mesh's coarsest.
+        i32 ForcedLod = AutomaticLod;
     };
 
     /// @brief One per-submesh draw candidate: a gather record and the submesh within it.

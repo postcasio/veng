@@ -157,6 +157,54 @@ TEST_CASE_FIXTURE(
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "mesh loader: a cooked mesh's levels of detail load with level 0's bound")
+{
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_mesh_lod.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, path(GPU_COOKER_FIXTURE_DIR) / "lod_pack.json",
+                                          outArchive)
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The generated chain: strictly fewer triangles per level, thresholds descending.
+    const AssetResult<AssetHandle<Mesh>> generated = assets.LoadSync<Mesh>(AssetId{0x3A01});
+    REQUIRE(generated.has_value());
+    const Mesh& mesh = *generated->Get();
+    REQUIRE(mesh.GetLodCount() >= 3);
+    REQUIRE(mesh.GetLodScreenSizes().size() == mesh.GetLodCount() - 1);
+    for (u32 level = 1; level < mesh.GetLodCount(); ++level)
+    {
+        CHECK(mesh.GetLodTriangleCount(level) < mesh.GetLodTriangleCount(level - 1));
+        CHECK(mesh.GetLodScreenSizes()[level - 1] == mesh.GetLods()[level - 1].ScreenSize);
+        for (u32 s = 0; s < mesh.GetSubMeshes().size(); ++s)
+        {
+            const MeshLodRange range = mesh.GetLodRange(level, s);
+            CHECK(range.IndexOffset + range.IndexCount <= mesh.GetIndexCount());
+        }
+    }
+    CHECK(mesh.GetLodRange(0, 1).IndexCount == mesh.GetSubMeshes()[1].IndexCount);
+    CHECK(mesh.FindSocket("Mount") != nullptr);
+
+    // The authored level's appended vertices leave the bound level 0's: the unit sphere.
+    const AssetResult<AssetHandle<Mesh>> authored = assets.LoadSync<Mesh>(AssetId{0x3A02});
+    REQUIRE(authored.has_value());
+    CHECK(authored->Get()->GetLodCount() == 3);
+    CHECK(authored->Get()->GetBounds().Max.y == doctest::Approx(1.0f));
+    CHECK(authored->Get()->GetBounds().Min.y == doctest::Approx(-1.0f));
+
+    // A mesh cooked with no levels is a single-level mesh.
+    const AssetResult<AssetHandle<Mesh>> plain = assets.LoadSync<Mesh>(AssetId{0x3A03});
+    REQUIRE(plain.has_value());
+    CHECK(plain->Get()->GetLodCount() == 1);
+    CHECK(plain->Get()->GetLods().empty());
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "mesh loader: a version-mismatched cooked mesh loads as AssetError::Corrupt")
 {
     const AssetId meshId{0x0000000000002D21ULL};

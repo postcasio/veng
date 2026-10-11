@@ -174,10 +174,10 @@ namespace Veng
 
     /// @brief The current mesh-format version.
     ///
-    /// Bumped on any CookedMeshHeader/CookedMeshSocket layout change; the loader rejects a
-    /// blob whose Version != this. The header is read by a fixed-offset memcpy, so a field
-    /// added without a version bump is misread as garbage rather than tolerated.
-    inline constexpr u32 CookedMeshVersion = 1u;
+    /// Bumped on any CookedMeshHeader/CookedMeshSocket/level-of-detail table layout change; the
+    /// loader rejects a blob whose Version != this. The header is read by a fixed-offset memcpy, so
+    /// a field added without a version bump is misread as garbage rather than tolerated.
+    inline constexpr u32 CookedMeshVersion = 2u;
 
     /// @brief Cooked header for a mesh asset.
     ///
@@ -188,6 +188,14 @@ namespace Veng
     ///   CookedMeshSocket[SocketCount]           — named attachment points, sorted by name
     ///   vertex bytes  (VertexCount * VertexStride)
     ///   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
+    ///   CookedMeshLod[LodCount - 1]             — levels 1.. : switch threshold + error
+    ///   CookedMeshLodRange[(LodCount - 1) * SubMeshCount] — per level, per submesh draw range
+    ///
+    /// Level 0 is the submesh table itself. Every coarser level is a further index range per
+    /// submesh over the one shared vertex buffer, so a level keeps its submesh's material; an
+    /// authored level's vertices are appended after level 0's and its indices already carry their
+    /// base-vertex offset, so every range draws with a vertex offset of zero. BaseVertexCount is
+    /// how many leading vertices level 0 references, the span the mesh's bound folds over.
     ///
     /// The attribute descriptor records the on-disk interleaved format so the loader can
     /// validate it against the engine's canonical (or skinned) VertexBufferLayout (a loud
@@ -217,6 +225,34 @@ namespace Veng
         u32 SocketCount = 0;
         /// @brief AssetId of the mesh's Skeleton, or 0 for a static (non-skinned) mesh.
         u64 SkeletonId = 0;
+        /// @brief Number of levels of detail, level 0 included; at least 1.
+        u32 LodCount = 1;
+        /// @brief Number of leading vertices level 0 draws from; the rest belong to authored levels.
+        u32 BaseVertexCount = 0;
+    };
+
+    /// @brief One coarser level of detail of a cooked mesh (levels 1 and up).
+    ///
+    /// Level i is drawn while the mesh's projected screen size is below its ScreenSize: the
+    /// diameter of the mesh's level-0 bounding sphere as a fraction of the view's height. The
+    /// thresholds descend with the level.
+    struct CookedMeshLod
+    {
+        /// @brief The projected screen size below which this level is drawn.
+        f32 ScreenSize = 0.0f;
+        /// @brief Simplification error as a fraction of the mesh's bounding diameter; 0 when authored.
+        f32 Error = 0.0f;
+    };
+
+    /// @brief One submesh's draw range at one level of detail.
+    ///
+    /// An empty range (IndexCount 0) draws nothing for that submesh at that level.
+    struct CookedMeshLodRange
+    {
+        /// @brief First index in the index buffer.
+        u32 IndexOffset = 0;
+        /// @brief Number of indices.
+        u32 IndexCount = 0;
     };
 
     /// @brief One named attachment point on a cooked mesh, in mesh space.

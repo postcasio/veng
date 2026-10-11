@@ -111,7 +111,7 @@ namespace Veng::Renderer
     ///
     /// A pass opens each view and adds the casters that view keeps. A caster any view keeps joins
     /// one shared list, and each view only sets its bit in that caster's mask. Build sorts the
-    /// shared list by (mesh, submesh) with SortDrawKeys and cuts it with GroupContiguousSlots
+    /// shared list by (mesh, level, submesh) with SortDrawKeys and cuts it with GroupContiguousSlots
     /// once, then walks it a single time to write every view's instance ids, view after view.
     /// A view's ids keep the shared order, so its draws are exactly those its own casters would
     /// group into alone, while the sort and the grouping run once however many views share them. An
@@ -133,12 +133,16 @@ namespace Veng::Renderer
         u32 AddView();
 
         /// @brief Adds a static caster a view keeps.
+        ///
+        /// Views drawing one candidate at the same level share its entry; a view drawing it at
+        /// another level gets an entry of its own.
         /// @param view         The view keeping it, from AddView.
         /// @param candidateId  The caster's broadphase candidate id.
         /// @param mesh         The candidate's mesh.
         /// @param subMeshIndex The candidate's submesh.
+        /// @param lod          The level of detail the view draws it at.
         /// @pre A candidate is added to one view at most once.
-        void Add(u32 view, u32 candidateId, const Mesh& mesh, u32 subMeshIndex);
+        void Add(u32 view, u32 candidateId, const Mesh& mesh, u32 subMeshIndex, u32 lod);
 
         /// @brief Groups the shared casters and lays out every view's draws and instance ids.
         void Build();
@@ -167,14 +171,22 @@ namespace Veng::Renderer
         /// @brief Marks a candidate not in the shared list.
         static constexpr u32 NotShared = ~0u;
 
+        /// @brief The shared entry drawing a candidate at a level.
+        /// @pre Add added the candidate at that level this frame.
+        [[nodiscard]] u32 FindEntry(u32 candidateId, u32 lod) const;
+
         /// @brief The candidates the current frame's keys index.
         std::span<const SubMeshCandidate> m_Candidates;
-        /// @brief Per candidate, its index in m_Masks, or NotShared.
+        /// @brief Per candidate, its first shared entry, or NotShared.
         vector<u32> m_SharedIndex;
         /// @brief The shared casters' keys, in the order they joined; sorted by Build.
         vector<DrawKey> m_Keys;
-        /// @brief Per shared caster (in joining order), the views keeping it, one bit each.
+        /// @brief Per shared entry (in joining order), the views keeping it, one bit each.
         vector<u64> m_Masks;
+        /// @brief Per shared entry, the level of detail it draws at.
+        vector<u32> m_EntryLod;
+        /// @brief Per shared entry, the candidate's next entry at another level, or NotShared.
+        vector<u32> m_NextShared;
         /// @brief The sorted shared casters as slots; a slot's CandidateId is its position.
         vector<DrawSlot> m_Slots;
         /// @brief The shared slots' groups, one per mesh.
@@ -221,9 +233,11 @@ namespace Veng::Renderer
         /// @param candidateId  The caster's broadphase candidate id.
         /// @param mesh         The candidate's mesh.
         /// @param subMeshIndex The candidate's submesh.
-        void Add(const u32 view, const u32 candidateId, const Mesh& mesh, const u32 subMeshIndex)
+        /// @param lod          The level of detail the view draws it at.
+        void Add(const u32 view, const u32 candidateId, const Mesh& mesh, const u32 subMeshIndex,
+                 const u32 lod)
         {
-            m_Grouping.Add(view, candidateId, mesh, subMeshIndex);
+            m_Grouping.Add(view, candidateId, mesh, subMeshIndex, lod);
         }
 
         /// @brief Groups the casters and lays out every view's draws.

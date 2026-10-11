@@ -9,6 +9,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -45,6 +46,33 @@ namespace Veng
         AABB Bounds = AABB::Empty();
         /// @brief Sentinel: submesh has no assigned material.
         static constexpr u32 NoMaterial = ~0u;
+    };
+
+    /// @brief One submesh's draw range at one level of detail.
+    ///
+    /// Indexes the mesh's one index buffer with a vertex offset of zero. An empty range draws
+    /// nothing for that submesh at that level.
+    struct MeshLodRange
+    {
+        /// @brief First index in the mesh's index buffer.
+        u32 IndexOffset = 0;
+        /// @brief Number of indices in this range.
+        u32 IndexCount = 0;
+    };
+
+    /// @brief One coarser level of detail of a mesh (level 1 and up; level 0 is the submesh table).
+    ///
+    /// A level is a further index range per submesh over the mesh's shared vertex buffer, so it
+    /// draws with its submesh's material. It is drawn while the mesh's projected screen size — its
+    /// level-0 bounding sphere's diameter as a fraction of the view height — is below ScreenSize.
+    struct MeshLod
+    {
+        /// @brief The projected screen size below which this level is drawn; descends with the level.
+        f32 ScreenSize = 0.0f;
+        /// @brief Simplification error as a fraction of the mesh's bounding diameter; 0 when authored.
+        f32 Error = 0.0f;
+        /// @brief The level's draw range per submesh, indexed like the mesh's submesh table.
+        vector<MeshLodRange> Ranges;
     };
 
     /// @brief A named attachment point on a mesh, in mesh space.
@@ -120,6 +148,11 @@ namespace Veng
         vector<SubMesh> SubMeshes;
         /// @brief Named attachment points, sorted by name.
         vector<MeshSocket> Sockets;
+        /// @brief Coarser levels of detail over Indices, level 1 first; empty for a single level.
+        ///
+        /// Each level carries one range per submesh (one, when SubMeshes is empty), and the
+        /// levels' ScreenSize values descend.
+        vector<MeshLod> Lods;
     };
 
     /// @brief Construction parameters for a GPU Mesh.
@@ -146,6 +179,11 @@ namespace Veng
         /// Mesh::FindSocket binary-searches this list, so it must be sorted by Name and carry
         /// no duplicate name. The cooker emits it that way.
         vector<MeshSocket> Sockets;
+        /// @brief The coarser levels of detail, level 1 first; empty for a single-level mesh.
+        ///
+        /// Each level carries one range per entry of SubMeshes, and the levels' ScreenSize values
+        /// descend. Bounds stays level 0's.
+        vector<MeshLod> Lods;
     };
 
     /// @brief Cooked mesh's GPU buffers and draw ranges.
@@ -306,6 +344,39 @@ namespace Veng
         /// named nodes, such as OBJ).
         [[nodiscard]] std::span<const MeshSocket> GetSockets() const { return m_Sockets; }
 
+        /// @brief The most levels of detail a mesh carries, level 0 included (MaxMeshLods).
+        static constexpr u32 MaxLods = MaxMeshLods;
+
+        /// @brief Returns how many levels of detail the mesh carries, level 0 included; at least 1.
+        [[nodiscard]] u32 GetLodCount() const { return static_cast<u32>(m_Lods.size()) + 1; }
+
+        /// @brief Returns the coarser levels, level 1 first; empty for a single-level mesh.
+        [[nodiscard]] std::span<const MeshLod> GetLods() const { return m_Lods; }
+
+        /// @brief Returns each coarser level's switch threshold, level 1 first, descending.
+        ///
+        /// The contiguous form of GetLods()[i].ScreenSize the renderer's selection reads.
+        [[nodiscard]] std::span<const f32> GetLodScreenSizes() const { return m_LodScreenSizes; }
+
+        /// @brief Returns a submesh's draw range at a level of detail.
+        /// @param level    The level, 0 for the submesh table itself.
+        /// @param subMesh  Index of the submesh within GetSubMeshes().
+        /// @return The range to draw; IndexCount 0 when the submesh draws nothing at that level.
+        /// @pre level < GetLodCount() and subMesh < GetSubMeshes().size().
+        [[nodiscard]] MeshLodRange GetLodRange(const u32 level, const u32 subMesh) const
+        {
+            if (level == 0)
+            {
+                const SubMesh& base = m_SubMeshes[subMesh];
+                return {.IndexOffset = base.IndexOffset, .IndexCount = base.IndexCount};
+            }
+            return m_Lods[level - 1].Ranges[subMesh];
+        }
+
+        /// @brief Returns how many triangles a level draws across every submesh.
+        /// @param level  The level, 0 for the submesh table itself.
+        [[nodiscard]] u32 GetLodTriangleCount(u32 level) const;
+
         /// @brief Returns the socket named `name`, or nullptr when the mesh has no such socket.
         ///
         /// A binary search over the sorted socket list. A missing socket is a content error the
@@ -315,12 +386,7 @@ namespace Veng
         [[nodiscard]] const MeshSocket* FindSocket(std::string_view name) const;
 
     private:
-        explicit Mesh(const MeshInfo& info)
-            : m_Name(info.Name), m_VertexBuffer(info.VertexBuffer), m_IndexBuffer(info.IndexBuffer),
-              m_Layout(info.Layout), m_SubMeshes(info.SubMeshes), m_Materials(info.Materials),
-              m_Bounds(info.Bounds), m_Skeleton(info.Skeleton), m_Sockets(info.Sockets)
-        {
-        }
+        explicit Mesh(const MeshInfo& info);
 
         string m_Name;
         Ref<Renderer::Buffer> m_VertexBuffer;
@@ -331,6 +397,8 @@ namespace Veng
         AABB m_Bounds = AABB::Empty();
         AssetHandle<Skeleton> m_Skeleton;
         vector<MeshSocket> m_Sockets;
+        vector<MeshLod> m_Lods;
+        vector<f32> m_LodScreenSizes;
     };
 
     /// @brief AssetTypeTrait specialization mapping Mesh to AssetTypes::Mesh.

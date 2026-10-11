@@ -462,10 +462,15 @@ extern "C"
 /// InputJitterBuffer grows its stopped state, and StampLocalSeatInput takes whether the world is
 /// presented. A module's systems read the context every tick and its prefabs spawn seats, so a stale
 /// module reads every later context field at a shifted offset and lays SeatInput out short.
+/// Version 108 adds mesh levels of detail: Mesh, MeshInfo and MeshData grow the level table,
+/// VisibleMesh grows ForcedLod, SceneRendererSettings grows LodBias, LodHysteresis and ForcedLod
+/// after Cull, SceneView grows ForcedLod and MeshLods after CaptureFace, ModelPortrait grows
+/// ForcedLod, and the LodOverride component registers. A module builds meshes and views and spawns
+/// portraits, so a stale module lays them out short and reads every later field at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 107u
+#define VENG_MODULE_ABI_VERSION 108u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

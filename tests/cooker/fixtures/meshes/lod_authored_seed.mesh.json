@@ -1,0 +1,13 @@
+{
+  "model": "lod_sphere.gltf",
+  "import": {
+    "generate_normals": false,
+    "generate_tangents": false
+  },
+  "lod": {
+    "levels": [
+      { "model": "lod_sphere_coarse.gltf" },
+      { "ratio": 0.4 }
+    ]
+  }
+}

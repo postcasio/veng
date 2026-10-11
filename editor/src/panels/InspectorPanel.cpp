@@ -6,6 +6,7 @@
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -206,6 +207,26 @@ namespace VengEditor
         if (const auto table = UI::PropertyTable("##fields"))
         {
             changed = DrawFields(component, info.Fields, ctx);
+        }
+
+        // A mesh's levels of detail are cooked, not authored here, so they show read-only beneath
+        // the renderer that draws it.
+        if (id == TypeIdOf<MeshRenderer>())
+        {
+            const auto& renderer = *static_cast<const MeshRenderer*>(component);
+            if (renderer.Mesh.IsLoaded() && renderer.Mesh->GetLodCount() > 1)
+            {
+                const Mesh& mesh = *renderer.Mesh.Get();
+                UI::TextDisabled(fmt::format("Levels of detail: {}", mesh.GetLodCount()));
+                UI::TextDisabled(fmt::format("  LOD 0: {} triangles", mesh.GetLodTriangleCount(0)));
+                for (u32 level = 1; level < mesh.GetLodCount(); ++level)
+                {
+                    const MeshLod& lod = mesh.GetLods()[level - 1];
+                    UI::TextDisabled(fmt::format(
+                        "  LOD {}: {} triangles, below {:.3f} of the view height (error {:.4f})",
+                        level, mesh.GetLodTriangleCount(level), lod.ScreenSize, lod.Error));
+                }
+            }
         }
 
         if (changed)

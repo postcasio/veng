@@ -36,6 +36,7 @@
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
 #include "Passes/VolumeScenePass.h"
+#include "LodSelection.h"
 #include "ShadowCasters.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
@@ -173,6 +174,12 @@ namespace Veng::Renderer
         constexpr u32 PostResolveUpscaleIdleFrameLimit = 128;
     }
 
+    namespace
+    {
+        // The widest hysteresis band a configuration may ask for: half a threshold either side.
+        constexpr f32 MaxLodHysteresis = 0.5f;
+    }
+
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
     struct SceneRenderer::Internal
     {
@@ -203,6 +210,13 @@ namespace Veng::Renderer
         vector<DrawKey> DrawKeyScratch;
         vector<u32> SkinnedScratch;
         vector<u32> TranslucentScratch;
+        // The camera view's level of detail per visible mesh, indexed like SceneView::Visible and
+        // published as SceneView::MeshLods.
+        vector<u8> MeshLods;
+        // The camera view's level per entity this frame and last, the hysteresis's memory; swapped
+        // at the start of each gather.
+        EntityFrameTable<u8> CurrentLods;
+        EntityFrameTable<u8> PreviousLods;
         // The frame's gathered flipbook sprites, which the sprite pass uploads and draws.
         SpriteDrawPlan SpritePlan;
         // Whether the pass set carries the sprite pass. Content-driven with deactivation
@@ -1559,6 +1573,7 @@ namespace Veng::Renderer
         PrepareDraws(resolvedView, 0, 0, false);
         resolvedView.SkinningPalette = m_PaletteSet;
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
+        resolvedView.MeshLods = m_Internal->MeshLods;
 
         const vector<RenderGraph::ImportBinding> bindings = {
             {.Id = m_LeanNormalId, .View = m_LeanNormalView},
@@ -1895,6 +1910,35 @@ namespace Veng::Renderer
 #endif
     }
 
+    void SceneRenderer::ResolveCameraLods(const SceneView& view)
+    {
+        Internal& internal = *m_Internal;
+        internal.PreviousLods.Swap(internal.CurrentLods);
+        internal.CurrentLods.Begin();
+        internal.MeshLods.assign(view.Visible.size(), 0);
+
+        LodView lodView =
+            LodView::FromViewProjection(view.Camera.ViewProjection(), m_Settings.LodBias);
+        lodView.ScreenScale *= view.LodScreenScale;
+        const LodPolicy policy{
+            .Forced = view.ForcedLod >= 0 ? view.ForcedLod : m_Settings.ForcedLod,
+            .Hysteresis = m_Settings.LodHysteresis,
+        };
+        for (usize i = 0; i < view.Visible.size(); ++i)
+        {
+            const VisibleMesh& item = view.Visible[i];
+            if (item.Mesh->GetLodCount() == 1)
+            {
+                continue;
+            }
+            const u8* previous = internal.PreviousLods.Find(item.Owner);
+            const u32 level = ResolveMeshLod(item, lodView, policy,
+                                             previous != nullptr ? *previous : NoPreviousLod);
+            internal.MeshLods[i] = static_cast<u8>(level);
+            internal.CurrentLods.Set(item.Owner, static_cast<u8>(level));
+        }
+    }
+
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex,
                                      const u32 halfResViewConstantsIndex,
                                      const bool halfResViewReady)
@@ -1975,6 +2019,11 @@ namespace Veng::Renderer
         m_FrustumSurvivedCount = static_cast<u32>(m_CullScratch.size());
         m_LastDrawnCount = m_FrustumSurvivedCount;
 
+        // The camera view's level per visible mesh, kept within the hysteresis band of the level
+        // the entity drew last frame. Selected before the gather lays slots out, so the sort keys,
+        // the slots and the GPU-cull commands all carry the same level.
+        ResolveCameraLods(view);
+
         // Per-object velocity needs each drawn entity's previous-frame world matrix. Record
         // this frame's worlds (swapped to "previous" after Execute) and look the prior one up
         // when filling DrawData. The surface pass writes velocity every frame (G3), so this is
@@ -2001,6 +2050,7 @@ namespace Veng::Renderer
             .PaletteData = paletteData,
             .PreviousWorlds = m_PreviousWorlds,
             .PreviousPaletteBases = m_PreviousPaletteBaseByEntity,
+            .MeshLods = m_Internal->MeshLods,
         };
 
         // One budget threads all three phases, which is what keeps the static opaque range
@@ -2189,6 +2239,8 @@ namespace Veng::Renderer
     {
         SceneRendererSettings clamped = settings;
         ShadowSystem::ClampResolutions(m_Context, clamped);
+        clamped.LodHysteresis = std::clamp(clamped.LodHysteresis, 0.0f, MaxLodHysteresis);
+        clamped.ForcedLod = std::clamp(clamped.ForcedLod, AutomaticLod, CoarsestLod);
         return clamped;
     }
 
@@ -2202,6 +2254,17 @@ namespace Veng::Renderer
         const SceneRendererSettings clamped = ClampSettings(settings);
         if (clamped == m_Settings)
         {
+            return;
+        }
+        // The level-of-detail fields are read per frame by the gather, so a change to them alone
+        // rebuilds nothing.
+        SceneRendererSettings lodOnly = m_Settings;
+        lodOnly.LodBias = clamped.LodBias;
+        lodOnly.LodHysteresis = clamped.LodHysteresis;
+        lodOnly.ForcedLod = clamped.ForcedLod;
+        if (clamped == lodOnly)
+        {
+            m_Settings = clamped;
             return;
         }
         m_Settings = clamped;
@@ -2718,6 +2781,7 @@ namespace Veng::Renderer
         // passes so a skinned caster casts its posed shadow.
         resolvedView.SkinningPalette = m_PaletteSet;
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
+        resolvedView.MeshLods = m_Internal->MeshLods;
 
         // With bloom inactive no extra input rewrites the tonemap's bloom handle pair, so it is
         // pointed at the live scene colour rather than left on a slot an earlier topology held —
@@ -2748,7 +2812,13 @@ namespace Veng::Renderer
         if (m_ShadowPass != nullptr || m_PunctualShadowPass != nullptr)
         {
             ShadowCasterViews& casters = *m_Internal->ShadowCasters;
-            casters.Begin(resolvedView, m_Settings.FrustumCull);
+            casters.Begin(resolvedView, m_Settings.FrustumCull,
+                          ShadowLodSettings{
+                              .Bias = m_Settings.LodBias,
+                              .Forced = resolvedView.ForcedLod >= 0 ? resolvedView.ForcedLod
+                                                                    : m_Settings.ForcedLod,
+                              .ScreenScale = resolvedView.LodScreenScale,
+                          });
             if (m_ShadowPass != nullptr)
             {
                 m_ShadowPass->AddViews(casters, resolvedView);

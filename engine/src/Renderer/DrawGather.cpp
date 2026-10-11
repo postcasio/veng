@@ -52,6 +52,12 @@ namespace Veng::Renderer
             };
         }
 
+        // The level of detail a visible mesh draws at this frame.
+        u32 LodOf(const DrawGatherInput& input, const u32 meshCandidate)
+        {
+            return input.MeshLods.empty() ? 0u : input.MeshLods[meshCandidate];
+        }
+
         // Whether two adjacent slots draw the same index range with consecutive candidate ids, so
         // one instanced draw covers both.
         bool ExtendsRun(const DrawSlot& previous, const DrawSlot& next)
@@ -75,6 +81,10 @@ namespace Veng::Renderer
                               if (a.SourceMesh != b.SourceMesh)
                               {
                                   return std::less<const Mesh*>{}(a.SourceMesh, b.SourceMesh);
+                              }
+                              if (a.Lod != b.Lod)
+                              {
+                                  return a.Lod < b.Lod;
                               }
                               if (a.SubMeshIndex != b.SubMeshIndex)
                               {
@@ -162,9 +172,17 @@ namespace Veng::Renderer
                 continue;
             }
 
+            // A submesh a coarser level drops draws nothing and claims no slot.
+            const u32 lod = LodOf(input, candidate.MeshCandidate);
+            if (mesh.GetLodRange(lod, candidate.SubMeshIndex).IndexCount == 0)
+            {
+                continue;
+            }
+
             keyScratch.push_back(DrawKey{
                 .Pipeline = material->GetParent().Get(),
                 .SourceMesh = &mesh,
+                .Lod = lod,
                 .SubMeshIndex = candidate.SubMeshIndex,
                 .Candidate = id,
             });
@@ -186,6 +204,7 @@ namespace Veng::Renderer
             const SubMeshCandidate& candidate = input.Candidates[key.Candidate];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const SubMesh& subMesh = key.SourceMesh->GetSubMeshes()[key.SubMeshIndex];
+            const MeshLodRange range = key.SourceMesh->GetLodRange(key.Lod, key.SubMeshIndex);
             const MaterialInstance* material = item.Materials[subMesh.MaterialIndex].Get();
             if (!plan.PipelineMaterial)
             {
@@ -202,8 +221,8 @@ namespace Veng::Renderer
                 input.CullData[slot] = GpuCullCandidate{
                     .BoundsMin = vec4(bounds.Min, 0.0f),
                     .BoundsMax = vec4(bounds.Max, 0.0f),
-                    .IndexCount = subMesh.IndexCount,
-                    .FirstIndex = subMesh.IndexOffset,
+                    .IndexCount = range.IndexCount,
+                    .FirstIndex = range.IndexOffset,
                     .VertexOffset = 0,
                     .FirstInstance = slot,
                 };
@@ -213,8 +232,8 @@ namespace Veng::Renderer
                 .SourceMesh = key.SourceMesh,
                 .Pipeline = material,
                 .PipelineKey = key.Pipeline,
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
+                .IndexCount = range.IndexCount,
+                .FirstIndex = range.IndexOffset,
                 .VertexOffset = 0,
                 .CandidateId = slot,
             });
@@ -234,9 +253,11 @@ namespace Veng::Renderer
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
+            const MeshLodRange range =
+                mesh.GetLodRange(LodOf(input, candidate.MeshCandidate), candidate.SubMeshIndex);
             const std::span<const AssetHandle<MaterialInstance>> materials = item.Materials;
             const AssetHandle<Skeleton>& skeletonHandle = mesh.GetSkeleton();
-            if (!skeletonHandle.IsLoaded())
+            if (!skeletonHandle.IsLoaded() || range.IndexCount == 0)
             {
                 continue;
             }
@@ -319,8 +340,8 @@ namespace Veng::Renderer
                 .SourceMesh = &mesh,
                 .Pipeline = materials[subMesh.MaterialIndex].Get(),
                 .PipelineKey = material.GetParent().Get(),
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
+                .IndexCount = range.IndexCount,
+                .FirstIndex = range.IndexOffset,
                 .VertexOffset = 0,
                 .CandidateId = slot,
             });
@@ -346,6 +367,12 @@ namespace Veng::Renderer
             }
             const std::span<const AssetHandle<MaterialInstance>> materials = item.Materials;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
+            const MeshLodRange range =
+                mesh.GetLodRange(LodOf(input, candidate.MeshCandidate), candidate.SubMeshIndex);
+            if (range.IndexCount == 0)
+            {
+                continue;
+            }
 
             u32 slot = 0;
             if (!budget.TryClaimSlot(slot))
@@ -381,8 +408,8 @@ namespace Veng::Renderer
             destination.Draws.push_back(TranslucentDraw{
                 .Material = &material,
                 .SourceMesh = &mesh,
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
+                .IndexCount = range.IndexCount,
+                .FirstIndex = range.IndexOffset,
                 .CandidateId = slot,
                 .ViewDepth = viewDepth,
                 .SortPriority = parent->GetSortPriority() + item.SortPriority,

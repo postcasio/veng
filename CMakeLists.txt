@@ -1136,6 +1136,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/flow_field.cpp
             tests/unit/draw_grouping.cpp
             tests/unit/depth_caster_grouping.cpp
+            tests/unit/lod_selection.cpp
             tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
@@ -2377,6 +2378,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
             tests/cooker/socket_cook.cpp
+            tests/cooker/mesh_lod_cook.cpp
             tests/cooker/collision_shape_cook.cpp
             tests/cooker/audio_clip.cpp
             tests/cooker/import_orientation.cpp

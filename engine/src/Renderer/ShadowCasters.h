@@ -3,6 +3,7 @@
 #include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Scene/Visibility.h>
 
 #include "DepthInstancing.h"
@@ -11,6 +12,17 @@ namespace Veng::Renderer
 {
     class Context;
     struct SceneView;
+
+    /// @brief How the shadow views select a caster's level of detail this frame.
+    struct ShadowLodSettings
+    {
+        /// @brief Levels of bias, as SceneRendererSettings::LodBias.
+        f32 Bias = 0.0f;
+        /// @brief The forced level every caster draws at, or AutomaticLod to select per view.
+        i32 Forced = AutomaticLod;
+        /// @brief The camera view's SceneView::LodScreenScale, applied to every shadow view's sizes.
+        f32 ScreenScale = 1.0f;
+    };
 
     /// @brief Every shadow view's casters for one frame: culled per view, grouped once, uploaded once.
     ///
@@ -37,15 +49,22 @@ namespace Veng::Renderer
         /// @brief Clears the previous frame's views and starts this frame's.
         /// @param view        The frame's view: its broadphase, visible meshes and skinning palette.
         /// @param frustumCull Whether views cull; off, every view keeps every caster.
+        /// @param lod         How casters select their level of detail.
         /// @pre @p view outlives the frame's AddView and Build calls.
-        void Begin(const SceneView& view, bool frustumCull);
+        void Begin(const SceneView& view, bool frustumCull, const ShadowLodSettings& lod);
 
-        /// @brief Adds one shadow view, culling its casters.
+        /// @brief Adds one shadow view, culling its casters and selecting each one's level.
+        ///
+        /// A static caster draws at the level the view's own projection selects for it, with no
+        /// hysteresis: a shadow view keeps no memory between frames, and its projection holds still
+        /// while its light and the caster do.
         /// @param cullViewProj The world → clip matrix whose frustum the casters are culled against.
         /// @param minExtent    A caster whose world bound's diagonal is shorter than this is
         ///                     skipped; 0 skips none.
+        /// @param lodViewProj  The world → clip matrix the view rasterizes through, which its
+        ///                     level-of-detail selection measures screen size in.
         /// @return The view's index among this frame's views.
-        u32 AddView(const mat4& cullViewProj, f32 minExtent);
+        u32 AddView(const mat4& cullViewProj, f32 minExtent, const mat4& lodViewProj);
 
         /// @brief Groups every view's static casters and uploads their instance ids.
         /// @param frameIndex The frame in flight being recorded.
@@ -85,6 +104,13 @@ namespace Veng::Renderer
         bool m_FrustumCull = true;
         /// @brief Whether the frame carries a skinning palette to pose skinned casters with.
         bool m_SkinnedPosed = false;
+        /// @brief How casters select their level of detail this frame.
+        ShadowLodSettings m_Lod;
+        /// @brief Per visible mesh, its level in the view being added; valid where m_LodStamp
+        ///        equals that view's index plus one.
+        vector<u8> m_ViewLods;
+        /// @brief Per visible mesh, which view (index plus one) m_ViewLods was resolved for.
+        vector<u32> m_LodStamp;
         /// @brief Per candidate, its class this frame.
         vector<CasterClass> m_Classes;
         /// @brief Frustum-query scratch, reused per view.

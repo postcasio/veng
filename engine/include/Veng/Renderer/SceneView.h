@@ -148,6 +148,30 @@ namespace Veng::Renderer
         /// lighting. SceneCapture sets it on every face it renders; an ordinary view leaves it false.
         bool CaptureFace = false;
 
+        /// @brief The level every mesh draws at this frame, or AutomaticLod to defer to the
+        ///        renderer's SceneRendererSettings::ForcedLod.
+        ///
+        /// A per-frame override for one render — a model portrait drawn at its mesh's coarsest
+        /// level — that needs no Configure. Clamps to each mesh's coarsest; a per-entity
+        /// LodOverride wins over it.
+        i32 ForcedLod = AutomaticLod;
+
+        /// @brief The fraction of the presenting surface's height this view's image covers.
+        ///
+        /// Level-of-detail selection measures a mesh against the view's own height, which is the
+        /// screen's for a view that fills it; a view rendered into a small image shown inside a
+        /// larger surface — a model portrait in a UI panel — multiplies every projected size by
+        /// this, so a mesh selects the level its size on the actual screen calls for. 1 for a view
+        /// that fills the screen.
+        f32 LodScreenScale = 1.0f;
+
+        /// @brief Each visible mesh's level of detail in the camera view; set by the renderer each Execute.
+        ///
+        /// Indexed like Visible. A pass drawing the camera's view reads its level here so it
+        /// draws what the g-buffer drew; a shadow view selects its own. Empty before the gather;
+        /// a caller's value is overwritten.
+        std::span<const u8> MeshLods;
+
         /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
         ///
         /// The gather blends each candidate's world transform between the scene's last two Sim-tick

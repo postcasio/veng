@@ -60,13 +60,16 @@ namespace Veng::Renderer
         const EntityFrameTable<mat4>& PreviousWorlds;
         /// @brief Previous frame's palette base per entity, the deformation-velocity source.
         const EntityFrameTable<u32>& PreviousPaletteBases;
+        /// @brief The level of detail each visible mesh draws at, indexed like View.Visible; empty
+        ///        draws every mesh at level 0.
+        std::span<const u8> MeshLods;
     };
 
     /// @brief The sort key a batched pass orders its draws by before laying them out.
     ///
     /// Equal keys up to Candidate draw the same index range of the same mesh through the same
     /// pipeline, so ordering by this key makes every such set adjacent — one pipeline bind per
-    /// pipeline, one buffer bind per mesh, one instanced draw per submesh. Candidate is the
+    /// pipeline, one buffer bind per mesh, one instanced draw per submesh and level. Candidate is the
     /// tiebreak, keeping gather order within a run.
     struct DrawKey
     {
@@ -75,13 +78,15 @@ namespace Veng::Renderer
         const void* Pipeline = nullptr;
         /// @brief The mesh whose buffers the draw binds.
         const Mesh* SourceMesh = nullptr;
+        /// @brief The level of detail the submesh draws at.
+        u32 Lod = 0;
         /// @brief The submesh within SourceMesh.
         u32 SubMeshIndex = 0;
         /// @brief The survivor's candidate id; the tiebreak, and how the caller finds it again.
         u32 Candidate = 0;
     };
 
-    /// @brief Orders draw keys by (pipeline, mesh, submesh, candidate), so equal draws are adjacent.
+    /// @brief Orders draw keys by (pipeline, mesh, level, submesh, candidate), so equal draws are adjacent.
     ///
     /// The order is total and depends only on the keys, so the same survivors always lay out the
     /// same way within a process. Pipeline and mesh compare by address, so the order between two
