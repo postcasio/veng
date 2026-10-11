@@ -106,8 +106,9 @@ namespace Veng::Renderer
         TextureHandle m_LitHandle;
         /// @brief Bindless slot for m_HdrId.
         ///
-        /// Not the pass IO's HDR handle: under SSR or a composited depth of field the resolve writes
-        /// an intermediate ahead of the final HDR target, which a later pass of the frame writes.
+        /// Not the pass IO's HDR handle, which names the lit target the passes ahead of the resolve
+        /// write: the resolve writes the scene colour after it — the HDR target, or under a
+        /// composited depth of field the chain's intermediate.
         TextureHandle m_HdrHandle;
         /// @brief Bindless slot for the history target.
         TextureHandle m_HistoryHandle;

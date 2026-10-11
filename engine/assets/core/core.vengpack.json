@@ -357,6 +357,16 @@
       "source": "shaders/ssr_composite.frag.shader.json"
     },
     {
+      "id": "0x41160D6C6F1A7E7D",
+      "type": "Shader",
+      "source": "shaders/ssr_composite_term.frag.shader.json"
+    },
+    {
+      "id": "0x10C795C4790585FB",
+      "type": "Shader",
+      "source": "shaders/ssr_temporal.frag.shader.json"
+    },
+    {
       "id": "0x93DA6E42B3B5479A",
       "type": "Shader",
       "source": "shaders/ssr_hiz_reduce.comp.shader.json"

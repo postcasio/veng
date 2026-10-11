@@ -1,8 +1,10 @@
-// SSR composite: folds the traced reflection back into the lit scene color, weighted by a
-// Fresnel term (so grazing angles and metals reflect more), and writes the combined linear HDR
-// the bloom/tonemap tail consumes — SSR slots in where TAA does, so the rest of the tail is
-// unchanged. The reflection chain is premultiplied by the trace's confidence, so its color is
-// added as it stands: a level that averaged few hits is dim by exactly that share.
+// SSR composite: weights the traced reflection by a Fresnel term (so grazing angles and metals
+// reflect more) and either folds it into the lit scene color, writing the combined linear HDR the
+// bloom/tonemap tail consumes (fsMain), or, under a temporal resolve, writes the reflection term
+// alone with the screen motion of the image it reflects, for the SSR temporal pass to accumulate
+// and add after the resolve (fsTerm). The reflection chain is premultiplied by the trace's
+// confidence, so its color is added as it stands: a level that averaged few hits is dim by exactly
+// that share.
 //
 // A rough surface reflects a cone, not a ray, and the composite blurs by that cone's footprint
 // rather than by a fraction of the screen:
@@ -41,10 +43,8 @@
 //
 // The composite runs at full render resolution (SSR disables the dynamic-resolution sub-rect), and
 // the chain may be at a lower resolution than the target. Every surface it reads — the pixel's own
-// and each chain tap's — is the one ssr_surface.slang takes, exactly as the trace took it. It writes
-// the lit scene ahead of any temporal resolve, so the reflection and the scene it lands on stand in
-// the same rasterized frame and the resolve integrates both. How level 0 is read depends on that
-// ratio:
+// and each chain tap's — is the one ssr_surface.slang takes, exactly as the trace took it, in the
+// rasterized (under a temporal resolve, jittered) frame. How level 0 is read depends on that ratio:
 //
 //  - At one composite pixel per SSR texel, level 0 is read bilinearly, which lands on the pixel's
 //    own texel, so a mirror is exactly as sharp as the trace.
@@ -86,6 +86,10 @@ struct PushConstants
     uint SurfaceTexture;      // the SSR surface chain, premultiplied by coverage
     uint Pad0;
     uint Pad1;
+    // fsTerm: the previous unjittered (projection x rotation-only view) applied to the camera's
+    // move since then, (camera - previous camera, 0); the clip offset a camera-relative point takes
+    // between the two frames beyond what PrevFromCurDirection carries.
+    float4 PrevClipTranslation;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -350,30 +354,36 @@ float4 SampleAtLod(Texture2D chain, SamplerState samp, ViewConstants vc, Surface
     return value;
 }
 
-[shader("fragment")]
-float4 fsMain(VSOutput input) : SV_Target
+// The reflection a composite pixel adds.
+struct Reflected
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    float3 Contribution;     // the radiance the reflection adds to the pixel
+    float3 VirtualPosition;  // camera-relative position of the reflected image: the hit, unfolded
+                             // through the surface along the pixel's ray
+    bool Reflects;           // a reflection was evaluated: a surface below the cutoff with a hit near it
+};
+
+Reflected EvaluateReflection(ViewConstants vc, float2 uv)
+{
+    Reflected result;
+    result.Contribution = float3(0.0, 0.0, 0.0);
+    result.VirtualPosition = float3(0.0, 0.0, 0.0);
+    result.Reflects = false;
+
     SamplerState reflSamp = g_Samplers[NonUniformResourceIndex(g_PC.ReflectionSampler)];
-    float2 uv = input.v_UV;
-
-    // Every read names its level: most sit past an early return, where implicit derivatives are
-    // undefined.
-    float3 scene =
-        g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].SampleLevel(samp, uv, 0.0).rgb;
-
-    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
     SsrSurface surface =
         SsrSurfaceAt(vc, depthTexture, g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)], uv);
     // The cleared background has nothing to reflect into.
     if (!surface.Valid)
-        return float4(scene, 1.0);
+        return result;
 
+    // Every read names its level: most sit past an early return, where implicit derivatives are
+    // undefined.
     float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0));
     float roughness = saturate(orm.g);
     if (roughness >= g_PC.MaxRoughness)
-        return float4(scene, 1.0);
+        return result;
     float roughnessFade =
         smoothstep(0.0, 1.0, (g_PC.MaxRoughness - roughness) / (RoughnessFadeBand * g_PC.MaxRoughness));
     float metallic = orm.b;
@@ -394,7 +404,7 @@ float4 fsMain(VSOutput input) : SV_Target
     }
     // Nothing around this pixel was hit at any level, so there is nothing to reflect.
     if (hitDistance < 0.0)
-        return float4(scene, 1.0);
+        return result;
 
     // The camera-relative position, reconstructed without the camera's translation.
     float3 relative = surface.Position;
@@ -448,6 +458,63 @@ float4 fsMain(VSOutput input) : SV_Target
     float3 f0 = lerp(float3(0.04), albedo, metallic);
     float3 fresnel = FresnelSchlick(max(dot(N, V), 0.0), f0);
 
-    float3 contribution = reflection.rgb * fresnel * roughnessFade * g_PC.Intensity;
-    return float4(scene + contribution, 1.0);
+    // The reflected image stands where the reflected ray, unfolded through the surface, ends: along
+    // the pixel's own ray, the hit distance past the surface. A plane mirror's image of a point is
+    // exactly there, wherever the camera stands.
+    float3 rayDirection = orthographic ? mul(float3(0.0, 0.0, -1.0), (float3x3)vc.View) : -V;
+    result.Contribution = reflection.rgb * fresnel * roughnessFade * g_PC.Intensity;
+    result.VirtualPosition = relative + rayDirection * hitDistance;
+    result.Reflects = true;
+    return result;
+}
+
+[shader("fragment")]
+float4 fsMain(VSOutput input) : SV_Target
+{
+    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    float3 scene = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)]
+                       .SampleLevel(samp, input.v_UV, 0.0)
+                       .rgb;
+    Reflected reflected = EvaluateReflection(LoadViewConstants(g_PC.ViewConstantsIndex), input.v_UV);
+    return float4(scene + reflected.Contribution, 1.0);
+}
+
+// The motion marking a reflected image the previous frame cannot have seen: it lands the history
+// read off-screen, which rejects it.
+static const float2 UnseenMotion = float2(4.0, 4.0);
+
+// The unjittered screen motion (current UV minus previous UV) of a camera-relative point that does
+// not move in the world. The current position is the jittered projection with its jitter taken
+// back out; the previous one is the same point's direction reprojected through
+// PrevFromCurDirection, offset by the camera's move, so no world-space translation enters it.
+float2 PointMotion(ViewConstants vc, float3 relative)
+{
+    float4 current = mul(vc.Proj, float4(mul((float3x3)vc.View, relative), 1.0));
+    current.xy -= vc.JitterNdc.xy * current.w;
+    float4 previous = mul(vc.PrevFromCurDirection, current) + g_PC.PrevClipTranslation;
+    if (current.w <= 1e-6 || previous.w <= 1e-6)
+        return UnseenMotion;
+    float2 currentUV = (current.xy / current.w) * 0.5 + 0.5;
+    float2 previousUV = (previous.xy / previous.w) * 0.5 + 0.5;
+    return currentUV - previousUV;
+}
+
+struct TermOutput
+{
+    float4 Term : SV_Target0;    // the radiance the reflection adds; alpha 1 where one was evaluated
+    float2 Motion : SV_Target1;  // the reflected image's unjittered screen motion since last frame
+};
+
+// Under a temporal resolve: the reflection term alone, and how far the image it reflects moved on
+// screen, for the SSR temporal pass to accumulate. The reflected scene is taken as still, so the
+// motion is the camera's alone; a moving reflected object is left to the pass's validation.
+[shader("fragment")]
+TermOutput fsTerm(VSOutput input)
+{
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    Reflected reflected = EvaluateReflection(vc, input.v_UV);
+    TermOutput output;
+    output.Term = float4(reflected.Contribution, reflected.Reflects ? 1.0 : 0.0);
+    output.Motion = reflected.Reflects ? PointMotion(vc, reflected.VirtualPosition) : float2(0.0, 0.0);
+    return output;
 }

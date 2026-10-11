@@ -1,6 +1,6 @@
-// Screen-space reflections under a temporal resolve. SSR composites into the lit scene ahead of the
-// resolve, tracing the jittered frame as it lies, so the resolve integrates a reflection with
-// everything else it reconstructs.
+// Screen-space reflections under a temporal resolve. SSR traces the jittered frame as it lies,
+// accumulates the reflection in a history of its own, reprojected by the reflected image's motion,
+// and adds it to the resolved scene.
 //  - A mirror floor reflects a dark wall carrying two bright patches set checkerwise, through a
 //    whole jitter period under TAA: every frame, the reflection's colour edges — the patches'
 //    vertical and horizontal borders, where depth is continuous and every ray hits — keep to a
@@ -10,6 +10,11 @@
 //  - A glossy normal-mapped metal floor reflects emissive bars: through a whole jitter period, the
 //    converged reflection changes by a small fraction of its level each frame. Each jitter phase
 //    samples the normal map somewhere else, and so turns every reflected ray.
+//  - A mirror floor reflecting the bars under a camera moving sideways shows, at each pose, close to
+//    what a camera converged still there shows: its reflected image moves with the bars' reflected
+//    depth, not with the floor.
+//  - A still floor's converged reflection of the bars keeps almost nothing of them a frame after
+//    they go, and is at their full level a frame after they return.
 //
 // A reflected silhouette is not measured: whether a ray grazing one hits depends on the depth
 // buffer's rasterized coverage, which the jitter moves each frame. Skips cleanly (exit 77) on a
@@ -310,6 +315,7 @@ namespace
         Unique<Scene> World;
         vector<Ref<Mesh>> Meshes;
         AssetHandle<MaterialInstance> Floor;
+        vector<Entity> Bars;
         CameraView Camera;
     };
 
@@ -350,6 +356,7 @@ namespace
             transform.Position = position;
             transform.Rotation = rotation;
             built.World->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+            return entity;
         };
         place(Mesh::BuildSync(context, Primitives::Plane(vec2(8.0f), uvec2(1), built.Floor),
                               "Normal-Mapped Floor"),
@@ -365,9 +372,10 @@ namespace
             MakeBrick(context, assets, "Bar", vec3(0.0f), vec3(2.0f));
         for (const f32 x : {-0.8f, -0.4f, 0.0f, 0.4f, 0.8f})
         {
-            place(Mesh::BuildSync(context, Primitives::Plane(vec2(0.12f, 0.8f), uvec2(1), bar),
-                                  "Bar"),
-                  vec3(x, 0.4f, -1.9f), upright);
+            built.Bars.push_back(
+                place(Mesh::BuildSync(context, Primitives::Plane(vec2(0.12f, 0.8f), uvec2(1), bar),
+                                      "Bar"),
+                      vec3(x, 0.4f, -1.9f), upright));
         }
 
         built.Camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.05f, 100.0f);
@@ -531,7 +539,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             2.0f * At(stillAdded, bands.Dark, bands.FirstRow));
     REQUIRE(At(stillAdded, left, bands.Above) > 2.0f * At(stillAdded, left, bands.Below));
     // The edges where a render supersampled four times per axis puts them: the aliased render
-    // above quantizes a hard reflected edge to its pixel grid, where the resolve integrates it.
+    // above quantizes a hard reflected edge to its pixel grid, where SSR's temporal pass integrates
+    // it across the jitter.
     ReflectionProbe supersampled(Context, assets, AntiAliasingMode::None, 4);
     const Edges reference = Locate(supersampled.Render(Context, built).first, bands);
 
@@ -574,10 +583,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const FloorBand band = LocateFloor(RenderLuma(Context, *plain, *built.World, built.Camera));
     REQUIRE(band.LastRow > band.FirstRow + 16);
 
+    // The reflection's history runs to 64 samples where it holds still; nine periods fill it.
     const Unique<SceneRenderer> temporal =
         MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
     vector<f32> previous;
-    for (u32 frame = 0; frame < 3 * TaaJitterSampleCount; ++frame)
+    for (u32 frame = 0; frame < 9 * TaaJitterSampleCount; ++frame)
     {
         previous = RenderLuma(Context, *temporal, *built.World, built.Camera);
     }
@@ -592,10 +602,129 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     CAPTURE(reflected);
     CAPTURE(worst);
-    // Composited after the resolve, the reflection was traced from each frame's own normals and
-    // changed by 28 % of its level between frames; integrated by the resolve it changes by 4 %
-    // (both measured at landing), the resolve's own ripple on a signal that varies with the jitter.
-    CHECK(worst < 0.08);
+    // Each phase's reflection differs from the next by 28 % of its level; the history weights every
+    // phase alike, so the average moves by about that over its count (0.3 % at landing).
+    CHECK(worst < 0.01);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr jitter: a mirror's reflection under a moving camera keeps to the reflected "
+                  "depth")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_strafe.vengpack");
+    const BarsScene built = BuildBarsScene(Context, assets, Types, 0.0f);
+
+    // Sideways 0.1 m a frame: the bars' reflection, at about twice the floor's depth, moves across
+    // the floor by several pixels a frame.
+    constexpr f32 Step = 0.1f;
+    constexpr u32 MovingFrames = 6;
+    const auto pose = [&](const u32 frame)
+    {
+        const vec3 shift(Step * static_cast<f32>(frame), 0.0f, 0.0f);
+        CameraView camera = built.Camera;
+        camera.SetView(vec3(0.0f, 0.6f, 1.5f) + shift, vec3(0.0f, 0.15f, -2.0f) + shift,
+                       vec3(0.0f, 1.0f, 0.0f));
+        return camera;
+    };
+    const CameraView last = pose(MovingFrames);
+
+    // The floor shows nothing of its own: lit by nothing, it is all reflection.
+    const Unique<SceneRenderer> plain =
+        MakeRenderer(Context, assets, AntiAliasingMode::None, false);
+    const vector<f32> unreflected = RenderLuma(Context, *plain, *built.World, last);
+    const FloorBand band = LocateFloor(unreflected);
+    REQUIRE(band.LastRow > band.FirstRow + 16);
+    REQUIRE(BandMean(unreflected, band) < 1e-4);
+
+    const Unique<SceneRenderer> moving = MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+    for (u32 frame = 0; frame < 2 * TaaJitterSampleCount; ++frame)
+    {
+        (void)RenderLuma(Context, *moving, *built.World, pose(0));
+    }
+    vector<f32> moved;
+    for (u32 frame = 1; frame <= MovingFrames; ++frame)
+    {
+        moved = RenderLuma(Context, *moving, *built.World, pose(frame));
+    }
+
+    const Unique<SceneRenderer> still = MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+    vector<f32> settled;
+    for (u32 frame = 0; frame < 9 * TaaJitterSampleCount; ++frame)
+    {
+        settled = RenderLuma(Context, *still, *built.World, last);
+    }
+    const f64 reflected = BandMean(settled, band);
+    REQUIRE(reflected > 0.01);
+    const f64 deviation = BandMeanDelta(moved, settled, band) / reflected;
+    CAPTURE(reflected);
+    CAPTURE(deviation);
+    // The bars seen directly differ from their still-converged image by 7 to 9 % under the frame's
+    // own resolve, and a reflection reprojected by the floor's motion by 40 % (7.7 % at landing).
+    CHECK(deviation < 0.09);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr jitter: a converged reflection follows its source going and returning")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_reset.vengpack");
+
+    // A mirror's history holds still with the camera; a normal-mapped floor's swings with the
+    // jitter, so it is trusted to stray further before it is doubted.
+    struct Case
+    {
+        f32 NormalStrength;
+        f64 MaxResidue;
+    };
+    for (const Case& c : {Case{.NormalStrength = 0.0f, .MaxResidue = 0.01},
+                          Case{.NormalStrength = 0.3f, .MaxResidue = 0.05}})
+    {
+        CAPTURE(c.NormalStrength);
+        BarsScene built = BuildBarsScene(Context, assets, Types, c.NormalStrength);
+        const Unique<SceneRenderer> plain =
+            MakeRenderer(Context, assets, AntiAliasingMode::None, false);
+        const FloorBand band = LocateFloor(RenderLuma(Context, *plain, *built.World, built.Camera));
+        REQUIRE(band.LastRow > band.FirstRow + 16);
+
+        const Unique<SceneRenderer> temporal =
+            MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
+        vector<f32> converged;
+        for (u32 frame = 0; frame < 9 * TaaJitterSampleCount; ++frame)
+        {
+            converged = RenderLuma(Context, *temporal, *built.World, built.Camera);
+        }
+        const f64 level = BandMean(converged, band);
+        REQUIRE(level > 0.01);
+
+        // Dropped under the floor, the bars reflect nowhere: the floor now reflects a black wall.
+        const auto shift = [&](const f32 dy)
+        {
+            for (const Entity bar : built.Bars)
+            {
+                built.World->Get<Transform>(bar).Position.y += dy;
+            }
+        };
+        shift(-100.0f);
+        const f64 residue =
+            BandMean(RenderLuma(Context, *temporal, *built.World, built.Camera), band) / level;
+        shift(100.0f);
+        const f64 returned =
+            BandMean(RenderLuma(Context, *temporal, *built.World, built.Camera), band) / level;
+        CAPTURE(residue);
+        CAPTURE(returned);
+        // At landing: 0.16 % and 2.4 % left a frame after the bars went, and their full level back a
+        // frame after they returned.
+        CHECK(residue < c.MaxResidue);
+        CHECK(returned > 0.9);
+        CHECK(returned < 1.1);
+    }
 
     std::filesystem::remove(archive);
 }

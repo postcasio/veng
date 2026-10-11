@@ -114,6 +114,7 @@ namespace Veng::Renderer
         topology.DebugReflections = settings.Mode == DebugView::Reflections;
         topology.SsrActive =
             (settings.Mode == DebugView::Final && settings.SSR) || topology.DebugReflections;
+        topology.SsrTemporal = ResolveSsrTemporal(settings);
 
         // Depth of field takes the same gate shape, but the debug arm wires only the chain's first
         // two stages: the gather, fill, and composite stay off, so inspecting the circle of
@@ -167,6 +168,11 @@ namespace Veng::Renderer
     {
         return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() &&
                !settings.DepthOfField;
+    }
+
+    bool ResolveSsrTemporal(const SceneRendererSettings& settings)
+    {
+        return settings.Mode == DebugView::Final && settings.SSR && settings.UsesTaa();
     }
 
     bool ResolveBloomActive(const SceneRendererSettings& settings)

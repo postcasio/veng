@@ -227,7 +227,8 @@ TEST_CASE("frame topology: a temporal-upscaling resolve promotes unless a compos
     settings.AntiAliasing = AntiAliasingMode::TAAU;
     CHECK(ResolveTemporalUpscalePromotes(settings));
 
-    // SSR composites into the lit target ahead of the resolve, so it leaves the promotion alone.
+    // SSR reconstructs its reflection at the resolve's own output allocation, so it leaves the
+    // promotion alone.
     settings.SSR = true;
     CHECK(ResolveTemporalUpscalePromotes(settings));
     CHECK(ResolveFrameTopology(settings, SkyTopologyInput{}).TaaUpscalePromotes);
@@ -240,6 +241,32 @@ TEST_CASE("frame topology: a temporal-upscaling resolve promotes unless a compos
     settings.DepthOfField = false;
     settings.AntiAliasing = AntiAliasingMode::TAA;
     CHECK_FALSE(ResolveTemporalUpscalePromotes(settings));
+}
+
+TEST_CASE("frame topology: SSR resolves its own reflection exactly when a temporal resolve runs")
+{
+    // A temporal resolve reprojects by the surface's motion, so a reflection inside its history
+    // lags; SSR then accumulates the reflection itself and adds it after the resolve.
+    for (const AntiAliasingMode mode :
+         {AntiAliasingMode::None, AntiAliasingMode::FXAA, AntiAliasingMode::TAA,
+          AntiAliasingMode::CMAA2, AntiAliasingMode::TAAU})
+    {
+        for (const bool ssr : {false, true})
+        {
+            for (const DebugView view : {DebugView::Final, DebugView::Reflections})
+            {
+                SceneRendererSettings settings = ModeOnly(view);
+                settings.AntiAliasing = mode;
+                settings.SSR = ssr;
+                const FrameTopology topology = ResolveFrameTopology(settings, SkyTopologyInput{});
+                CAPTURE(static_cast<int>(mode));
+                CAPTURE(ssr);
+                CAPTURE(static_cast<int>(view));
+                CHECK(topology.SsrTemporal == (topology.SsrActive && topology.TaaActive));
+                CHECK(topology.SsrTemporal == ResolveSsrTemporal(settings));
+            }
+        }
+    }
 }
 
 TEST_CASE("frame topology: every sky source selects exactly one display path")

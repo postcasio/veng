@@ -139,7 +139,8 @@ namespace Veng::Renderer
     /// native image, with no second resample behind it. A TAAU frame that also wires a composited
     /// depth-of-field chain resolves like TAA instead (the chain reads render-resolution depth beside
     /// the resolved scene colour), degrading the reconstruction to spatial and keeping everything
-    /// else. SSR composites ahead of the resolve, so it composes with either.
+    /// else. SSR reconstructs its reflection at the resolve's own output allocation, so it composes
+    /// with either.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.
@@ -353,11 +354,12 @@ namespace Veng::Renderer
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
-        /// passes between lighting and the temporal resolve (or, with none, the bloom/tonemap tail)
-        /// and routes the lit scene color through an intermediate the SSR composite reflects into,
-        /// so a temporal resolve integrates the reflection with the rest of the frame. SsrIntensity / SsrMaxDistance
-        /// / SsrThickness / SsrMaxRoughness / SsrMaxSteps are per-frame values on SceneView and do
-        /// not recompile.
+        /// passes between lighting and the bloom/tonemap tail. With no temporal resolve the lit
+        /// scene color is routed through an intermediate the SSR composite reflects into; under one
+        /// the reflection is kept out of the resolve's history and accumulated by SSR's own temporal
+        /// pass, reprojected by the reflected image's motion, which adds it to the resolved scene.
+        /// SsrIntensity / SsrMaxDistance / SsrThickness / SsrMaxRoughness / SsrMaxSteps are
+        /// per-frame values on SceneView and do not recompile.
         /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
         /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
         /// trace itself.

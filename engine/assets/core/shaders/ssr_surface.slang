@@ -1,7 +1,7 @@
 // The surface an SSR trace texel or composite pixel reflects from, taken on the pixel's ray in the
-// rasterized frame. SSR composites into the lit scene ahead of any temporal resolve, so the
-// g-buffer, the scene colour it reflects and the target it writes all stand where the raster put
-// them, and the resolve integrates the reflection with the rest of the frame.
+// rasterized frame. SSR traces and composites ahead of any temporal resolve, so the g-buffer, the
+// scene colour it reflects and the target it writes all stand where the raster put them; under a
+// temporal resolve SSR's own temporal pass reconstructs the reflection at unjittered positions.
 //
 // The g-buffer texel holding the pixel's position was sampled at its own centre, which a trace
 // below the render resolution places up to a texel away from the pixel's ray, so its point is

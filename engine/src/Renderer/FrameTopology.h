@@ -139,6 +139,12 @@ namespace Veng::Renderer
         bool SsaoActive = false;
         /// @brief The SSR trace, blur, and composite are wired.
         bool SsrActive = false;
+        /// @brief SSR resolves its own reflection over time and adds it after the temporal resolve.
+        ///
+        /// Set when SSR runs under a temporal resolve (ResolveSsrTemporal): the composite writes the
+        /// reflection term and its reflected image's motion rather than the lit scene, and the SSR
+        /// temporal pass adds its accumulation to the resolved scene after the resolve's history copy.
+        bool SsrTemporal = false;
         /// @brief The pre-translucent opaque-depth copy is wired.
         ///
         /// Wherever the translucent composite runs, independent of Settings.Refraction: a material
@@ -266,14 +272,26 @@ namespace Veng::Renderer
     /// composited depth-of-field chain sits there and reads both through one extent, so a frame
     /// wiring it resolves at the render allocation instead and the spatial promotion carries the
     /// tail up — a spatial reconstruction rather than a temporal one, with the render scale still
-    /// buying exactly what it buys in every other mode. The SSR composite does not constrain it:
-    /// it writes the lit target ahead of the resolve, at the render allocation.
+    /// buying exactly what it buys in every other mode. SSR does not constrain it: its temporal
+    /// pass reconstructs the reflection at the resolve's own output allocation, as the resolve does.
     ///
     /// A function of the settings alone (no sky input), so the renderer can size its scene-colour
     /// allocation from it before the frame topology is resolved.
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @return True when the temporal resolve is the promotion.
     [[nodiscard]] bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings);
+
+    /// @brief Whether SSR resolves its own reflection over time rather than leaving it to the frame.
+    ///
+    /// Under a temporal resolve the reflection is kept out of the resolve's history: the resolve
+    /// reprojects a pixel by its surface's motion, and a reflected image moves with the reflected
+    /// geometry's depth instead, so the frame's history would lag it under every camera translation.
+    /// SSR then accumulates the reflection itself, reprojected by the reflected image's own motion,
+    /// and adds it to the resolved scene. A function of the settings alone, so the SSR chain can
+    /// size its targets before the frame topology is resolved.
+    /// @param settings The topology and sizing knobs the frame renders under.
+    /// @return True for the Final arm with SSR on under TAA or TAAU.
+    [[nodiscard]] bool ResolveSsrTemporal(const SceneRendererSettings& settings);
 
     /// @brief Whether the frame wires the bloom pyramid sweep (and so the bloom mask beside it).
     ///

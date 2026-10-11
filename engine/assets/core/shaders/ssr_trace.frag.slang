@@ -23,8 +23,8 @@
 // Everything the trace reads is the rasterized frame — the depth, the g-buffer, and the lit scene
 // colour ahead of any temporal resolve — so each texel's ray leaves its surface on the texel's own
 // ray (ssr_surface.slang), is marched through the projection the scene rasterized with, and reads
-// its hit where the march found it. Under a temporal resolve that projection is jittered, and the
-// resolve integrates the reflection with the rest of the frame.
+// its hit where the march found it. Under a temporal resolve that projection is jittered, and SSR's
+// temporal pass (ssr_temporal.frag) integrates the jitter out of the reflection.
 //
 // A crossing — in front of the stored surface one test, behind it the next — is a hit when the gap
 // behind it is under the larger of Thickness and StepToleranceScale times the depth the ray itself
