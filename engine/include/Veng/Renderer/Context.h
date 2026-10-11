@@ -373,11 +373,12 @@ namespace Veng::Renderer
 
         /// @brief Registers a transfer-timeline wait the next frame submit must satisfy.
         ///
-        /// The frame's graphics submit waits timeline >= value at the fragment-shader
-        /// (sampled-image) stage. The render side calls this on first graphics use of a
-        /// just-uploaded resource; SubmitFrame folds every accumulated wait in and clears
-        /// the set each frame. Rides alongside the binary present/acquire semaphores,
-        /// never replacing them.
+        /// The frame's graphics submit waits timeline >= value at every stage. The render side
+        /// calls this on first graphics use of a just-uploaded resource; SubmitFrame folds every
+        /// accumulated wait in and clears the set each frame. An ImmediateCommands submit waits
+        /// them too, and one made outside any frame settles the waits it took once it completes,
+        /// since every later submit follows a submit already past the copy. Rides alongside the
+        /// binary present/acquire semaphores, never replacing them.
         /// @param timeline The transfer timeline to wait.
         /// @param value    The timeline value to wait for.
         void AddFrameTransferWait(const TimelineSemaphore& timeline, u64 value);
@@ -633,9 +634,11 @@ namespace Veng::Renderer
         /// into the submit. The resident half of the async upload (Texture::Finalize)
         /// enqueues the view here; BeginFrame drains the queue into the frame's command
         /// buffer before any pass records, so the resource is in shader-read layout and
-        /// graphics-owned by the time anything samples it. The transition is recorded once,
-        /// on the first frame after the resource becomes resident. Called on the main thread
-        /// only (same thread as BeginFrame); not synchronized.
+        /// graphics-owned by the time anything samples it. An ImmediateCommands recording made
+        /// outside any frame drains it the same way, ahead of its callback, so a process that
+        /// never begins a frame still samples the resource in shader-read layout. The transition
+        /// is recorded once. Called on the main thread only (same thread as BeginFrame); not
+        /// synchronized.
         /// @param view The image view to transition.
         void EnqueueBindlessAcquire(const Ref<ImageView>& view);
 
@@ -707,8 +710,9 @@ namespace Veng::Renderer
 
         /// @brief Bindless-sampled resources awaiting their one-time graphics-queue acquire.
         ///
-        /// Populated by EnqueueBindlessAcquire and drained by BeginFrame. Holds a Ref so a
-        /// view enqueued for a texture dropped before the next frame cannot dangle.
+        /// Populated by EnqueueBindlessAcquire and drained by BeginFrame or an out-of-frame
+        /// ImmediateCommands. Holds a Ref so a view enqueued for a texture dropped before then
+        /// cannot dangle.
         vector<Ref<ImageView>> m_PendingBindlessAcquires;
 
         /// @brief Setup work RecordSetupCommands was handed while no command buffer was open.
@@ -720,6 +724,10 @@ namespace Veng::Renderer
         /// @brief Records the held setup work into @p commandBuffer and empties the queue.
         /// @param commandBuffer  The command buffer that has just begun recording.
         void DrainSetupCommands(CommandBuffer& commandBuffer);
+
+        /// @brief Records the queued bindless acquires into @p commandBuffer and empties the queue.
+        /// @param commandBuffer  The command buffer that has just begun recording.
+        void DrainBindlessAcquires(CommandBuffer& commandBuffer);
 
         /// @brief The render-domain viewport identity registry.
         ///

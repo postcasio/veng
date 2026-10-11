@@ -316,7 +316,9 @@ namespace Veng::Renderer
         /// its last submitted value. When both hold the detached handles are destroyed; otherwise
         /// they return to PendingRetire for the next BeginFrame or a later call. This is what
         /// bounds the pending bin, the descriptor pool behind it, and the bindless arrays, in a
-        /// process that submits only one-off work and never begins a frame.
+        /// process that submits only one-off work and never begins a frame. Upload scratch whose
+        /// transfer value has been reached is freed here too (DrainTransferRetireList), which
+        /// otherwise only a frame acquire does.
         void DrainPendingRetiresIfIdle();
 
         /// @brief Defers destruction of a handle into the current frame's retire bin.

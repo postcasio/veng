@@ -1134,12 +1134,8 @@ namespace Veng::Renderer
         if (!m_PendingBindlessAcquires.empty())
         {
             BeginGpuScope(*commandBuffer, "Frame Acquires");
-            for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
-            {
-                commandBuffer->PrepareForAccess(view, AccessKind::SampleAny);
-            }
+            DrainBindlessAcquires(*commandBuffer);
             EndGpuScope(*commandBuffer);
-            m_PendingBindlessAcquires.clear();
         }
 
         // Amortized generation and readback record here, at the top of the frame and ahead of
@@ -1386,6 +1382,13 @@ namespace Veng::Renderer
         }
         native.ActiveImmediateCommands = commandBuffer.get();
         self.DrainSetupCommands(*commandBuffer);
+        // Outside a frame no BeginFrame may come to record what went resident since, and the
+        // callback may sample it. Inside one they wait for the next frame: an acquire recorded
+        // here would run ahead of commands the frame recorded before it.
+        if (outsideFrame)
+        {
+            self.DrainBindlessAcquires(*commandBuffer);
+        }
         function(*commandBuffer);
         native.ActiveImmediateCommands = outerImmediate;
 
@@ -1396,6 +1399,12 @@ namespace Veng::Renderer
         self.m_GpuScopeRecording = wasRecording;
 
         commandBuffer->End();
+        usize foldedWaits = 0;
+        if (outsideFrame)
+        {
+            const std::scoped_lock lock(native.SubmitMutex);
+            foldedWaits = native.PendingFrameTransferWaits.size();
+        }
         SubmitImmediateCommands(*commandBuffer);
 
         // What was dropped outside a frame waits in the pending bin, and a released bindless slot
@@ -1405,6 +1414,17 @@ namespace Veng::Renderer
         // still use them.
         if (outsideFrame)
         {
+            // The transfer waits this submit took are settled: it has completed, so each value was
+            // reached, and every later submit is made after it. Kept owed, they would grow by one
+            // per upload and be waited by every later immediate submit in a process with no frame
+            // submit to clear them. The count was taken before the submit read the set, and only
+            // this thread removes from it, so the leading entries are exactly those it waited.
+            {
+                const std::scoped_lock lock(native.SubmitMutex);
+                auto& waits = native.PendingFrameTransferWaits;
+                waits.erase(waits.begin(),
+                            waits.begin() + static_cast<std::ptrdiff_t>(foldedWaits));
+            }
             native.DrainPendingRetiresIfIdle();
         }
 
@@ -1516,6 +1536,15 @@ namespace Veng::Renderer
             return;
         }
         m_PendingSetupCommands.push_back(std::move(commands));
+    }
+
+    void Context::DrainBindlessAcquires(CommandBuffer& commandBuffer)
+    {
+        for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
+        {
+            commandBuffer.PrepareForAccess(view, AccessKind::SampleAny);
+        }
+        m_PendingBindlessAcquires.clear();
     }
 
     void Context::DrainSetupCommands(CommandBuffer& commandBuffer)
@@ -2093,6 +2122,10 @@ namespace Veng::Renderer
             Bindless->ReclaimAllReleased();
         }
 
+        // Upload scratch is keyed on the transfer timeline alone, and otherwise drained only by a
+        // frame acquire.
+        DrainTransferRetireList();
+
         // Detached before anything in flight is examined. A handle is retired only after every
         // submit using it was made, so whatever the detached bin holds was in use by work
         // submitted before this point at the latest, and the checks below see all of it. A handle
@@ -2296,8 +2329,8 @@ namespace Veng::Renderer
 
         // A one-shot recording can be the first graphics use of an async upload (its acquire
         // transition registered a transfer wait), so it waits every wait the next frame owes as
-        // well. They stay owed: a timeline wait does not consume the value, and the next frame's
-        // acquires need their own dependency on the copy.
+        // well. They stay owed here: inside a frame, the frame's own submit still waits them; an
+        // out-of-frame ImmediateCommands settles the ones it took once this returns.
         vector<vk::Semaphore> waitSemaphores;
         vector<vk::PipelineStageFlags> waitStages;
         vector<u64> waitValues;

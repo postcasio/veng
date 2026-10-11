@@ -11,6 +11,9 @@
 // 4. The pending bin: a drop between frames waits for the next frame's fence, and
 //    a drop outside any frame is released after an ImmediateCommands recording
 //    once nothing else is in flight.
+// 5. What else waits on a frame in a process that never begins one: reached
+//    upload scratch, a queued bindless acquire, and the transfer waits an
+//    out-of-frame ImmediateCommands submit has already taken.
 //
 // These deal in raw Vulkan/VMA handles by design, so this case reaches through
 // the public Native.h escape hatch; veng_gpu links Vulkan + VMA for it.
@@ -20,12 +23,16 @@
 #include <algorithm>
 #include <mutex>
 
+#include <Veng/Renderer/Backend/Barrier.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Renderer/Types.h>
@@ -313,4 +320,60 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         });
     CHECK(pendingAfterInner == 1);
     CHECK(native.PendingRetire.Size() == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "an immediate submit outside a frame frees upload scratch the transfer reached")
+{
+    auto buffer = MakeScratch(Context);
+    const auto released = ReleaseBuffer(*buffer);
+    buffer.reset();
+
+    Context::Native& native = Context.GetNative();
+    native.RetireOnTransfer(released.Buffer, released.Allocation, 0);
+    REQUIRE(native.TransferRetireList.size() == 1);
+
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(native.TransferRetireList.empty());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "an immediate submit outside a frame acquires a queued bindless view")
+{
+    // The state an async upload leaves: written on the transfer queue, its wait value reached.
+    Context::Native& native = Context.GetNative();
+    u64 value = 0;
+    {
+        const std::scoped_lock lock(native.SubmitMutex);
+        value = ++native.TransferTimelineValue;
+    }
+    native.TransferTimeline->Signal(value);
+
+    const Ref<Image> image =
+        Image::Create(Context, {
+                                   .Name = "Queued Acquire",
+                                   .Extent = {4, 4, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    Ref<ImageView> view =
+        ImageView::Create(Context, {.Name = "Queued Acquire View", .Image = image});
+
+    // Laid out by a real copy first, so the acquire transitions from a defined layout.
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+                              { Backend::TransitionImage(cmd, *image, ImageLayout::TransferDst); });
+    Image::Native::SubresourceState& state = image->GetNative().At(0, 0);
+    state.ProducingFamily =
+        Context.GetQueueFamilies().TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+    state.PendingTransferValue = value;
+
+    Context.EnqueueBindlessAcquire(view);
+    const std::weak_ptr<ImageView> queued = view;
+    view.reset();
+
+    Context.ImmediateCommands([](CommandBuffer&) {});
+    CHECK(state.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(state.PendingTransferValue == 0);
+    CHECK(native.PendingFrameTransferWaits.empty());
+    CHECK(queued.expired());
 }

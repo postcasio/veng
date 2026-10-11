@@ -958,9 +958,11 @@ the next `BeginFrame` adopts; a headless or tool process that never begins a fra
 and submits only through `ImmediateCommands` has that bin released after each such
 submit made outside a frame, once no frame slot and no transfer is still in flight
 (`Context::Native::DrainPendingRetiresIfIdle`), so what it drops does not pile up
-against the descriptor pool. An async upload's staging buffer instead retires on the
+against the descriptor pool — and the same drain reclaims released bindless slots once
+no frame is in flight. An async upload's staging buffer instead retires on the
 **transfer timeline** (`RetireOnTransfer`), since its copy completes on the
-transfer queue, not the frame fence; off-thread drops make the whole retire path
+transfer queue, not the frame fence, and is freed by a frame acquire or that same
+drain once the timeline reaches its value; off-thread drops make the whole retire path
 mutex-guarded. The one deliberate exception: `DescriptorSet` holds `Ref`s to the
 resources it was written with (`m_BoundResources`) — that's ownership, not
 frame-tracking.
