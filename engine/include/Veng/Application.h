@@ -2193,7 +2193,8 @@ namespace Veng
         ///
         /// A managed or bound viewport registered for the world (FindPresentingViewport), else a
         /// Presented viewport a consumer drives itself; either only once its retained scene is
-        /// @p scene. The one presentation answer a world's view, its seats' input and its sound share.
+        /// @p scene. The one presentation answer a world's view, its seats' input and navigation, and
+        /// its sound share.
         /// @param world  The world whose scene is asked about.
         /// @param scene  The world's live scene.
         /// @return The presenting viewport, or null.

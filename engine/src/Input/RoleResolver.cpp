@@ -154,6 +154,14 @@ namespace Veng
         state.Previous = std::move(resolved);
     }
 
+    void RoleResolver::LetGo(const SeatRef seat)
+    {
+        SeatState& state = m_Seats[seat];
+        state.Seen = true;
+        state.Previous = NeutralActionState(state.Previous);
+        state.Timers.clear();
+    }
+
     void RoleResolver::RetireUnseen()
     {
         std::erase_if(m_Seats, [](const auto& entry) { return !entry.second.Seen; });
@@ -208,6 +216,7 @@ namespace Veng
             Scene& scene = world->GetScene();
             const PointerRouting none{};
             const PointerRouting& pointer = &scene == frame.PointerScene ? frame.Pointer : none;
+            const bool presented = frame.IsPresented && frame.IsPresented(world->Id, scene);
             scene.Each<Viewer, SeatInput>(
                 [&](const Entity viewer, Viewer&, SeatInput& devices)
                 {
@@ -216,6 +225,14 @@ namespace Veng
                         return;
                     }
                     const SeatRef seat{.World = world->Id, .Viewer = viewer};
+
+                    // A seat in a world nothing presents is not the one the player is aiming at, so
+                    // it neither navigates nor frees the cursor, and comes back holding nothing.
+                    if (!presented && !devices.ReceivesInputWhileUnpresented)
+                    {
+                        LetGo(seat);
+                        return;
+                    }
                     const InputFocus focus = frame.Router.GetFocus(seat);
                     const InputContextStack* stack = scene.TryGet<InputContextStack>(viewer);
 

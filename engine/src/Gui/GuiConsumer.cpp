@@ -325,13 +325,15 @@ namespace Veng::Gui
 
         // The seat's own viewports, topmost first, and in each its routable documents topmost first:
         // the press stops at the first document that takes it. The implicit seat reaches only the
-        // viewports bound to no seat, so a seated document is driven by its own seat alone.
+        // viewports bound to no seat, so a seated document is driven by its own seat alone. A
+        // viewport its owner has stopped showing — a hidden panel's — is on no screen, so its
+        // documents take no press.
         for (auto viewportIt = m_Viewports.rbegin(); viewportIt != m_Viewports.rend(); ++viewportIt)
         {
             Renderer::Viewport* const viewport = *viewportIt;
             const SeatRef seat = viewport->GetSeat();
             const bool owns = event.Seat.IsImplicit() ? seat.IsImplicit() : seat == event.Seat;
-            if (!owns)
+            if (!owns || !viewport->IsShown())
             {
                 continue;
             }

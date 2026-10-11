@@ -2,9 +2,10 @@
 // on: its press is resolved once per frame for every seat — the implicit all-devices seat and each
 // locally-owned SeatInput seat in every world — and a navigation role is dispatched through the
 // router's consumers only while the pressing seat holds UI focus, a ReleaseFocus press releasing the
-// seat's gameplay focus only while it holds that. The resolver is driven over a real
-// InputRouter, Input snapshot and WorldRunner; a recording consumer stands in for the Gui consumers,
-// which the gpu band covers against real documents.
+// seat's gameplay focus only while it holds that, and only while a viewport presents the seat's
+// world. The resolver is driven over a real InputRouter, Input snapshot and WorldRunner; a recording
+// consumer stands in for the Gui consumers, which the gpu band covers against real documents, and a
+// list of unpresented worlds stands in for the engine's presenting-viewport lookup.
 
 #include <doctest/doctest.h>
 
@@ -161,6 +162,8 @@ namespace
         AssetHandle<InputMappingContext> DefaultUi = MakeHandle(0xD1, UiContext());
         FocusRequestTokens Tokens;
         bool UseDefault = true;
+        // The worlds no viewport presents; every other world is on screen.
+        vector<WorldInstanceId> Unpresented;
 
         Rig()
         {
@@ -183,13 +186,16 @@ namespace
         void Step(const f32 delta = Frame)
         {
             const PointerRouting pointer{};
-            Resolver.Update(RoleFrameInfo{.Snapshot = Snapshot,
-                                          .Router = Router,
-                                          .Worlds = Runner,
-                                          .DefaultUi = UseDefault ? DefaultUi.Get() : nullptr,
-                                          .Pointer = pointer,
-                                          .Delta = delta,
-                                          .FocusTokens = &Tokens});
+            Resolver.Update(RoleFrameInfo{
+                .Snapshot = Snapshot,
+                .Router = Router,
+                .Worlds = Runner,
+                .IsPresented = [this](const WorldInstanceId world, const Scene&)
+                { return std::ranges::find(Unpresented, world) == Unpresented.end(); },
+                .DefaultUi = UseDefault ? DefaultUi.Get() : nullptr,
+                .Pointer = pointer,
+                .Delta = delta,
+                .FocusTokens = &Tokens});
             // The next frame begins: the snapshot rolls, applying any release this frame deferred.
             Snapshot.BeginFrame(true);
         }
@@ -594,4 +600,64 @@ TEST_CASE("action roles: one press releases one entry, however many seats raise 
     CHECK_FALSE(rig.Router.IsFocusTokenLive(top));
     CHECK(rig.Router.IsFocusTokenLive(beneath));
     CHECK(rig.Router.IsGameplayFocused(seat));
+}
+
+TEST_CASE(
+    "action roles: a seat whose world nothing presents is let go, and a held key presses afresh "
+    "on its return")
+{
+    Rig rig;
+    const SeatRef seat = rig.OpenReleasingSeat();
+    rig.Unpresented.push_back(seat.World);
+
+    // Escape held unseen under gameplay focus frees nothing.
+    const FocusToken gameplay = rig.Router.PushFocus(seat, InputFocus::Gameplay);
+    rig.Press(Key::Escape);
+    rig.Step();
+    rig.Step();
+    CHECK(rig.Router.IsFocusTokenLive(gameplay));
+    rig.Release(Key::Escape);
+    rig.Step();
+    rig.Router.PopFocus(gameplay);
+
+    // Under UI focus, a direction and Confirm held unseen past the repeat delay move nothing.
+    rig.Press(Key::Down);
+    rig.Press(Key::Enter);
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        rig.Step();
+    }
+    CHECK(rig.Recorder.CountFor(seat) == 0);
+
+    // Presented with both still down, each is a fresh press — once, and not a repeat.
+    rig.Unpresented.clear();
+    rig.Step();
+    rig.Step();
+    REQUIRE(rig.Recorder.CountFor(seat) == 2);
+    for (const RoleEvent& event : rig.Recorder.Roles)
+    {
+        if (event.Seat == seat)
+        {
+            CHECK_FALSE(event.Repeat);
+        }
+    }
+}
+
+TEST_CASE("action roles: a world leaving the screen silences only its own seats")
+{
+    Rig rig;
+    const SeatRef shown = rig.OpenSeat();
+    const SeatRef unseen = rig.OpenSeat();
+    const SeatRef steered = rig.OpenSeat();
+    rig.SceneOf(steered).Get<SeatInput>(steered.Viewer).ReceivesInputWhileUnpresented = true;
+    rig.Unpresented = {unseen.World, steered.World};
+
+    // The presented seat and the implicit seat, which belongs to no world, navigate as ever; so does
+    // a seat that opts in to being steered unseen.
+    rig.Press(Key::Down);
+    rig.Step();
+    CHECK(rig.Recorder.CountFor(shown) == 1);
+    CHECK(rig.Recorder.CountFor(SeatRef{}) == 1);
+    CHECK(rig.Recorder.CountFor(steered) == 1);
+    CHECK(rig.Recorder.CountFor(unseen) == 0);
 }

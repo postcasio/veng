@@ -16,7 +16,9 @@
 // resolves every seat's role actions once per frame, whatever the seat's focus, so a press is a
 // Started edge exactly once however long it is held and whatever focus changes it is held across;
 // only the dispatch is gated on focus. It reads no Sim-resolved PlayerInput: a paused world does not
-// step, a frame may run zero or several steps, and a seatless viewport has no seat to resolve.
+// step, a frame may run zero or several steps, and a seatless viewport has no seat to resolve. A
+// seat whose world no viewport presents is let go instead, as InputMappingSystem lets its Sim input
+// go.
 
 namespace Veng
 {
@@ -45,6 +47,12 @@ namespace Veng
         InputRouter& Router;
         /// @brief The worlds whose locally-owned seats resolve, paused or not.
         const WorldRunner& Worlds;
+        /// @brief Answers whether a viewport presents a world's live scene this frame.
+        ///
+        /// The presenting-viewport lookup a world's systems read SystemContext::Presented from, so
+        /// a seat navigates exactly while its Sim input is live. Empty presents nothing, so every
+        /// world seat is let go; the implicit seat, which belongs to no world, never asks.
+        function<bool(WorldInstanceId, const Scene&)> IsPresented;
         /// @brief The default UI context beneath every non-exclusive seat and alone on the implicit
         ///        seat; null when the application has none, so nothing navigates by default.
         const InputMappingContext* DefaultUi = nullptr;
@@ -72,6 +80,12 @@ namespace Veng
     /// phase across the takeover, and one held through it is not new when it ends. The implicit seat
     /// resolves the default UI context alone, against every device, and drives only documents on
     /// viewports bound to no seat.
+    ///
+    /// A seat whose world no viewport presents (RoleFrameInfo::IsPresented) resolves nothing and
+    /// fires nothing — no navigation, no ReleaseFocus — unless its SeatInput sets
+    /// ReceivesInputWhileUnpresented. It is let go rather than released (LetGo): what it held reads
+    /// at rest, so no press is carried across the gap and a control still down when its world is
+    /// presented again is a fresh press. The implicit seat belongs to no world and is never let go.
     ///
     /// Dispatch is gated on the focus each seat held as the frame's dispatch began — the implicit
     /// seat taking the cursor seat's focus, as the window events it reads do. A navigation role is
@@ -104,7 +118,15 @@ namespace Veng
         void ResolveSeat(SeatRef seat, std::span<const ResolvedContext> contexts, usize trackedOnly,
                          const RawInputView& raw, f32 delta, vector<RoleFire>& fires);
 
-        /// @brief Forgets every seat ResolveSeat did not see since the previous call.
+        /// @brief Brings a seat to rest for the frame: it fires nothing and holds nothing.
+        ///
+        /// Its carried state becomes NeutralActionState and its repeat timers drop, so no action is
+        /// remembered as held: a control still down when the seat next resolves is a fresh press.
+        /// Marks the seat seen for RetireUnseen.
+        /// @param seat  The seat let go.
+        void LetGo(SeatRef seat);
+
+        /// @brief Forgets every seat ResolveSeat or LetGo did not see since the previous call.
         void RetireUnseen();
 
     private:
@@ -126,7 +148,7 @@ namespace Veng
             ActionState Previous;
             /// @brief The repeat timers of the seat's held repeating actions.
             vector<RepeatTimer> Timers;
-            /// @brief Whether ResolveSeat saw the seat since the last RetireUnseen.
+            /// @brief Whether ResolveSeat or LetGo saw the seat since the last RetireUnseen.
             bool Seen = false;
         };
 

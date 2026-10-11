@@ -595,7 +595,10 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `Completed` edge fires — and a control still down when the world is presented again reads as a
   fresh press, exactly as after popping a seat's contexts to empty. A seat meant to be steered
   unseen (a remotely piloted drone, a picture-in-picture view not registered as presenting) sets
-  **`SeatInput::ReceivesInputWhileUnpresented`**. A joining client carries the rule to its host:
+  **`SeatInput::ReceivesInputWhileUnpresented`**. The rule and its opt-out cover the seat's
+  per-frame role presses too: the role resolver (below) lets an unpresented seat go the same way, so
+  it neither navigates nor frees the cursor, and a key held across the gap presses afresh on its
+  return. A joining client carries the rule to its host:
   it sends no input records for an unpresented world, and the host's seat comes to rest (see
   [../Net/CLAUDE.md](../Net/CLAUDE.md), "Input replication"). Which unseen-world state a game still
   counts — whether an unpresented arrival is "there" for its NPCs or zones — stays the game's.
@@ -665,7 +668,7 @@ a cutscene retargets the camera without un-possessing).
 `ReleaseFocus` releases the pressing seat's gameplay focus (above). Role actions are
 **not** read off `PlayerInput`. The engine's **role resolver** (`engine/src/Input/RoleResolver`)
 resolves them once per **frame**, after the input lands and before any world ticks, for the implicit
-seat and every locally-owned `SeatInput` seat in every world — paused ones included — against a
+seat and every locally-owned `SeatInput` seat in every presented world — paused ones included — against a
 `FrameInputView` (`SeatInputView`'s device gating with the per-frame deltas; a key a router consumer
 claimed reads up). A seat resolves its `InputContextStack` over the application's **default UI
 context** (`Application::SetDefaultUiContext`, from the project's `"defaultUiContext"`); a stack a

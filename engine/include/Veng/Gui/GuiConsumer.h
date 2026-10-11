@@ -48,7 +48,9 @@ namespace Veng::Gui
     /// map binds the navigation roles, the engine resolves them per seat each frame, and this
     /// consumer drives Document::Navigate in the pressing seat's viewports — topmost first, stopping
     /// at the first document that takes it. The implicit seat reaches only viewports bound to no
-    /// seat.
+    /// seat, and no press reaches a viewport its owner has stopped showing
+    /// (Renderer::Viewport::IsShown). A seat whose world no viewport presents raises no press at
+    /// all.
     ///
     /// The consumer borrows the router, the input snapshot, the window, and the viewport drive-list
     /// it walks (the Application-owned, registration-ordered list that self-cleans on a viewport's

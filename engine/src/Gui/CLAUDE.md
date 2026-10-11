@@ -601,6 +601,22 @@ maps each role to its own `NavAction`, so the input layer never depends on Gui.
   nothing). The **implicit seat** resolves the default alone against every device and drives only
   viewports bound to no seat. It reads no Sim-resolved `PlayerInput`, so a paused world's seat
   still navigates.
+- **A seat navigates only while its world is presented.** The resolver asks the same
+  presenting-viewport lookup a world's `SystemContext::Presented` comes from, and a seat in a world
+  nothing presents is **let go**: it fires nothing — no navigation, no `ReleaseFocus` — and its
+  carried state goes to rest (`NeutralActionState`, timers dropped), so no press or repeat is
+  carried across the gap and a key still down when the world returns is a fresh press, with no
+  release edge on the way out. That is exactly the seat's Sim-input rule
+  ([../Scene/CLAUDE.md](../Scene/CLAUDE.md), "A seat takes input only while its world is
+  presented"), and one opt-out governs both: a seat whose `SeatInput` sets
+  `ReceivesInputWhileUnpresented` keeps navigating unseen. What it reaches: the documents a seat
+  drives are an overlay world's (its viewport presents the seat's own world, so it is presented
+  whenever it is on screen) and that seat's world panels — exactly the ones a world off screen
+  hides. **The implicit seat belongs to no world and is never let go**, so the front door,
+  settings and every other document on a viewport bound to no seat navigate as before; instead
+  **a viewport its owner has stopped showing** (`Viewport::IsShown` — a hidden panel's on-demand
+  viewport) is skipped at delivery, so its documents take no press and it passes to the one on
+  screen.
 - **Only dispatch is gated on focus.** A navigation role fires only for a seat holding UI focus as
   the frame's dispatch begins (the implicit seat takes the cursor seat's focus, as the window events
   it reads do). Because resolution never stops, a press is `Started` once however long it is held and

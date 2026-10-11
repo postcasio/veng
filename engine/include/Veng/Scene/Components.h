@@ -686,8 +686,8 @@ namespace Veng
     /// assignments resolve to distinct PlayerInputs. Authorable in a level and serialized through
     /// the reflection path. A seat with no SeatInput takes no local device input:
     /// InputMappingSystem skips it, so its PlayerInput is synthesized or replicated (the AI/remote
-    /// path). A seat whose world no viewport presents reads neutral input (NeutralActionState)
-    /// unless it sets ReceivesInputWhileUnpresented.
+    /// path). A seat whose world no viewport presents reads neutral input (NeutralActionState) and
+    /// raises no navigation or focus-release press unless it sets ReceivesInputWhileUnpresented.
     struct SeatInput
     {
         /// @brief Whether this seat reads the keyboard (and, region-gated elsewhere, the pointer).
@@ -706,7 +706,8 @@ namespace Veng
         /// unseen — a destination loading behind the one presented, a world a hidden tab shows — is
         /// never driven by controls the player is aiming at another. Set it for a seat that is
         /// meant to be steered unseen, such as a remotely piloted drone or a picture-in-picture view
-        /// whose world is not registered as presented.
+        /// whose world is not registered as presented. It governs the seat's actions and its
+        /// navigation alike: the per-frame role presses (navigation, ReleaseFocus) follow it too.
         bool ReceivesInputWhileUnpresented = false;
     };
 

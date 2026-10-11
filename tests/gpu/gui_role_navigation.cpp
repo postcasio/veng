@@ -9,7 +9,8 @@
 //       its own viewports, each press reaching a document once;
 //   (b) one press reaches exactly one document, the topmost that takes it;
 //   (c) the modifiers held on the seat's keyboard reach Navigate, so Shift with a direction extends
-//       an Extended list's range and Control moves focus alone.
+//       an Extended list's range and Control moves focus alone;
+//   (d) a viewport its owner has stopped showing is skipped, so the press reaches the one on screen.
 
 #include <doctest/doctest.h>
 
@@ -90,8 +91,9 @@ namespace
             Router.RegisterConsumer(Consumer);
         }
 
-        // A new offscreen viewport, last in the drive list (so topmost).
-        Renderer::Viewport& AddViewport()
+        // A new offscreen viewport, last in the drive list (so topmost). An on-demand one is shown
+        // only while its owner pushes a view each frame, as a tool panel's is.
+        Renderer::Viewport& AddViewport(const bool onDemand = false)
         {
             Owned.push_back(Renderer::Viewport::Create({
                 .Context = GpuContext,
@@ -99,6 +101,7 @@ namespace
                 .Region = {.Offset = {0, 0}, .Extent = {128, 128}},
                 .Settings = {},
                 .Role = Renderer::ViewportRole::Offscreen,
+                .RenderOnDemand = onDemand,
             }));
             Viewports.push_back(Owned.back().get());
             return *Owned.back();
@@ -107,12 +110,16 @@ namespace
         void Frame()
         {
             const PointerRouting pointer{};
-            Resolver.Update(RoleFrameInfo{.Snapshot = Snapshot,
-                                          .Router = Router,
-                                          .Worlds = Runner,
-                                          .DefaultUi = UiMap.get(),
-                                          .Pointer = pointer,
-                                          .Delta = 1.0f / 60.0f});
+            // Every world the rig opens stands on screen; which seats an unpresented world silences
+            // is the unit band's question.
+            Resolver.Update(
+                RoleFrameInfo{.Snapshot = Snapshot,
+                              .Router = Router,
+                              .Worlds = Runner,
+                              .IsPresented = [](WorldInstanceId, const Scene&) { return true; },
+                              .DefaultUi = UiMap.get(),
+                              .Pointer = pointer,
+                              .Delta = 1.0f / 60.0f});
             // The next frame begins: the snapshot rolls, applying any release this frame deferred.
             Snapshot.BeginFrame(true);
         }
@@ -253,6 +260,35 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     rig.Press(Key::Right);
     CHECK(above.Focused() == 2);
     CHECK(below.Focused() == 1);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui role navigation: a viewport its owner stopped showing takes no press")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+    NavRig rig(Context, assets);
+
+    ButtonRow shown;
+    ButtonRow hidden;
+    rig.AddViewport().AttachDocument(shown.Doc);
+    Renderer::Viewport& panel = rig.AddViewport(true);
+    panel.AttachDocument(hidden.Doc);
+
+    // A whole frame with no view pushed: the panel is hidden, so the press passes over it, though
+    // it sits on top, to the document on screen.
+    panel.Render(Context.BeginFrame());
+    Context.EndFrame();
+    REQUIRE_FALSE(panel.IsShown());
+    rig.Press(Key::Right);
+    CHECK(hidden.Focused() == 0);
+    CHECK(shown.Focused() == 1);
+
+    // Shown again, the topmost document takes the next press.
+    panel.SetViewState({});
+    rig.Press(Key::Right);
+    CHECK(hidden.Focused() == 1);
+    CHECK(shown.Focused() == 1);
 }
 
 TEST_CASE_FIXTURE(

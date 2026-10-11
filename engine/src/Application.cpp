@@ -3046,7 +3046,8 @@ namespace Veng
         // The frame's input has landed: resolve every seat's role actions and act on their presses —
         // navigation and focus release — once per frame and before any world ticks, so a paused
         // world's seat still navigates and a press never depends on how many Sim steps this frame
-        // runs.
+        // runs. A seat's world must be presented for it to navigate, by the same answer its Sim
+        // input follows.
         {
             VE_PROFILE_SCOPE("Frame/Roles");
             const ScopedPointer pointer = ComputePointerRouting();
@@ -3054,6 +3055,8 @@ namespace Veng
                 .Snapshot = *m_Input,
                 .Router = *m_InputRouter,
                 .Worlds = *m_WorldRunner,
+                .IsPresented = [this](const WorldInstanceId world, const Scene& scene)
+                { return FindScenePresenter(world, scene) != nullptr; },
                 .DefaultUi = m_DefaultUiContext.IsLoaded() ? m_DefaultUiContext.Get() : nullptr,
                 .Pointer = pointer.Routing,
                 .PointerScene = pointer.Scene,
