@@ -112,8 +112,12 @@ namespace Veng::Renderer
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
         topology.DebugReflections = settings.Mode == DebugView::Reflections;
-        topology.SsrActive =
+        const bool ssrRuns =
             (settings.Mode == DebugView::Final && settings.SSR) || topology.DebugReflections;
+        const bool stochastic =
+            settings.SsrMethod == SceneRendererSettings::SsrTechnique::Stochastic;
+        topology.SsrActive = ssrRuns && !stochastic;
+        topology.SsrStochasticActive = ssrRuns && stochastic;
         topology.SsrTemporal = ResolveSsrTemporal(settings);
 
         // Depth of field takes the same gate shape, but the debug arm wires only the chain's first
@@ -172,7 +176,8 @@ namespace Veng::Renderer
 
     bool ResolveSsrTemporal(const SceneRendererSettings& settings)
     {
-        return settings.Mode == DebugView::Final && settings.SSR && settings.UsesTaa();
+        return settings.Mode == DebugView::Final && settings.SSR && settings.UsesTaa() &&
+               settings.SsrMethod == SceneRendererSettings::SsrTechnique::Legacy;
     }
 
     bool ResolveBloomActive(const SceneRendererSettings& settings)

@@ -51,6 +51,7 @@
 #include "Passes/RibbonScenePass.h"
 #include "Passes/SpriteScenePass.h"
 #include "SsrChain.h"
+#include "SsrStochasticChain.h"
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
 #include "PostResolveUpscale.h"
@@ -300,6 +301,7 @@ namespace Veng::Renderer
         // layouts, which must already exist, so the chain is constructed after that subsystem.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
                                  m_GpuCull->GetHiZTailLayout());
+        m_SsrStochastic = SsrStochasticChain::Create(m_Context, m_Assets);
         // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
@@ -492,6 +494,10 @@ namespace Veng::Renderer
                                                            m_Ssr->GetReflectionMipCount());
             m_SsrHiZChainId =
                 graph.ImportImageMips("SceneRenderer SSR MinZ", m_Ssr->GetHiZMipCount());
+        }
+        if (m_Topology->SsrStochasticActive)
+        {
+            m_SsrStochastic->Import(graph);
         }
         // Depth of field splices in the same way: the tail writes the chain's scene-color
         // intermediate and the composite writes the HDR target, so bloom, metering, and tonemap
@@ -922,7 +928,7 @@ namespace Veng::Renderer
             // after it, adding the accumulated reflection once the history copy has read the scene.
             if (m_Topology->TaaActive)
             {
-                if (m_Topology->SsrActive)
+                if (m_Topology->SsrActive || m_Topology->SsrStochasticActive)
                 {
                     ssrAnchor = m_Passes.size();
                 }
@@ -1355,8 +1361,12 @@ namespace Veng::Renderer
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
-            .SsrReflection = m_Topology->SsrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
-            .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
+            .SsrReflection = m_Topology->SsrActive             ? m_SsrReflectionChainId.Level(0)
+                             : m_Topology->SsrStochasticActive ? m_SsrStochastic->GetRadianceId()
+                                                               : ResourceId{},
+            .SsrReflectionHandle = m_Topology->SsrStochasticActive
+                                       ? m_SsrStochastic->GetRadianceHandle()
+                                       : m_Ssr->GetReflectionSampleHandle(),
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
             .SamplerHandle = m_SamplerHandle,
@@ -1401,6 +1411,14 @@ namespace Veng::Renderer
                                m_SsrReflectionChainId, m_SsrHiZChainId, m_AlbedoId, m_NormalId,
                                m_OrmId, m_DepthId, anchorId, m_DepthHandle, m_NormalHandle,
                                m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
+            }
+            const bool declareStochastic =
+                m_Topology->SsrStochasticActive &&
+                (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
+            if (declareStochastic)
+            {
+                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, m_DepthHandle,
+                                         m_NormalHandle, m_OrmHandle);
             }
 
             if (i == tailAnchor)
@@ -2216,6 +2234,7 @@ namespace Veng::Renderer
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_SceneColorAllocExtent, m_DepthView,
                         m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout());
+        m_SsrStochastic->Recreate(m_Settings, m_RenderAllocExtent);
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);
@@ -3257,6 +3276,10 @@ namespace Veng::Renderer
                 bindings.push_back({.Id = m_SsrHiZChainId.Level(level), .View = hiZMips[level]});
             }
         }
+        if (m_Topology->SsrStochasticActive)
+        {
+            m_SsrStochastic->AppendBindings(bindings);
+        }
         if (m_Topology->DofWired())
         {
             bindings.push_back({.Id = m_DofNearId, .View = m_Dof->GetNearView()});
@@ -3536,6 +3559,10 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
     {
         return m_Shadows->GetPunctualView();
+    }
+    SsrTraceTargets SceneRenderer::GetSsrTraceTargets() const
+    {
+        return m_SsrStochastic->GetTargets();
     }
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {

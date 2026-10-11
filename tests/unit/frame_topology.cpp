@@ -269,6 +269,42 @@ TEST_CASE("frame topology: SSR resolves its own reflection exactly when a tempor
     }
 }
 
+TEST_CASE("frame topology: SSR runs through exactly the chain its technique names")
+{
+    using Technique = SceneRendererSettings::SsrTechnique;
+    for (const Technique technique : {Technique::Legacy, Technique::Stochastic})
+    {
+        for (const AntiAliasingMode mode : {AntiAliasingMode::None, AntiAliasingMode::TAA})
+        {
+            for (const bool ssr : {false, true})
+            {
+                for (const DebugView view : {DebugView::Final, DebugView::Reflections})
+                {
+                    SceneRendererSettings settings = ModeOnly(view);
+                    settings.AntiAliasing = mode;
+                    settings.SSR = ssr;
+                    settings.SsrMethod = technique;
+                    const FrameTopology topology = Resolve(settings);
+                    CAPTURE(static_cast<int>(technique));
+                    CAPTURE(static_cast<int>(mode));
+                    CAPTURE(ssr);
+                    CAPTURE(static_cast<int>(view));
+                    const bool runs =
+                        (view == DebugView::Final && ssr) || view == DebugView::Reflections;
+                    CHECK(topology.SsrActive == (runs && technique == Technique::Legacy));
+                    CHECK(topology.SsrStochasticActive ==
+                          (runs && technique == Technique::Stochastic));
+                    // The stochastic chain keeps no history of its own past the resolve.
+                    if (technique == Technique::Stochastic)
+                    {
+                        CHECK_FALSE(topology.SsrTemporal);
+                    }
+                }
+            }
+        }
+    }
+}
+
 TEST_CASE("frame topology: every sky source selects exactly one display path")
 {
     constexpr std::array kinds{SkySourceKind::None, SkySourceKind::Environment,

@@ -645,6 +645,21 @@
       "id": "0x27644C3AE58BB0D3",
       "type": "Raw",
       "source": "data/ltc_lut.bin"
+    },
+    {
+      "id": "0xC652F35EA7002748",
+      "type": "Shader",
+      "source": "shaders/ssr_classify.comp.shader.json"
+    },
+    {
+      "id": "0x7D76AEC62D2E44D4",
+      "type": "Shader",
+      "source": "shaders/ssr_prepare_args.comp.shader.json"
+    },
+    {
+      "id": "0xCDED5EB51013870B",
+      "type": "Raw",
+      "source": "data/ssr_blue_noise.bin"
     }
   ]
 }

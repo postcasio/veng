@@ -105,7 +105,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
-  `PostResolveUpscale`, `SsrChain`, `DofChain`,
+  `PostResolveUpscale`, `SsrChain`, `SsrStochasticChain`, `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
@@ -1576,6 +1576,68 @@ level (the bars seen directly, through the frame's resolve, in brackets): on a m
 and 6.6 % (8.7, 7.4); on the same floor normal-mapped, turns 7.1, 9.0 and 12 %, moves 11 and 18 %.
 A normal-mapped floor's reflection under translation is where history helps least: each facet's
 reflected content changes with the viewpoint, so the moving history is short and tightly clipped.
+
+#### The stochastic chain classifies tiles and samples each ray's lobe
+
+`SceneRendererSettings::SsrMethod` picks which chain SSR runs through: `Legacy`, everything above,
+or `Stochastic`, a second chain (`SsrStochasticChain`) built on the published stochastic
+screen-space-reflection design — one GGX-sampled ray per traced pixel, a ray list compacted per
+frame, and a denoiser over the 8×8 tiles that need one. `FrameTopology` wires exactly one of the two
+(`SsrActive` or `SsrStochasticActive`); the stochastic one never takes the Legacy chain's temporal
+pass (`SsrTemporal` is false under it). Under `Stochastic` nothing composites a reflection into the
+Final view yet: the frame renders as with SSR off, and the `Reflections` debug view blits the chain's
+radiance target. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
+at the HDR tail anchor — and every target is at the render allocation, renderer-owned and imported.
+
+**Classification** (`ssr_classify.comp`, one 64×1 group per 8×8 tile, its local indices remapped so
+each 2×2 quad holds four consecutive ones):
+
+- **α is one quantity.** The classifier squares the specular-anti-aliasing-widened perceptual
+  roughness (`SsrRoughness`) once and stores it (`R8`, the extracted α target); a pixel is glossy
+  below `SsrMaxRoughness²` and a mirror below `SsrMirrorAlpha` (1e-4). Nothing downstream squares it
+  again.
+- **Who traces.** Every mirror; each copy group's base ray, the group set by
+  `SceneRendererSettings::SsrDensity` (`SsrSamplesPerQuad` One — the quad, based at its even-even
+  pixel; Two — each row's pair, based on the quad's diagonal; Four — every pixel); and a glossy pixel
+  the denoiser's variance flags (above 0, read from a variance target the classifier is handed — none
+  yet, so it reads 0). **A group whose designated base is not glossy** — background, or past the
+  cutoff — **is based at its first glossy pixel**, so a quad cut by a silhouette or a roughness edge
+  still traces: with the base fixed to the even-even pixel its other glossy pixels would be neither
+  traced nor copied, and in a converged still view their variance would never rise to pick them up.
+- **Copies.** A glossy, non-mirror pixel tracing nothing is named by a copy flag on its group's base
+  ray; each pixel's state is exchanged through workgroup memory, not across subgroup lanes, whose
+  order relative to the local index Vulkan does not promise.
+- **Compaction is per subgroup**: a prefix count of the lanes tracing, one atomic per subgroup on the
+  append counter, the base broadcast from the first lane — correct at any subgroup width and lane
+  order, so it needs no full-subgroup guarantee. A tile holding a glossy pixel (mirrors included) is
+  appended by local index 0.
+- **The radiance target (`RGBA16F`) is cleared to zero** for every pixel; what traces fills it.
+
+**The lists** (`Veng/ssr_ray_list.slang`): a ray is its pixel (x 15 bits, y 14) plus three copy flags
+in bits 29–31; a tile its origin pixel, `x | y << 16`. Four `u32` counters — the ray and tile append
+slots and their totals — start at zero (a host-visible buffer, written at `Recreate`).
+`ssr_prepare_args.comp` (one invocation) writes two dispatch-indirect records,
+`[(rays + 63) / 64, 1, 1, tiles, 1, 1]`, moves each total into its count slot, and zeroes the append
+slots for the next frame. Both passes declare the counters read and written, so the graph orders
+the appends after the previous frame's rotation.
+
+**Ray directions** (`Veng/ssr_sample.slang`): `SampleGgxVndf` is Heitz's 2018 sampler of the GGX
+distribution of visible normals (isotropic), and `SampleReflectionVector` reflects the view ray about
+a normal it draws in the surface's tangent frame; a mirror reflects about the normal itself. The lobe
+is not truncated and no pdf is kept, so a grazing view reflects part of its lobe below the surface.
+The 2D sample is **`SsrBlueNoise`**: the core pack's 128² two-channel void-and-cluster tile
+(`data/ssr_blue_noise.bin`, a `Raw` asset uploaded `RG8` the first time the chain is allocated,
+generated deterministically by `tools/ssr_blue_noise.py`), read at the pixel's stratum centre and
+rotated by the golden ratio per frame of the view block's `FrameIndex` (wrapping at 256), so the
+rotation shares no period with the projection jitter.
+
+`SceneRenderer::GetSsrTraceTargets()` exposes the lists, counters, records and targets for tests.
+`tests/gpu/ssr_classify.cpp` pins: one, two and four rays per quad over a glossy floor; none and no
+tile past the cutoff; every pixel of a mirror at every density; every glossy pixel of a floor cut at
+a slant traced or copied exactly once and no background pixel either; the tile list naming exactly
+the tiles holding floor; the records matching the totals, with a dispatch through them visiting each
+ray once; the sampler's mean reflected cosine and below-surface share against a quadrature of the
+visible-normal distribution; and the noise tile's uniform levels and even 8×8 windows.
 
 ### Depth of field and the physical camera
 

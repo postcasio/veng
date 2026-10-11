@@ -470,10 +470,14 @@ extern "C"
 /// Version 109 reads the device's capabilities once at creation: Context::Native grows the
 /// DeviceCapabilities readout Context::GetDeviceCapabilities returns. Context::Native is laid out in
 /// a public header a module compiles against, so a stale module lays it out short.
+/// Version 110 adds the stochastic screen-space-reflection chain: SceneRendererSettings grows
+/// SsrMethod and SsrDensity after SsrResolutionScale, and SceneRenderer grows the chain it owns. A
+/// module builds renderer settings and owns viewports, so a stale module reads every later settings
+/// field at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 109u
+#define VENG_MODULE_ABI_VERSION 110u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

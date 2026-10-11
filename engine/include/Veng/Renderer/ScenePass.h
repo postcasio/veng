@@ -135,11 +135,12 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the emissive target (always valid — written every frame).
         TextureHandle EmissiveHandle;
 
-        /// @brief SSR reflection target (mip 0) produced by the SSR trace; blitted by the Reflections debug arm.
+        /// @brief SSR reflection target the Reflections debug arm blits.
         ///
-        /// Valid only when the SSR pass is wired (Final + Settings.SSR, or the Reflections debug
-        /// mode). The debug blit declares .Sample so the graph derives the attachment → shader-read
-        /// transition. An invalid handle means no SSR pass is active.
+        /// The Legacy chain's reflection mip 0, or the stochastic chain's radiance target, whichever
+        /// SsrMethod wires. Valid only when SSR runs (Final + Settings.SSR, or the Reflections debug
+        /// mode). The debug blit declares .Sample so the graph derives the transition to a shader
+        /// read. An invalid id means no SSR chain is active.
         ResourceId SsrReflection;
         /// @brief Bindless slot for the SSR reflection sample view; invalid when SSR is off.
         TextureHandle SsrReflectionHandle;

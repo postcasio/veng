@@ -229,6 +229,33 @@ namespace Veng::Renderer
             Quarter,
         };
 
+        /// @brief Which screen-space-reflection chain runs while SSR is on.
+        ///
+        /// Two chains stand side by side: the deterministic one-ray-per-texel trace with its blur
+        /// chain and temporal pass, and the stochastic one that classifies tiles, samples the GGX
+        /// lobe per ray from blue noise and denoises the result.
+        enum class SsrTechnique : u8
+        {
+            /// @brief The mirror-ray trace, cone-footprint blur chain and reflection history.
+            Legacy,
+            /// @brief Tile classification, GGX-lobe ray sampling and a reflections denoiser.
+            Stochastic,
+        };
+
+        /// @brief How many of each 2x2 pixel quad's glossy pixels trace a ray of their own (the stochastic chain).
+        ///
+        /// An untraced pixel copies its quad's base ray, and the denoiser reconstructs the rest. A
+        /// mirror traces every pixel at every density, since the denoiser does not filter it.
+        enum class SsrSamplesPerQuad : u8
+        {
+            /// @brief One ray per quad: the even-even pixel.
+            One,
+            /// @brief Two rays per quad: the diagonal pair.
+            Two,
+            /// @brief Four rays per quad: every pixel.
+            Four,
+        };
+
         /// @brief Selects the top-level render path; GeometryDepthNormal ignores DebugView Mode.
         ///
         /// Default Shaded, so an existing consumer is unchanged. Selected at Create — the renderer
@@ -373,6 +400,20 @@ namespace Veng::Renderer
         /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
         /// when SSR is inactive.
         SsrResolution SsrResolutionScale = SsrResolution::Half;
+
+        /// @brief Which screen-space-reflection chain runs while SSR is on.
+        ///
+        /// A topology change: the two chains wire different passes and allocate different targets,
+        /// so a change recompiles. Under Stochastic nothing composites the reflection into the frame:
+        /// the frame renders as with SSR off, and the Reflections debug view shows the chain's
+        /// radiance target. Ignored when SSR is inactive.
+        SsrTechnique SsrMethod = SsrTechnique::Legacy;
+
+        /// @brief How many rays each 2x2 quad of glossy pixels traces under the stochastic chain.
+        ///
+        /// A topology change, so a change recompiles. Defaults to One. Ignored by the Legacy chain
+        /// and when SSR is inactive.
+        SsrSamplesPerQuad SsrDensity = SsrSamplesPerQuad::One;
 
         /// @brief Whether the depth-of-field battery runs.
         ///
@@ -607,6 +648,17 @@ VE_ENUMERATOR(Half)
 VE_ENUMERATOR(Quarter)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrTechnique, 0x0ABE6F1D0A72637CULL)
+VE_ENUMERATOR(Legacy)
+VE_ENUMERATOR(Stochastic)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrSamplesPerQuad, 0xC6ADA8D0ACE2402FULL)
+VE_ENUMERATOR(One)
+VE_ENUMERATOR(Two)
+VE_ENUMERATOR(Four)
+VE_ENUM_END();
+
 // Reflected so a field-masked override set (FieldOverrides) and a reflected-field settings surface
 // can address every field without listing them. Category groups the fields into the sections a
 // settings surface draws; the render path is chosen at Create, so it reads but does not edit.
@@ -641,6 +693,8 @@ VE_FIELD(ShadowCasterMinTexels, .DisplayName = "Shadow caster min texels", .Disp
 VE_FIELD(SSR, .DisplayName = "Screen-space reflections", .Category = "Screen-space reflections")
 VE_FIELD(SsrResolutionScale, .DisplayName = "SSR trace resolution",
          .Category = "Screen-space reflections")
+VE_FIELD(SsrMethod, .DisplayName = "SSR technique", .Category = "Screen-space reflections")
+VE_FIELD(SsrDensity, .DisplayName = "SSR rays per quad", .Category = "Screen-space reflections")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of field", .Category = "Depth of field")
 VE_FIELD(Refraction, .DisplayName = "Refraction (scene-color grab)", .Category = "Refraction")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction blur (grab mip chain)",

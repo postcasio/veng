@@ -1848,6 +1848,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_ray_visit.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_lobe_sample.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1867,7 +1869,9 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_ray_visit.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_lobe_sample.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1969,6 +1973,11 @@ if (VENG_BUILD_TESTS)
             # depth and leaves no smear behind it once it stops, and a converged reflection follows
             # its source going and returning.
             tests/gpu/ssr_jitter.cpp
+            # ssr_classify.cpp drives the stochastic reflection chain's front: the rays each density
+            # traces per quad, the roughness cutoff and the mirror, copies covering every glossy
+            # pixel once, the tile list, the dispatch records and a dispatch through them, the GGX
+            # lobe sampler against its distribution, and the blue-noise tile's spread.
+            tests/gpu/ssr_classify.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

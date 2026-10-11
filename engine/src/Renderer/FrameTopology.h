@@ -137,8 +137,17 @@ namespace Veng::Renderer
         bool SsaoFold = false;
         /// @brief The SSAO pass is wired, whether folded into lighting or only visualized.
         bool SsaoActive = false;
-        /// @brief The SSR trace, blur, and composite are wired.
+        /// @brief The Legacy SSR chain — trace, blur, and composite — is wired.
+        ///
+        /// SSR runs (Final with Settings.SSR, or the Reflections debug arm) through exactly one of
+        /// the two chains Settings.SsrMethod names: this flag for Legacy, SsrStochasticActive for
+        /// Stochastic.
         bool SsrActive = false;
+        /// @brief The stochastic SSR chain is wired.
+        ///
+        /// Its tile classification and argument passes run, and the Reflections debug arm blits its
+        /// radiance target; nothing composites it into the Final view.
+        bool SsrStochasticActive = false;
         /// @brief SSR resolves its own reflection over time and adds it after the temporal resolve.
         ///
         /// Set when SSR runs under a temporal resolve (ResolveSsrTemporal): the composite writes the
@@ -290,7 +299,7 @@ namespace Veng::Renderer
     /// and adds it to the resolved scene. A function of the settings alone, so the SSR chain can
     /// size its targets before the frame topology is resolved.
     /// @param settings The topology and sizing knobs the frame renders under.
-    /// @return True for the Final arm with SSR on under TAA or TAAU.
+    /// @return True for the Final arm with the Legacy SSR chain on under TAA or TAAU.
     [[nodiscard]] bool ResolveSsrTemporal(const SceneRendererSettings& settings);
 
     /// @brief Whether the frame wires the bloom pyramid sweep (and so the bloom mask beside it).
