@@ -156,6 +156,15 @@ namespace Veng::Renderer
         /// LodOverride wins over it.
         i32 ForcedLod = AutomaticLod;
 
+        /// @brief The fraction of the presenting surface's height this view's image covers.
+        ///
+        /// Level-of-detail selection measures a mesh against the view's own height, which is the
+        /// screen's for a view that fills it; a view rendered into a small image shown inside a
+        /// larger surface — a model portrait in a UI panel — multiplies every projected size by
+        /// this, so a mesh selects the level its size on the actual screen calls for. 1 for a view
+        /// that fills the screen.
+        f32 LodScreenScale = 1.0f;
+
         /// @brief Each visible mesh's level of detail in the camera view; set by the renderer each Execute.
         ///
         /// Indexed like Visible. A pass drawing the camera's view reads its level here so it

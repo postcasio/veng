@@ -1955,6 +1955,11 @@ runtime-built mesh carries levels through `MeshData::Lods`.
 - **Bias.** `SceneRendererSettings::LodBias` multiplies every size by 2^−bias before the comparison,
   in every view: +1 switches each level at twice the distance. The level-of-detail fields are read
   per frame, so a `Configure` that changes only them rebuilds nothing.
+- **A view shown smaller than the screen says so.** The metric is a fraction of the view's own
+  height, which is the screen's only for a view that fills it. `SceneView::LodScreenScale` — the
+  fraction of the presenting surface's height the view's image covers, 1 by default — multiplies
+  every size in the view and its shadow views, so a view rendered into a small image inside a panel
+  (a model portrait) selects what its meshes' size on the actual screen calls for.
 - **Forced levels, most specific first:** a per-entity **`LodOverride`** component
   (`Veng/Scene/Components.h`, reflected and editor-visible; `GatherMeshes` copies it onto
   `VisibleMesh::ForcedLod`), then **`SceneView::ForcedLod`** (one render's override, no `Configure`),
@@ -2882,12 +2887,15 @@ the capture pre-pass's, extended:
 - **Static and silent.** The private scene has no systems and no presentation scope; it is posed by
   `ModelPose` and by what the populate callback attaches, and lit by one key light and an ambient
   floor (`SceneView::AmbientFloor`). Its clip planes are fitted to everything in it each frame.
-- **Coarsest level of detail by default.** `ModelPortrait::ForcedLod` rides `SceneView::ForcedLod`
-  (see "Level of detail"), so it needs no `Configure` of the pooled renderer. It defaults to
-  `CoarsestLod` — a portrait is a small UI render, the case a mesh's lowest level exists for; `0`
-  draws full detail for a hero preview, a level between picks that level, and `AutomaticLod` selects
-  from each mesh's projected size in the portrait's own camera. An entity of the model carrying a
-  `LodOverride` wins, and a single-level mesh is unaffected.
+- **The level of detail its size on screen calls for.** A portrait frames its model to fill its
+  image, so selecting from its own camera alone would always pick full detail however small the
+  panel showing it. `ModelPortrait::LodScreenScale` — the fraction of the screen's height the image
+  is shown at — rides `SceneView::LodScreenScale` (see "Level of detail") and scales every projected
+  size, so a portrait draws the level the model would in a scene at that size; the caller supplies
+  it, since only the UI knows where the image lands. `ModelPortrait::ForcedLod` (default
+  `AutomaticLod`) rides `SceneView::ForcedLod`, so neither needs a `Configure` of the pooled
+  renderer: `0` draws full detail and a level between picks that level. An entity of the model
+  carrying a `LodOverride` wins, and a single-level mesh is unaffected.
 
 ## Generated textures: compute something expensive once, then sample it
 

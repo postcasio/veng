@@ -20,6 +20,8 @@ namespace Veng::Renderer
         f32 Bias = 0.0f;
         /// @brief The forced level every caster draws at, or AutomaticLod to select per view.
         i32 Forced = AutomaticLod;
+        /// @brief The camera view's SceneView::LodScreenScale, applied to every shadow view's sizes.
+        f32 ScreenScale = 1.0f;
     };
 
     /// @brief Every shadow view's casters for one frame: culled per view, grouped once, uploaded once.

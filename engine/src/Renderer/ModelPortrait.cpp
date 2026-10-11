@@ -428,6 +428,7 @@ namespace Veng::Renderer
             .World = *runtime.Stage,
             .Camera = runtime.Camera,
             .ForcedLod = ForcedLod,
+            .LodScreenScale = LodScreenScale,
             .AmbientFloor = Lighting.Ambient,
         };
         runtime.Renderer->Render(cmd, view);

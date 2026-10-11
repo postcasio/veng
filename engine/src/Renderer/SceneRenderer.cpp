@@ -1917,8 +1917,9 @@ namespace Veng::Renderer
         internal.CurrentLods.Begin();
         internal.MeshLods.assign(view.Visible.size(), 0);
 
-        const LodView lodView =
+        LodView lodView =
             LodView::FromViewProjection(view.Camera.ViewProjection(), m_Settings.LodBias);
+        lodView.ScreenScale *= view.LodScreenScale;
         const LodPolicy policy{
             .Forced = view.ForcedLod >= 0 ? view.ForcedLod : m_Settings.ForcedLod,
             .Hysteresis = m_Settings.LodHysteresis,
@@ -2816,6 +2817,7 @@ namespace Veng::Renderer
                               .Bias = m_Settings.LodBias,
                               .Forced = resolvedView.ForcedLod >= 0 ? resolvedView.ForcedLod
                                                                     : m_Settings.ForcedLod,
+                              .ScreenScale = resolvedView.LodScreenScale,
                           });
             if (m_ShadowPass != nullptr)
             {

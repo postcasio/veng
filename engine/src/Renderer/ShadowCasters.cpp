@@ -54,7 +54,8 @@ namespace Veng::Renderer
     {
         VE_PROFILE_SCOPE("Shadow/Cull");
         const u32 viewIndex = m_Batch.AddView();
-        const LodView lodView = LodView::FromViewProjection(lodViewProj, m_Lod.Bias);
+        LodView lodView = LodView::FromViewProjection(lodViewProj, m_Lod.Bias);
+        lodView.ScreenScale *= m_Lod.ScreenScale;
         const LodPolicy lodPolicy{.Forced = m_Lod.Forced, .Hysteresis = 0.0f};
 
         m_CullScratch.clear();

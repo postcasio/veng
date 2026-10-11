@@ -196,12 +196,18 @@ namespace Veng::Renderer
         CaptureRefresh Refresh = CaptureRefresh::EveryFrame;
         /// @brief The level of detail the model's meshes draw at.
         ///
-        /// CoarsestLod (the default) draws each mesh's lowest detail, since a portrait is a small
-        /// UI render; 0 draws full detail, a level between picks that level (clamped to each mesh's
-        /// coarsest), and AutomaticLod selects by each mesh's projected size in the portrait's own
-        /// camera, as a scene view does. A mesh with a single level is unaffected, and a
-        /// LodOverride an entity of the model carries wins.
-        i32 ForcedLod = CoarsestLod;
+        /// AutomaticLod (the default) selects by each mesh's projected size in the portrait's own
+        /// camera scaled by LodScreenScale, so the portrait draws the level the model would at the
+        /// size it is shown; 0 draws full detail, and a level between picks that level (clamped to
+        /// each mesh's coarsest). A mesh with a single level is unaffected, and a LodOverride an
+        /// entity of the model carries wins.
+        i32 ForcedLod = AutomaticLod;
+
+        /// @brief The fraction of the screen's height the portrait's image is shown at.
+        ///
+        /// Passed as SceneView::LodScreenScale: a portrait framing its model to fill the image
+        /// would otherwise always select full detail however small the panel showing it.
+        f32 LodScreenScale = 1.0f;
 
         /// @brief Runtime state, materialized on the first drive (or SetOnPopulate); empty until then.
         mutable Unique<ModelPortraitRuntime> Runtime;
@@ -388,4 +394,7 @@ VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(ForcedLod, .DisplayName = "Forced LOD",
          .Tooltip = "Level of detail drawn: -1 selects by size, 0 is full detail, 7 the coarsest",
          .Display = {.Min = -1.0, .Max = 7.0})
+VE_FIELD(LodScreenScale, .DisplayName = "LOD Screen Scale",
+         .Tooltip = "Fraction of the screen's height the portrait is shown at",
+         .Display = {.Min = 0.0, .Max = 1.0})
 VE_REFLECT_END();
