@@ -15,8 +15,14 @@
 // level 0 the ray takes a depth test. A skip costs one probe, not the steps it crosses, and the
 // depth-test stride widens only when the tests left could not otherwise reach the line's end. The
 // trace runs at the reflection target's resolution (Extent), which may be below the render
-// resolution; the g-buffer it reads is full-resolution and is sampled at the plain logical UV (SSR
-// disables the dynamic-resolution sub-rect).
+// resolution; the g-buffer it reads is full-resolution (SSR disables the dynamic-resolution
+// sub-rect).
+//
+// Each texel's ray leaves the surface on its unjittered ray (ssr_surface.slang) and is marched in
+// the rasterized frame, through the jittered projection over the jittered depth, where every depth
+// it compares against lies. The scene colour it reads is the temporal resolve's output when one
+// runs, reconstructed at unjittered positions, so the hit is read back JitterNdc / 2 from where the
+// march found it. With no temporal resolve the jitter is zero and the two frames coincide.
 //
 // A crossing — in front of the stored surface one test, behind it the next — is a hit when the gap
 // behind it is under the larger of Thickness and StepToleranceScale times the depth the ray itself
@@ -40,7 +46,7 @@
 // reads one bilinear tap and stays as sharp as the trace, while rays that diverge are prefiltered
 // across the gap between them. The footprint is the hit's own tangent plane, so it never spans a
 // silhouette the way a quad's derivatives do.
-#include "view_constants.slang"
+#include "ssr_surface.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -163,32 +169,26 @@ TraceOutput fsMain(VSOutput input)
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     float2 uv = input.v_UV;
     Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
+    Texture2D normalTexture = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)];
     Texture2D hiZ = g_Textures[NonUniformResourceIndex(g_PC.HiZTexture)];
 
-    // The depth, normal and ORM reads name their level: they sit past early returns and at per-lane
-    // ray positions, where implicit derivatives are undefined and the anisotropic sampler blends
-    // texels across a silhouette.
-    float depth = depthTexture.SampleLevel(samp, uv, 0.0).r;
-    // The cleared background (reverse-Z far = 0.0) has no surface to reflect from.
-    if (depth <= 0.0)
+    // The cleared background has no surface to reflect from.
+    SsrSurface surface = SsrSurfaceAt(vc, depthTexture, normalTexture, uv);
+    if (!surface.Valid)
         return Miss;
 
-    float roughness = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].SampleLevel(samp, uv, 0.0).g;
+    float roughness =
+        g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0)).g;
     // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
     // reflection out smoothly below this cutoff).
     if (roughness > g_PC.MaxRoughness)
         return Miss;
 
-    float3 worldNormal =
-        g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].SampleLevel(samp, uv, 0.0).xyz;
-    float normalLength = length(worldNormal);
-    if (normalLength < 1e-4)
-        return Miss;
-    float3 N = mul((float3x3)vc.View, worldNormal / normalLength);
+    float3 N = mul((float3x3)vc.View, surface.Normal);
 
-    // The camera is at the view-space origin, so the fragment's view position is also
-    // the view ray to it; reflect that about the surface normal.
-    float3 viewPos = ViewPositionAt(vc, uv, depth);
+    // The camera is at the view-space origin, so the surface's view position is also the view ray
+    // to it; reflect that about the surface normal.
+    float3 viewPos = mul((float3x3)vc.View, surface.Position);
     float3 R = normalize(reflect(normalize(viewPos), N));
 
     // Clamp the ray end so it never crosses the camera plane (view space looks down -Z,
@@ -204,9 +204,12 @@ TraceOutput fsMain(VSOutput input)
         return Miss;
     float3 endPos = viewPos + R * endDistance;
 
-    // Project the ray's start and end into screen space (uv.xy + NDC depth). A straight
-    // view-space segment projects to a straight segment in (uv, depth).
-    float2 startUV = ViewToScreenUV(vc.Proj, viewPos);
+    // Project the ray's start and end into the rasterized frame's screen space (uv.xy + NDC
+    // depth). A straight view-space segment projects to a straight segment in (uv, depth).
+    float4 startClip = mul(vc.Proj, float4(viewPos, 1.0));
+    float3 startNdc = startClip.xyz / startClip.w;
+    float2 startUV = startNdc.xy * 0.5 + 0.5;
+    float depth = startNdc.z;
     float4 endClip = mul(vc.Proj, float4(endPos, 1.0));
     float3 endNdc = endClip.xyz / endClip.w;
     float3 p0 = float3(startUV, depth);
@@ -346,14 +349,14 @@ TraceOutput fsMain(VSOutput input)
     if (!hit)
         return Miss;
 
-    // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span.
+    // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span and
+    // read where the scene colour holds the hit: unjittered, as the temporal resolve wrote it.
     Texture2D sceneColor = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)];
     uint sceneWidth;
     uint sceneHeight;
     uint sceneLevels;
     sceneColor.GetDimensions(0u, sceneWidth, sceneHeight, sceneLevels);
     float2 sceneSize = float2(sceneWidth, sceneHeight);
-    Texture2D normalTexture = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)];
     uint normalWidth;
     uint normalHeight;
     uint normalLevels;
@@ -368,29 +371,30 @@ TraceOutput fsMain(VSOutput input)
     {
         float3 hitNormal = mul((float3x3)vc.View, hitWorldNormal / hitNormalLength);
         float2 texel = 1.0 / float2(g_PC.Extent);
-        spreadX = TapSpread(NeighbourLanding(vc, uv + float2(texel.x, 0.0), depth, viewPos, N, hitPos,
-                                             hitNormal, hitUV, sceneSize));
-        spreadY = TapSpread(NeighbourLanding(vc, uv + float2(0.0, texel.y), depth, viewPos, N, hitPos,
-                                             hitNormal, hitUV, sceneSize));
+        spreadX = TapSpread(NeighbourLanding(vc, startUV + float2(texel.x, 0.0), depth, viewPos, N,
+                                             hitPos, hitNormal, hitUV, sceneSize));
+        spreadY = TapSpread(NeighbourLanding(vc, startUV + float2(0.0, texel.y), depth, viewPos, N,
+                                             hitPos, hitNormal, hitUV, sceneSize));
     }
+    float2 resolvedUV = hitUV - vc.JitterNdc.xy * 0.5;
     float3 reflected;
     if (all(spreadX == 0.0) && all(spreadY == 0.0))
     {
-        reflected = sceneColor.SampleLevel(samp, hitUV, 0.0).rgb;
+        reflected = sceneColor.SampleLevel(samp, resolvedUV, 0.0).rgb;
     }
     else
     {
         float2 offsetA = (spreadX + spreadY) / sceneSize;
         float2 offsetB = (spreadX - spreadY) / sceneSize;
-        reflected = 0.25 * (sceneColor.SampleLevel(samp, hitUV + offsetA, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV - offsetA, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV + offsetB, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV - offsetB, 0.0).rgb);
+        reflected = 0.25 * (sceneColor.SampleLevel(samp, resolvedUV + offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV - offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV + offsetB, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV - offsetB, 0.0).rgb);
     }
 
     // Fade the contribution as the hit nears the screen border (the reflected detail
     // runs off-screen there) so reflections vanish smoothly rather than clipping.
-    float2 edge = smoothstep(0.0, 0.15, hitUV) * (1.0 - smoothstep(0.85, 1.0, hitUV));
+    float2 edge = smoothstep(0.0, 0.15, resolvedUV) * (1.0 - smoothstep(0.85, 1.0, resolvedUV));
     float confidence = edge.x * edge.y;
 
     TraceOutput output;

@@ -30,9 +30,11 @@
 // magnifies smoothly instead of drawing its texel grid, and two adjacent levels are blended by the
 // LOD's fraction so the blur grows without popping.
 //
-// The composite runs at full render resolution: it reads the g-buffer at the plain logical UV
-// (SSR disables the dynamic-resolution sub-rect), and the chain may be at a lower resolution than
-// the target. How level 0 is read depends on that ratio:
+// The composite runs at full render resolution (SSR disables the dynamic-resolution sub-rect), and
+// the chain may be at a lower resolution than the target. Every surface it reads — the pixel's own
+// and each chain tap's — is the one ssr_surface.slang takes on the unjittered ray, exactly as the
+// trace took it, so under a temporal resolve the reflection and the scene it lands on both stand at
+// unjittered positions. How level 0 is read depends on that ratio:
 //
 //  - At one composite pixel per SSR texel, level 0 is read bilinearly, which lands on the pixel's
 //    own texel, so a mirror is exactly as sharp as the trace.
@@ -43,15 +45,14 @@
 //    carries at most 1/48 of the weight; it is folded out of the far tap, so the window moves to
 //    the next texel without a jump. Between ratios 1 and 2 the weights blend from bilinear to the
 //    B-spline, so the read is continuous in the ratio.
-//  - A tap's surface is the g-buffer sampled exactly as the trace sampled it, at the texel's
-//    centre. It agrees in position when it lies near the pixel's tangent plane, within about an
+//  - A tap's surface is the one the trace took for that texel. It agrees in position when it lies near the pixel's tangent plane, within about an
 //    SSR texel's width there, and in orientation when its normal is within about 25 degrees of the
 //    pixel's, falling to nothing by 45; a background tap traced nothing and never agrees. The
 //    weights are renormalized over the agreeing taps, so a reflection keeps its full strength up to
 //    a silhouette and adds nothing past it, and confidence, carried in alpha, fades the same way.
 //    A pixel no tap agrees with (a feature thinner than a texel) reflects nothing rather than its
 //    neighbour's reflection.
-#include "view_constants.slang"
+#include "ssr_surface.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -65,7 +66,7 @@ struct PushConstants
     uint NormalTexture;       // G1 world-space normal
     uint OrmTexture;          // G2 packed occlusion/roughness/metallic
     uint DepthTexture;        // depth attachment (position reconstruction)
-    uint Sampler;             // shared linear sampler (g-buffer reads)
+    uint Sampler;             // shared linear sampler (the scene colour read)
     uint ReflectionSampler;   // trilinear clamp-to-edge sampler over the chains
     uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
     float Intensity;          // reflection mix scale
@@ -194,42 +195,27 @@ struct Surface
     float Tolerance;  // one level-0 texel's width at the pixel, in world units
 };
 
-// The camera-relative position of a screen UV at a device depth.
-float3 RelativePosition(ViewConstants vc, float2 uv, float depth)
-{
-    float4 relativeH = mul(vc.InvViewRotProj, float4(uv * 2.0 - 1.0, depth, 1.0));
-    return relativeH.xyz / relativeH.w;
-}
-
 // How well the surface level-0 texel `texel`'s ray left from agrees with the pixel's, in [0, 1].
-// The g-buffer is sampled at the texel's centre with the trace's own sampler, so the surface is
-// the one the trace reflected.
-float Agreement(ViewConstants vc, Surface pixel, int2 texel, float2 chainSize, SamplerState samp)
+// The surface is taken at the texel's centre exactly as the trace took it there.
+float Agreement(ViewConstants vc, Surface pixel, int2 texel, float2 chainSize)
 {
-    float2 tapUV = (float2(texel) + 0.5) / chainSize;
-    float tapDepth =
-        g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].SampleLevel(samp, tapUV, 0.0).r;
-    if (tapDepth <= 0.0)
-        return 0.0;
-    float3 tapNormal =
-        g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].SampleLevel(samp, tapUV, 0.0).xyz;
-    float normalLength = length(tapNormal);
-    if (normalLength < 1e-4)
+    SsrSurface tap = SsrSurfaceAt(vc, g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)],
+                                  g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)],
+                                  (float2(texel) + 0.5) / chainSize);
+    if (!tap.Valid)
         return 0.0;
 
-    float planeDistance = abs(dot(pixel.Normal, RelativePosition(vc, tapUV, tapDepth) - pixel.Position));
+    float planeDistance = abs(dot(pixel.Normal, tap.Position - pixel.Position));
     float position =
         1.0 - smoothstep(PlaneAgreementFull, PlaneAgreementNone, planeDistance / pixel.Tolerance);
-    float orientation =
-        smoothstep(NormalAgreementNone, NormalAgreementFull, dot(pixel.Normal, tapNormal / normalLength));
+    float orientation = smoothstep(NormalAgreementNone, NormalAgreementFull, dot(pixel.Normal, tap.Normal));
     return position * orientation;
 }
 
 // Level 0 magnified past the composite: the B-spline over the 3x3 texels nearest the pixel, each
 // weighted by its surface's agreement with the pixel's and renormalized over the agreeing ones.
 // `spline` per axis blends the weights from bilinear (at one pixel per texel) to the B-spline.
-float4 SampleLevelZeroJoint(Texture2D chain, ViewConstants vc, Surface pixel, float2 uv, float2 spline,
-                            SamplerState samp)
+float4 SampleLevelZeroJoint(Texture2D chain, ViewConstants vc, Surface pixel, float2 uv, float2 spline)
 {
     uint width;
     uint height;
@@ -250,7 +236,7 @@ float4 SampleLevelZeroJoint(Texture2D chain, ViewConstants vc, Surface pixel, fl
         for (int i = 0; i < 3; ++i)
         {
             int2 texel = clamp(int2(nearest) + int2(i - 1, j - 1), int2(0, 0), int2(size) - 1);
-            float weight = wx[i] * wy[j] * Agreement(vc, pixel, texel, size, samp);
+            float weight = wx[i] * wy[j] * Agreement(vc, pixel, texel, size);
             sum += chain.Load(int3(texel, 0)) * weight;
             total += weight;
         }
@@ -260,14 +246,14 @@ float4 SampleLevelZeroJoint(Texture2D chain, ViewConstants vc, Surface pixel, fl
 
 // One chain level: level 0 bilinearly at one composite pixel per texel, through the joint read
 // when magnified; every coarser one through the B-spline.
-float4 SampleLevel(Texture2D chain, SamplerState samp, SamplerState gbufferSamp, ViewConstants vc,
-                   Surface pixel, float2 uv, float2 spline, uint level)
+float4 SampleLevel(Texture2D chain, SamplerState samp, ViewConstants vc, Surface pixel, float2 uv,
+                   float2 spline, uint level)
 {
     if (level != 0u)
         return SampleBSpline(chain, samp, uv, level);
     if (all(spline <= 0.0))
         return chain.SampleLevel(samp, uv, 0.0);
-    return SampleLevelZeroJoint(chain, vc, pixel, uv, spline, gbufferSamp);
+    return SampleLevelZeroJoint(chain, vc, pixel, uv, spline);
 }
 
 [shader("fragment")]
@@ -278,16 +264,19 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 uv = input.v_UV;
 
     // Every read names its level: most sit past an early return, where implicit derivatives are
-    // undefined and the anisotropic g-buffer sampler would blend texels across a silhouette.
+    // undefined.
     float3 scene =
         g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].SampleLevel(samp, uv, 0.0).rgb;
 
-    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].SampleLevel(samp, uv, 0.0).r;
-    // Reverse-Z: the cleared background sits at depth 0.
-    if (depth <= 0.0)
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
+    SsrSurface surface =
+        SsrSurfaceAt(vc, depthTexture, g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)], uv);
+    // The cleared background has nothing to reflect into.
+    if (!surface.Valid)
         return float4(scene, 1.0);
 
-    float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].SampleLevel(samp, uv, 0.0);
+    float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0));
     float roughness = saturate(orm.g);
     if (roughness >= g_PC.MaxRoughness)
         return float4(scene, 1.0);
@@ -313,16 +302,11 @@ float4 fsMain(VSOutput input) : SV_Target
     if (hitDistance < 0.0)
         return float4(scene, 1.0);
 
-    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     // The camera-relative position, reconstructed without the camera's translation.
-    float3 relative = RelativePosition(vc, uv, depth);
+    float3 relative = surface.Position;
     float3 viewPos = mul((float3x3)vc.View, relative);
     float cameraDistance = max(length(relative), 1e-6);
-
-    float3 worldNormal =
-        g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].SampleLevel(samp, uv, 0.0).xyz;
-    float normalLength = length(worldNormal);
-    float3 N = normalLength > 1e-4 ? worldNormal / normalLength : float3(0.0, 0.0, 1.0);
+    float3 N = surface.Normal;
     float3 V = -relative / cameraDistance;
 
     // The cone's footprint at the hit, projected to SSR texels from where the hit appears.
@@ -350,22 +334,21 @@ float4 fsMain(VSOutput input) : SV_Target
     uint compositeWidth;
     uint compositeHeight;
     uint compositeLevels;
-    g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].GetDimensions(0u, compositeWidth, compositeHeight,
-                                                                        compositeLevels);
+    depthTexture.GetDimensions(0u, compositeWidth, compositeHeight, compositeLevels);
     float2 spline = saturate(float2(compositeWidth, compositeHeight) / float2(chainWidth, chainHeight) - 1.0);
     Surface pixel = { relative, N, 1.0 / texelsPerUnit };
 
     uint fine = uint(lod);
     uint coarse = min(fine + 1u, mipCount - 1u);
     float blend = lod - float(fine);
-    float4 reflection = SampleLevel(reflectionChain, reflSamp, samp, vc, pixel, uv, spline, fine);
+    float4 reflection = SampleLevel(reflectionChain, reflSamp, vc, pixel, uv, spline, fine);
     if (blend > 0.0 && coarse != fine)
-        reflection = lerp(reflection,
-                          SampleLevel(reflectionChain, reflSamp, samp, vc, pixel, uv, spline, coarse), blend);
+        reflection =
+            lerp(reflection, SampleLevel(reflectionChain, reflSamp, vc, pixel, uv, spline, coarse), blend);
 
     // Metallic workflow base reflectance: dielectrics reflect a flat 0.04, metals tint
     // the reflection by albedo.
-    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].SampleLevel(samp, uv, 0.0).rgb;
+    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Load(int3(surface.Texel, 0)).rgb;
     float3 f0 = lerp(float3(0.04), albedo, metallic);
     float3 fresnel = FresnelSchlick(max(dot(N, V), 0.0), f0);
 

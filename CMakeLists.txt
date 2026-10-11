@@ -1946,6 +1946,9 @@ if (VENG_BUILD_TESTS)
             # no SSR texel grid in a glossy reflection at any sub-texel camera offset, and nothing
             # carried across a silhouette from either side.
             tests/gpu/ssr_upsample.cpp
+            # ssr_jitter.cpp drives a mirror's reflection through a TAA jitter period: every frame,
+            # its side and far edges keep to where the unjittered render puts them.
+            tests/gpu/ssr_jitter.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

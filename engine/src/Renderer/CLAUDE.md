@@ -1360,8 +1360,8 @@ ratio, taken from the depth target's and the chain's own sizes:
   weight; it is folded out of the far tap, so the window moves to the next texel without a jump.
   The weights blend from bilinear at a ratio of 1 to the full B-spline at 2, so the read is
   continuous in the ratio.
-- **A tap's surface is the g-buffer sampled exactly as the trace sampled it**, at the texel's centre,
-  so no SSR-resolution depth or normal target is kept. It agrees in position when it lies within
+- **A tap's surface is the one the trace took for that texel** (below), so no SSR-resolution depth
+  or normal target is kept. It agrees in position when it lies within
   about an SSR texel's width of the pixel's tangent plane (fully under half a width, not at all past
   two), which a floor at any grazing angle satisfies and a silhouette's depth step does not; and in
   orientation when its normal is within about 25° of the pixel's, falling to nothing by 45°, which
@@ -1371,10 +1371,11 @@ ratio, taken from the depth target's and the chain's own sizes:
   the same weights. A pixel no tap agrees with — a feature thinner than a texel — reflects nothing
   rather than its neighbour's reflection. The coarse levels a rough surface blends in stay
   unweighted: they are wide blurs by design.
-- **Every g-buffer read in the trace and the composite names level 0.** Those reads sit past early
-  returns, or at per-lane ray positions in the march, where implicit derivatives are undefined and
-  the g-buffer sampler, which is anisotropic, blends texels along whatever footprint they imply —
-  across a silhouette, exactly where the joint weights need the pixel's own surface.
+- **Every g-buffer read in the trace and the composite is a point load or names level 0.** Those
+  reads sit past early returns, or at per-lane ray positions in the march, where implicit
+  derivatives are undefined and the g-buffer sampler, which is anisotropic, blends texels along
+  whatever footprint they imply — across a silhouette, exactly where the joint weights need the
+  pixel's own surface.
 
 It costs nine chain loads and eighteen g-buffer samples per reflective pixel, only where the chain
 is coarser than the composite. `tests/gpu/ssr_upsample.cpp` pins it at half render scale and Half
@@ -1383,6 +1384,32 @@ fourth difference along every row and column of floor stays a small, steady frac
 at every quarter-texel camera offset — a bilinear read leaves about a quarter of a reflected step's
 height there, moving with the grid phase), and a polished panel on a polished floor takes none of
 the floor's reflection beside its edges while the floor keeps all of it.
+
+#### Under a temporal resolve, a reflection stands at unjittered positions
+
+SSR composites after the TAA resolve, which reconstructs the scene at unjittered positions, but the
+g-buffer and depth it traces are the jittered raster. Traced from that raster as it lies, a
+reflection follows the jitter frame to frame — a mirror magnifies it, by most of a pixel — and
+nothing after the resolve integrates it. So the trace and the composite meet the two frames at
+their ends (`ssr_surface.slang`), and with no temporal resolve `JitterNdc` is zero and both ends
+reduce to the texel as rasterized:
+
+- **The surface is taken on the pixel's unjittered ray.** The texel holding the pixel's unjittered
+  position is the one the jitter moved it into (`uv + JitterNdc / 2`); its depth and normal are
+  point-loaded, and its point is carried along its tangent plane onto the unjittered ray — exact
+  for a plane at any angle. The carry is capped at 16 texel widths: past that the plane is seen
+  edge-on, where the reflected ray runs almost along the view ray and where it starts barely moves
+  what it hits. The trace, the composite's pixel, and every joint tap take the surface this way.
+- **The march stays in the rasterized frame**, through the jittered projection over the jittered
+  depth and max-Z pyramid, where every depth it compares against lies.
+- **The hit is read back where the resolve put it**, `JitterNdc / 2` from where the march found it,
+  since the scene colour the trace reads is the resolve's output.
+
+What this cannot remove is the raster's own coverage: whether a ray grazing a silhouette hits
+depends on which texels the jittered raster covered, and that moves by up to half a texel a frame.
+`tests/gpu/ssr_jitter.cpp` pins the rest: under TAA, through a whole jitter period, a mirror's
+reflected colour borders — inside a surface, where every ray hits — keep to a fraction of a pixel
+of where the render with no anti-aliasing puts them.
 
 ### Depth of field and the physical camera
 
