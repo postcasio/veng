@@ -61,6 +61,55 @@
         1.0,
         1.0
       ]
+    },
+    {
+      "name": "LensDirt",
+      "type": "texture"
+    },
+    {
+      "name": "LensDirtSampler",
+      "type": "sampler",
+      "texture": "LensDirt"
+    },
+    {
+      "name": "LensDirtBloom",
+      "type": "texture"
+    },
+    {
+      "name": "LensDirtBloomSampler",
+      "type": "sampler",
+      "texture": "LensDirtBloom"
+    },
+    {
+      "name": "LensDirtIntensity",
+      "value": 0.0
+    },
+    {
+      "name": "LensDirtCover",
+      "value": [
+        1.0,
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "LensDirtBloomScale",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "name": "LensDirtBloomTexel",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
     }
   ]
 }

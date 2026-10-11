@@ -53,6 +53,9 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.SpecularAntiAliasingVariance == defaults.SpecularAntiAliasingVariance);
     CHECK(view.SpecularAntiAliasingThreshold == defaults.SpecularAntiAliasingThreshold);
     CHECK(view.NormalMapAntiAliasingScale == defaults.NormalMapAntiAliasingScale);
+    // No dirt unless a look asks for it.
+    CHECK(view.LensDirtIntensity == 0.0f);
+    CHECK_FALSE(view.LensDirt.IsValid());
 }
 
 TEST_CASE("ApplyRenderLook clamps the authored depth-of-field quality knobs")
@@ -129,6 +132,7 @@ namespace
         look.BloomFireflyCeiling = 200.0f;
         look.BloomIntensity = 1.7f;
         look.BloomRadius = 2.0f;
+        look.LensDirtIntensity = 0.35f;
         look.AmbientFloor = vec3(0.4f, 0.5f, 0.6f);
         look.SsrIntensity = 0.6f;
         look.SsrMaxDistance = 9000.0f;
@@ -180,6 +184,9 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.BloomFireflyCeiling == direct.BloomFireflyCeiling);
     CHECK(carried.BloomIntensity == direct.BloomIntensity);
     CHECK(carried.BloomRadius == direct.BloomRadius);
+    CHECK(carried.LensDirt == direct.LensDirt);
+    CHECK(carried.LensDirtIntensity == direct.LensDirtIntensity);
+    CHECK(carried.LensDirtIntensity == doctest::Approx(0.35f));
     CHECK(carried.AmbientFloor == direct.AmbientFloor);
     CHECK(carried.SsrIntensity == direct.SsrIntensity);
     CHECK(carried.SsrMaxDistance == direct.SsrMaxDistance);

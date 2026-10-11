@@ -699,7 +699,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 105** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 106** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -751,6 +751,9 @@ and calls `Run()`.
   specular anti-aliasing scale), `TextureData` and `Texture` (the normal-variance companion) and
   `BindlessRegistry` (the normal-variance array): a module spawns looks, builds views and textures,
   and registers into the registry.
+  **Version 106** grows `RenderLook`, `SceneView` and `Viewport::ViewState` (the lens-dirt mask and
+  its intensity), turns `PostProcessScenePass`'s single extra input into a list (`AddExtraInput`),
+  and gives `UI::RenderSettingsEditor` an asset-handle picker parameter.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

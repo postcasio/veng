@@ -22,6 +22,7 @@
 
 #include "AutoExposureMeter.h"
 #include "BloomMips.h"
+#include "LensDirt.h"
 #include "MipTail.h"
 
 namespace Veng::Renderer
@@ -215,6 +216,7 @@ namespace Veng::Renderer
     BloomPyramid::~BloomPyramid()
     {
         m_Context.GetBindlessRegistry().Release(m_Mip0Handle);
+        m_Context.GetBindlessRegistry().Release(m_LensDirtHandle);
     }
 
     void BloomPyramid::Resize(const uvec2 sceneExtent, const Ref<ImageView>& hdrView)
@@ -238,6 +240,7 @@ namespace Veng::Renderer
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_Mip0Handle);
+        bindless.Release(m_LensDirtHandle);
 
         const u32 mipCount = BloomMipCount(sceneExtent);
 
@@ -281,6 +284,9 @@ namespace Veng::Renderer
         // The tonemap and the DebugView::Bloom arm sample pyramid mip 0 (post up-sweep) as a
         // bindless source.
         m_Mip0Handle = bindless.Register(m_Mips[0]);
+        // The tonemap's lens-dirt term samples a wide level after the up-sweep.
+        m_LensDirtLevel = LensDirtBloomLevel(mipCount);
+        m_LensDirtHandle = bindless.Register(m_Mips[m_LensDirtLevel]);
 
         // Per-level descriptor sets. A down step binds the source (HDR for level 0, mip k-1
         // otherwise) + sampler + the destination mip; an up step binds the coarser mip k+1 +
@@ -344,6 +350,9 @@ namespace Veng::Renderer
         // The images and sets retire through the frame bin; the slot through the registry's window.
         m_Context.GetBindlessRegistry().Release(m_Mip0Handle);
         m_Mip0Handle = TextureHandle{};
+        m_Context.GetBindlessRegistry().Release(m_LensDirtHandle);
+        m_LensDirtHandle = TextureHandle{};
+        m_LensDirtLevel = 0;
         m_DownSets.clear();
         m_UpSets.clear();
         m_TailSet.reset();
@@ -374,8 +383,18 @@ namespace Veng::Renderer
 
     vec4 BloomPyramid::GetMip0SampleMap(const uvec2 validExtent) const
     {
-        const MipSubRect mip0 = ComputeMipSubRect(BloomPyramidBase(validExtent), m_Extent, 0);
-        return {mip0.ScaleUV, mip0.MaxUV};
+        return GetLevelSampleMap(0, validExtent);
+    }
+
+    vec4 BloomPyramid::GetLevelSampleMap(const u32 level, const uvec2 validExtent) const
+    {
+        const MipSubRect sub = ComputeMipSubRect(BloomPyramidBase(validExtent), m_Extent, level);
+        return {sub.ScaleUV, sub.MaxUV};
+    }
+
+    uvec2 BloomPyramid::GetLevelExtent(const u32 level) const
+    {
+        return {std::max(m_Extent.x >> level, 1u), std::max(m_Extent.y >> level, 1u)};
     }
 
     void BloomPyramid::Declare(RenderGraph& graph, const ResourceId hdrId, const MipChainId chainId,

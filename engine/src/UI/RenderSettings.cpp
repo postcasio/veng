@@ -44,6 +44,8 @@ namespace Veng::UI
                         {.Speed = 0.01f, .Min = 0.0f, .Max = 2.0f, .Format = "%.2f"});
         changed |= Drag("Bloom radius", state.BloomRadius,
                         {.Speed = 0.01f, .Min = 0.1f, .Max = 3.0f, .Format = "%.2f"});
+        changed |= Drag("Lens dirt intensity", state.LensDirtIntensity,
+                        {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f, .Format = "%.2f"});
         return changed;
     }
 }

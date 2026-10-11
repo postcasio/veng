@@ -123,6 +123,12 @@ namespace Veng
         /// @brief Returns true when the asset is resident.
         explicit operator bool() const { return IsLoaded(); }
 
+        /// @brief Whether two handles name the same asset through the same cache entry.
+        ///
+        /// Identity, not content: a handle still holding only the raw id a record decoded and one
+        /// rebound to its live entry differ, as do two handles to distinct runtime-built assets.
+        friend bool operator==(const AssetHandle&, const AssetHandle&) = default;
+
     private:
         friend class AssetManager;
         friend class WeakAssetHandle<T>;

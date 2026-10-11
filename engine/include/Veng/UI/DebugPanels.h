@@ -1,5 +1,6 @@
 #pragma once
 #include <Veng/Veng.h>
+#include <Veng/UI/Inspector.h>
 
 #include <array>
 #include <span>
@@ -255,9 +256,15 @@ namespace Veng::UI
     /// lens fields grey out while the viewport's camera is Physical (its lens authors them). The
     /// Resolution section carries the render-scale override and the viewport's dynamic-resolution
     /// controls, which drive the viewport directly.
-    /// @param viewport  The viewport whose override layer this panel edits.
-    /// @param types     The type registry the fields' enums are drawn through.
+    ///
+    /// An asset-handle row (the view's lens-dirt mask) is drawn by @p drawAssetHandle, the
+    /// consumer's picker over the assets it can offer — the engine keeps no catalogue of what is
+    /// mounted to choose from. A picker that writes a handle into the field it is handed overrides
+    /// that field like any other edit; unset draws the row as a read-only id.
+    /// @param viewport         The viewport whose override layer this panel edits.
+    /// @param types            The type registry the fields' enums are drawn through.
+    /// @param drawAssetHandle  Draws and edits an AssetHandle field's value; may be empty.
     /// @return True the frame the override layer changed.
-    [[nodiscard]] bool RenderSettingsEditor(Renderer::Viewport& viewport,
-                                            const TypeRegistry& types);
+    [[nodiscard]] bool RenderSettingsEditor(Renderer::Viewport& viewport, const TypeRegistry& types,
+                                            const FieldValueFn& drawAssetHandle = {});
 }

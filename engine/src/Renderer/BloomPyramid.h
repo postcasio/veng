@@ -126,6 +126,25 @@ namespace Veng::Renderer
         /// @return `(scale.xy, clamp.zw)`, applied as `min(uv * map.xy, map.zw)`.
         [[nodiscard]] vec4 GetMip0SampleMap(uvec2 validExtent) const;
 
+        /// @brief The level the lens-dirt term samples (LensDirtBloomLevel of the pyramid's count).
+        [[nodiscard]] u32 GetLensDirtLevel() const { return m_LensDirtLevel; }
+
+        /// @brief Bindless slot for the lens-dirt level, sampled by the tonemap's dirt term.
+        [[nodiscard]] TextureHandle GetLensDirtHandle() const { return m_LensDirtHandle; }
+
+        /// @brief The sub-rect map a full-frame UV reads one pyramid level through.
+        ///
+        /// GetMip0SampleMap's mapping at any level, taken over the same valid base.
+        /// @param level       The pyramid level read.
+        /// @param validExtent The frame's valid scene extent (SceneView::PostResolveExtent).
+        /// @return `(scale.xy, clamp.zw)`, applied as `min(uv * map.xy, map.zw)`.
+        [[nodiscard]] vec4 GetLevelSampleMap(u32 level, uvec2 validExtent) const;
+
+        /// @brief The allocated extent of one pyramid level, in texels.
+        /// @param level The pyramid level.
+        /// @return The level's extent, each axis floor-halved from level 0 and at least 1.
+        [[nodiscard]] uvec2 GetLevelExtent(u32 level) const;
+
         /// @brief Number of mip levels in the pyramid (the import slot count and the binding range).
         [[nodiscard]] u32 GetMipCount() const { return static_cast<u32>(m_Mips.size()); }
 
@@ -178,6 +197,10 @@ namespace Veng::Renderer
         Ref<Sampler> m_Sampler;
         /// @brief Bindless slot for pyramid mip 0 (the tonemap and the DebugView::Bloom arm read it).
         TextureHandle m_Mip0Handle;
+        /// @brief The level the lens-dirt term samples, set by Resize.
+        u32 m_LensDirtLevel = 0;
+        /// @brief Bindless slot for the lens-dirt level (its own slot even when it is mip 0).
+        TextureHandle m_LensDirtHandle;
 
         /// @brief One downsample set per level k, binding level k's source and destination.
         std::vector<Ref<DescriptorSet>> m_DownSets;

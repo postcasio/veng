@@ -30,6 +30,7 @@ namespace Veng
     class AssetManager;
     class MaterialInstance;
     class EnvironmentMap;
+    class Texture;
     class SceneBroadphase;
 
     namespace Gui
@@ -380,6 +381,24 @@ namespace Veng::Renderer
         /// larger value spreads the glow wider. Rides the compute push (no recompile). Ignored
         /// when bloom is inactive.
         f32 BloomRadius = 1.0f;
+        /// @brief The lens-dirt mask the bloom lights; written to the tonemap material each Execute.
+        ///
+        /// A greyscale mask (its red channel) of what a dirty lens scatters light from. The tonemap
+        /// adds `bloom × dirt × LensDirtIntensity` beside the ordinary bloom term, the bloom read
+        /// from a wide level of the pyramid (LensDirtBloomLevel) so a bright source lights the dirt
+        /// over a broad patch around it. The mask is fitted over the presented frame by cover —
+        /// scaled uniformly until it fills the frame, centred, cropped along one axis, never
+        /// stretched — and sampled in output space, so it is fixed on screen whatever the render
+        /// scale or the anti-aliasing. Empty, or not yet resident, draws no dirt. Ignored when bloom
+        /// is inactive.
+        AssetHandle<Texture> LensDirt;
+        /// @brief How strongly the bloom lights the lens dirt; written to the tonemap material each
+        ///        Execute.
+        ///
+        /// Independent of BloomIntensity, so the ordinary glow and the dirt it reveals tune
+        /// separately. Zero — the default — skips the term in the shader, so a view with no dirt
+        /// renders exactly as one without the feature. A per-frame material parameter: no recompile.
+        f32 LensDirtIntensity = 0.0f;
 
         /// @brief SSR reflection mix scale; pushed to the SSR composite each Execute.
         ///

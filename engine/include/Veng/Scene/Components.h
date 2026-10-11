@@ -29,6 +29,7 @@ namespace Veng
     struct Animation;
     struct Skeleton;
     class Flipbook;
+    class Texture;
 
     namespace Renderer
     {
@@ -1684,6 +1685,18 @@ namespace Veng
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread fed into the per-frame SceneView.
         f32 BloomRadius = 1.0f;
+        /// @brief The lens-dirt mask the bloom lights, fed into the per-frame SceneView.
+        ///
+        /// A greyscale screen-space texture (its red channel is read) of the smudges and dust a
+        /// bright source reveals on a dirty lens. It is fitted over the presented frame preserving
+        /// its aspect, so any texture shape works. Empty draws no dirt.
+        /// @see Renderer::SceneView::LensDirt
+        AssetHandle<Texture> LensDirt;
+        /// @brief How strongly the bloom lights the lens dirt, fed into the per-frame SceneView.
+        ///
+        /// The default of zero draws no dirt and costs nothing, whatever LensDirt names.
+        /// @see Renderer::SceneView::LensDirtIntensity
+        f32 LensDirtIntensity = 0.0f;
         /// @brief Whether the directional cascaded-shadow battery is enabled.
         bool Shadows = true;
         /// @brief Whether the punctual shadow atlas is enabled.
@@ -2337,6 +2350,9 @@ VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.
 VE_FIELD(BloomFireflyCeiling, .DisplayName = "Bloom Firefly Ceiling", .Display = {.Min = 0.0})
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(BloomRadius, .DisplayName = "Bloom Radius", .Display = {.Min = 0.0})
+VE_FIELD(LensDirt, .DisplayName = "Lens Dirt",
+         .Tooltip = "Greyscale mask the bloom lights, fitted over the frame")
+VE_FIELD(LensDirtIntensity, .DisplayName = "Lens Dirt Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})

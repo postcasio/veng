@@ -9,6 +9,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Prefab.h>
@@ -36,13 +37,15 @@ namespace Veng::Cook
         // Reference stays unset, so a Reference field in level config is a located error — the
         // level config records (game mode, render settings) name no entity.
         Result<vector<u8>> CookConfigRecord(const json& configJson, const TypeInfo& type,
-                                            const TypeRegistry& registry, const string& file,
+                                            const TypeRegistry& registry,
+                                            const JsonFieldHooks& hooks, const string& file,
                                             const string& section)
         {
             vector<u8> instance(type.Size);
             type.DefaultConstruct(instance.data());
 
-            VoidResult bindResult = JsonReadFields(instance.data(), type, configJson, registry);
+            VoidResult bindResult =
+                JsonReadFields(instance.data(), type, configJson, registry, hooks);
             if (!bindResult)
             {
                 bindResult = std::unexpected(Located(file, section, bindResult.error()));
@@ -60,6 +63,40 @@ namespace Veng::Cook
                 return std::unexpected(bindResult.error());
             }
             return record;
+        }
+
+        // An AssetHandle field in a config record must name an asset of the type it expects, when
+        // the id resolves in this pack or a reference pack; an id no pack names is accepted (its
+        // residency is the runtime's), the prefab importer's handle policy.
+        JsonFieldHooks MakeConfigHooks(const CookContext& context)
+        {
+            JsonFieldHooks hooks;
+            if (!context.Resolve || context.AssetTypes == nullptr)
+            {
+                return hooks;
+            }
+            hooks.ValidateAssetId = [&context](u64 id, TypeId fieldType) -> VoidResult
+            {
+                const optional<AssetTypeId> expected =
+                    context.AssetTypes->FindByHandleField(fieldType);
+                if (!expected)
+                {
+                    return std::unexpected(fmt::format(
+                        "field is an AssetHandle whose leaf type {} no registered asset type "
+                        "claims",
+                        FormatHexId(fieldType)));
+                }
+                const optional<ResolvedSource> resolved = context.Resolve(AssetId{.Value = id});
+                if (resolved && !AssetHandleFieldAccepts(*expected, resolved->Type))
+                {
+                    return std::unexpected(
+                        fmt::format("asset {} resolves to type {} but the field expects type {}",
+                                    FormatHexId(id), context.AssetTypes->GetName(resolved->Type),
+                                    context.AssetTypes->GetName(*expected)));
+                }
+                return {};
+            };
+            return hooks;
         }
 
         template <class T>
@@ -190,8 +227,10 @@ namespace Veng::Cook
             return std::unexpected(
                 fmt::format("level importer: '{}': 'gameMode' must be an object", file));
         }
-        const Result<vector<u8>> gameModeRecord = CookConfigRecord(
-            gameModeJson, registry.Info(TypeIdOf<GameModeConfig>()), registry, file, "gameMode");
+        const JsonFieldHooks configHooks = MakeConfigHooks(context);
+        const Result<vector<u8>> gameModeRecord =
+            CookConfigRecord(gameModeJson, registry.Info(TypeIdOf<GameModeConfig>()), registry,
+                             configHooks, file, "gameMode");
         if (!gameModeRecord)
         {
             return std::unexpected(gameModeRecord.error());
@@ -203,8 +242,9 @@ namespace Veng::Cook
             return std::unexpected(
                 fmt::format("level importer: '{}': 'render' must be an object", file));
         }
-        const Result<vector<u8>> renderRecord = CookConfigRecord(
-            renderJson, registry.Info(TypeIdOf<RenderLook>()), registry, file, "render");
+        const Result<vector<u8>> renderRecord =
+            CookConfigRecord(renderJson, registry.Info(TypeIdOf<RenderLook>()), registry,
+                             configHooks, file, "render");
         if (!renderRecord)
         {
             return std::unexpected(renderRecord.error());

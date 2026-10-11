@@ -217,6 +217,38 @@ TEST_CASE("level cook: a world id resolving to a non-prefab is a located error")
     CHECK(blob.error().find("not a prefab") != string::npos);
 }
 
+TEST_CASE("level cook: the render block names a lens-dirt texture, and nothing else")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+    const path refs[] = {path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json"};
+
+    // Id 1001 is a texture in the sample pack: it round-trips as the look's mask.
+    json level = SampleLevel();
+    level["render"]["LensDirt"] = FormatHexId(1001);
+    level["render"]["LensDirtIntensity"] = 0.25;
+    const Result<vector<u8>> blob =
+        CookLevel(WriteLevelPack("level_lens_dirt", level), module, refs, AssetId{7777});
+    REQUIRE_MESSAGE(blob.has_value(), "cook failed: ", blob ? string{} : blob.error());
+    CookedLevelHeader header{};
+    std::memcpy(&header, blob->data(), sizeof(header));
+    const std::span<const u8> renderRecord(blob->data() + blob->size() - header.RenderRecordBytes,
+                                           header.RenderRecordBytes);
+    RenderLook render;
+    REQUIRE(
+        ReadFields(renderRecord, &render, module.Types.Info(TypeIdOf<RenderLook>()), module.Types)
+            .has_value());
+    CHECK(render.LensDirt.Id().Value == 1001);
+    CHECK(render.LensDirtIntensity == doctest::Approx(0.25f));
+
+    // The world prefab's id names a prefab, which the mask field refuses at cook time.
+    level["render"]["LensDirt"] = FormatHexId(WorldPrefabId);
+    const Result<vector<u8>> wrong =
+        CookLevel(WriteLevelPack("level_lens_dirt_wrong", level), module, refs, AssetId{7777});
+    REQUIRE_FALSE(wrong.has_value());
+    CHECK(wrong.error().find("LensDirt") != string::npos);
+    CHECK(wrong.error().find("expects type") != string::npos);
+}
+
 TEST_CASE("level cook: a malformed game-mode field is a located error")
 {
     const LoadedModuleTypes module = LoadRegistry();

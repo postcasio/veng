@@ -80,6 +80,8 @@ namespace Veng
         view.BloomFireflyCeiling = look.BloomFireflyCeiling;
         view.BloomIntensity = look.BloomIntensity;
         view.BloomRadius = look.BloomRadius;
+        view.LensDirt = look.LensDirt;
+        view.LensDirtIntensity = look.LensDirtIntensity;
         view.SsrIntensity = look.SsrIntensity;
         view.SsrMaxDistance = look.SsrMaxDistance;
         view.SsrThickness = look.SsrThickness;
@@ -114,6 +116,8 @@ namespace Veng
         view.BloomFireflyCeiling = resolved.BloomFireflyCeiling;
         view.BloomIntensity = resolved.BloomIntensity;
         view.BloomRadius = resolved.BloomRadius;
+        view.LensDirt = resolved.LensDirt;
+        view.LensDirtIntensity = resolved.LensDirtIntensity;
         view.SsrIntensity = resolved.SsrIntensity;
         view.SsrMaxDistance = resolved.SsrMaxDistance;
         view.SsrThickness = resolved.SsrThickness;

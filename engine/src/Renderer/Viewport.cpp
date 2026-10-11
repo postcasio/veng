@@ -729,6 +729,8 @@ namespace Veng::Renderer
             .BloomFireflyCeiling = state.BloomFireflyCeiling,
             .BloomIntensity = state.BloomIntensity,
             .BloomRadius = state.BloomRadius,
+            .LensDirt = state.LensDirt,
+            .LensDirtIntensity = state.LensDirtIntensity,
             .SsrIntensity = state.SsrIntensity,
             .SsrMaxDistance = state.SsrMaxDistance,
             .SsrThickness = state.SsrThickness,

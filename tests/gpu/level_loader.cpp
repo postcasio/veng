@@ -3,7 +3,7 @@
 // loader spawned the world, seeded the settings entity from the game-mode config, and built
 // the simulation from exactly the named system set (proven by ticking it once and observing
 // only the named systems run). Also pins that a version-mismatched cooked blob loads as
-// AssetError::Corrupt rather than aborting.
+// AssetError::Corrupt rather than aborting, and that a cooked level's lens-dirt mask loads with it.
 //
 // It lives in the GPU band only because LoadInto/SpawnInto take an AssetManager&, which
 // requires a Context; the assertions touch no device.
@@ -170,3 +170,84 @@ TEST_CASE_FIXTURE(LevelFixture, "A version-mismatched cooked level loads as Asse
     CHECK(result.error().Kind == AssetError::Corrupt);
     CHECK(result.error().Id == levelId);
 }
+
+#ifdef GPU_GBUFFER_FIXTURE_DIR
+
+#include <filesystem>
+#include <fstream>
+
+#include <nlohmann/json.hpp>
+
+#include <Veng/Asset/HexId.h>
+#include <Veng/Asset/Texture.h>
+#include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/Cooker.h>
+
+#include "support/TempPath.h"
+#include "support/TestCook.h"
+
+// A cooked level whose render block names a lens-dirt texture keeps that texture resident and hands
+// the look a live handle to it, both on the Level and on the settings entity LoadInto seeds — a
+// handle left holding the raw id would read as no mask at all.
+TEST_CASE_FIXTURE(LevelFixture, "A cooked level's lens-dirt mask is loaded with the level")
+{
+    constexpr u64 TextureId = 0xABABA944997A1974ULL;
+    constexpr u64 WorldId = 0x6C5E3621BC13E285ULL;
+    constexpr u64 LevelId = 0xC5B3B88D2DD55BCCULL;
+
+    const path dir = TestSupport::TempDir() / "veng_gpu_level_lens_dirt";
+    std::filesystem::create_directories(dir);
+    {
+        nlohmann::json world;
+        world["entities"] = nlohmann::json::array(
+            {{{"name", "World Root"},
+              {"components", {{"::Veng::Name", {{"Value", "World Root"}}}}}}});
+        std::ofstream(dir / "world.prefab.json") << world.dump();
+
+        nlohmann::json level;
+        level["world"] = FormatHexId(WorldId);
+        level["render"] = {{"LensDirt", FormatHexId(TextureId)}, {"LensDirtIntensity", 0.3}};
+        std::ofstream(dir / "lens_dirt.level.json") << level.dump();
+
+        nlohmann::json pack;
+        pack["version"] = 1;
+        pack["assets"] = nlohmann::json::array({
+            {{"id", FormatHexId(TextureId)},
+             {"type", "Texture"},
+             {"source", (path(GPU_GBUFFER_FIXTURE_DIR) / "textures" / "white.tex.json").string()}},
+            {{"id", FormatHexId(WorldId)}, {"type", "Prefab"}, {"source", "world.prefab.json"}},
+            {{"id", FormatHexId(LevelId)}, {"type", "Level"}, {"source", "lens_dirt.level.json"}},
+        });
+        std::ofstream(dir / "pack.json") << pack.dump();
+    }
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const path archive = dir / "lens_dirt.vengpack";
+    const VoidResult cooked =
+        TestSupport::CookCached(cooker, dir / "pack.json", archive, {}, &Types, &Systems);
+    REQUIRE_MESSAGE(cooked.has_value(), "cook failed: ", cooked ? string{} : cooked.error());
+    REQUIRE(Assets->Mount(archive).has_value());
+
+    const AssetResult<AssetHandle<Level>> level = Assets->LoadSync<Level>(AssetId{LevelId});
+    REQUIRE(level.has_value());
+    const RenderLook& look = level->Get()->GetRender();
+    CHECK(look.LensDirt.Id().Value == TextureId);
+    CHECK(look.LensDirt.IsLoaded());
+    CHECK(look.LensDirtIntensity == doctest::Approx(0.3f));
+
+    LevelInstance instance = level->Get()->LoadInto(*Assets, Systems);
+    REQUIRE(instance.World != nullptr);
+    usize seeded = 0;
+    instance.World->Each<RenderLook>(
+        [&](Entity, RenderLook& seededLook)
+        {
+            CHECK(seededLook.LensDirt.IsLoaded());
+            ++seeded;
+        });
+    CHECK(seeded == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+#endif // GPU_GBUFFER_FIXTURE_DIR

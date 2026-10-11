@@ -451,10 +451,16 @@ extern "C"
 /// BindlessRegistry grows the normal-variance array beside the texture slots. A module spawns looks,
 /// builds views and textures and registers into the registry, so a stale module lays them out short
 /// and reads every later field at a shifted offset.
+/// Version 106 lets the bloom light a lens-dirt mask: RenderLook, SceneView and Viewport::ViewState
+/// grow LensDirt and LensDirtIntensity after BloomRadius, PostProcessScenePass holds a list of extra
+/// inputs (AddExtraInput replacing SetExtraInput), and UI::RenderSettingsEditor takes an asset-handle
+/// picker. A module spawns looks, builds views and calls the editor, so a stale module lays the
+/// structs out short, reads every later field at a shifted offset and calls an entry point the host
+/// no longer exports.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 105u
+#define VENG_MODULE_ABI_VERSION 106u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

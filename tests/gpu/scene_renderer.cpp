@@ -1212,6 +1212,7 @@ TEST_CASE_FIXTURE(
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Skeleton.h>
+#include <Veng/Asset/Texture.h>
 
 namespace
 {
@@ -2834,6 +2835,149 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The cube is lit, so the comparison is between two real frames rather than two black ones.
     CHECK(DecodeTexel(offPixels, extent.x, extent.x / 2, extent.y / 2).r > 0.01f);
     CHECK(worstExcess <= 0.0f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// Lens dirt is a second term the bloom lights: `bloom × dirt × LensDirtIntensity` beside the ordinary
+// bloom. A bright specular cube blooms, and the frame is rendered with no dirt, with a mask but zero
+// intensity, and with an intensity but no mask — all three byte-identical — and then under uniform
+// masks: the term is non-negative everywhere, lifts the frame around the source, and is linear in
+// both the intensity and the mask's value.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: bloom lights the lens dirt, and with none the frame is unchanged")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_lens_dirt.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+    auto& mat = const_cast<MaterialInstance&>(*material->Get());
+    mat.SetParam("RoughnessFactor", 0.08f);
+    mat.SetParam("MetallicFactor", 1.0f);
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Lens Dirt Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(8.0f),
+    };
+
+    // Large enough that the dirt term reads a level below mip 0.
+    constexpr uvec2 extent{256, 256};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = true},
+    });
+
+    // A uniform mask of one byte value; the cover fit cannot move a uniform mask's reading.
+    const auto UniformMask = [&](u8 value) -> AssetHandle<Texture>
+    {
+        constexpr u32 Size = 8;
+        std::array<u8, static_cast<usize>(Size) * Size * 4> pixels{};
+        for (usize i = 0; i < pixels.size(); ++i)
+        {
+            pixels[i] = (i % 4 == 3) ? u8{255} : value;
+        }
+        const AssetHandle<Texture> handle = assets.BuildSync<Texture>(TextureData{
+            .Name = "Lens Dirt Mask",
+            .Extent = {Size, Size},
+            .Format = Format::RGBA8Unorm,
+            .Pixels = pixels,
+        });
+        REQUIRE(handle.IsLoaded());
+        return handle;
+    };
+
+    // Tonemapper None maps linear HDR through saturate, so an unsaturated pixel's output is the HDR
+    // sum the term adds into.
+    const auto Render = [&](const AssetHandle<Texture>& dirt, f32 intensity) -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Tonemapper = Tonemapper::None,
+                                                           .BloomThreshold = 1.0f,
+                                                           .BloomIntensity = 1.0f,
+                                                           .BloomRadius = 1.0f,
+                                                           .LensDirt = dirt,
+                                                           .LensDirtIntensity = intensity});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    const AssetHandle<Texture> full = UniformMask(255);
+    const AssetHandle<Texture> half = UniformMask(128);
+
+    // No mask, a mask at zero intensity and an intensity with no mask all render the plain frame.
+    const vector<u8> plain = Render({}, 0.0f);
+    CHECK(Render(full, 0.0f) == plain);
+    CHECK(Render({}, 1.0f) == plain);
+
+    const vector<u8> fullHalfIntensity = Render(full, 0.5f);
+    const vector<u8> fullUnit = Render(full, 1.0f);
+    const vector<u8> halfUnit = Render(half, 1.0f);
+
+    // Over the pixels no render saturates: the term's rise never goes negative, it lifts the frame
+    // somewhere, doubling the intensity doubles it, and a mask of half the value lifts it by half.
+    // Each worst excess is the error beyond a few half-float steps of the values compared.
+    const f32 halfMask = 128.0f / 255.0f;
+    f32 worstNegative = 0.0f;
+    f32 worstIntensity = 0.0f;
+    f32 worstMask = 0.0f;
+    f32 largestRise = 0.0f;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 base = DecodeTexel(plain, extent.x, x, y);
+            const vec3 a = DecodeTexel(fullHalfIntensity, extent.x, x, y);
+            const vec3 b = DecodeTexel(fullUnit, extent.x, x, y);
+            const vec3 c = DecodeTexel(halfUnit, extent.x, x, y);
+            for (i32 ch = 0; ch < 3; ++ch)
+            {
+                if (b[ch] >= 0.99f)
+                {
+                    continue;
+                }
+                const f32 step = 4.0f * std::max(b[ch], 1.0e-4f) * 0x1p-10f;
+                const f32 riseHalf = a[ch] - base[ch];
+                const f32 riseUnit = b[ch] - base[ch];
+                const f32 riseMask = c[ch] - base[ch];
+                largestRise = std::max(largestRise, riseUnit);
+                worstNegative = std::max(worstNegative, -riseHalf - step);
+                worstIntensity =
+                    std::max(worstIntensity, std::abs(riseUnit - 2.0f * riseHalf) - step);
+                worstMask = std::max(worstMask, std::abs(riseMask - halfMask * riseUnit) - step);
+            }
+        }
+    }
+    CHECK(largestRise > 0.01f);
+    CHECK(worstNegative <= 0.0f);
+    CHECK(worstIntensity <= 0.0f);
+    CHECK(worstMask <= 0.0f);
 
     std::filesystem::remove(outArchive);
 }

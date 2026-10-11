@@ -1,6 +1,7 @@
 // Tonemap fragment stage: the engine's first PostProcess-domain material. It samples the HDR
 // scene colour through the bindless set-0 array (the HDR input is a runtime-bound handle field
-// the post pass rewrites each frame), adds the accumulated bloom when bloom is active, applies an
+// the post pass rewrites each frame), adds the accumulated bloom when bloom is active and the
+// lens dirt that bloom lights when a dirt mask is set, applies an
 // exposure scale, and maps the linear HDR color to the display range with a selectable tone curve
 // (the Tonemapper param, written each frame from the SceneView). The terminal stage of the deferred
 // chain — it replaces a plain clamp with a curve that rolls off highlights instead of hard-clipping
@@ -34,6 +35,14 @@ struct MaterialParams
     float  Tonemapper;  // the Renderer::Tonemapper enum as a float, set per frame from the SceneView
     float  OutputBrightness; // display-calibration multiply, set per frame from the SceneView
     float  OutputGamma;      // display-calibration gamma, set per frame from the SceneView
+    float4 LensDirtCover;    // cover fit of the dirt mask over the frame: xy scale, zw offset
+    float4 LensDirtBloomScale; // the dirt term's bloom level sub-rect map: xy scale, zw clamp
+    float4 LensDirtBloomTexel; // that level's extent: xy texels, zw their reciprocal
+    uint   LensDirt;         // bindless index of the dirt mask (written each frame)
+    uint   LensDirtSampler;  // bindless index of the mask's own sampler (written each frame)
+    uint   LensDirtBloom;    // bindless index of the dirt term's bloom level (runtime-bound)
+    uint   LensDirtBloomSampler; // bindless sampler for that level (runtime-bound)
+    float  LensDirtIntensity; // the dirt term's mix, set per frame; 0 when no dirt is drawn
 };
 
 MaterialParams LoadMaterialParams(uint offset)
@@ -120,6 +129,33 @@ float3 TonemapAgx(float3 color)
     return pow(saturate(color), 2.2.xxx);
 }
 
+// A cubic B-spline read of a coarse bloom level in four bilinear taps. The dirt term magnifies its
+// level many times over, and a bilinear read draws a bright source's glow there as a visible
+// diamond; the B-spline's smooth kernel draws it round.
+float3 SampleBloomBSpline(uint texture, uint samplerIndex, float2 uv, float4 texel)
+{
+    const float2 p = uv * texel.xy - 0.5;
+    const float2 i = floor(p);
+    const float2 f = p - i;
+    const float2 f2 = f * f;
+    const float2 f3 = f2 * f;
+    const float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    const float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    const float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    const float2 w3 = f3 / 6.0;
+    const float2 g0 = w0 + w1;
+    const float2 g1 = w2 + w3;
+    // Each pair of taps folds into one bilinear read between them.
+    const float2 uv0 = (i - 1.0 + w1 / g0 + 0.5) * texel.zw;
+    const float2 uv1 = (i + 1.0 + w3 / g1 + 0.5) * texel.zw;
+    Texture2D t = g_Textures[NonUniformResourceIndex(texture)];
+    SamplerState s = g_Samplers[NonUniformResourceIndex(samplerIndex)];
+    return g0.y * (g0.x * t.Sample(s, float2(uv0.x, uv0.y)).rgb +
+                   g1.x * t.Sample(s, float2(uv1.x, uv0.y)).rgb) +
+           g1.y * (g0.x * t.Sample(s, float2(uv0.x, uv1.y)).rgb +
+                   g1.x * t.Sample(s, float2(uv1.x, uv1.y)).rgb);
+}
+
 [shader("fragment")]
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
@@ -140,6 +176,19 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
         hdr += g_Textures[NonUniformResourceIndex(p.Bloom)].Sample(
                    g_Samplers[NonUniformResourceIndex(p.BloomSampler)], bloomUv).rgb *
                p.BloomIntensity;
+    }
+    // Lens dirt: the light a dirty lens scatters, the wide bloom times the mask. The mask is read
+    // in output space through its cover fit, so it is fixed on screen; the branch is uniform, and
+    // with no dirt neither slot is indexed.
+    if (p.LensDirtIntensity > 0.0)
+    {
+        const float2 dirtUv = input.v_UV * p.LensDirtCover.xy + p.LensDirtCover.zw;
+        const float dirt = g_Textures[NonUniformResourceIndex(p.LensDirt)].Sample(
+                               g_Samplers[NonUniformResourceIndex(p.LensDirtSampler)], dirtUv).r;
+        const float2 wideUv = min(input.v_UV * p.LensDirtBloomScale.xy, p.LensDirtBloomScale.zw);
+        const float3 wide = SampleBloomBSpline(p.LensDirtBloom, p.LensDirtBloomSampler, wideUv,
+                                               p.LensDirtBloomTexel);
+        hdr += wide * (dirt * p.LensDirtIntensity);
     }
     float3 exposed = max(hdr * p.Exposure, 0.0);
 

@@ -727,7 +727,8 @@ namespace Veng::UI
         return false;
     }
 
-    bool RenderSettingsEditor(Viewport& viewport, const TypeRegistry& types)
+    bool RenderSettingsEditor(Viewport& viewport, const TypeRegistry& types,
+                              const FieldValueFn& drawAssetHandle)
     {
         const Renderer::Context& context =
             viewport.GetRenderer().GetOutput()->GetImage()->GetContext();
@@ -771,7 +772,7 @@ namespace Veng::UI
         const auto isLensField = [](const FieldDescriptor& field)
         { return field.Name == "DofFocusDistance" || field.Name == "DofAperture"; };
 
-        const InspectorHooks hooks{.Registry = &types};
+        const InspectorHooks hooks{.Registry = &types, .DrawAssetHandle = drawAssetHandle};
         for (const string_view category : categories)
         {
             const auto section = UI::CollapsingHeader(

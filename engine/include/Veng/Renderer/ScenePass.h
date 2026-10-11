@@ -235,24 +235,24 @@ namespace Veng::Renderer
         string SamplerField;
     };
 
-    /// @brief Optional second runtime-bound input for a PostProcessScenePass.
+    /// @brief An additional runtime-bound input for a PostProcessScenePass.
     ///
-    /// Some PostProcess materials sample a second upstream target alongside the
-    /// primary one (e.g. the tonemap samples the scene colour and, under bloom, the
-    /// accumulated bloom pyramid's mip 0 together). When Texture is valid the pass
-    /// declares .Sample on Source and writes the handle pair into the named fields each
-    /// frame; an invalid Texture is skipped.
+    /// Some PostProcess materials sample further upstream targets alongside the primary
+    /// one (e.g. the tonemap samples the scene colour and, under bloom, the accumulated
+    /// bloom pyramid's mip 0 and the wider level its lens-dirt term reads). When Texture is
+    /// valid the pass declares .Sample on Source and writes the handle pair into the named
+    /// fields each frame; an invalid Texture is skipped.
     struct PostProcessExtraInput
     {
-        /// @brief The second imported upstream target.
+        /// @brief The imported upstream target.
         ResourceId Source;
-        /// @brief Bindless slot for the second source; invalid means this entry is inactive.
+        /// @brief Bindless slot for the source; invalid means this entry is inactive.
         TextureHandle Texture;
         /// @brief Bindless sampler slot written into SamplerField each frame.
         SamplerHandle Sampler;
-        /// @brief Material field name to receive the second texture handle.
+        /// @brief Material field name to receive the texture handle.
         string TextureField;
-        /// @brief Material field name to receive the second sampler handle.
+        /// @brief Material field name to receive the sampler handle.
         string SamplerField;
     };
 
@@ -285,11 +285,11 @@ namespace Veng::Renderer
                              PostProcessInput input, ResourceId output, Format outputFormat,
                              uvec2 extent);
 
-        /// @brief Registers a second runtime-bound input sampled alongside the primary.
+        /// @brief Registers a further runtime-bound input sampled alongside the primary.
         ///
-        /// The graph derives the second source's attachment → shader-read barrier from
-        /// its declared .Sample, exactly as for the primary input.
-        void SetExtraInput(PostProcessExtraInput extra) { m_Extra = std::move(extra); }
+        /// The graph derives each extra source's barrier from its declared .Sample, exactly
+        /// as for the primary input.
+        void AddExtraInput(PostProcessExtraInput extra) { m_Extras.push_back(std::move(extra)); }
 
         /// @brief Updates the render extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
@@ -306,8 +306,8 @@ namespace Veng::Renderer
         AssetHandle<MaterialInstance> m_Material;
         /// @brief Primary input descriptor.
         PostProcessInput m_Input;
-        /// @brief Optional second input (inactive when Texture is invalid).
-        PostProcessExtraInput m_Extra;
+        /// @brief The extra inputs, in registration order (each inactive when its Texture is invalid).
+        vector<PostProcessExtraInput> m_Extras;
         /// @brief Output resource id.
         ResourceId m_Output;
         /// @brief Output color format.

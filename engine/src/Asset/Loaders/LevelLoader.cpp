@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -84,31 +85,43 @@ namespace Veng
             return std::unexpected(Corrupt(id, renderRead.error()));
         }
 
-        // ── 4. Name the world prefab and the game-mode player prefab ─────────
-        // Both are dependencies the level keeps resident. The environment map is not a level field:
+        // ── 4. Name the world prefab, the game-mode player prefab and the look's mask ──
+        // All are dependencies the level keeps resident. The environment map is not a level field:
         // it rides an EnvironmentSky source on the world prefab's Sky component and resolves
         // through the prefab's own dependency walk like any embedded handle.
         const AssetId worldId{header.WorldPrefabId};
         const AssetId playerId = gameMode.PlayerPrefab.Id();
+        const AssetId lensDirtId = render.LensDirt.Id();
         Detail::ParsedAsset parsed;
         parsed.Dependencies.push_back({.Type = AssetTypes::Prefab, .Id = worldId});
         if (playerId.IsValid())
         {
             parsed.Dependencies.push_back({.Type = AssetTypes::Prefab, .Id = playerId});
         }
+        if (lensDirtId.IsValid())
+        {
+            parsed.Dependencies.push_back({.Type = AssetTypes::Texture, .Id = lensDirtId});
+        }
 
-        // ── 5. Construct the Level once the prefabs are named in the cache ───
-        parsed.Complete = [systems = std::move(systems), gameMode = std::move(gameMode),
-                           render](AssetManager&,
-                                   std::span<const Ref<Detail::AssetCacheEntry>> resolved) mutable
+        // ── 5. Construct the Level once its dependencies are named in the cache ──
+        parsed.Complete = [systems = std::move(systems), gameMode = std::move(gameMode), render,
+                           hasPlayer = playerId.IsValid(), hasLensDirt = lensDirtId.IsValid()](
+                              AssetManager&,
+                              std::span<const Ref<Detail::AssetCacheEntry>> resolved) mutable
             -> AssetResult<Detail::LoadJob>
         {
-            // The decoded handle carries only the raw id; rebind it to the live entry so the
-            // settings entity the level seeds reports the player prefab as loaded.
+            // The decoded handles carry only the raw id; rebind each to its live entry so the
+            // settings entity the level seeds reports the player prefab loaded and the look's
+            // mask resident.
             const AssetHandle<Prefab> world = AssetManager::HandleOf<Prefab>(resolved[0]);
-            if (resolved.size() > 1)
+            usize next = 1;
+            if (hasPlayer)
             {
-                gameMode.PlayerPrefab = AssetManager::HandleOf<Prefab>(resolved[1]);
+                gameMode.PlayerPrefab = AssetManager::HandleOf<Prefab>(resolved[next++]);
+            }
+            if (hasLensDirt)
+            {
+                render.LensDirt = AssetManager::HandleOf<Texture>(resolved[next++]);
             }
             const Ref<Level> level =
                 Level::Create(world, std::move(systems), std::move(gameMode), render);

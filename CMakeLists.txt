@@ -1125,6 +1125,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
             tests/unit/bloom_mips.cpp
+            tests/unit/lens_dirt.cpp
             tests/unit/mip_tail.cpp
             tests/unit/render_layer.cpp
             tests/unit/post_process_effect.cpp

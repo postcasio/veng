@@ -54,10 +54,16 @@ namespace Veng::Renderer
         }
 
         const PostProcessInput input = m_Input;
-        const PostProcessExtraInput extra = m_Extra;
-        const bool hasExtra = extra.Texture.IsValid();
+        vector<PostProcessExtraInput> extras;
+        for (const PostProcessExtraInput& extra : m_Extras)
+        {
+            if (extra.Texture.IsValid())
+            {
+                extras.push_back(extra);
+            }
+        }
 
-        // A two-source pass (the tonemap under bloom) declares .Sample on both ids for the
+        // A multi-source pass (the tonemap under bloom) declares .Sample on every id for the
         // graph-derived barriers; single-source passes declare only the primary input.
         RenderGraph::PassBuilder builder = graph.AddPass("PostProcess");
         builder
@@ -68,13 +74,13 @@ namespace Veng::Renderer
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Sample(input.Source);
-        if (hasExtra)
+        for (const PostProcessExtraInput& extra : extras)
         {
             builder.Sample(extra.Source);
         }
 
         builder.Execute(
-            [this, input, extra, hasExtra](PassContext& inner)
+            [this, input, extras = std::move(extras)](PassContext& inner)
             {
                 CommandBuffer& cmd = inner.Cmd();
                 MaterialInstance& material = *m_Material.Get();
@@ -86,7 +92,7 @@ namespace Veng::Renderer
                 // BindlessRegistry::MaterialArenaBytes and SceneRenderer's tonemap material.
                 material.SetTextureHandle(input.TextureField, input.SourceTexture);
                 material.SetSamplerHandle(input.SamplerField, input.Sampler);
-                if (hasExtra)
+                for (const PostProcessExtraInput& extra : extras)
                 {
                     material.SetTextureHandle(extra.TextureField, extra.Texture);
                     material.SetSamplerHandle(extra.SamplerField, extra.Sampler);

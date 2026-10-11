@@ -1252,6 +1252,28 @@ Kawase** filter for the TBDR GPUs veng primarily targets. `Bloom` (on/off) and `
 `Intensity` the tonemap's material block — so tuning them never recompiles. `DebugView::Bloom` blits pyramid
 mip 0 after the up-sweep — the accumulated bloom contribution the tonemap would add.
 
+**The bloom lights a lens-dirt mask.** `SceneView::LensDirt` (a texture, its red channel read) and
+`LensDirtIntensity` — authored on `RenderLook`, overridable through the debug layer like any view
+knob — add a second term in the same tonemap pass, beside the ordinary bloom:
+`hdr += wide × dirt(uv) × LensDirtIntensity`. With no resident mask, an intensity of 0 (the
+default) or bloom inactive, the renderer writes 0 and the shader skips the term's uniform branch, so
+the frame is bit-identical to one without the feature (`tests/gpu/scene_renderer.cpp`).
+
+- **`wide` is a coarse level of the pyramid, not mip 0.** A dirty lens scatters a source's light over
+  a broad patch of glass, so the term reads the level `LensDirtLevelsAboveCoarsest` (3) above the
+  coarsest (`LensDirtBloomLevel`, `LensDirt.h`) — a sixteenth of the frame's resolution at 1080p, and
+  the same fraction of the frame at every extent, since the coarsest level is. After the up-sweep that
+  level holds every coarser level's glow too, so it carries about mip 0's energy, spread wider:
+  mip 0's tight core would reveal the dirt only in a halo hugging the source. Read through the same
+  extra-input seam as mip 0 (declared whenever bloom is wired, so a per-frame knob never recompiles),
+  its many-fold magnification is a four-tap cubic B-spline rather than one bilinear tap, which would
+  draw a single bright source's glow as a diamond.
+- **The mask is cover-fitted to the presented frame** (`ComputeLensDirtCoverMap`): scaled uniformly
+  until it fills the frame, centred, cropped along one axis, never stretched. It is sampled in output
+  UV at the post-resolve allocation through the texture's own sampler, so it is fixed on screen —
+  no jitter, no dependence on a temporal resolve — and independent of the render scale.
+  `tests/unit/lens_dirt.cpp` pins the fit at 4:3 through 21:9.
+
 **Firefly stability is a per-tap ceiling ahead of a linear average.** On the first downsample,
 each tap (a bilinear average over a 2×2 block of the scene) is conditioned on its own before the
 kernel averages it (`bloom_bright_pass.slang`, shared by both kernels): a non-finite tap becomes

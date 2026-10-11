@@ -25,6 +25,7 @@ namespace Veng
     class Scene;
     class AssetManager;
     struct RenderLook;
+    class Texture;
     class GuiDriverRegistry;
     struct GuiOverlay;
     struct GuiSurface;
@@ -124,6 +125,14 @@ namespace Veng::Renderer
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread.
         f32 BloomRadius = 1.0f;
+        /// @brief The lens-dirt mask the bloom lights; empty draws none.
+        ///
+        /// @see SceneView::LensDirt
+        AssetHandle<Texture> LensDirt;
+        /// @brief How strongly the bloom lights the lens dirt; zero draws none.
+        ///
+        /// @see SceneView::LensDirtIntensity
+        f32 LensDirtIntensity = 0.0f;
         /// @brief SSR reflection mix scale (ignored while the renderer's SSR pass is off).
         f32 SsrIntensity = 1.0f;
         /// @brief SSR maximum ray length in view-space units.
@@ -1416,6 +1425,10 @@ VE_FIELD(BloomIntensity, .DisplayName = "Bloom intensity", .Display = {.Min = 0.
          .Category = "Bloom")
 VE_FIELD(BloomRadius, .DisplayName = "Bloom radius", .Display = {.Min = 0.0, .Max = 4.0},
          .Category = "Bloom")
+VE_FIELD(LensDirt, .DisplayName = "Lens dirt",
+         .Tooltip = "Greyscale mask the bloom lights, fitted over the frame", .Category = "Bloom")
+VE_FIELD(LensDirtIntensity, .DisplayName = "Lens dirt intensity",
+         .Display = {.Min = 0.0, .Max = 4.0}, .Category = "Bloom")
 VE_FIELD(SsrIntensity, .DisplayName = "SSR intensity", .Display = {.Min = 0.0, .Max = 4.0},
          .Category = "Screen-space reflections")
 VE_FIELD(SsrMaxDistance, .DisplayName = "SSR max distance",

@@ -14,6 +14,7 @@
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "GBufferShadingOverride.h"
+#include "LensDirt.h"
 #include "LightTileCuller.h"
 #include "PickingSystem.h"
 #include "Passes/DebugBlitScenePasses.h"
@@ -95,6 +96,7 @@
 #include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Skeleton.h>
 
@@ -1056,12 +1058,22 @@ namespace Veng::Renderer
             {
                 // The down/up sweep is declared by the tail anchor in the pass loop, ahead of this
                 // pass; the tonemap samples its accumulated mip 0.
-                tonemapPass->SetExtraInput({
+                tonemapPass->AddExtraInput({
                     .Source = m_BloomChainId.Level(0),
                     .Texture = m_Bloom->GetMip0Handle(),
                     .Sampler = m_SamplerHandle,
                     .TextureField = "Bloom",
                     .SamplerField = "BloomSampler",
+                });
+                // The lens-dirt term's wide level is declared whether or not a frame draws dirt:
+                // it is already sampled-ready after the sweep, and a per-frame knob must not
+                // recompile the graph.
+                tonemapPass->AddExtraInput({
+                    .Source = m_BloomChainId.Level(m_Bloom->GetLensDirtLevel()),
+                    .Texture = m_Bloom->GetLensDirtHandle(),
+                    .Sampler = m_SamplerHandle,
+                    .TextureField = "LensDirtBloom",
+                    .SamplerField = "LensDirtBloomSampler",
                 });
             }
             m_Passes.push_back(std::move(tonemapPass));
@@ -2281,6 +2293,10 @@ namespace Veng::Renderer
         const f32 exposure = m_AutoExposure->ResolveExposure(view, m_Topology->AutoExposureActive);
         m_Taa->SetExposure(exposure);
 
+        const Texture* const dirt = view.LensDirt.Get();
+        const bool lensDirtActive =
+            m_Topology->BloomActive && view.LensDirtIntensity > 0.0f && dirt != nullptr;
+
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
@@ -2300,6 +2316,23 @@ namespace Veng::Renderer
             if (m_Topology->BloomActive)
             {
                 tonemap.SetParam("BloomScale", m_Bloom->GetMip0SampleMap(postResolveExtent));
+            }
+
+            // The lens-dirt term, lit by the bloom; a zero intensity is the shader's gate, written
+            // whenever bloom is off or the mask is not resident.
+            tonemap.SetParam("LensDirtIntensity", lensDirtActive ? view.LensDirtIntensity : 0.0f);
+            if (lensDirtActive)
+            {
+                tonemap.SetTextureHandle("LensDirt", dirt->GetHandle());
+                tonemap.SetSamplerHandle("LensDirtSampler", dirt->GetSamplerHandle());
+                // Fitted over the presented frame, so the mask stays put whatever the render scale.
+                tonemap.SetParam("LensDirtCover",
+                                 ComputeLensDirtCoverMap(postResolveExtent, dirt->GetExtent()));
+                const u32 level = m_Bloom->GetLensDirtLevel();
+                const vec2 levelExtent = vec2(m_Bloom->GetLevelExtent(level));
+                tonemap.SetParam("LensDirtBloomScale",
+                                 m_Bloom->GetLevelSampleMap(level, postResolveExtent));
+                tonemap.SetParam("LensDirtBloomTexel", vec4(levelExtent, 1.0f / levelExtent));
             }
         }
 
@@ -2664,6 +2697,16 @@ namespace Veng::Renderer
             MaterialInstance& tonemap = *m_TonemapMaterial.Get();
             tonemap.SetTextureHandle("Bloom", m_TonemapSourceHandle);
             tonemap.SetSamplerHandle("BloomSampler", m_SamplerHandle);
+            tonemap.SetTextureHandle("LensDirtBloom", m_TonemapSourceHandle);
+            tonemap.SetSamplerHandle("LensDirtBloomSampler", m_SamplerHandle);
+        }
+        // Likewise the dirt mask while its term is gated off: never indexed, but never left on a
+        // slot a released texture held.
+        if (!lensDirtActive && m_TonemapMaterial.IsLoaded())
+        {
+            MaterialInstance& tonemap = *m_TonemapMaterial.Get();
+            tonemap.SetTextureHandle("LensDirt", m_TonemapSourceHandle);
+            tonemap.SetSamplerHandle("LensDirtSampler", m_SamplerHandle);
         }
 
         // Size the overlay-document intermediate to this frame's documents — after every Rebuild
