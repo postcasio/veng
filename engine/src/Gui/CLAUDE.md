@@ -753,7 +753,9 @@ Cyrillic, plus the two string-level rules CSS applies — `ß` capitalises to `S
 *longer* than the text), and a word-final capital sigma lowers to `ς` — and is locale-independent
 (no Turkish dotted I). Uncased text and ill-formed UTF-8 pass through byte for byte. Changing it is a **layout**
 move, like a font swap: capitals are wider than the lower case they replace, and no numeric property
-comparison can see either, so both are checked explicitly in `UpdateElement`.
+comparison can see either, so both are checked explicitly in `UpdateElement`. A **`TextInput`
+ignores the transform**, measured and painted alike: it shows exactly what is typed, and its caret and
+selection index that text, so a transformed run would put them in the wrong place.
 
 **A state reaches inside the element that carries it, and the selector grammar is why.** There is
 no descendant combinator, so `.row:selected` cannot reach `.row .row-name`; a label with a `color`

@@ -655,6 +655,29 @@ TEST_CASE("gui layout: text-transform changes the run measured and drawn, not th
     CHECK(measured == "café straße οδος жук 東京");
 }
 
+TEST_CASE("gui layout: a text input ignores text-transform")
+{
+    // An input shows what is typed, and its caret and selection index that text, so a transform
+    // would measure and draw a run its editing does not address.
+    Document doc;
+    Element& input = doc.Add(doc.Root(), ElementKind::TextInput);
+    doc.SetText(input, "straße");
+
+    string measured;
+    doc.SetTextMeasurer(
+        [&measured](const string_view text, const Style&, optional<f32>) -> vec2
+        {
+            measured = text;
+            return vec2{static_cast<f32>(text.size()) * 8.0f, 16.0f};
+        });
+
+    Style upper;
+    upper.Casing = TextTransform::Uppercase;
+    doc.SetStyle(input, upper);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "straße");
+}
+
 TEST_CASE("gui layout: a case transform re-solves the box it changed the width of")
 {
     // Capitals are wider than the lower case they replace, so a transform is a layout input — and

@@ -2256,11 +2256,13 @@ namespace Veng::Gui
         // is *typeset* in is a property of the screen and not of the model that named the station.
         // `storage` holds the mapped copy when there is one; otherwise the view aliases the
         // element's own text and nothing is allocated, which is every element on a document that
-        // does not ask for this.
+        // does not ask for this. A text input ignores the transform: it shows what is typed, and its
+        // caret and selection index that text.
         string_view RunOf(const Element& element, string& storage)
         {
             const TextTransform casing = element.ComputedStyle.Casing;
-            if (casing == TextTransform::None || element.Text.empty())
+            if (casing == TextTransform::None || element.Text.empty() ||
+                element.Kind == ElementKind::TextInput)
             {
                 return element.Text;
             }
