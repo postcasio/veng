@@ -2454,12 +2454,14 @@ namespace Veng
         const World* managed = m_WorldRunner->ResolveWorld(m_ManagedWorld);
         const Scene* managedScene = managed != nullptr ? &managed->GetScene() : nullptr;
 
-        // GLFW reports the cursor in window coordinates (logical points), but the viewport regions
-        // hit-tested here live in framebuffer pixels (the swapchain extent), so on a HiDPI display the
+        // GLFW reports the cursor in screen coordinates, but the viewport regions hit-tested here
+        // live in framebuffer pixels (the swapchain extent); where screen coordinates are points the
         // two differ by the window's content scale. Convert before routing so the pointer lands in the
         // right region and its region-local position matches the window point a picking ray later
         // unprojects.
-        const vec2 scale = m_Window ? m_Window->GetContentScale() : vec2{1.0f, 1.0f};
+        const vec2 scale = m_Window ? PixelsPerScreenCoordinate(m_Window->GetContentScale(),
+                                                                PlatformScreenCoordinateUnit())
+                                    : vec2{1.0f, 1.0f};
         const ivec2 windowPoint = ivec2(m_Input->GetMousePosition() * scale);
         const bool captured = m_InputRouter->IsGameplayFocused();
 

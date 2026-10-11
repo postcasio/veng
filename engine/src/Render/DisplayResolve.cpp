@@ -41,6 +41,53 @@ namespace Veng
 #endif
     }
 
+    ScreenCoordinateUnit PlatformScreenCoordinateUnit()
+    {
+#if defined(__APPLE__)
+        return ScreenCoordinateUnit::Points;
+#else
+        return ScreenCoordinateUnit::Pixels;
+#endif
+    }
+
+    namespace
+    {
+        vec2 PositiveScale(const vec2 contentScale)
+        {
+            return {contentScale.x > 0.0f ? contentScale.x : 1.0f,
+                    contentScale.y > 0.0f ? contentScale.y : 1.0f};
+        }
+    }
+
+    vec2 PixelsPerScreenCoordinate(const vec2 contentScale, const ScreenCoordinateUnit unit)
+    {
+        return unit == ScreenCoordinateUnit::Points ? PositiveScale(contentScale) : vec2(1.0f);
+    }
+
+    uvec2 ScreenCoordsFromPixels(const uvec2 pixels, const vec2 contentScale,
+                                 const ScreenCoordinateUnit unit)
+    {
+        if (unit == ScreenCoordinateUnit::Pixels)
+        {
+            return pixels;
+        }
+        const vec2 scale = PositiveScale(contentScale);
+        return {static_cast<u32>(static_cast<f32>(pixels.x) / scale.x + 0.5f),
+                static_cast<u32>(static_cast<f32>(pixels.y) / scale.y + 0.5f)};
+    }
+
+    uvec2 PixelsFromScreenCoords(const uvec2 coords, const vec2 contentScale,
+                                 const ScreenCoordinateUnit unit)
+    {
+        if (unit == ScreenCoordinateUnit::Pixels)
+        {
+            return coords;
+        }
+        const vec2 scale = PositiveScale(contentScale);
+        return {static_cast<u32>(static_cast<f32>(coords.x) * scale.x + 0.5f),
+                static_cast<u32>(static_cast<f32>(coords.y) * scale.y + 0.5f)};
+    }
+
     vector<DisplayVideoMode> DedupVideoModes(std::span<const DisplayVideoMode> modes)
     {
         vector<DisplayVideoMode> result(modes.begin(), modes.end());

@@ -5,6 +5,8 @@
 //  - present-mode fallback: an unsupported request resolves to Vsync, never a hard failure;
 //  - the per-platform fullscreen set: PlatformFullscreenModes offers Windowed + a single native
 //    fullscreen (Borderless) on macOS, and adds Exclusive elsewhere;
+//  - the screen-coordinate convention: a pixel size divides by the content scale only where screen
+//    coordinates are points, and passes through where they are pixels;
 //  - invalid-selection fallback against a stubbed capability set: a persisted monitor / resolution /
 //    refresh the hardware no longer offers resolves to a supported one, an exclusive mode a platform
 //    does not offer drops to its fullscreen choice, and a three-way platform keeps exclusive intact;
@@ -194,6 +196,36 @@ TEST_CASE("PlatformFullscreenModes reports the platform's fullscreen set")
 #else
     CHECK(offersExclusive);
     CHECK(modes.size() == 3);
+#endif
+}
+
+TEST_CASE("Pixel sizes map to screen coordinates by the platform's convention")
+{
+    // A 2560x1440 selection on a display scaled to 150%.
+    constexpr uvec2 Pixels{2560, 1440};
+    constexpr vec2 Scale{1.5f, 1.5f};
+
+    // Where screen coordinates are pixels (Windows, X11) the scale is a UI hint only: a window or an
+    // exclusive mode asked for in pixels is that many screen coordinates, so the monitor never has
+    // to stretch a smaller one up.
+    CHECK(ScreenCoordsFromPixels(Pixels, Scale, ScreenCoordinateUnit::Pixels) == Pixels);
+    CHECK(PixelsFromScreenCoords(Pixels, Scale, ScreenCoordinateUnit::Pixels) == Pixels);
+    CHECK(PixelsPerScreenCoordinate(Scale, ScreenCoordinateUnit::Pixels) == vec2(1.0f));
+
+    // Where they are points (macOS) a pixel size divides by the scale, and back again.
+    const uvec2 points = ScreenCoordsFromPixels(Pixels, Scale, ScreenCoordinateUnit::Points);
+    CHECK(points == uvec2{1707, 960});
+    CHECK(PixelsFromScreenCoords(uvec2{1280, 720}, vec2(2.0f), ScreenCoordinateUnit::Points) ==
+          uvec2{2560, 1440});
+    CHECK(PixelsPerScreenCoordinate(Scale, ScreenCoordinateUnit::Points) == Scale);
+
+    // A degenerate scale counts as 1 rather than dividing by zero.
+    CHECK(ScreenCoordsFromPixels(Pixels, vec2(0.0f), ScreenCoordinateUnit::Points) == Pixels);
+
+#if defined(__APPLE__)
+    CHECK(PlatformScreenCoordinateUnit() == ScreenCoordinateUnit::Points);
+#else
+    CHECK(PlatformScreenCoordinateUnit() == ScreenCoordinateUnit::Pixels);
 #endif
 }
 

@@ -10,6 +10,8 @@
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Window.h>
 
+#include "../Render/DisplayResolve.h"
+
 #include <algorithm>
 
 namespace Veng::Gui
@@ -145,10 +147,13 @@ namespace Veng::Gui
 
     ivec2 GuiConsumer::PointerPixels() const
     {
-        // The snapshot reports the cursor in logical points; a viewport region is framebuffer
-        // pixels, so scale by the window's content scale on a HiDPI display.
+        // The snapshot reports the cursor in screen coordinates; a viewport region is framebuffer
+        // pixels, which differ by the content scale where screen coordinates are points.
         const vec2 point = m_Input.GetMousePosition();
-        const vec2 scale = m_Window != nullptr ? m_Window->GetContentScale() : vec2(1.0f);
+        const vec2 scale = m_Window != nullptr
+                               ? PixelsPerScreenCoordinate(m_Window->GetContentScale(),
+                                                           PlatformScreenCoordinateUnit())
+                               : vec2(1.0f);
         return ivec2(point * scale);
     }
 

@@ -482,19 +482,15 @@ namespace Veng
                 info.Name = name;
             }
 
-            // GLFW reports video modes in screen coordinates (points); the swapchain and every
-            // resolution field are in backing pixels, so each mode scales up by the monitor's content
-            // scale to report true pixel resolutions. ApplyDisplayMode divides back to points for the
-            // GLFW sizing calls, which take screen coordinates.
+            // GLFW reports video modes in screen coordinates, while the swapchain and every
+            // resolution field are in pixels; ApplyDisplayMode converts back for the sizing calls.
             float scaleX = 1.0f;
             float scaleY = 1.0f;
             glfwGetMonitorContentScale(monitor, &scaleX, &scaleY);
-            scaleX = scaleX > 0.0f ? scaleX : 1.0f;
-            scaleY = scaleY > 0.0f ? scaleY : 1.0f;
             const auto toPixels = [scaleX, scaleY](const int w, const int h)
             {
-                return uvec2{static_cast<u32>(static_cast<f32>(w) * scaleX + 0.5f),
-                             static_cast<u32>(static_cast<f32>(h) * scaleY + 0.5f)};
+                return PixelsFromScreenCoords({static_cast<u32>(w), static_cast<u32>(h)},
+                                              {scaleX, scaleY}, PlatformScreenCoordinateUnit());
             };
 
             if (const GLFWvidmode* current = glfwGetVideoMode(monitor))
@@ -521,20 +517,6 @@ namespace Veng
         return result;
     }
 
-    namespace
-    {
-        // Screen coordinates (points) for the GLFW sizing calls from a pixel resolution: the monitor
-        // enumeration reports true backing pixels, so a list-selected resolution divides back by the
-        // target display's content scale here. A zero or unit scale leaves it unchanged.
-        uvec2 ScreenCoordsFromPixels(const uvec2 pixels, const float scaleX, const float scaleY)
-        {
-            const float sx = scaleX > 0.0f ? scaleX : 1.0f;
-            const float sy = scaleY > 0.0f ? scaleY : 1.0f;
-            return {static_cast<u32>(static_cast<float>(pixels.x) / sx + 0.5f),
-                    static_cast<u32>(static_cast<float>(pixels.y) / sy + 0.5f)};
-        }
-    }
-
     void Window::ApplyDisplayMode(const FullscreenMode mode, const u32 monitorId,
                                   const uvec2 resolution, const u32 refreshHz)
     {
@@ -555,7 +537,8 @@ namespace Veng
                 float sx = 1.0f;
                 float sy = 1.0f;
                 glfwGetWindowContentScale(m_Handle, &sx, &sy);
-                const uvec2 points = ScreenCoordsFromPixels(resolution, sx, sy);
+                const uvec2 points =
+                    ScreenCoordsFromPixels(resolution, {sx, sy}, PlatformScreenCoordinateUnit());
                 glfwSetWindowSize(m_Handle, static_cast<int>(points.x), static_cast<int>(points.y));
             }
         }
@@ -573,15 +556,15 @@ namespace Veng
         {
             // Returning to (or staying) windowed: detach from any monitor and restore the remembered
             // windowed rectangle, resizing to the requested resolution when one was named. A selected
-            // resolution is in backing pixels and divides back to points; the remembered extent was
-            // captured from glfwGetWindowSize and is already points.
+            // resolution is in pixels; the remembered extent was captured from glfwGetWindowSize and
+            // is already in screen coordinates.
             uvec2 size = m_WindowedExtent;
             if (resolution != uvec2{0, 0})
             {
                 float sx = 1.0f;
                 float sy = 1.0f;
                 glfwGetWindowContentScale(m_Handle, &sx, &sy);
-                size = ScreenCoordsFromPixels(resolution, sx, sy);
+                size = ScreenCoordsFromPixels(resolution, {sx, sy}, PlatformScreenCoordinateUnit());
             }
             const int width = size.x != 0 ? static_cast<int>(size.x) : static_cast<int>(m_Extent.x);
             const int height =
@@ -627,15 +610,16 @@ namespace Veng
         {
             // Exclusive on a platform that supports it: take the requested mode/refresh, native
             // (the monitor's current mode) where a field is left zero. The requested resolution is in
-            // backing pixels and divides back to the points the video-mode match works in.
+            // pixels and converts to the screen coordinates the video-mode match works in.
             if (resolution.x != 0 && resolution.y != 0)
             {
                 float sx = 1.0f;
                 float sy = 1.0f;
                 glfwGetMonitorContentScale(monitor, &sx, &sy);
-                const uvec2 points = ScreenCoordsFromPixels(resolution, sx, sy);
-                width = static_cast<int>(points.x);
-                height = static_cast<int>(points.y);
+                const uvec2 coords =
+                    ScreenCoordsFromPixels(resolution, {sx, sy}, PlatformScreenCoordinateUnit());
+                width = static_cast<int>(coords.x);
+                height = static_cast<int>(coords.y);
             }
             if (refreshHz != 0)
             {
@@ -680,7 +664,7 @@ namespace Veng
             items.reserve(filters.size());
             for (const auto& filter : filters)
             {
-                items.push_back({filter.Name.c_str(), filter.Extensions.c_str()});
+                items.push_back({.name = filter.Name.c_str(), .spec = filter.Extensions.c_str()});
             }
             return items;
         }

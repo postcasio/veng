@@ -27,6 +27,58 @@ namespace Veng
     /// @return The offered full-screen modes for this platform.
     [[nodiscard]] vector<FullscreenMode> PlatformFullscreenModes();
 
+    /// @brief The unit a platform's window-system sizing calls take.
+    enum class ScreenCoordinateUnit : u8
+    {
+        /// @brief Screen coordinates are pixels (Windows, X11): sizes pass through unchanged.
+        Pixels,
+        /// @brief Screen coordinates are points (macOS): a pixel size divides by the content scale.
+        Points,
+    };
+
+    /// @brief The unit the host platform's screen coordinates are in.
+    ///
+    /// A compile-time platform fact: points on macOS, where a window's size and a video mode are
+    /// reported in points and its framebuffer is the content scale larger, and pixels elsewhere,
+    /// where the content scale is a UI hint only and never changes what a size means. Pure and
+    /// device-free.
+    /// @return The host's screen-coordinate unit.
+    [[nodiscard]] ScreenCoordinateUnit PlatformScreenCoordinateUnit();
+
+    /// @brief How many pixels one screen coordinate spans on each axis.
+    ///
+    /// The content scale under Points and 1 under Pixels. A cursor position arrives in screen
+    /// coordinates and a viewport region is in framebuffer pixels, so this is the factor between
+    /// them. A zero or negative scale component counts as 1. Pure and device-free.
+    /// @param contentScale  The window's content scale.
+    /// @param unit          The platform's screen-coordinate unit.
+    /// @return Pixels per screen coordinate.
+    [[nodiscard]] vec2 PixelsPerScreenCoordinate(vec2 contentScale, ScreenCoordinateUnit unit);
+
+    /// @brief Converts a pixel resolution to the screen coordinates the window-system sizing calls
+    ///        take.
+    ///
+    /// Every resolution the display settings carry is in pixels. Under Points the result divides by
+    /// the content scale (rounded to nearest); under Pixels it is the identity, whatever the scale.
+    /// A zero or negative scale component counts as 1. Pure and device-free.
+    /// @param pixels        The resolution in pixels.
+    /// @param contentScale  The window's or monitor's content scale.
+    /// @param unit          The platform's screen-coordinate unit.
+    /// @return The size in screen coordinates.
+    [[nodiscard]] uvec2 ScreenCoordsFromPixels(uvec2 pixels, vec2 contentScale,
+                                               ScreenCoordinateUnit unit);
+
+    /// @brief Converts a size in screen coordinates to pixels; the inverse of ScreenCoordsFromPixels.
+    ///
+    /// Under Points the result multiplies by the content scale (rounded to nearest); under Pixels it
+    /// is the identity. A zero or negative scale component counts as 1. Pure and device-free.
+    /// @param coords        The size in screen coordinates (a video mode, a window size).
+    /// @param contentScale  The window's or monitor's content scale.
+    /// @param unit          The platform's screen-coordinate unit.
+    /// @return The size in pixels.
+    [[nodiscard]] uvec2 PixelsFromScreenCoords(uvec2 coords, vec2 contentScale,
+                                               ScreenCoordinateUnit unit);
+
     /// @brief Resolves a requested present mode against what the surface supports.
     ///
     /// Returns the requested mode when it is offered, else Vsync (FIFO), which every Vulkan surface
