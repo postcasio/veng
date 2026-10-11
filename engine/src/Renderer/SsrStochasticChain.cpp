@@ -117,6 +117,7 @@ namespace Veng::Renderer
         constexpr u32 HistorySampleCountBinding = 3;
         constexpr u32 HistoryOutputBinding = 4;
         constexpr u32 HistoryVarianceBinding = 5;
+        constexpr u32 HistoryRayLengthBinding = 6;
 
         // The classify push block, matching ssr_classify.comp PushConstants.
         struct SsrClassifyPush
@@ -168,8 +169,8 @@ namespace Veng::Renderer
             uvec2 Extent;
             f32 MaxAlpha;
             u32 HistoryValid;
+            u32 RayLengthHistoryTexture;
             u32 Pad0;
-            u32 Pad1;
             vec4 PrevClipTranslation;
         };
 
@@ -195,14 +196,10 @@ namespace Veng::Renderer
             u32 PrefilteredTexture;
             u32 ReprojectedTexture;
             u32 SampleCountTexture;
-            u32 AverageTexture;
             u32 AlphaTexture;
-            u32 Sampler;
             uvec2 Extent;
             f32 MaxAlpha;
             u32 Pad0;
-            u32 Pad1;
-            u32 Pad2;
         };
 
         // The history push block, matching ssr_denoise_history.comp PushConstants.
@@ -214,7 +211,7 @@ namespace Veng::Renderer
             u32 SampleCountTexture;
             uvec2 Extent;
             f32 MaxAlpha;
-            u32 Pad0;
+            u32 RayLengthTexture;
         };
 
         // The pyramid's reduce push: one level's extent and its source's. Matches
@@ -278,7 +275,7 @@ namespace Veng::Renderer
         };
 
         // Indexed by SsrStochasticChain::DenoiseSlot.
-        constexpr std::array<DenoiseTargetSpec, 11> DenoiseTargetSpecs{{
+        constexpr std::array<DenoiseTargetSpec, 12> DenoiseTargetSpecs{{
             {.Name = "SceneRenderer SSR Prefiltered", .Format = RadianceFormat, .PerTile = false},
             {.Name = "SceneRenderer SSR Denoised", .Format = RadianceFormat, .PerTile = false},
             {.Name = "SceneRenderer SSR Reprojected", .Format = RadianceFormat, .PerTile = false},
@@ -298,6 +295,9 @@ namespace Veng::Renderer
              .PerTile = false},
             {.Name = "SceneRenderer SSR Alpha History", .Format = AlphaFormat, .PerTile = false},
             {.Name = "SceneRenderer SSR Depth History", .Format = PyramidFormat, .PerTile = false},
+            {.Name = "SceneRenderer SSR Ray Length History",
+             .Format = RayLengthFormat,
+             .PerTile = false},
         }};
     }
 
@@ -486,6 +486,7 @@ namespace Veng::Renderer
                       ComputeBinding(HistorySampleCountBinding, DescriptorType::StorageImage),
                       ComputeBinding(HistoryOutputBinding, DescriptorType::StorageImage),
                       ComputeBinding(HistoryVarianceBinding, DescriptorType::StorageImage),
+                      ComputeBinding(HistoryRayLengthBinding, DescriptorType::StorageImage),
                   },
                   PushConstantRange::Of<SsrDenoiseHistoryPush>(ShaderStage::Compute));
 
@@ -835,6 +836,7 @@ namespace Veng::Renderer
                              Target(DenoiseSlot::SampleCountHistory).View);
         m_History.Set->Write(HistoryOutputBinding, Target(DenoiseSlot::Output).View);
         m_History.Set->Write(HistoryVarianceBinding, Target(DenoiseSlot::Variance).View);
+        m_History.Set->Write(HistoryRayLengthBinding, Target(DenoiseSlot::RayLengthHistory).View);
     }
 
     void SsrStochasticChain::Import(RenderGraph& graph)
@@ -1101,8 +1103,8 @@ namespace Veng::Renderer
                 .Extent = m_Extent,
                 .MaxAlpha = 0.0f,
                 .HistoryValid = 0,
+                .RayLengthHistoryTexture = Target(DenoiseSlot::RayLengthHistory).Handle.Index,
                 .Pad0 = 0,
-                .Pad1 = 0,
                 .PrevClipTranslation = vec4(0.0f),
             };
             graph.AddComputePass("SSR Reproject")
@@ -1120,6 +1122,7 @@ namespace Veng::Renderer
                 .Sample(Target(DenoiseSlot::NormalHistory).Id)
                 .Sample(Target(DenoiseSlot::AlphaHistory).Id)
                 .Sample(Target(DenoiseSlot::DepthHistory).Id)
+                .Sample(Target(DenoiseSlot::RayLengthHistory).Id)
                 .StorageWrite(Target(DenoiseSlot::Reprojected).Id)
                 .StorageWrite(Target(DenoiseSlot::ReprojectedVariance).Id)
                 .StorageWrite(Target(DenoiseSlot::SampleCount).Id)
@@ -1192,14 +1195,10 @@ namespace Veng::Renderer
                 .PrefilteredTexture = Target(DenoiseSlot::Prefiltered).Handle.Index,
                 .ReprojectedTexture = Target(DenoiseSlot::Reprojected).Handle.Index,
                 .SampleCountTexture = Target(DenoiseSlot::SampleCount).Handle.Index,
-                .AverageTexture = Target(DenoiseSlot::Average).Handle.Index,
                 .AlphaTexture = m_AlphaHandle.Index,
-                .Sampler = m_HistorySampler.Index,
                 .Extent = m_Extent,
                 .MaxAlpha = 0.0f,
                 .Pad0 = 0,
-                .Pad1 = 0,
-                .Pad2 = 0,
             };
             graph.AddComputePass("SSR Resolve")
                 .IndirectRead(m_ArgumentsId)
@@ -1207,7 +1206,6 @@ namespace Veng::Renderer
                 .Sample(Target(DenoiseSlot::Prefiltered).Id)
                 .Sample(Target(DenoiseSlot::Reprojected).Id)
                 .Sample(Target(DenoiseSlot::SampleCount).Id)
-                .Sample(Target(DenoiseSlot::Average).Id)
                 .Sample(m_AlphaId)
                 .StorageWrite(Target(DenoiseSlot::Output).Id)
                 .StorageReadWrite(Target(DenoiseSlot::Variance).Id)
@@ -1237,12 +1235,13 @@ namespace Veng::Renderer
                 .SampleCountTexture = Target(DenoiseSlot::SampleCount).Handle.Index,
                 .Extent = m_Extent,
                 .MaxAlpha = 0.0f,
-                .Pad0 = 0,
+                .RayLengthTexture = m_RayLengthHandle.Index,
             };
             graph.AddComputePass("SSR Denoise History")
                 .Sample(normalId)
                 .Sample(m_AlphaId)
                 .Sample(depthLevel)
+                .Sample(m_RayLengthId)
                 .Sample(Target(DenoiseSlot::SampleCount).Id)
                 .StorageWrite(Target(DenoiseSlot::NormalHistory).Id)
                 .StorageWrite(Target(DenoiseSlot::AlphaHistory).Id)
@@ -1250,6 +1249,7 @@ namespace Veng::Renderer
                 .StorageWrite(Target(DenoiseSlot::SampleCountHistory).Id)
                 .StorageWrite(Target(DenoiseSlot::Output).Id)
                 .StorageWrite(Target(DenoiseSlot::Variance).Id)
+                .StorageWrite(Target(DenoiseSlot::RayLengthHistory).Id)
                 .Execute(
                     [this, Bind, push, tiles](PassContext& inner)
                     {

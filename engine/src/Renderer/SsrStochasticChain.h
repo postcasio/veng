@@ -42,9 +42,9 @@ namespace Veng::Renderer
     /// ssr_resolve.comp), dispatched through the second record over the listed tiles, reproject last
     /// frame's denoised reflection, filter this frame's spatially and blend the two into the output
     /// target (GetOutputHandle); a full-extent pass (ssr_denoise_history.comp) then keeps the normal,
-    /// α, depth and sample-count histories the next frame's reprojection reads, and clears every
-    /// pixel that is not glossy. Every target is at the render allocation (the tile averages at an
-    /// eighth of it), renderer-owned, and imported into the graph by Import.
+    /// α, depth, ray-length and sample-count histories the next frame's reprojection reads, and
+    /// clears every pixel that is not glossy. Every target is at the render allocation (the tile
+    /// averages at an eighth of it), renderer-owned, and imported into the graph by Import.
     ///
     /// The chain also holds the blue-noise tile its rays sample their GGX lobe from
     /// (Veng/ssr_sample.slang), loaded from the core pack the first time the chain is allocated.
@@ -193,6 +193,8 @@ namespace Veng::Renderer
             AlphaHistory,
             /// @brief Last frame's depth (R32F).
             DepthHistory,
+            /// @brief Last frame's ray lengths (R16F).
+            RayLengthHistory,
             /// @brief The number of targets.
             Count,
         };

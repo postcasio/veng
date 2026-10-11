@@ -5,7 +5,8 @@
 //  - a still view converges with anti-aliasing off: the denoiser is a reflection's only history;
 //  - under the projection's jitter a normal-mapped floor's reflection holds still, though each
 //    phase turns every ray;
-//  - a reflection whose source goes fades away, and one whose source returns builds back up;
+//  - a reflection whose source goes is gone the next frame, and one whose source returns builds
+//    back up frame by frame;
 //  - the spatial filter stops at a silhouette, from either side;
 //  - a mirror is not filtered spatially: its reflected edge is as sharp as the trace's.
 //
@@ -405,7 +406,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(reflecting.size() > 256);
     level /= static_cast<f64>(reflecting.size());
 
-    f64 worst = 0.0;
+    const auto MeanOf = [&](const Frame& frame)
+    {
+        f64 sum = 0.0;
+        for (const usize i : reflecting)
+        {
+            sum += Luma(vec3(frame.Denoised[i]));
+        }
+        return sum / static_cast<f64>(reflecting.size());
+    };
+    f64 worstLevel = 0.0;
+    f64 worstPixel = 0.0;
     for (u32 frame = 0; frame < 16; ++frame)
     {
         Frame current = probe.Render(Context, *built.World, built.Camera);
@@ -414,13 +425,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         {
             change += std::abs(Luma(vec3(current.Denoised[i])) - Luma(vec3(previous.Denoised[i])));
         }
-        worst = std::max(worst, change / static_cast<f64>(reflecting.size()) / level);
+        worstPixel = std::max(worstPixel, change / static_cast<f64>(reflecting.size()) / level);
+        worstLevel = std::max(worstLevel, std::abs(MeanOf(current) - MeanOf(previous)) / level);
         previous = std::move(current);
     }
     CAPTURE(level);
-    CAPTURE(worst);
+    CAPTURE(worstLevel);
+    CAPTURE(worstPixel);
     // Every frame's rays are new, so each pixel's raw reflection changes by about half its level.
-    CHECK(worst < 0.005);
+    // The reflection's level settles under half a percent a frame (0.44 % at landing); a pixel keeps
+    // a little more flicker (0.91 %), which the 3x3 clip trades for a sharp, prompt history.
+    CHECK(worstLevel < 0.005);
+    CHECK(worstPixel < 0.015);
 
     std::filesystem::remove(archive);
 }
@@ -508,27 +524,24 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             back.push_back(BandMean(probe.Render(Context, *built.World, built.Camera), band) /
                            level);
         }
-        f64 goneRise = 0.0;
+        f64 goneMost = 0.0;
         f64 backFall = 0.0;
-        for (u32 frame = 1; frame < Frames; ++frame)
+        for (u32 frame = 0; frame < Frames; ++frame)
         {
-            goneRise = std::max(goneRise, gone[frame] - gone[frame - 1]);
-            backFall = std::max(backFall, back[frame - 1] - back[frame]);
+            goneMost = std::max(goneMost, gone[frame]);
+            backFall = frame > 0 ? std::max(backFall, back[frame - 1] - back[frame]) : backFall;
         }
-        CAPTURE(gone.front());
-        CAPTURE(gone[7]);
-        CAPTURE(back.front());
-        CAPTURE(back.back());
-        CAPTURE(goneRise);
+        CAPTURE(goneMost);
         CAPTURE(backFall);
-        // Gone, the reflection fades frame by frame; back, it builds up frame by frame. A glossy
-        // pixel keeps 8 to 32 samples of history, and the clip to its neighbourhood is wide over
-        // bright bars on a dark wall, so both take several frames (at landing: 39 % and 43 % left
-        // a frame after the bars went, 2.5 % and 7.4 % after eight; 55 % and 27 % back after ten).
-        CHECK(goneRise < 0.005);
+        CAPTURE(back.back());
+        // The history is clipped to this frame's filtered neighbourhood, which holds nothing bright
+        // once the source has gone, so the reflection is gone the first frame after (at landing
+        // under 0.3 % of its level). A returning source builds back every frame; the gaps between
+        // the bars keep the neighbourhood's lower bound dark, so the dark history is clipped only
+        // from above and returns at its blend's pace (44 % and 47 % ten frames on at landing).
+        CHECK(goneMost < 0.05);
         CHECK(backFall < 0.005);
-        CHECK(gone[7] < 0.12);
-        CHECK(back.back() > 0.2);
+        CHECK(back.back() > 0.3);
     }
 
     std::filesystem::remove(archive);
@@ -690,10 +703,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const f64 floorKept = floorDenoised / floorTraced;
     CAPTURE(panelMost);
     CAPTURE(floorKept);
-    // The temporal resolve leans each pixel's history a little toward its tile's average, which here
-    // holds floor and panel alike: the panel takes a few percent of the floor's level that way, and
-    // none through the spatial filter, whose normal weight stops at the edge.
-    CHECK(panelMost < 0.05f);
+    // The spatial filter's normal weight stops at the edge and the temporal clip takes only this
+    // frame's neighbourhood, so the panel takes none of the floor's level (under 0.01 % at landing).
+    CHECK(panelMost < 0.01f);
     CHECK(floorKept > 0.9);
 
     std::filesystem::remove(archive);

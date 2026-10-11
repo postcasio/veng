@@ -1,9 +1,9 @@
 // Shared by the stochastic reflection denoiser's passes (ssr_reproject.comp, ssr_prefilter.comp and
 // ssr_resolve.comp): its constants, the tile each workgroup covers, and the luminance, variance,
-// depth and clip helpers.
+// depth, colour-space and clip helpers.
 //
-// Each pass runs one 8x8 workgroup per listed tile and stages the 16x16 neighbourhood around it, four
-// texels a thread, in workgroup memory. A texel outside the render extent stages as zero.
+// Each pass runs one 8x8 workgroup per listed tile; the filter and the resolve stage the
+// neighbourhood around it in workgroup memory. A texel outside the render extent stages as zero.
 //
 // The signal is the intersection's radiance premultiplied by its confidence, (rgb·c, c). The fourth
 // channel rides through every blend, weight and clip as the other three do; the luminance
@@ -33,11 +33,6 @@
 #include "Veng/ssr_ray_list.slang"
 #include "Veng/ssr_sample.slang"
 
-// The 9x9 Gaussian over which the reprojection and the temporal resolve take the neighbourhood's
-// moments: exp(-K i^2 / (Radius + 1)^2) per axis.
-static const int NeighbourhoodRadius = 4;
-static const float NeighbourhoodGaussianK = 3.0;
-
 // The spatial filter's radiance weight, exp(-(Bias + variance * VarianceK) * distance). The distance
 // is absolute radiance, so any bias holds a bright reflection below its tile average however
 // settled it is, and a small bright source loses most of its energy. With no bias only a young or
@@ -52,9 +47,6 @@ static const float PrefilterVarianceBias = 0.1;
 // The spatial filter's edge stops: pow(n·n', NormalSigma) and exp(-|Δz| z DepthSigma).
 static const float PrefilterNormalSigma = 512.0;
 static const float PrefilterDepthSigma = 4.0;
-// The surface candidate is kept while its squared distance from the neighbourhood mean is under
-// this multiple of the neighbourhood's variance.
-static const float SurfaceDiscardVarianceWeight = 1.5;
 // The disocclusion factor exp(-|1 - n·n'| NormalWeight) exp(-|Δz| / z DepthWeight), and the factor
 // below which a history is searched for, then dropped.
 static const float DisocclusionNormalWeight = 1.4;
@@ -62,19 +54,26 @@ static const float DisocclusionDepthWeight = 1.0;
 static const float DisocclusionThreshold = 0.9;
 // The virtual-point candidate is taken only where its history normal agrees this closely.
 static const float ReprojectionNormalSimilarityThreshold = 0.9999;
-// The longest history a pixel keeps, scaled by SamplesForRoughness, and the shortest cap on it.
+// The longest history a still pixel keeps, scaled by SamplesForRoughness, and the shortest cap on
+// it.
 static const float MaxHistorySamples = 32.0;
 static const float MinHistorySamples = 8.0;
-// The temporal resolve's clip box is the neighbourhood's spread times this, times the clip scale.
-static const float HistoryClipScale = 1.4;
-// How far toward the tile average the clip box's centre moves.
-static const float ClipCentreAverageShare = 0.2;
+// The history a moving reflection keeps: the still cap divided by
+// 1 + motion / HistoryMotionPixels + misplacement / HistoryMisplacementPixels, never below
+// MovingHistorySamples. The motion is how far the reflected image moved this frame, which a
+// Catmull-Rom read resamples nearly losslessly; the misplacement is how far from the reflection the
+// history was read, which carries other content.
+static const float HistoryMotionPixels = 2.0;
+static const float HistoryMisplacementPixels = 0.25;
+static const float MovingHistorySamples = 2.0;
+// A hit has jumped when last frame's ray lengths around the history and this frame's around the
+// pixel do not overlap within this factor.
+static const float RayLengthJump = 2.0;
+// The temporal resolve's clip box: the 3x3 neighbourhood's YCoCg mean plus or minus this many
+// standard deviations, within the neighbourhood's range.
+static const float HistoryClipGamma = 1.25;
 // The view depth taken for a cleared or far-plane depth, so a disocclusion against it is total.
 static const float FarDepth = 1e30;
-
-// The reference's temporal stability factor, the share of the neighbourhood's spread the history
-// clip keeps.
-static const float TemporalStabilityFactor = 0.7;
 
 // The share of the maximum history length a lobe of GGX width `alpha` keeps.
 float SamplesForRoughness(float alpha)
@@ -107,10 +106,17 @@ float TemporalVariance(float3 history, float3 radiance)
     return difference * difference;
 }
 
-float NeighbourhoodKernelWeight(float offset)
+// The history clip's colour space: its luminance and chroma axes keep a hue when a box is narrow.
+float3 RgbToYCoCg(float3 c)
 {
-    float radius = float(NeighbourhoodRadius) + 1.0;
-    return exp(-NeighbourhoodGaussianK * (offset * offset) / (radius * radius));
+    return float3(0.25 * (c.r + 2.0 * c.g + c.b), 0.5 * (c.r - c.b),
+                  0.25 * (-c.r + 2.0 * c.g - c.b));
+}
+
+float3 YCoCgToRgb(float3 c)
+{
+    float t = c.x - c.z;
+    return float3(t + c.y, c.x + c.z, t - c.y);
 }
 
 // A unit normal, or zero for a texel with none (the cleared background, a staged texel off screen).
@@ -169,19 +175,12 @@ float2 TileAverageUV(int2 pixel, uint2 extent)
 // NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 // OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-float4 ClipAabb(float4 aabbMin, float4 aabbMax, float4 history)
+float3 ClipAabb(float3 aabbMin, float3 aabbMax, float3 history)
 {
-    float4 centre = 0.5 * (aabbMax + aabbMin);
-    float4 extentClip = 0.5 * (aabbMax - aabbMin) + 0.001;
-    float4 offset = history - centre;
-    float4 offsetClip = abs(offset / extentClip);
-    float maxUnit = max(max(offsetClip.x, offsetClip.y), max(offsetClip.z, offsetClip.w));
+    float3 centre = 0.5 * (aabbMax + aabbMin);
+    float3 extentClip = 0.5 * (aabbMax - aabbMin) + 0.001;
+    float3 offset = history - centre;
+    float3 offsetClip = abs(offset / extentClip);
+    float maxUnit = max(offsetClip.x, max(offsetClip.y, offsetClip.z));
     return maxUnit > 1.0 ? centre + offset / maxUnit : history;
 }
-
-// The neighbourhood's weighted mean and variance, per channel.
-struct Moments
-{
-    float4 Mean;
-    float4 Variance;
-};

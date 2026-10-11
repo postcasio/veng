@@ -1,22 +1,30 @@
 // Stochastic SSR denoiser, first pass: finds each glossy pixel's reflection in last frame's
-// denoised output and averages each tile's radiance. One 8x8 workgroup per listed tile, dispatched
-// indirectly by the tile count.
+// denoised output, decides how many frames of it to keep, and averages each tile's radiance. One
+// 8x8 workgroup per listed tile, dispatched indirectly by the tile count.
 //
-// - Two history candidates. The surface's: the pixel's own motion, `uv - motion`, with the jitter
+// - Two history positions. The surface's: the pixel's own motion, `uv - motion`, with the jitter
 //   change added back, `(previous jitter - this jitter) / 2`, since the motion is unjittered and both
 //   frames stand in their jittered rasters. The reflection's: the virtual point a mirror shows the
 //   hit at, the pixel's camera-relative position carried a further ray length along its own view
-//   ray, projected into last frame through PrevFromCurDirection and the camera's move. The virtual
-//   point wins where its history normal agrees with the pixel's past 0.9999, at least as well as the
-//   surface's, and its roughness is closer; otherwise the surface's is kept while it lies within the
-//   neighbourhood's spread, and anything else is a disocclusion.
-// - The disocclusion factor compares the history's normal and view depth with the pixel's. Below
-//   0.9 the 3x3 texels around the candidate are searched for a better match, then the 2x2 bilinear
-//   footprint is reweighted by which of its texels match; still below, there is no history.
+//   ray, projected into last frame through PrevFromCurDirection and the camera's move.
+// - Whether a history exists is decided by geometry, never by colour. Last frame's normal and view
+//   depth at the surface's position must match the pixel's (the disocclusion factor, searched over
+//   the 3x3 texels around it and then rebuilt from the matching texels of its 2x2 footprint), and
+//   the hit must not have jumped: last frame's ray lengths there and this frame's around the pixel
+//   must overlap within a factor of RayLengthJump. Failing either, the pixel starts again.
+// - The history is read at the virtual point where last frame's normal there agrees with the
+//   pixel's past 0.9999, at least as well as the surface's, and its alpha is as close (a planar
+//   reflector, which the virtual point reprojects exactly); otherwise at the surface's. The read is
+//   Catmull-Rom (catmull_rom.slang), so thin, bright reflected content stays sharp where a bilinear
+//   read every frame would blur it.
+// - The sample count grows by one a frame up to a cap set by how far the history can be trusted:
+//   max(8, 32 (1 - exp(-100 alpha))) for a still reflection, shortened by how far the reflected
+//   image moved this frame (which the Catmull-Rom read resamples) and, more steeply, by how far from
+//   the virtual point the history was read (the surface's position under a camera's translation,
+//   which shows other reflected content), and never below MovingHistorySamples.
 // - Without history the pixel starts again: no reprojected radiance, a variance of 1 (so the
-//   classifier traces it next frame) and one sample. With it, the sample count grows by one up to a
-//   cap of max(8, 32 (1 - exp(-100 alpha))), and the variance is the temporal luminance variance
-//   mixed into the history's by 1 / samples.
+//   classifier traces it next frame) and one sample. With it, the variance is the temporal luminance
+//   variance mixed into the history's by 1 / samples.
 // - The tile's average, weighed by exp(-0.3 luminance) over its glossy pixels, is this frame's
 //   radiance blended 30 % toward the reprojected history.
 //
@@ -38,6 +46,7 @@
 // NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 // OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#include "catmull_rom.slang"
 #include "ssr_denoise.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -69,8 +78,8 @@ struct PushConstants
     uint2 Extent;                    // render extent in pixels
     float MaxAlpha;                  // glossy below this alpha
     uint HistoryValid;               // 0 on the first frame after the targets were created
+    uint RayLengthHistoryTexture;    // last frame's ray lengths (R16F, read by loads)
     uint Pad0;
-    uint Pad1;
     // The previous unjittered (projection x rotation-only view) applied to the camera's move since
     // then, (camera - previous camera, 0): the clip offset a camera-relative point takes between the
     // two frames beyond what PrevFromCurDirection carries.
@@ -79,19 +88,9 @@ struct PushConstants
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
-// The 16x16 neighbourhood: this frame's radiance, and whether each texel is glossy.
-groupshared float4 g_Radiance[16][16];
-groupshared float g_Glossy[16][16];
 // The tile average's reduction: luminance-weighted radiance, and the weights.
 groupshared float4 g_WeightedSum[8][8];
 groupshared float g_WeightSum[8][8];
-
-float4 LoadRadiance(int2 pixel)
-{
-    if (!InsideExtent(pixel, g_PC.Extent))
-        return float4(0.0, 0.0, 0.0, 0.0);
-    return g_Textures[g_PC.RadianceTexture].Load(int3(pixel, 0));
-}
 
 bool LoadGlossy(int2 pixel)
 {
@@ -107,7 +106,8 @@ float3 LoadNormal(int2 pixel)
 
 float4 SampleRadianceHistory(float2 uv)
 {
-    return g_Textures[g_PC.RadianceHistoryTexture].SampleLevel(g_Samplers[g_PC.Sampler], uv, 0.0);
+    return SampleCatmullRom(g_Textures[g_PC.RadianceHistoryTexture], g_Samplers[g_PC.Sampler], uv,
+                            float2(g_PC.Extent));
 }
 
 float4 LoadRadianceHistory(int2 pixel)
@@ -216,120 +216,108 @@ float DisocclusionFactor(float3 normal, float3 historyNormal, float linearDepth,
            exp(-abs(historyLinearDepth - linearDepth) / linearDepth * DisocclusionDepthWeight);
 }
 
-Moments EstimateNeighbourhood(int2 local)
+bool OnScreen(float2 uv)
 {
-    Moments moments;
-    moments.Mean = float4(0.0, 0.0, 0.0, 0.0);
-    moments.Variance = float4(0.0, 0.0, 0.0, 0.0);
-    float accumulated = 0.0;
-    for (int j = -NeighbourhoodRadius; j <= NeighbourhoodRadius; ++j)
-    {
-        for (int i = -NeighbourhoodRadius; i <= NeighbourhoodRadius; ++i)
-        {
-            int2 index = local + int2(i, j);
-            float4 radiance = g_Radiance[index.y][index.x];
-            float weight = NeighbourhoodKernelWeight(float(i)) * NeighbourhoodKernelWeight(float(j)) *
-                           g_Glossy[index.y][index.x];
-            accumulated += weight;
-            moments.Mean += radiance * weight;
-            moments.Variance += radiance * radiance * weight;
-        }
-    }
-    accumulated = max(accumulated, 1e-6);
-    moments.Mean /= accumulated;
-    moments.Variance /= accumulated;
-    moments.Variance = abs(moments.Variance - moments.Mean * moments.Mean);
-    return moments;
+    return all(uv > 0.0) && all(uv < 1.0);
 }
 
-float Dot2(float3 a)
+// Whether the hit jumped between the frames: last frame's ray lengths over the 2x2 footprint of
+// `historyUv` and this frame's over the pixel's 3x3 (which spans several rays where a quad shares
+// one) do not overlap within RayLengthJump. A miss carries no length, so a side holding only misses
+// has nothing to compare, and the colour clip judges it instead.
+bool HitJumped(int2 pixel, float2 historyUv)
 {
-    return dot(a, a);
+    int2 last = int2(g_PC.Extent) - 1;
+    float currentNearest = 1e30;
+    float currentFarthest = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            int2 texel = clamp(pixel + int2(x, y), int2(0, 0), last);
+            float hitLength = g_Textures[g_PC.RayLengthTexture].Load(int3(texel, 0)).r;
+            if (hitLength > 0.0)
+            {
+                currentNearest = min(currentNearest, hitLength);
+                currentFarthest = max(currentFarthest, hitLength);
+            }
+        }
+    }
+    float historyNearest = 1e30;
+    float historyFarthest = 0.0;
+    int2 base = int2(floor(historyUv * float2(g_PC.Extent) - 0.5));
+    for (int k = 0; k < 4; ++k)
+    {
+        int2 texel = clamp(base + int2(k & 1, k >> 1), int2(0, 0), last);
+        float hitLength = g_Textures[g_PC.RayLengthHistoryTexture].Load(int3(texel, 0)).r;
+        if (hitLength > 0.0)
+        {
+            historyNearest = min(historyNearest, hitLength);
+            historyFarthest = max(historyFarthest, hitLength);
+        }
+    }
+    if (currentFarthest <= 0.0 || historyFarthest <= 0.0)
+        return false;
+    return historyNearest > currentFarthest * RayLengthJump ||
+           historyFarthest * RayLengthJump < currentNearest;
 }
 
 struct Reprojection
 {
-    float Disocclusion;  // 0 for no history, else at least DisocclusionThreshold
-    float2 Uv;           // where the history was read
-    float4 Radiance;     // the history read there
+    bool Valid;           // a history exists
+    float Disocclusion;   // the surface's disocclusion factor, at least DisocclusionThreshold
+    float2 Uv;            // where the history was read
+    float4 Radiance;      // the history read there
+    float MotionPixels;   // how far the reflected image moved since last frame, in pixels
+    float MisplacedPixels; // how far from the reflection's last position the history was read
 };
 
-Reprojection PickReprojection(ViewConstants vc, int2 pixel, int2 local, float2 uv, float alpha,
-                              float rayLength, float3 normal, float depth, float linearDepth)
+Reprojection Reproject(ViewConstants vc, int2 pixel, float2 uv, float alpha, float rayLength,
+                       float3 normal, float depth, float linearDepth)
 {
     Reprojection result;
+    result.Valid = false;
     result.Disocclusion = 0.0;
     result.Uv = float2(-1.0, -1.0);
     result.Radiance = float4(0.0, 0.0, 0.0, 0.0);
+    result.MotionPixels = 0.0;
+    result.MisplacedPixels = 0.0;
 
-    Moments neighbourhood = EstimateNeighbourhood(local);
+    float2 surfaceUv = SurfaceReprojection(vc, pixel, uv);
+    float2 hitUv = HitReprojection(vc, uv, depth, rayLength);
 
-    float3 historyNormal;
-    float historyLinearDepth;
+    // Disocclusion is the surface's: was this pixel's surface where its motion says, last frame?
+    float factor = DisocclusionFactor(normal, SampleNormalHistory(surfaceUv), linearDepth,
+                                      LinearDepth(vc, surfaceUv, SampleDepthHistory(surfaceUv)));
+    if (factor <= DisocclusionThreshold)
     {
-        float2 surfaceUv = SurfaceReprojection(vc, pixel, uv);
-        float2 hitUv = HitReprojection(vc, uv, depth, rayLength);
-        float3 surfaceNormal = SampleNormalHistory(surfaceUv);
-        float3 hitNormal = SampleNormalHistory(hitUv);
-        float4 surfaceHistory = SampleRadianceHistory(surfaceUv);
-        float4 hitHistory = SampleRadianceHistory(hitUv);
-        float hitSimilarity = dot(hitNormal, normal);
-        float surfaceSimilarity = dot(surfaceNormal, normal);
-        float hitAlpha = SampleAlphaHistory(hitUv);
-        float surfaceAlpha = SampleAlphaHistory(surfaceUv);
-
-        if (hitSimilarity > ReprojectionNormalSimilarityThreshold &&
-            hitSimilarity + 1.0e-3 > surfaceSimilarity &&
-            abs(hitAlpha - alpha) < abs(surfaceAlpha - alpha) + 1.0e-3)
+        // Not convinced of a disocclusion: search the texels around it for a closer match.
+        float2 dudv = 1.0 / float2(g_PC.Extent);
+        float2 centre = surfaceUv;
+        for (int y = -1; y <= 1; y++)
         {
-            historyNormal = hitNormal;
-            historyLinearDepth = LinearDepth(vc, hitUv, SampleDepthHistory(hitUv));
-            result.Uv = hitUv;
-            result.Radiance = hitHistory;
-        }
-        else if (Dot2(surfaceHistory.rgb - neighbourhood.Mean.rgb) <
-                 SurfaceDiscardVarianceWeight * length(neighbourhood.Variance.rgb))
-        {
-            historyNormal = surfaceNormal;
-            historyLinearDepth = LinearDepth(vc, surfaceUv, SampleDepthHistory(surfaceUv));
-            result.Uv = surfaceUv;
-            result.Radiance = surfaceHistory;
-        }
-        else
-        {
-            return result;
-        }
-    }
-
-    result.Disocclusion =
-        DisocclusionFactor(normal, historyNormal, linearDepth, historyLinearDepth);
-    if (result.Disocclusion > DisocclusionThreshold)
-        return result;
-
-    // Not convinced of a disocclusion: search the texels around the candidate for a closer match.
-    float2 dudv = 1.0 / float2(g_PC.Extent);
-    for (int y = -1; y <= 1; y++)
-    {
-        for (int x = -1; x <= 1; x++)
-        {
-            float2 candidateUv = result.Uv + float2(x, y) * dudv;
-            float weight = DisocclusionFactor(
-                normal, SampleNormalHistory(candidateUv), linearDepth,
-                LinearDepth(vc, candidateUv, SampleDepthHistory(candidateUv)));
-            if (weight > result.Disocclusion)
+            for (int x = -1; x <= 1; x++)
             {
-                result.Disocclusion = weight;
-                result.Uv = candidateUv;
+                float2 candidateUv = centre + float2(x, y) * dudv;
+                float weight = DisocclusionFactor(
+                    normal, SampleNormalHistory(candidateUv), linearDepth,
+                    LinearDepth(vc, candidateUv, SampleDepthHistory(candidateUv)));
+                if (weight > factor)
+                {
+                    factor = weight;
+                    surfaceUv = candidateUv;
+                }
             }
         }
     }
-    result.Radiance = SampleRadianceHistory(result.Uv);
 
-    // Still short, typically at an edge in motion: rebuild the bilinear read from those of its 2x2
-    // texels whose surface matches.
-    if (result.Disocclusion < DisocclusionThreshold)
+    // Still short, typically at an edge in motion: rebuild the history from those of the 2x2
+    // texels whose surface matches, weighted bilinearly.
+    bool rebuilt = false;
+    float4 rebuiltRadiance = float4(0.0, 0.0, 0.0, 0.0);
+    if (factor < DisocclusionThreshold)
     {
-        float2 position = float2(g_PC.Extent) * result.Uv - 0.5;
+        float2 position = float2(g_PC.Extent) * surfaceUv - 0.5;
         float2 f = frac(position + 1.0);
         int2 base = int2(floor(position));
         int2 offsets[4] = {int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1)};
@@ -345,7 +333,7 @@ Reprojection PickReprojection(ViewConstants vc, int2 pixel, int2 local, float2 u
             int2 texel = base + offsets[k];
             radiance[k] = LoadRadianceHistory(texel);
             normals[k] = LoadNormalHistory(texel);
-            depths[k] = LinearDepth(vc, result.Uv, LoadDepthHistory(texel));
+            depths[k] = LinearDepth(vc, surfaceUv, LoadDepthHistory(texel));
             float matches = DisocclusionFactor(normal, normals[k], linearDepth, depths[k]) >
                                     DisocclusionThreshold / 2.0
                                 ? 1.0
@@ -354,21 +342,40 @@ Reprojection PickReprojection(ViewConstants vc, int2 pixel, int2 local, float2 u
             weightSum += weights[k];
         }
         weightSum = max(weightSum, 1.0e-3);
-        float4 rebuilt = float4(0.0, 0.0, 0.0, 0.0);
         float3 rebuiltNormal = float3(0.0, 0.0, 0.0);
         float rebuiltDepth = 0.0;
         for (int k = 0; k < 4; ++k)
         {
             float weight = weights[k] / weightSum;
-            rebuilt += radiance[k] * weight;
+            rebuiltRadiance += radiance[k] * weight;
             rebuiltNormal += normals[k] * weight;
             rebuiltDepth += depths[k] * weight;
         }
-        result.Radiance = rebuilt;
-        result.Disocclusion = DisocclusionFactor(normal, rebuiltNormal, linearDepth, rebuiltDepth);
+        factor = DisocclusionFactor(normal, rebuiltNormal, linearDepth, rebuiltDepth);
+        rebuilt = true;
     }
-    result.Disocclusion =
-        result.Disocclusion < DisocclusionThreshold ? 0.0 : result.Disocclusion;
+    if (factor < DisocclusionThreshold || !OnScreen(surfaceUv) || HitJumped(pixel, surfaceUv))
+        return result;
+
+    // The reflection's own position for a planar reflector, else the surface's.
+    float3 hitNormal = SampleNormalHistory(hitUv);
+    float hitSimilarity = dot(hitNormal, normal);
+    float surfaceSimilarity = dot(SampleNormalHistory(surfaceUv), normal);
+    bool atHit = OnScreen(hitUv) && hitSimilarity > ReprojectionNormalSimilarityThreshold &&
+                 hitSimilarity + 1.0e-3 > surfaceSimilarity &&
+                 abs(SampleAlphaHistory(hitUv) - alpha) <
+                     abs(SampleAlphaHistory(surfaceUv) - alpha) + 1.0e-3;
+
+    result.Valid = true;
+    result.Disocclusion = factor;
+    result.Uv = atHit ? hitUv : surfaceUv;
+    result.Radiance = atHit    ? SampleRadianceHistory(hitUv)
+                      : rebuilt ? rebuiltRadiance
+                                : SampleRadianceHistory(surfaceUv);
+    float2 extent = float2(g_PC.Extent);
+    float2 jitterChange = (vc.JitterNdc.zw - vc.JitterNdc.xy) * 0.5;
+    result.MotionPixels = length((hitUv - uv - jitterChange) * extent);
+    result.MisplacedPixels = length((result.Uv - hitUv) * extent);
     return result;
 }
 
@@ -380,20 +387,10 @@ void csMain(uint2 groupThread : SV_GroupThreadID, uint3 group : SV_GroupID)
     int2 thread = int2(groupThread);
     int2 pixel = origin + thread;
 
-    // Stage the 16x16 region from four texels behind the tile to four past it.
-    for (int k = 0; k < 4; ++k)
-    {
-        int2 offset = int2(k & 1, k >> 1) * 8;
-        int2 staged = origin - 4 + thread + offset;
-        g_Radiance[thread.y + offset.y][thread.x + offset.x] = LoadRadiance(staged);
-        g_Glossy[thread.y + offset.y][thread.x + offset.x] = LoadGlossy(staged) ? 1.0 : 0.0;
-    }
-    GroupMemoryBarrierWithGroupSync();
-
-    int2 local = thread + 4;
     bool inside = InsideExtent(pixel, g_PC.Extent);
-    float4 radiance = g_Radiance[local.y][local.x];
-    bool glossy = g_Glossy[local.y][local.x] > 0.0;
+    bool glossy = LoadGlossy(pixel);
+    float4 radiance = glossy ? g_Textures[g_PC.RadianceTexture].Load(int3(pixel, 0))
+                             : float4(0.0, 0.0, 0.0, 0.0);
 
     if (glossy)
     {
@@ -406,20 +403,22 @@ void csMain(uint2 groupThread : SV_GroupThreadID, uint3 group : SV_GroupID)
         float linearDepth = LinearDepth(vc, uv, depth);
 
         Reprojection reprojection;
-        reprojection.Disocclusion = 0.0;
-        reprojection.Uv = float2(-1.0, -1.0);
-        reprojection.Radiance = float4(0.0, 0.0, 0.0, 0.0);
+        reprojection.Valid = false;
         if (g_PC.HistoryValid != 0u)
             reprojection =
-                PickReprojection(vc, pixel, local, uv, alpha, rayLength, normal, depth, linearDepth);
+                Reproject(vc, pixel, uv, alpha, rayLength, normal, depth, linearDepth);
 
-        bool onScreen = all(reprojection.Uv > 0.0) && all(reprojection.Uv < 1.0);
-        if (onScreen && reprojection.Disocclusion >= DisocclusionThreshold)
+        if (reprojection.Valid)
         {
             float previousVariance = SampleVarianceHistory(reprojection.Uv);
+            float stillSamples =
+                max(MinHistorySamples, MaxHistorySamples * SamplesForRoughness(alpha));
+            float trustedSamples = max(
+                MovingHistorySamples,
+                stillSamples / (1.0 + reprojection.MotionPixels / HistoryMotionPixels +
+                                reprojection.MisplacedPixels / HistoryMisplacementPixels));
             float samples = SampleSampleCountHistory(reprojection.Uv) * reprojection.Disocclusion;
-            float maxSamples = max(MinHistorySamples, MaxHistorySamples * SamplesForRoughness(alpha));
-            samples = min(maxSamples, samples + 1.0);
+            samples = min(min(stillSamples, trustedSamples), samples + 1.0);
             float newVariance = TemporalVariance(radiance.rgb, reprojection.Radiance.rgb);
             g_Reprojected[pixel] = reprojection.Radiance;
             g_Variance[pixel] = lerp(newVariance, previousVariance, 1.0 / samples);

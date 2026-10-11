@@ -32,6 +32,7 @@
 //    tight box. The first period of a history is not validated, since its spread is not learnt yet.
 //    A history read off-screen, a pixel that reflected nothing, and the first frame after a recreate
 //    keep no history at all.
+#include "catmull_rom.slang"
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -109,36 +110,6 @@ float3 YCoCgToRgb(float3 c)
     return float3(t + c.y, c.x + c.z, t - c.y);
 }
 
-// Catmull-Rom read of the history at uv (as taa_resolve.frag reads its own), so a moving
-// pixel's reprojected read does not blur the history as a bilinear one would.
-float3 SampleHistoryCatmullRom(Texture2D t, SamplerState s, float2 uv, float2 texelSize)
-{
-    const float2 samplePos = uv * float2(g_PC.Extent);
-    const float2 texPos1 = floor(samplePos - 0.5) + 0.5;
-    const float2 f = samplePos - texPos1;
-    const float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    const float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    const float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    const float2 w3 = f * f * (-0.5 + 0.5 * f);
-    const float2 w12 = w1 + w2;
-    const float2 offset12 = w2 / w12;
-    const float2 texPos0 = (texPos1 - 1.0) * texelSize;
-    const float2 texPos3 = (texPos1 + 2.0) * texelSize;
-    const float2 texPos12 = (texPos1 + offset12) * texelSize;
-
-    float3 result = 0.0;
-    result += t.SampleLevel(s, float2(texPos0.x, texPos0.y), 0.0).rgb * w0.x * w0.y;
-    result += t.SampleLevel(s, float2(texPos12.x, texPos0.y), 0.0).rgb * w12.x * w0.y;
-    result += t.SampleLevel(s, float2(texPos3.x, texPos0.y), 0.0).rgb * w3.x * w0.y;
-    result += t.SampleLevel(s, float2(texPos0.x, texPos12.y), 0.0).rgb * w0.x * w12.y;
-    result += t.SampleLevel(s, float2(texPos12.x, texPos12.y), 0.0).rgb * w12.x * w12.y;
-    result += t.SampleLevel(s, float2(texPos3.x, texPos12.y), 0.0).rgb * w3.x * w12.y;
-    result += t.SampleLevel(s, float2(texPos0.x, texPos3.y), 0.0).rgb * w0.x * w3.y;
-    result += t.SampleLevel(s, float2(texPos12.x, texPos3.y), 0.0).rgb * w12.x * w3.y;
-    result += t.SampleLevel(s, float2(texPos3.x, texPos3.y), 0.0).rgb * w3.x * w3.y;
-    return max(result, 0.0);
-}
-
 // The history read where the pixel's reflected image stood last frame.
 struct Reprojected
 {
@@ -162,7 +133,7 @@ Reprojected ReadHistory(float2 uv, float2 motion)
         return candidate;
     Texture2D history = g_Textures[NonUniformResourceIndex(g_PC.HistoryTexture)];
     SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
-    candidate.Value = SampleHistoryCatmullRom(history, samp, prevUv, 1.0 / float2(g_PC.Extent));
+    candidate.Value = SampleCatmullRom(history, samp, prevUv, float2(g_PC.Extent)).rgb;
     candidate.Count = history.SampleLevel(samp, prevUv, 0.0).a;
     const float2 fast =
         g_Textures[NonUniformResourceIndex(g_PC.FastTexture)].SampleLevel(samp, prevUv, 0.0).rg;

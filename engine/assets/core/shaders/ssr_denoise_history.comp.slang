@@ -1,8 +1,8 @@
 // Stochastic SSR denoiser, last pass: keeps what next frame's reprojection compares against. One
 // invocation per pixel of the render extent, after the temporal resolve.
 //
-// - Every pixel's normal, GGX alpha and depth, and a glossy pixel's sample count, are copied into
-//   their history targets.
+// - Every pixel's normal, GGX alpha, depth and ray length, and a glossy pixel's sample count, are
+//   copied into their history targets.
 // - A pixel that is not glossy has no reflection: its denoised output, variance and sample count
 //   are zero. The resolve writes only the tiles holding a glossy pixel, so this is also what clears
 //   every other tile.
@@ -35,6 +35,7 @@
 [[vk::binding(3, 3)]] [format("r16f")] RWTexture2D<float> g_SampleCountHistory;
 [[vk::binding(4, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Output;
 [[vk::binding(5, 3)]] [format("r16f")] RWTexture2D<float> g_Variance;
+[[vk::binding(6, 3)]] [format("r16f")] RWTexture2D<float> g_RayLengthHistory;
 
 struct PushConstants
 {
@@ -44,7 +45,7 @@ struct PushConstants
     uint SampleCountTexture;  // the reprojection's sample counts
     uint2 Extent;             // render extent in pixels
     float MaxAlpha;           // glossy below this alpha
-    uint Pad0;
+    uint RayLengthTexture;    // the intersection's ray lengths
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -62,6 +63,7 @@ void csMain(uint3 dispatch : SV_DispatchThreadID)
     g_NormalHistory[pixel] = g_Textures[g_PC.NormalTexture].Load(texel);
     g_AlphaHistory[pixel] = alpha;
     g_DepthHistory[pixel] = g_Textures[g_PC.DepthTexture].Load(texel).r;
+    g_RayLengthHistory[pixel] = g_Textures[g_PC.RayLengthTexture].Load(texel).r;
     g_SampleCountHistory[pixel] = glossy ? g_Textures[g_PC.SampleCountTexture].Load(texel).r : 0.0;
     if (!glossy)
     {

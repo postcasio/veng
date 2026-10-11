@@ -2,19 +2,19 @@
 // reprojected history and writes the denoised reflection. One 8x8 workgroup per listed tile,
 // dispatched indirectly by the tile count.
 //
+// - The history is clipped to a box built from the filtered signal's 3x3 neighbourhood: its mean plus
+//   or minus HistoryClipGamma standard deviations, within the neighbourhood's minimum and maximum,
+//   and widened to hold this pixel's own filtered value. Only glossy neighbours count. The colour is
+//   clipped toward the box's centre in YCoCg (Playdead's ClipAABB) and the confidence clamped to its
+//   own range. A box that tight
+//   holds no blur or stale content a history could carry, and one always holding the pixel's own
+//   value keeps a still, sparse reflection (a small bright source) at its level.
+// - The blend takes 1 / samples of this frame, the sample count the reprojection set.
 // - A glossy pixel whose filtered radiance is zero still resolves against its history: a miss is a
 //   sample of the premultiplied signal, so a reflection hit on few frames accumulates rather than
 //   starting again at every miss. A pixel that is not glossy passes through.
-// - The history is clipped (Playdead's ClipAABB) to a box about the neighbourhood's 9x9 Gaussian
-//   mean moved a fifth of the way to the tile average, of half-size (sigma + |mean - average|) times
-//   the stability factor 0.7 times 1.4.
-// - This frame's value is first blended toward the tile average by 1 / (samples + 1), so a young
-//   history leans on the tile, and clipped to the average plus or minus the same half-size; it is
-//   then blended into the clipped history by 1 / samples.
-// - The variance is the temporal variance between the result and the clipped history, blended into
-//   the filtered variance the same way. A non-finite result or variance is zero.
-//
-// The variance is resolved in place: each invocation reads only its own pixel's filtered variance.
+// - The variance is resolved in place: the temporal luminance variance between the result and the
+//   clipped history, blended into the filter's by the history's weight.
 //
 // The denoiser follows the AMD FidelityFX SDK's reflections denoiser, under this licence:
 //
@@ -37,7 +37,6 @@
 #include "ssr_denoise.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
 // Set 0 is reserved for the bindless registry; the tile list and the pass's targets bind on set 3.
 [[vk::binding(0, 3)]] StructuredBuffer<uint> g_TileList;
@@ -49,21 +48,17 @@ struct PushConstants
     uint PrefilteredTexture;   // the spatial filter's radiance
     uint ReprojectedTexture;   // the reprojection's history radiance
     uint SampleCountTexture;   // the reprojection's sample counts
-    uint AverageTexture;       // the reprojection's tile averages
     uint AlphaTexture;         // the classifier's GGX alpha
-    uint Sampler;              // bilinear, clamped to the edge
     uint2 Extent;              // render extent in pixels
     float MaxAlpha;            // glossy below this alpha
     uint Pad0;
-    uint Pad1;
-    uint Pad2;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
-// The 16x16 neighbourhood of the filtered radiance, and whether each texel is glossy.
-groupshared float4 g_Radiance[16][16];
-groupshared float g_Glossy[16][16];
+// The 10x10 neighbourhood of the filtered radiance around the tile, and whether each texel is glossy.
+groupshared float4 g_Radiance[10][10];
+groupshared float g_Glossy[10][10];
 
 void StageNeighbour(int2 pixel, int2 index)
 {
@@ -80,32 +75,6 @@ void StageNeighbour(int2 pixel, int2 index)
     g_Glossy[index.y][index.x] = glossy;
 }
 
-Moments EstimateNeighbourhood(int2 local)
-{
-    Moments moments;
-    moments.Mean = float4(0.0, 0.0, 0.0, 0.0);
-    moments.Variance = float4(0.0, 0.0, 0.0, 0.0);
-    float accumulated = 0.0;
-    for (int j = -NeighbourhoodRadius; j <= NeighbourhoodRadius; ++j)
-    {
-        for (int i = -NeighbourhoodRadius; i <= NeighbourhoodRadius; ++i)
-        {
-            int2 index = local + int2(i, j);
-            float4 radiance = g_Radiance[index.y][index.x];
-            float weight = NeighbourhoodKernelWeight(float(i)) * NeighbourhoodKernelWeight(float(j)) *
-                           g_Glossy[index.y][index.x];
-            accumulated += weight;
-            moments.Mean += radiance * weight;
-            moments.Variance += radiance * radiance * weight;
-        }
-    }
-    accumulated = max(accumulated, 1e-6);
-    moments.Mean /= accumulated;
-    moments.Variance /= accumulated;
-    moments.Variance = abs(moments.Variance - moments.Mean * moments.Mean);
-    return moments;
-}
-
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void csMain(uint2 groupThread : SV_GroupThreadID, uint3 group : SV_GroupID)
@@ -114,37 +83,59 @@ void csMain(uint2 groupThread : SV_GroupThreadID, uint3 group : SV_GroupID)
     int2 thread = int2(groupThread);
     int2 pixel = origin + thread;
 
-    // Stage the 16x16 region from four texels behind the tile to four past it.
-    for (int k = 0; k < 4; ++k)
+    // Stage the 10x10 region from one texel behind the tile to one past it.
+    for (int index = thread.y * 8 + thread.x; index < 100; index += 64)
     {
-        int2 offset = int2(k & 1, k >> 1) * 8;
-        StageNeighbour(origin - 4 + thread + offset, thread + offset);
+        int2 local = int2(index % 10, index / 10);
+        StageNeighbour(origin - 1 + local, local);
     }
     GroupMemoryBarrierWithGroupSync();
 
     if (!InsideExtent(pixel, g_PC.Extent))
         return;
 
-    int2 local = thread + 4;
+    int2 local = thread + 1;
     float4 signal = g_Radiance[local.y][local.x];
     float variance = g_Variance[pixel];
     if (g_Glossy[local.y][local.x] > 0.0)
     {
         float samples = g_Textures[g_PC.SampleCountTexture].Load(int3(pixel, 0)).r;
-        float4 average = g_Textures[g_PC.AverageTexture].SampleLevel(
-            g_Samplers[g_PC.Sampler], TileAverageUV(pixel, g_PC.Extent), 0.0);
         float4 history = g_Textures[g_PC.ReprojectedTexture].Load(int3(pixel, 0));
 
-        Moments neighbourhood = EstimateNeighbourhood(local);
-        float4 spread = (sqrt(neighbourhood.Variance) + length(neighbourhood.Mean - average)) *
-                        TemporalStabilityFactor * HistoryClipScale;
-        float4 centre = lerp(neighbourhood.Mean, average, ClipCentreAverageShare);
-        float4 clippedHistory = ClipAabb(centre - spread, centre + spread, history);
+        float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+        float4 sumSquares = float4(0.0, 0.0, 0.0, 0.0);
+        float4 lowest = float4(1e30, 1e30, 1e30, 1e30);
+        float4 highest = float4(-1e30, -1e30, -1e30, -1e30);
+        float count = 0.0;
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int x = -1; x <= 1; ++x)
+            {
+                int2 neighbour = local + int2(x, y);
+                if (g_Glossy[neighbour.y][neighbour.x] > 0.0)
+                {
+                    float4 radiance = g_Radiance[neighbour.y][neighbour.x];
+                    float4 value = float4(RgbToYCoCg(radiance.rgb), radiance.a);
+                    sum += value;
+                    sumSquares += value * value;
+                    lowest = min(lowest, value);
+                    highest = max(highest, value);
+                    count += 1.0;
+                }
+            }
+        }
+        float4 mean = sum / count;
+        float4 deviation = sqrt(max(sumSquares / count - mean * mean, 0.0));
+        float4 own = float4(RgbToYCoCg(signal.rgb), signal.a);
+        float4 boxMin = min(max(mean - HistoryClipGamma * deviation, lowest), own);
+        float4 boxMax = max(min(mean + HistoryClipGamma * deviation, highest), own);
+        // The confidence is clamped on its own axis: clipped with the colour toward the box's
+        // centre, a confidence just outside a narrow range would drag the colour toward a bright
+        // neighbour's across a silhouette.
+        float4 clippedHistory =
+            float4(YCoCgToRgb(ClipAabb(boxMin.xyz, boxMax.xyz, RgbToYCoCg(history.rgb))),
+                   clamp(history.a, boxMin.w, boxMax.w));
         float historyWeight = 1.0 - 1.0 / max(samples, 1.0);
-
-        // A young history leans on the tile average, and an outlier is held to the tile's spread.
-        signal = lerp(signal, average, 1.0 / max(samples + 1.0, 1.0));
-        signal = ClipAabb(average - spread, average + spread, signal);
 
         signal = lerp(signal, clippedHistory, historyWeight);
         variance = lerp(TemporalVariance(signal.rgb, clippedHistory.rgb), variance, historyWeight);

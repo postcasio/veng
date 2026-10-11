@@ -30,6 +30,7 @@
 // blur a bilinear history accumulates). The blend is luminance-weighted on the exposed
 // luminance to damp fireflies (the Karis weighting), the stability mechanism the bloom
 // bright-pass's per-tap ceiling complements.
+#include "catmull_rom.slang"
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -109,47 +110,6 @@ float3 ClipToAabb(float3 boxMin, float3 boxMax, float3 history)
     return history;
 }
 
-// Catmull-Rom sampling of a bilinearly-filtered texture: reconstructs a sharp history
-// sample from the 4×4 texels around uv, collapsing the sixteen taps into nine bilinear
-// fetches. Counters the per-frame blur a bilinear history accumulates.
-float3 SampleHistoryCatmullRom(uint texture, uint samp, float2 uv, float2 texelSize)
-{
-    const float2 resolution = float2(g_PC.Extent);
-    const float2 samplePos = uv * resolution;
-    const float2 texPos1 = floor(samplePos - 0.5) + 0.5;
-
-    const float2 f = samplePos - texPos1;
-    const float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    const float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    const float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    const float2 w3 = f * f * (-0.5 + 0.5 * f);
-
-    const float2 w12 = w1 + w2;
-    const float2 offset12 = w2 / w12;
-
-    const float2 texPos0 = (texPos1 - 1.0) * texelSize;
-    const float2 texPos3 = (texPos1 + 2.0) * texelSize;
-    const float2 texPos12 = (texPos1 + offset12) * texelSize;
-
-    SamplerState s = g_Samplers[NonUniformResourceIndex(samp)];
-    Texture2D t = g_Textures[NonUniformResourceIndex(texture)];
-
-    float3 result = 0.0;
-    result += t.Sample(s, float2(texPos0.x, texPos0.y)).rgb * w0.x * w0.y;
-    result += t.Sample(s, float2(texPos12.x, texPos0.y)).rgb * w12.x * w0.y;
-    result += t.Sample(s, float2(texPos3.x, texPos0.y)).rgb * w3.x * w0.y;
-
-    result += t.Sample(s, float2(texPos0.x, texPos12.y)).rgb * w0.x * w12.y;
-    result += t.Sample(s, float2(texPos12.x, texPos12.y)).rgb * w12.x * w12.y;
-    result += t.Sample(s, float2(texPos3.x, texPos12.y)).rgb * w3.x * w12.y;
-
-    result += t.Sample(s, float2(texPos0.x, texPos3.y)).rgb * w0.x * w3.y;
-    result += t.Sample(s, float2(texPos12.x, texPos3.y)).rgb * w12.x * w3.y;
-    result += t.Sample(s, float2(texPos3.x, texPos3.y)).rgb * w3.x * w3.y;
-
-    return max(result, 0.0);
-}
-
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
@@ -158,7 +118,6 @@ float4 fsMain(VSOutput input) : SV_Target0
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     // The current frame's rendered sub-rect extent; Extent is the full output/history extent.
     const float2 renderExtent = vc.ExtentParams.xy;
-    const float2 outputTexel = 1.0 / float2(g_PC.Extent);
     const float2 kernelScale =
         clamp(float2(g_PC.Extent) / renderExtent, 1.0, MaxKernelSharpening);
     Texture2D current = g_Textures[NonUniformResourceIndex(g_PC.CurrentTexture)];
@@ -241,7 +200,10 @@ float4 fsMain(VSOutput input) : SV_Target0
     }
 
     float3 history =
-        SampleHistoryCatmullRom(g_PC.HistoryTexture, g_PC.Sampler, prevUv, outputTexel);
+        SampleCatmullRom(g_Textures[NonUniformResourceIndex(g_PC.HistoryTexture)],
+                         g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], prevUv,
+                         float2(g_PC.Extent))
+            .rgb;
     history = YCoCgToRgb(ClipToAabb(boxMin, boxMax, RgbToYCoCg(history)));
 
     // This frame's share: the full blend where a sample landed on the pixel, less where the nearest

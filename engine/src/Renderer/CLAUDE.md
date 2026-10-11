@@ -1675,42 +1675,53 @@ record; one invocation per listed ray):
   both zero for a miss, written to the ray's pixel and to each quad neighbour its copy flags name.
   The classifier clears both targets every frame, so a pixel no ray covers reads zero.
 
-**The denoiser** follows the published stochastic-reflection denoiser: three passes over the listed
-tiles, each one 8×8 workgroup per tile dispatched through the second record, staging the 16×16
-neighbourhood around its tile in workgroup memory (no subgroup operations), then a full-extent history
-pass. Its signal is the intersection's premultiplied radiance `(rgb·c, c)`: the confidence rides as a
-fourth channel through every blend, weight and clip; the luminance statistics and radiance distances
-are taken on `rgb·c`; and a pixel that is not glossy carries no weight in a neighbourhood statistic,
-the spatial filter or a tile average, since its zero is not a sample of a reflection.
+**The denoiser** follows the published stochastic-reflection denoiser's spatial half and replaces its
+temporal half: three passes over the listed tiles, each one 8×8 workgroup per tile dispatched through
+the second record, staging the neighbourhood around its tile in workgroup memory (no subgroup
+operations), then a full-extent history pass. Its signal is the intersection's premultiplied radiance
+`(rgb·c, c)`: the confidence rides as a fourth channel through every blend, weight and clip; the
+luminance statistics and radiance distances are taken on `rgb·c`; and a pixel that is not glossy
+carries no weight in a neighbourhood statistic, the spatial filter or a tile average, since its zero
+is not a sample of a reflection.
 
 - **Reproject** (`ssr_reproject.comp`) finds each glossy pixel's reflection in the last committed
-  frame's denoised output through two candidates. The surface's is `uv − motion + (previous jitter −
+  frame's denoised output at one of two positions. The surface's is `uv − motion + (previous jitter −
   this jitter) / 2`: the g-buffer's unjittered motion taken back out, with the change of jitter added
   so the history is read in the jittered raster it was written in. The reflection's is the virtual
   point a mirror shows the hit at — the pixel's camera-relative position carried a further ray length
   along its own view ray — projected into last frame through `PrevFromCurDirection` and the clip
   offset of the camera's move, composed in double on the CPU (`SsrStochasticChain::SetCamera`), so no
-  world-space translation enters the shader. The virtual point wins where its history normal agrees
-  past 0.9999 and its α is at least as close; else the surface's stands while it lies within the 9×9
-  neighbourhood's spread; else there is no history. A normal-and-depth disocclusion factor, a 3×3
-  search and a 2×2 reweighting follow. Without history a pixel restarts (variance 1, so the
-  classifier traces it next frame, one sample); with it the sample count grows to
-  `max(8, 32(1 − e^(−100α)))`. It also writes each tile's luminance-weighted average radiance.
+  world-space translation enters the shader. The virtual point is read where last frame's normal
+  there agrees past 0.9999, at least as well as the surface's, and its α is as close; else the
+  surface's position is. **The read is Catmull-Rom** (nine bilinear fetches; `catmull_rom.slang`,
+  shared with the TAA resolve), so thin, sharp reflected content is not blurred by every fractional
+  reprojection.
+  **Whether a history exists is geometry's call alone, never colour's**: the normal-and-depth
+  disocclusion factor (a 3×3 search, a 2×2 rebuild), and a hit-jump test — last frame's ray lengths
+  over the history's footprint and this frame's over the pixel's 3×3 must overlap within ×2 (the ray
+  length history is a target of its own). **The sample count is capped by how far the history can be
+  trusted**: the still cap `max(8, 32(1 − e^(−100α)))`, divided by `1 + motion / 2 px + misplacement /
+  0.25 px` and floored at 2, the motion being how far the reflected image moved this frame and the
+  misplacement how far from the virtual point the history was read. Without history a pixel restarts
+  (variance 1, so the classifier traces it next frame, one sample). It also writes each tile's
+  luminance-weighted average radiance, which the spatial filter weighs against.
 - **Prefilter** (`ssr_prefilter.comp`) spreads a noisy, non-mirror glossy pixel over fifteen
   Halton taps within three texels, weighed by normal (`pow(n·n′, 512)`), view depth, distance from the
   tile average and variance. **The radiance weight carries no bias**: its distance is absolute
   radiance, so any bias holds a bright reflection below its tile average however settled it is, and a
   small bright source loses most of its energy; only the variance term damps an outlier in a young or
   unsettled history.
-- **Resolve** (`ssr_resolve.comp`) blends the filtered value into the reprojected history, clipped
-  (Playdead's ClipAABB, four channels) to a box about the neighbourhood's mean moved a fifth of the
-  way to the tile average, of half-size `(σ + |mean − average|) · 0.7 · 1.4`; a young history leans on
-  the tile average by `1/(samples + 1)`. A glossy pixel whose filtered value is zero still resolves: a
-  miss is a sample of the premultiplied signal, so a reflection hit on few frames accumulates. The
-  variance is resolved in place.
-- **History** (`ssr_denoise_history.comp`) copies every pixel's normal, α and depth and each glossy
-  pixel's sample count into history targets, and clears the output, variance and sample count of
-  every pixel that is not glossy — which also clears every tile the resolve did not visit.
+- **Resolve** (`ssr_resolve.comp`) clips the reprojected history to a box built from the filtered
+  frame's 3×3 glossy neighbours in YCoCg — mean ± 1.25σ within the neighbourhood's range, **widened to
+  hold the pixel's own filtered value** (else a still, sparse source loses its peaks every frame) —
+  with Playdead's ClipAABB on the colour and **the confidence clamped on its own axis** (clipped with
+  the colour, a confidence just outside a narrow range drags the colour toward a bright neighbour's
+  across a silhouette), then blends `1 − 1/samples` of it. No colour-learnt tolerance takes part. A
+  glossy pixel whose filtered value is zero still resolves: a miss is a sample of the premultiplied
+  signal, so a reflection hit on few frames accumulates. The variance is resolved in place.
+- **History** (`ssr_denoise_history.comp`) copies every pixel's normal, α, depth and ray length and
+  each glossy pixel's sample count into history targets, and clears the output, variance and sample
+  count of every pixel that is not glossy — which also clears every tile the resolve did not visit.
 
 The histories are targets of their own rather than a pair swapped by frame parity, so the raw
 intersection (`SsrTraceTargets::Radiance`) and the denoised output (`GetOutputHandle`,
@@ -1718,13 +1729,14 @@ intersection (`SsrTraceTargets::Radiance`) and the denoised output (`GetOutputHa
 history (`CommitHistory` arms it). The g-buffer stores velocity whenever the chain runs, in every
 anti-aliasing mode (`FrameTopology::GBufferStores`).
 
-**What the reference's temporal behaviour costs**, measured at landing on a glossy floor reflecting
-thin emissive bars on a dark wall at 128²: a history of 8–32 samples clipped to a 9×9 box that wide
-contrast loosens responds over several frames — the bars' reflection keeps 39 % a frame after they
-go and is back to 55 % ten frames after they return (27 % on a normal-mapped floor) — and bilinear
-history reads under a fast strafe lag the reflection (12 % under TAA, 27 % without). On a sparse
-signal the clip costs a small, distant, bright source energy: a 0.6° emitter 300 m away keeps about
-half its traced energy on a flat floor and a fifth on a normal-mapped one.
+**What the tight history buys and costs**, measured at landing on a glossy floor reflecting thin
+emissive bars on a dark wall at 128²: a vanished source is gone from the reflection the next frame,
+while a returning one builds back at the blend's pace (44–47 % ten frames on), since the gaps between
+the bars keep the box's lower bound dark; a still view's reflection level changes under 0.5 % a frame
+and a pixel's under 1 %. Against the published resolve's bilinear history and 9×9 box it smears and
+lags less under motion and flickers more when still. The spatial filter, not the clip, is where a
+small distant source loses most of its energy: its variance weight is the centre pixel's alone, so a
+flickering bright pixel spreads over stable dark neighbours that gather little of it back.
 
 `SsrMaxDistance` and `SsrResolutionScale` do not reach the stochastic chain; `SsrMaxSteps` is its
 per-ray iteration budget and `SsrThickness` the floor of its thickness tolerance.
@@ -1743,12 +1755,13 @@ front of it; a spent budget leaving no hit; the vignette fading a mirror's confi
 the screen edge and leaving it whole inside; and a panel seen from above never reflected from below.
 `tests/gpu/ssr_reach.cpp`'s last case pins the distant energy: from 0.3 m above a mirror, an emitter
 300 m away is reflected as fully as one 30 m away.
-`tests/gpu/ssr_denoise.cpp` pins, on the denoised output: a still view whose reflection changes by
-under 0.5 % a frame after 32 frames with anti-aliasing off; a normal-mapped floor's reflection
-deviating by under 5 % from phase to phase under TAA, read where the scene stands (the raw trace's
-deviates by 0.72); a reflection fading and building back frame by frame as its source goes and
-returns; a panel taking under 5 % of the floor's reflection beside its edges while the floor keeps
-what its own rays brought it there; and a mirror's reflected edge as sharp as the trace's.
+`tests/gpu/ssr_denoise.cpp` pins, on the denoised output: a still view whose reflection level changes
+by under 0.5 % a frame after 32 frames with anti-aliasing off, and each pixel's by under 1.5 %; a
+normal-mapped floor's reflection deviating by under 5 % from phase to phase under TAA, read where the
+scene stands (the raw trace's deviates by 0.72); a reflection gone the frame after its source goes and
+building back frame by frame as it returns; a panel taking none of the floor's reflection beside its
+edges while the floor keeps what its own rays brought it there; and a mirror's reflected edge as sharp
+as the trace's.
 
 ### Depth of field and the physical camera
 
