@@ -1845,6 +1845,9 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1861,7 +1864,10 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1911,6 +1917,9 @@ if (VENG_BUILD_TESTS)
             tests/gpu/transient_aliasing.cpp
             tests/gpu/render_graph_skip.cpp
             tests/gpu/indirect_draw.cpp
+            # device_capabilities.cpp checks the device readout against the subgroup operations it
+            # describes, and an indirect dispatch against the group counts a compute pass wrote.
+            tests/gpu/device_capabilities.cpp
             tests/gpu/adopt.cpp
             tests/gpu/create_async.cpp
             tests/gpu/primitive_resolve.cpp

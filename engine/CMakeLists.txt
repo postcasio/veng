@@ -353,6 +353,7 @@ add_library(veng SHARED
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
         src/Renderer/LodSelection.cpp
+        src/Renderer/DeviceCapabilities.cpp
         src/Renderer/QueueSubmitMode.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/SceneRendererResources.cpp

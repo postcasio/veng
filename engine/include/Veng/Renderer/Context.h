@@ -6,6 +6,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
 #include <Veng/Render/DisplayModes.h>
+#include <Veng/Renderer/DeviceCapabilities.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -173,6 +174,14 @@ namespace Veng::Renderer
         /// pass uses it to pancake casters nearer than a cascade's tight near plane onto it
         /// instead of extending the depth range to the scene bound.
         [[nodiscard]] bool IsDepthClampSupported() const;
+
+        /// @brief Returns what the device offers the engine's shaders, read once at device creation.
+        ///
+        /// The subgroup size, stages and operation classes, subgroup size control (enabled when
+        /// present, with computeFullSubgroups), the 16-bit arithmetic and storage features, and the
+        /// storage-image support of the two HDR formats a compute pass is likeliest to write. Logged
+        /// as one line at Initialize (DescribeDeviceCapabilities). Valid from the end of Initialize.
+        [[nodiscard]] const DeviceCapabilities& GetDeviceCapabilities() const;
 
         /// @brief Returns true when the graphics queue can timestamp GPU work.
         ///

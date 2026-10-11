@@ -406,6 +406,9 @@ namespace Veng::Renderer
         /// reported support.
         bool ExtendedStorageImageFormatsSupported = false;
 
+        /// @brief The device readout Context::GetDeviceCapabilities returns; filled in CreateDevice.
+        DeviceCapabilities Capabilities;
+
         /// @brief True when VK_EXT_metal_objects was advertised and enabled at device creation.
         ///
         /// Gates Context::IsExternalTextureImportSupported and the Metal-object export; appended

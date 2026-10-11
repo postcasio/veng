@@ -467,10 +467,13 @@ extern "C"
 /// after Cull, SceneView grows ForcedLod and MeshLods after CaptureFace, ModelPortrait grows
 /// ForcedLod, and the LodOverride component registers. A module builds meshes and views and spawns
 /// portraits, so a stale module lays them out short and reads every later field at a shifted offset.
+/// Version 109 reads the device's capabilities once at creation: Context::Native grows the
+/// DeviceCapabilities readout Context::GetDeviceCapabilities returns. Context::Native is laid out in
+/// a public header a module compiles against, so a stale module lays it out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 108u
+#define VENG_MODULE_ABI_VERSION 109u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

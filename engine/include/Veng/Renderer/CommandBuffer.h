@@ -225,6 +225,19 @@ namespace Veng::Renderer
         /// @brief Records a compute dispatch.
         void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);
 
+        /// @brief Records a compute dispatch whose group counts are read from a GPU buffer.
+        ///
+        /// Maps to vkCmdDispatchIndirect: the record at @p offset is three u32 group counts
+        /// (x, y, z — VkDispatchIndirectCommand), read when the dispatch executes, so a compute
+        /// pass earlier in the frame may write them. A zero count dispatches nothing. Each count
+        /// must not exceed the device's maxComputeWorkGroupCount on its axis.
+        /// @param buffer Buffer holding the record.
+        /// @param offset 4-byte-aligned byte offset of the record; the record must fit the buffer.
+        /// @pre buffer was created with BufferUsage::Indirect, and the pass dispatching reads it
+        ///      through RenderGraph::PassBuilder::IndirectRead, which orders the read after the
+        ///      writes that produced it.
+        void DispatchIndirect(const Ref<Buffer>& buffer, u64 offset = 0);
+
         /// @brief Binds a graphics pipeline.
         void BindPipeline(const Ref<GraphicsPipeline>& pipeline);
 

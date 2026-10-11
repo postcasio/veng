@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <set>
+#include <utility>
 
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/Backend/Barrier.h>
@@ -291,6 +292,7 @@ namespace Veng::Renderer
         m_Native->PhysicalDevice = m_Native->GetPhysicalDevice();
 
         m_Native->Device = m_Native->CreateDevice();
+        Log::Info("{}", DescribeDeviceCapabilities(m_Native->Capabilities));
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
 
@@ -760,6 +762,11 @@ namespace Veng::Renderer
     bool Context::IsExtendedStorageImageFormatsSupported() const
     {
         return m_Native->ExtendedStorageImageFormatsSupported;
+    }
+
+    const DeviceCapabilities& Context::GetDeviceCapabilities() const
+    {
+        return m_Native->Capabilities;
     }
 
     bool Context::IsGpuTimingSupported() const
@@ -1692,6 +1699,11 @@ namespace Veng::Renderer
 
         auto deviceExtensions = DeviceExtensions;
 
+        // Subgroup size control is core from Vulkan 1.3 (the instance's version); an older device
+        // carries it as VK_EXT_subgroup_size_control, enabled below when advertised.
+        const u32 deviceApiVersion = PhysicalDevice.getProperties().apiVersion;
+        bool subgroupSizeControlAvailable = deviceApiVersion >= VK_API_VERSION_1_3;
+
         // VK_KHR_portability_subset must be enabled iff the device advertises it (a
         // non-conformant implementation such as MoltenVK); a conformant native driver does
         // not expose it and must not be asked for it. Add it per-device here rather than in
@@ -1712,6 +1724,13 @@ namespace Veng::Renderer
                 {
                     deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
                     MemoryBudgetSupported = true;
+                }
+                else if (!subgroupSizeControlAvailable &&
+                         std::strcmp(extension.extensionName,
+                                     VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+                    subgroupSizeControlAvailable = true;
                 }
 #ifdef __APPLE__
                 // VK_EXT_metal_objects exports the Metal device/queue the implementation is
@@ -1801,6 +1820,94 @@ namespace Veng::Renderer
         features2.features.shaderStorageImageExtendedFormats =
             extendedStorageImageFormats ? vk::True : vk::False;
 
+        // A workgroup-wide ballot compaction is correct only over full subgroups, and a device may
+        // run a stage narrower than its default size, so subgroup size control is enabled wherever
+        // it is present: a pipeline may then require full subgroups. The rest of the readout is
+        // queried beside it and changes nothing that is enabled.
+        vk::PhysicalDeviceSubgroupSizeControlFeatures supportedSizeControl{};
+        vk::PhysicalDevice16BitStorageFeatures supportedStorage16{};
+        if (subgroupSizeControlAvailable)
+        {
+            supportedStorage16.pNext = &supportedSizeControl;
+        }
+        vk::PhysicalDeviceFeatures2 capabilityFeatures{.pNext = &supportedStorage16};
+        PhysicalDevice.getFeatures2(&capabilityFeatures);
+
+        vk::PhysicalDeviceSubgroupSizeControlProperties sizeControlProperties{};
+        vk::PhysicalDeviceSubgroupProperties subgroupProperties{};
+        if (subgroupSizeControlAvailable)
+        {
+            subgroupProperties.pNext = &sizeControlProperties;
+        }
+        vk::PhysicalDeviceDriverProperties driverProperties{.pNext = &subgroupProperties};
+        vk::PhysicalDeviceProperties2 capabilityProperties{.pNext = &driverProperties};
+        PhysicalDevice.getProperties2(&capabilityProperties);
+
+        vk::PhysicalDeviceSubgroupSizeControlFeatures enabledSizeControl{
+            .subgroupSizeControl = supportedSizeControl.subgroupSizeControl,
+            .computeFullSubgroups = supportedSizeControl.computeFullSubgroups,
+        };
+        if (subgroupSizeControlAvailable)
+        {
+            shaderDrawParametersFeatures.pNext = &enabledSizeControl;
+        }
+
+        DeviceCapabilities& capabilities = Capabilities;
+        capabilities.DeviceName = capabilityProperties.properties.deviceName.data();
+        capabilities.DriverName = driverProperties.driverName.data();
+        capabilities.DriverInfo = driverProperties.driverInfo.data();
+        capabilities.ApiVersion = capabilityProperties.properties.apiVersion;
+        capabilities.SubgroupSize = subgroupProperties.subgroupSize;
+        for (const auto& [vkStage, stage] : std::array{
+                 std::pair{vk::ShaderStageFlagBits::eVertex, ShaderStage::Vertex},
+                 std::pair{vk::ShaderStageFlagBits::eFragment, ShaderStage::Fragment},
+                 std::pair{vk::ShaderStageFlagBits::eCompute, ShaderStage::Compute},
+             })
+        {
+            if (subgroupProperties.supportedStages & vkStage)
+            {
+                capabilities.SubgroupStages |= stage;
+            }
+        }
+        for (const auto& [vkOperation, operation] : std::array{
+                 std::pair{vk::SubgroupFeatureFlagBits::eBasic, SubgroupOperation::Basic},
+                 std::pair{vk::SubgroupFeatureFlagBits::eVote, SubgroupOperation::Vote},
+                 std::pair{vk::SubgroupFeatureFlagBits::eArithmetic, SubgroupOperation::Arithmetic},
+                 std::pair{vk::SubgroupFeatureFlagBits::eBallot, SubgroupOperation::Ballot},
+                 std::pair{vk::SubgroupFeatureFlagBits::eShuffle, SubgroupOperation::Shuffle},
+                 std::pair{vk::SubgroupFeatureFlagBits::eShuffleRelative,
+                           SubgroupOperation::ShuffleRelative},
+                 std::pair{vk::SubgroupFeatureFlagBits::eClustered, SubgroupOperation::Clustered},
+                 std::pair{vk::SubgroupFeatureFlagBits::eQuad, SubgroupOperation::Quad},
+             })
+        {
+            if (subgroupProperties.supportedOperations & vkOperation)
+            {
+                capabilities.SubgroupOperations |= operation;
+            }
+        }
+        capabilities.QuadOperationsInAllStages = subgroupProperties.quadOperationsInAllStages;
+        capabilities.SubgroupSizeControl = enabledSizeControl.subgroupSizeControl == vk::True;
+        capabilities.ComputeFullSubgroups = enabledSizeControl.computeFullSubgroups == vk::True;
+        if (subgroupSizeControlAvailable)
+        {
+            capabilities.MinSubgroupSize = sizeControlProperties.minSubgroupSize;
+            capabilities.MaxSubgroupSize = sizeControlProperties.maxSubgroupSize;
+            capabilities.MaxComputeWorkgroupSubgroups =
+                sizeControlProperties.maxComputeWorkgroupSubgroups;
+        }
+        capabilities.ShaderInt16 = features2.features.shaderInt16 == vk::True;
+        capabilities.StorageBuffer16BitAccess =
+            supportedStorage16.storageBuffer16BitAccess == vk::True;
+        const auto storageWritable = [&](const Format format)
+        {
+            return static_cast<bool>(
+                PhysicalDevice.getFormatProperties(ToVk(format)).optimalTilingFeatures &
+                vk::FormatFeatureFlagBits::eStorageImage);
+        };
+        capabilities.B10G11R11UfloatStorage = storageWritable(Format::B10G11R11Ufloat);
+        capabilities.RGBA16SfloatStorage = storageWritable(Format::RGBA16Sfloat);
+
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.
         vk::PhysicalDeviceVulkan12Features supportedVulkan12Features{};
@@ -1826,6 +1933,7 @@ namespace Veng::Renderer
         // or every one is a validation error. Enable it when the device advertises it; MoltenVK
         // exposes it on Apple GPUs, and a device lacking it cannot run those shaders.
         const bool shaderFloat16Supported = supportedVulkan12Features.shaderFloat16;
+        Capabilities.ShaderFloat16 = shaderFloat16Supported;
 
         // Designators must be in declaration order (MSVC enforces the C++ rule; clang is
         // lenient). shaderFloat16 is declared early (before the descriptor-indexing block);

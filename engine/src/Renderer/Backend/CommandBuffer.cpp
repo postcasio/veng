@@ -258,6 +258,17 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);
     }
 
+    void CommandBuffer::DispatchIndirect(const Ref<Buffer>& buffer, const u64 offset)
+    {
+        constexpr u64 RecordBytes = 3 * sizeof(u32);
+        VE_ASSERT(offset % 4 == 0, "DispatchIndirect: offset {} is not 4-byte aligned", offset);
+        VE_ASSERT(offset + RecordBytes <= buffer->GetSize(),
+                  "DispatchIndirect: the record at offset {} runs past the end of '{}' ({} bytes)",
+                  offset, buffer->GetName(), buffer->GetSize());
+
+        m_Native->CommandBuffer.dispatchIndirect(buffer->GetNative().Buffer, offset);
+    }
+
     void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
