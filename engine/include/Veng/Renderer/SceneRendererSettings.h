@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
@@ -463,6 +464,28 @@ namespace Veng::Renderer
         /// different pass topology).
         CullMode Cull = CullMode::CPU;
 
+        /// @brief Levels of bias on level-of-detail selection, in every view.
+        ///
+        /// Each +1 halves every mesh's projected screen size before it is compared against the
+        /// mesh's thresholds, so a mesh switches to each coarser level at twice the distance; a
+        /// negative bias holds finer levels longer. Not a topology change: a Configure that changes
+        /// only the level-of-detail fields rebuilds nothing.
+        f32 LodBias = 0.0f;
+
+        /// @brief Half-width of the hysteresis band around each level's threshold, as a fraction of
+        ///        the threshold, in [0, 0.5].
+        ///
+        /// The camera view keeps the level a mesh drew last frame while its screen size stays within
+        /// the band, so a mesh resting near a threshold does not alternate between levels. Shadow
+        /// views select without it (see the renderer's level-of-detail notes).
+        f32 LodHysteresis = 0.1f;
+
+        /// @brief The level every mesh draws at in every view, or AutomaticLod to select by size.
+        ///
+        /// Clamps to each mesh's coarsest, so CoarsestLod forces every mesh's lowest detail. A
+        /// per-entity LodOverride and SceneView::ForcedLod both win over it.
+        i32 ForcedLod = AutomaticLod;
+
         /// @brief Whether the GPU path runs the hi-Z occlusion test (GPU mode only).
         ///
         /// When off, the GPU path issues every camera-frustum survivor (frustum-only). When on,
@@ -628,6 +651,13 @@ VE_FIELD(FrustumCull, .DisplayName = "Frustum culling", .Category = "Culling")
 VE_FIELD(LightTileCulling, .DisplayName = "Light tile culling", .Category = "Culling")
 VE_FIELD(Cull, .DisplayName = "Cull mode", .Category = "Culling")
 VE_FIELD(Occlusion, .DisplayName = "GPU occlusion", .Category = "Culling")
+VE_FIELD(LodBias, .DisplayName = "LOD bias", .Display = {.Min = -4.0, .Max = 4.0},
+         .Category = "Level of detail")
+VE_FIELD(LodHysteresis, .DisplayName = "LOD hysteresis",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.5},
+         .Category = "Level of detail")
+VE_FIELD(ForcedLod, .DisplayName = "Forced LOD", .Tooltip = "-1 selects by screen size",
+         .Display = {.Min = -1.0, .Max = 7.0}, .Category = "Level of detail")
 VE_FIELD(DebugDraw, .DisplayName = "Debug draw", .Category = "Authoring")
 VE_FIELD(Picking, .DisplayName = "Picking", .Category = "Authoring")
 VE_FIELD(PostProcessEffects, .DisplayName = "Post-process effects", .Category = "Pipeline")

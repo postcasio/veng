@@ -234,7 +234,8 @@ namespace Veng::Renderer
             // caster between the light and the slice must survive the cull so the depth-clamped
             // rasterization can pancake it onto the render matrix's tight near plane.
             casters.AddView(view.CascadeCullViewProj[set][k],
-                            m_MinCasterTexels > 0.0f ? m_MinCasterTexels / texelsPerUnit : 0.0f);
+                            m_MinCasterTexels > 0.0f ? m_MinCasterTexels / texelsPerUnit : 0.0f,
+                            viewProj);
         }
     }
 

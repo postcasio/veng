@@ -758,8 +758,9 @@ and calls `Run()`.
   (`ReceivesInputWhileUnpresented`), with `InputPacket`, `InputJitterBuffer` and
   `StampLocalSeatInput` taking the stopped-input stream: a module's systems read the context every
   tick and its prefabs spawn seats.
-  **Version 108** adds mesh levels of detail: `Mesh`/`MeshInfo`/`MeshData` grow the level table —
-  a module builds meshes.
+  **Version 108** adds mesh levels of detail: `Mesh`/`MeshInfo`/`MeshData` grow the level table,
+  `VisibleMesh`, `SceneView` and `SceneRendererSettings` grow their forced-level and selection
+  fields, and the `LodOverride` component registers — a module builds meshes and views.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

@@ -290,7 +290,13 @@ namespace Veng::Renderer
                         }
                         if (!mesh.IsSkinned())
                         {
-                            m_Batch.Add(batchView, id, mesh, c.SubMeshIndex);
+                            // The camera's level, so the prepass draws what the camera selected.
+                            const u32 lod =
+                                view.MeshLods.empty() ? 0u : view.MeshLods[c.MeshCandidate];
+                            if (mesh.GetLodRange(lod, c.SubMeshIndex).IndexCount > 0)
+                            {
+                                m_Batch.Add(batchView, id, mesh, c.SubMeshIndex, lod);
+                            }
                         }
                         else if (skinnedPosed)
                         {

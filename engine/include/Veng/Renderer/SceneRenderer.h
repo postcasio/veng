@@ -706,6 +706,13 @@ namespace Veng::Renderer
         void PrepareDraws(const SceneView& view, u32 viewConstantsIndex,
                           u32 halfResViewConstantsIndex, bool halfResViewReady);
 
+        /// @brief Selects the camera view's level of detail for every visible mesh.
+        ///
+        /// Fills the per-visible-mesh levels the gather and SceneView::MeshLods read, each kept
+        /// within the hysteresis band of the level its entity drew at last frame.
+        /// @param view  The resolved frame view (its camera, its visible meshes, its forced level).
+        void ResolveCameraLods(const SceneView& view);
+
         /// @brief This frame's sub-rect of the render allocation and its UV mapping into it.
         struct FrameScale
         {

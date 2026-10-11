@@ -205,7 +205,8 @@ namespace Veng::Renderer
                 m_Views.push_back(ShadowView{.Slot = slot, .Face = face});
                 // Off-screen casters within the light's range or cone are kept; only what falls
                 // outside the face's own frustum is dropped.
-                casters.AddView(view.PunctualShadowRawViewProj[slot][face], 0.0f);
+                casters.AddView(view.PunctualShadowRawViewProj[slot][face], 0.0f,
+                                view.PunctualShadowRawViewProj[slot][face]);
             }
         }
     }

@@ -104,6 +104,8 @@ namespace Veng::Renderer
         m_SharedIndex.assign(candidates.size(), NotShared);
         m_Keys.clear();
         m_Masks.clear();
+        m_EntryLod.clear();
+        m_NextShared.clear();
         m_Slots.clear();
         m_Groups.clear();
         m_Runs.clear();
@@ -120,21 +122,43 @@ namespace Veng::Renderer
     }
 
     void DepthCasterGrouping::Add(const u32 view, const u32 candidateId, const Mesh& mesh,
-                                  const u32 subMeshIndex)
+                                  const u32 subMeshIndex, const u32 lod)
     {
-        u32& shared = m_SharedIndex[candidateId];
-        if (shared == NotShared)
+        // A candidate's entries chain from its first, one per level the views draw it at; a
+        // candidate is rarely drawn at more than two, so the walk is short.
+        u32 tail = NotShared;
+        u32 entry = m_SharedIndex[candidateId];
+        while (entry != NotShared && m_EntryLod[entry] != lod)
         {
-            shared = static_cast<u32>(m_Masks.size());
+            tail = entry;
+            entry = m_NextShared[entry];
+        }
+        if (entry == NotShared)
+        {
+            entry = static_cast<u32>(m_Masks.size());
             m_Masks.push_back(0);
+            m_EntryLod.push_back(lod);
+            m_NextShared.push_back(NotShared);
             m_Keys.push_back(DrawKey{
                 .Pipeline = nullptr,
                 .SourceMesh = &mesh,
+                .Lod = lod,
                 .SubMeshIndex = subMeshIndex,
                 .Candidate = candidateId,
             });
+            (tail == NotShared ? m_SharedIndex[candidateId] : m_NextShared[tail]) = entry;
         }
-        m_Masks[shared] |= u64{1} << view;
+        m_Masks[entry] |= u64{1} << view;
+    }
+
+    u32 DepthCasterGrouping::FindEntry(const u32 candidateId, const u32 lod) const
+    {
+        u32 entry = m_SharedIndex[candidateId];
+        while (m_EntryLod[entry] != lod)
+        {
+            entry = m_NextShared[entry];
+        }
+        return entry;
     }
 
     void DepthCasterGrouping::Build()
@@ -145,13 +169,13 @@ namespace Veng::Renderer
         // consecutive and GroupContiguousSlots cuts one run per submesh.
         for (const DrawKey& key : m_Keys)
         {
-            const SubMesh& subMesh = key.SourceMesh->GetSubMeshes()[key.SubMeshIndex];
+            const MeshLodRange range = key.SourceMesh->GetLodRange(key.Lod, key.SubMeshIndex);
             m_Slots.push_back(DrawSlot{
                 .SourceMesh = key.SourceMesh,
                 .Pipeline = nullptr,
                 .PipelineKey = nullptr,
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
+                .IndexCount = range.IndexCount,
+                .FirstIndex = range.IndexOffset,
                 .VertexOffset = 0,
                 .CandidateId = static_cast<u32>(m_Slots.size()),
             });
@@ -167,7 +191,7 @@ namespace Veng::Renderer
             u64 runMask = 0;
             for (u32 s = run.FirstSlot; s < run.FirstSlot + run.Count; ++s)
             {
-                const u64 mask = m_Masks[m_SharedIndex[m_Keys[s].Candidate]];
+                const u64 mask = m_Masks[FindEntry(m_Keys[s].Candidate, m_Keys[s].Lod)];
                 runMask |= mask;
                 for (u64 bits = mask; bits != 0; bits &= bits - 1)
                 {
@@ -200,7 +224,7 @@ namespace Veng::Renderer
             for (u32 s = run.FirstSlot; s < run.FirstSlot + run.Count; ++s)
             {
                 const DrawKey& key = m_Keys[s];
-                const u64 mask = m_Masks[m_SharedIndex[key.Candidate]];
+                const u64 mask = m_Masks[FindEntry(key.Candidate, key.Lod)];
                 for (u64 bits = mask & ~runMask; bits != 0; bits &= bits - 1)
                 {
                     const u32 v = static_cast<u32>(std::countr_zero(bits));

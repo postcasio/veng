@@ -46,6 +46,7 @@ namespace Veng
         registry.Register<Camera>();
         registry.Register<Viewer>();
         registry.Register<MeshRenderer>();
+        registry.Register<LodOverride>();
         registry.Register<RootMotionMode>();
         registry.Register<Animator>();
         registry.Register<SkinnedPose>();

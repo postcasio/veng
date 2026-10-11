@@ -1,5 +1,7 @@
 #include <Veng/Scene/Visibility.h>
 
+#include <algorithm>
+
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include <Veng/Asset/Mesh.h>
@@ -18,6 +20,7 @@ namespace Veng
         // Only a predicted entity being smoothed carries a residual, so the per-entity lookup is
         // skipped outright when none does.
         const bool anyPredictionError = scene.PoolCount(TypeIdOf<PredictionError>()) > 0;
+        const bool anyLodOverride = scene.PoolCount(TypeIdOf<LodOverride>()) > 0;
 
         out.clear();
         outBounds = AABB::Empty();
@@ -72,6 +75,13 @@ namespace Veng
                 .CastsShadows = renderer->CastsShadows,
                 .SortPriority = renderer->SortPriority,
             });
+            if (anyLodOverride)
+            {
+                if (const auto* lod = scene.TryGet<LodOverride>(entity))
+                {
+                    out.back().ForcedLod = std::max(lod->Level, 0);
+                }
+            }
             outBounds.Expand(worldBounds);
         }
     }

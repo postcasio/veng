@@ -89,7 +89,7 @@ namespace
         {
             const SubMeshCandidate& c = candidates[id];
             grouping.Add(view, id, *broadphase.GetCandidates()[c.MeshCandidate].Mesh,
-                         c.SubMeshIndex);
+                         c.SubMeshIndex, 0);
         }
     }
 }
@@ -186,4 +186,68 @@ TEST_CASE("depth caster grouping: grouping every view once draws each view as gr
         CHECK(drawn == kept);
     }
     CHECK(shared.GetViewDraws(3).empty());
+}
+
+TEST_CASE(
+    "depth caster grouping: views drawing one caster at different levels draw each level's range")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const AssetManager manager(context, tasks, types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Level 0 is indices [0, 36); level 1 is [36, 48).
+    const AABB box{.Min = vec3(-0.5f), .Max = vec3(0.5f)};
+    const Ref<Mesh> leveled = Mesh::Create(MeshInfo{
+        .Name = "leveled",
+        .SubMeshes = {SubMesh{.IndexOffset = 0, .IndexCount = 36, .Bounds = box}},
+        .Bounds = box,
+        .Lods = {MeshLod{.ScreenSize = 0.5f,
+                         .Ranges = {MeshLodRange{.IndexOffset = 36, .IndexCount = 12}}}},
+    });
+    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(leveled);
+    for (const f32 x : {-2.0f, 2.0f})
+    {
+        const Entity e = scene->CreateEntity();
+        scene->Add<Transform>(e, Transform{.Position = vec3(x, 0.0f, -5.0f)});
+        scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});
+    }
+    SceneBroadphase broadphase;
+    broadphase.Sync(*scene);
+    const std::span<const SubMeshCandidate> candidates = broadphase.GetSubMeshCandidates();
+    REQUIRE(candidates.size() == 2);
+
+    // View 0 draws both casters at level 0, view 1 both at level 1, view 2 one at each.
+    DepthCasterGrouping grouping;
+    grouping.Begin(candidates);
+    const u32 fine = grouping.AddView();
+    const u32 coarse = grouping.AddView();
+    const u32 mixed = grouping.AddView();
+    for (u32 id = 0; id < 2; ++id)
+    {
+        grouping.Add(fine, id, *leveled, 0, 0);
+        grouping.Add(coarse, id, *leveled, 0, 1);
+        grouping.Add(mixed, id, *leveled, 0, id);
+    }
+    grouping.Build();
+
+    const vector<Draw> fineDraws = ViewDraws(grouping, fine);
+    REQUIRE(fineDraws.size() == 1);
+    CHECK(fineDraws[0].FirstIndex == 0);
+    CHECK(fineDraws[0].IndexCount == 36);
+    CHECK(fineDraws[0].Records.size() == 2);
+
+    const vector<Draw> coarseDraws = ViewDraws(grouping, coarse);
+    REQUIRE(coarseDraws.size() == 1);
+    CHECK(coarseDraws[0].FirstIndex == 36);
+    CHECK(coarseDraws[0].IndexCount == 12);
+    CHECK(coarseDraws[0].Records.size() == 2);
+
+    const vector<Draw> mixedDraws = ViewDraws(grouping, mixed);
+    REQUIRE(mixedDraws.size() == 2);
+    CHECK(mixedDraws[0].IndexCount + mixedDraws[1].IndexCount == 48);
+    CHECK(mixedDraws[0].Records.size() == 1);
+    CHECK(mixedDraws[1].Records.size() == 1);
 }

@@ -4833,6 +4833,68 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+// Level-of-detail selection is made once per visible mesh before the gather lays its slots out, so
+// the GPU-cull path's indirect commands carry the same level's ranges as the CPU path's direct
+// draws. A cube whose level 1 draws a single face, at a distance its thresholds select level 1:
+// the CPU and GPU renders agree pixel for pixel, and forcing level 0 draws a different picture.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: CPU and GPU culling draw the same level of detail")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_lod.vengpack");
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    MeshData data = Primitives::Cube(1.0f, *material);
+    data.Lods = {
+        MeshLod{.ScreenSize = 100.0f, .Ranges = {MeshLodRange{.IndexOffset = 0, .IndexCount = 6}}}};
+    const Ref<Mesh> leveled = Mesh::BuildSync(Context, data, "Leveled Cube");
+    REQUIRE(leveled->GetLodCount() == 2);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    AddCubeAt(*scene, assets, leveled, vec3(0.0f));
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(2.0f, 1.5f, 2.5f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const auto Render = [&](const SceneRendererSettings::CullMode cull, const i32 forcedLod)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::Albedo, .Cull = cull, .Occlusion = false},
+        });
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd,
+                    Renderer::SceneView{.World = *scene, .Camera = camera, .ForcedLod = forcedLod});
+            });
+        return SampleThroughBindless(Context, assets, renderer->GetOutput(), extent);
+    };
+
+    const vector<u8> cpu = Render(SceneRendererSettings::CullMode::CPU, AutomaticLod);
+    CHECK(cpu != Render(SceneRendererSettings::CullMode::CPU, 0));
+    if (Context.IsGpuDrivenCullingSupported())
+    {
+        CHECK(cpu == Render(SceneRendererSettings::CullMode::GPU, AutomaticLod));
+    }
+    else
+    {
+        MESSAGE("GPU-driven culling unsupported on this device; the GPU half is skipped");
+    }
+    std::filesystem::remove(outArchive);
+}
+
 // The hi-Z pyramid costs about 1.33 x W x H x 4 bytes, and only the GPU occlusion test reads it, so
 // it is held only while that test runs: none under CPU cull, a one-texel stand-in for the cull set
 // while the GPU cull runs without occlusion, and the full chain — allocated afresh, its history

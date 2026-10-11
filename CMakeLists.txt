@@ -1136,6 +1136,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/flow_field.cpp
             tests/unit/draw_grouping.cpp
             tests/unit/depth_caster_grouping.cpp
+            tests/unit/lod_selection.cpp
             tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp

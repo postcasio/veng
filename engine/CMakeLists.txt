@@ -352,6 +352,7 @@ add_library(veng SHARED
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
+        src/Renderer/LodSelection.cpp
         src/Renderer/QueueSubmitMode.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/SceneRendererResources.cpp
@@ -646,6 +647,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/LightPacking.cpp
+        src/Renderer/LodSelection.cpp
         src/Renderer/ShadowCasters.cpp
         src/Renderer/Backend/CommandBuffer.cpp
         src/Renderer/Passes/GBufferScenePass.cpp

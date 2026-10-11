@@ -1,6 +1,7 @@
 #include "ShadowCasters.h"
 
 #include "DrawGather.h"
+#include "LodSelection.h"
 
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
@@ -17,9 +18,13 @@ namespace Veng::Renderer
 
     ShadowCasterViews::~ShadowCasterViews() = default;
 
-    void ShadowCasterViews::Begin(const SceneView& view, const bool frustumCull)
+    void ShadowCasterViews::Begin(const SceneView& view, const bool frustumCull,
+                                  const ShadowLodSettings& lod)
     {
         m_View = &view;
+        m_Lod = lod;
+        m_ViewLods.assign(view.Visible.size(), 0);
+        m_LodStamp.assign(view.Visible.size(), 0);
         m_Candidates = view.Broadphase->GetSubMeshCandidates();
         m_FrustumCull = frustumCull;
         m_SkinnedPosed = view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr;
@@ -44,10 +49,13 @@ namespace Veng::Renderer
         return m_SkinnedPosed ? CasterClass::Skinned : CasterClass::None;
     }
 
-    u32 ShadowCasterViews::AddView(const mat4& cullViewProj, const f32 minExtent)
+    u32 ShadowCasterViews::AddView(const mat4& cullViewProj, const f32 minExtent,
+                                   const mat4& lodViewProj)
     {
         VE_PROFILE_SCOPE("Shadow/Cull");
         const u32 viewIndex = m_Batch.AddView();
+        const LodView lodView = LodView::FromViewProjection(lodViewProj, m_Lod.Bias);
+        const LodPolicy lodPolicy{.Forced = m_Lod.Forced, .Hysteresis = 0.0f};
 
         m_CullScratch.clear();
         if (m_FrustumCull)
@@ -81,7 +89,18 @@ namespace Veng::Renderer
             }
             if (casterClass == CasterClass::Static)
             {
-                m_Batch.Add(viewIndex, id, *item.Mesh, c.SubMeshIndex);
+                // One selection per mesh per view, shared by its submeshes.
+                if (m_LodStamp[c.MeshCandidate] != viewIndex + 1)
+                {
+                    m_LodStamp[c.MeshCandidate] = viewIndex + 1;
+                    m_ViewLods[c.MeshCandidate] =
+                        static_cast<u8>(ResolveMeshLod(item, lodView, lodPolicy, NoPreviousLod));
+                }
+                const u32 lod = m_ViewLods[c.MeshCandidate];
+                if (item.Mesh->GetLodRange(lod, c.SubMeshIndex).IndexCount > 0)
+                {
+                    m_Batch.Add(viewIndex, id, *item.Mesh, c.SubMeshIndex, lod);
+                }
             }
             else
             {

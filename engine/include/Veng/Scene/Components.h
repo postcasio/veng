@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
@@ -291,6 +292,19 @@ namespace Veng
         /// output reaches only the entity it drives, never every sharer of the mesh — and a game
         /// may set it for a per-entity material override of its own.
         vector<AssetHandle<MaterialInstance>> InstanceMaterials;
+    };
+
+    /// @brief Pins the level of detail an entity's MeshRenderer draws at, in every view.
+    ///
+    /// Without it a mesh carrying levels of detail is drawn at the level each view selects from its
+    /// projected screen size. With it every view — the camera, each shadow view, a capture — draws
+    /// Level, which clamps to the mesh's coarsest (CoarsestLod selects that for any mesh). It wins
+    /// over a renderer's forced level (SceneRendererSettings::ForcedLod, SceneView::ForcedLod). A
+    /// mesh with a single level is unaffected.
+    struct LodOverride
+    {
+        /// @brief The level drawn: 0 is the full-detail mesh, higher is coarser.
+        i32 Level = 0;
     };
 
     /// @brief How an Animator treats a clip's baked root motion.
@@ -1929,6 +1943,11 @@ VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(SortPriority, .DisplayName = "Sort priority")
 VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(Layer, .DisplayName = "Render layer")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::LodOverride, 0xF4018529AB2F8DF7ULL)
+VE_FIELD(Level, .DisplayName = "Level", .Tooltip = "Level of detail drawn; 0 is full detail",
+         .Display = {.Min = 0.0, .Max = 7.0})
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL)
