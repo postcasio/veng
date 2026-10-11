@@ -175,8 +175,9 @@ namespace Veng::Renderer
 
         /// @brief Which g-buffer colour channels the g-buffer pass stores for a later reader.
         ///
-        /// Velocity is the one channel with no reader on most frames: only the temporal resolve
-        /// and the MotionVectors debug blit sample it, so it is discarded when neither is wired.
+        /// Velocity is the one channel with no reader on most frames: only the temporal resolve,
+        /// the MotionVectors debug blit and the stochastic reflection denoiser sample it, so it is
+        /// discarded when none of them is wired.
         GBufferChannelStates GBufferStores;
 
         /// @brief The sky source bakes to a cube this frame, so the bake's set backs the skybox.

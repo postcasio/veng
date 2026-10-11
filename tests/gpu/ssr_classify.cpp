@@ -635,7 +635,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "ssr classify: the Reflections view shows the chain's cleared radiance")
+                  "ssr classify: the Reflections view shows the chain's reflection")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -660,8 +660,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                                        .Delta = 0.0f,
                                                        .SsrMaxRoughness = MaxRoughness});
         });
-    // The chain ran (its lists hold the floor's rays), and the blit shows its radiance, which
-    // nothing has traced into yet.
+    // The chain ran (its lists hold the floor's rays), and the blit shows its denoised reflection:
+    // seen from straight above, every ray heads back past the camera and meets nothing.
     CHECK(DownloadAs<u32>(renderer->GetSsrTraceTargets().Counters)[RayCount] == Quads);
     const vector<u8> output = renderer->GetOutput()->GetImage()->Download();
     const auto* halves = reinterpret_cast<const u16*>(output.data());

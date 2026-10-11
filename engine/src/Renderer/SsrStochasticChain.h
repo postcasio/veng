@@ -4,6 +4,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Veng.h>
 
+#include <array>
 #include <vector>
 
 namespace Veng
@@ -24,7 +25,7 @@ namespace Veng::Renderer
     struct SceneRendererSettings;
     struct SsrTraceTargets;
 
-    /// @brief Owns the stochastic screen-space-reflection chain: the depth pyramid, tile classification, the work lists and the intersection.
+    /// @brief Owns the stochastic screen-space-reflection chain: the depth pyramid, tile classification, the work lists, the intersection and the denoiser.
     ///
     /// Per frame the chain reduces the depth target to a nearest-depth pyramid (ssr_hiz_reduce.comp
     /// and its one-dispatch tail, level 0 a copy of the depth at the render allocation, seven
@@ -37,14 +38,24 @@ namespace Veng::Renderer
     /// intersection (ssr_intersect.comp), dispatched through the first record, traces each listed
     /// ray through the pyramid and writes the lit scene it meets, premultiplied by the hit's
     /// confidence, and the ray's world-space length, to the ray's pixel and the quad neighbours it
-    /// covers. Every target is at the render allocation, renderer-owned, and imported into the
-    /// graph by Import.
+    /// covers. The denoiser's three passes (ssr_reproject.comp, ssr_prefilter.comp and
+    /// ssr_resolve.comp), dispatched through the second record over the listed tiles, reproject last
+    /// frame's denoised reflection, filter this frame's spatially and blend the two into the output
+    /// target (GetOutputHandle); a full-extent pass (ssr_denoise_history.comp) then keeps the normal,
+    /// α, depth and sample-count histories the next frame's reprojection reads, and clears every
+    /// pixel that is not glossy. Every target is at the render allocation (the tile averages at an
+    /// eighth of it), renderer-owned, and imported into the graph by Import.
     ///
     /// The chain also holds the blue-noise tile its rays sample their GGX lobe from
     /// (Veng/ssr_sample.slang), loaded from the core pack the first time the chain is allocated.
     ///
+    /// The denoiser keeps its histories in targets of their own rather than swapping a pair by frame
+    /// parity, so the raw intersection (GetRadianceHandle) and the denoised output stay readable
+    /// at fixed slots. It reprojects with the camera's move since the frame it last committed
+    /// (SetCamera, CommitHistory), and the first frame after Recreate keeps no history.
+    ///
     /// Storage targets bind on set 3 through each pass's own descriptor set; the g-buffer, the
-    /// pyramid, the lit scene, the view block and the variance are read through bindless set 0. The
+    /// pyramid, the lit scene, the view block and the histories are read through bindless set 0. The
     /// pyramid's reduce and tail pipelines build on the renderer's hi-Z reduce and tail layouts,
     /// which must exist when the chain is created.
     class SsrStochasticChain
@@ -92,23 +103,38 @@ namespace Veng::Renderer
         /// @pre IsAllocated().
         void Import(RenderGraph& graph);
 
-        /// @brief Declares the pyramid, classify, argument and intersection passes into the graph.
+        /// @brief Declares the pyramid, classify, argument, intersection and denoiser passes into the graph.
         ///
         /// Declared after the last pass writing the lit scene, on the imports Import declared: the
         /// intersection reads the scene as it stands then.
-        /// @param graph        The renderer's internal graph being rebuilt.
-        /// @param depthId      The depth import (sampled).
-        /// @param normalId     The G1 world-normal import (sampled).
-        /// @param ormId        The G2 packed occlusion/roughness/metallic import (sampled).
-        /// @param sceneId      The lit scene the rays reflect (sampled).
-        /// @param depthHandle  Bindless slot for the depth target.
-        /// @param normalHandle Bindless slot for the G1 normal.
-        /// @param ormHandle    Bindless slot for the G2 ORM.
-        /// @param sceneHandle  Bindless slot for the lit scene.
+        /// @param graph          The renderer's internal graph being rebuilt.
+        /// @param depthId        The depth import (sampled).
+        /// @param normalId       The G1 world-normal import (sampled).
+        /// @param ormId          The G2 packed occlusion/roughness/metallic import (sampled).
+        /// @param velocityId     The G3 velocity import (sampled), stored by the g-buffer pass.
+        /// @param sceneId        The lit scene the rays reflect (sampled).
+        /// @param depthHandle    Bindless slot for the depth target.
+        /// @param normalHandle   Bindless slot for the G1 normal.
+        /// @param ormHandle      Bindless slot for the G2 ORM.
+        /// @param velocityHandle Bindless slot for the G3 velocity.
+        /// @param sceneHandle    Bindless slot for the lit scene.
         /// @pre Import ran on @p graph.
         void Declare(RenderGraph& graph, ResourceId depthId, ResourceId normalId, ResourceId ormId,
-                     ResourceId sceneId, TextureHandle depthHandle, TextureHandle normalHandle,
-                     TextureHandle ormHandle, TextureHandle sceneHandle);
+                     ResourceId velocityId, ResourceId sceneId, TextureHandle depthHandle,
+                     TextureHandle normalHandle, TextureHandle ormHandle,
+                     TextureHandle velocityHandle, TextureHandle sceneHandle);
+
+        /// @brief Takes this frame's camera position, against which the reprojection measures the camera's move.
+        ///
+        /// The move since the last committed frame is composed in double, through the previous
+        /// frame's unjittered (projection x rotation-only view), into a clip offset, so no
+        /// world-space translation enters the shader however far the camera is from the origin.
+        /// @param cameraPosition            This frame's world-space camera position.
+        /// @param previousDirectionViewProj The previous frame's unjittered projection times its rotation-only view.
+        void SetCamera(const dvec3& cameraPosition, const dmat4& previousDirectionViewProj);
+
+        /// @brief Records that this frame's histories were written: the next frame reprojects against them.
+        void CommitHistory();
 
         /// @brief Appends the chain's import bindings for this Execute (nothing when unallocated).
         /// @param bindings The renderer's import bindings.
@@ -117,8 +143,19 @@ namespace Veng::Renderer
         /// @brief The radiance target's import, declared by the last Import.
         [[nodiscard]] ResourceId GetRadianceId() const { return m_RadianceId; }
 
-        /// @brief Bindless slot for the radiance target (the Reflections debug arm blits it).
+        /// @brief Bindless slot for the intersection's raw radiance target.
         [[nodiscard]] TextureHandle GetRadianceHandle() const { return m_RadianceHandle; }
+
+        /// @brief The denoised reflection's import, declared by the last Import.
+        [[nodiscard]] ResourceId GetOutputId() const { return Target(DenoiseSlot::Output).Id; }
+
+        /// @brief Bindless slot for the denoised reflection (RGBA16F, premultiplied by its confidence).
+        ///
+        /// The Reflections debug arm blits it. A pixel that is not glossy reads zero.
+        [[nodiscard]] TextureHandle GetOutputHandle() const
+        {
+            return Target(DenoiseSlot::Output).Handle;
+        }
 
         /// @brief Bindless slot for the extracted-α target.
         [[nodiscard]] TextureHandle GetAlphaHandle() const { return m_AlphaHandle; }
@@ -131,6 +168,63 @@ namespace Veng::Renderer
         [[nodiscard]] SsrTraceTargets GetTargets() const;
 
     private:
+        /// @brief The denoiser's targets, indexing m_DenoiseTargets.
+        enum class DenoiseSlot : u8
+        {
+            /// @brief The spatial filter's radiance (RGBA16F).
+            Prefiltered,
+            /// @brief The denoised reflection, and next frame's radiance history (RGBA16F).
+            Output,
+            /// @brief The reprojected history radiance (RGBA16F).
+            Reprojected,
+            /// @brief The reprojection's variance (R16F).
+            ReprojectedVariance,
+            /// @brief The filtered then resolved variance, read next frame by the reprojection and the classifier (R16F).
+            Variance,
+            /// @brief This frame's sample counts (R16F).
+            SampleCount,
+            /// @brief Last frame's sample counts (R16F).
+            SampleCountHistory,
+            /// @brief Each 8x8 tile's average radiance, one texel per tile (RGBA16F).
+            Average,
+            /// @brief Last frame's G1 normal.
+            NormalHistory,
+            /// @brief Last frame's GGX α (R8).
+            AlphaHistory,
+            /// @brief Last frame's depth (R32F).
+            DepthHistory,
+            /// @brief The number of targets.
+            Count,
+        };
+
+        /// @brief One denoiser target: its image, view, bindless slot and graph import.
+        struct DenoiseTarget
+        {
+            /// @brief The image, at the render allocation (the tile grid for Average).
+            ///
+            /// Named qualified because the member takes the type's name.
+            Ref<Veng::Renderer::Image> Image;
+            /// @brief View over Image.
+            Ref<ImageView> View;
+            /// @brief Bindless slot for View.
+            TextureHandle Handle;
+            /// @brief The target's import, declared by Import.
+            ResourceId Id;
+        };
+
+        /// @brief One denoiser compute pass: its set-3 layout, pipeline layout, pipeline and set.
+        struct DenoisePass
+        {
+            /// @brief The pass's set 3: its tile list and storage targets.
+            Ref<DescriptorSetLayout> SetLayout;
+            /// @brief SetLayout plus the pass's push block.
+            Ref<PipelineLayout> Layout;
+            /// @brief The pass's pipeline.
+            Ref<ComputePipeline> Pipeline;
+            /// @brief The pass's set, written by Recreate.
+            Ref<DescriptorSet> Set;
+        };
+
         SsrStochasticChain(Context& context, AssetManager& assets,
                            const Ref<PipelineLayout>& hiZReduceLayout,
                            const Ref<PipelineLayout>& hiZTailLayout);
@@ -145,6 +239,24 @@ namespace Veng::Renderer
         void CreatePyramid(const Ref<ImageView>& depthView,
                            const Ref<DescriptorSetLayout>& hiZReduceSetLayout,
                            const Ref<DescriptorSetLayout>& hiZTailSetLayout);
+
+        /// @brief The target in @p slot.
+        [[nodiscard]] const DenoiseTarget& Target(DenoiseSlot slot) const
+        {
+            return m_DenoiseTargets[static_cast<usize>(slot)];
+        }
+
+        /// @brief Allocates the denoiser's targets and writes its passes' sets.
+        void CreateDenoiser();
+
+        /// @brief Declares the reprojection, filter, resolve and history passes.
+        /// @param graph          The graph being rebuilt.
+        /// @param normalId       The G1 world-normal import.
+        /// @param velocityId     The G3 velocity import.
+        /// @param normalHandle   Bindless slot for the G1 normal.
+        /// @param velocityHandle Bindless slot for the G3 velocity.
+        void DeclareDenoiser(RenderGraph& graph, ResourceId normalId, ResourceId velocityId,
+                             TextureHandle normalHandle, TextureHandle velocityHandle);
 
         /// @brief Declares the pyramid's per-level reductions and its coarse tail.
         /// @param graph   The graph being rebuilt.
@@ -181,6 +293,16 @@ namespace Veng::Renderer
         Ref<DescriptorSetLayout> m_PrepareSetLayout;
         /// @brief Layout for m_PreparePipeline.
         Ref<PipelineLayout> m_PrepareLayout;
+        /// @brief The reprojection pass (8x8 per listed tile, dispatched indirectly).
+        DenoisePass m_Reproject;
+        /// @brief The spatial filter pass (8x8 per listed tile, dispatched indirectly).
+        DenoisePass m_Prefilter;
+        /// @brief The temporal resolve pass (8x8 per listed tile, dispatched indirectly).
+        DenoisePass m_Resolve;
+        /// @brief The history pass (8x8 groups over the render extent).
+        DenoisePass m_History;
+        /// @brief The bilinear, edge-clamped sampler the denoiser reads its histories through.
+        SamplerHandle m_HistorySampler;
 
         /// @brief The classifier's set, written by Recreate.
         Ref<DescriptorSet> m_ClassifySet;
@@ -214,6 +336,20 @@ namespace Veng::Renderer
         Ref<Image> m_RayLengthImage;
         /// @brief View over m_RayLengthImage.
         Ref<ImageView> m_RayLengthView;
+        /// @brief Bindless slot for m_RayLengthView, which the reprojection reads.
+        TextureHandle m_RayLengthHandle;
+
+        /// @brief The denoiser's targets, by DenoiseSlot.
+        std::array<DenoiseTarget, static_cast<usize>(DenoiseSlot::Count)> m_DenoiseTargets;
+
+        /// @brief Whether the histories hold a committed frame (false from Recreate until the first CommitHistory).
+        bool m_HistoryValid = false;
+        /// @brief This frame's camera position (SetCamera).
+        dvec3 m_CameraPosition{0.0};
+        /// @brief The camera position of the last committed frame.
+        dvec3 m_PreviousCameraPosition{0.0};
+        /// @brief The camera's move since the last committed frame, as a clip offset (SetCamera).
+        vec4 m_PrevClipTranslation{0.0f};
 
         /// @brief The nearest-depth pyramid (R32F), level 0 the depth at the render allocation.
         Ref<Image> m_PyramidImage;

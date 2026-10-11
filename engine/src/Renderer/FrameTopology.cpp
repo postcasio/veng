@@ -33,12 +33,6 @@ namespace Veng::Renderer
         topology.FxaaActive = aaFinal && settings.AntiAliasing == AntiAliasingMode::FXAA;
         topology.Cmaa2Active = aaFinal && settings.AntiAliasing == AntiAliasingMode::CMAA2;
 
-        // Velocity's only readers are the temporal resolve and the motion-vector blit.
-        topology.GBufferStores.Velocity =
-            topology.TaaActive || settings.Mode == DebugView::MotionVectors
-                ? GBufferChannelState::Stored
-                : GBufferChannelState::Discarded;
-
         topology.DebugShadow = settings.Mode == DebugView::Shadows;
         topology.DebugAo = settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.
@@ -119,6 +113,14 @@ namespace Veng::Renderer
         topology.SsrActive = ssrRuns && !stochastic;
         topology.SsrStochasticActive = ssrRuns && stochastic;
         topology.SsrTemporal = ResolveSsrTemporal(settings);
+
+        // Velocity's readers are the temporal resolve, the motion-vector blit, and the stochastic
+        // reflection denoiser, which reprojects by it in every anti-aliasing mode.
+        topology.GBufferStores.Velocity = topology.TaaActive ||
+                                                  settings.Mode == DebugView::MotionVectors ||
+                                                  topology.SsrStochasticActive
+                                              ? GBufferChannelState::Stored
+                                              : GBufferChannelState::Discarded;
 
         // Depth of field takes the same gate shape, but the debug arm wires only the chain's first
         // two stages: the gather, fill, and composite stay off, so inspecting the circle of

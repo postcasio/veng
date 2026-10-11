@@ -477,10 +477,12 @@ extern "C"
 /// Version 111 adds the stochastic chain's intersection: SsrTraceTargets, which
 /// SceneRenderer::GetSsrTraceTargets returns by value, grows RayLength. A stale module lays the
 /// returned struct out short.
+/// Version 112 adds the stochastic chain's denoiser: SsrTraceTargets grows Denoised and Variance
+/// after RayLength. A stale module lays the returned struct out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 111u
+#define VENG_MODULE_ABI_VERSION 112u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

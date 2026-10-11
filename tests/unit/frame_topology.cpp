@@ -438,27 +438,40 @@ TEST_CASE("frame topology: the resolve is stateless")
 
 TEST_CASE("frame topology: velocity is stored only where something reads it")
 {
-    // Velocity's readers are the temporal resolve and the motion-vector blit; every other colour
-    // channel is stored in every configuration.
+    // Velocity's readers are the temporal resolve, the motion-vector blit and the stochastic
+    // reflection denoiser; every other colour channel is stored in every configuration.
     constexpr std::array modes{AntiAliasingMode::None, AntiAliasingMode::FXAA,
                                AntiAliasingMode::TAA, AntiAliasingMode::CMAA2,
                                AntiAliasingMode::TAAU};
+    using Technique = SceneRendererSettings::SsrTechnique;
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         for (const AntiAliasingMode aa : modes)
         {
-            SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
-            settings.AntiAliasing = aa;
-            const FrameTopology topology = Resolve(settings);
-            CAPTURE(DebugViewNames[arm]);
-            CAPTURE(static_cast<int>(aa));
+            for (const Technique technique : {Technique::Legacy, Technique::Stochastic})
+            {
+                SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
+                settings.AntiAliasing = aa;
+                settings.SSR = true;
+                settings.SsrMethod = technique;
+                const FrameTopology topology = Resolve(settings);
+                CAPTURE(DebugViewNames[arm]);
+                CAPTURE(static_cast<int>(aa));
+                CAPTURE(static_cast<int>(technique));
 
-            const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors;
-            CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
+                const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors ||
+                                  topology.SsrStochasticActive;
+                CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
+                // The denoiser reprojects by velocity in every anti-aliasing mode.
+                if (topology.SsrStochasticActive)
+                {
+                    CHECK(topology.GBufferStores.Velocity == GBufferChannelState::Stored);
+                }
 
-            GBufferChannelStates others = topology.GBufferStores;
-            others.Velocity = GBufferChannelState::Stored;
-            CHECK(others == GBufferChannelStates{});
+                GBufferChannelStates others = topology.GBufferStores;
+                others.Velocity = GBufferChannelState::Stored;
+                CHECK(others == GBufferChannelStates{});
+            }
         }
     }
 

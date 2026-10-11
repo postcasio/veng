@@ -107,7 +107,7 @@ namespace Veng::Renderer
         Ref<Buffer> Counters;
         /// @brief Six u32: the intersect's and then the denoiser's dispatch-indirect records.
         Ref<Buffer> Arguments;
-        /// @brief The reflected radiance target (RGBA16F, premultiplied by its confidence).
+        /// @brief The intersection's raw radiance target (RGBA16F, premultiplied by its confidence).
         Ref<ImageView> Radiance;
         /// @brief Each pixel's GGX alpha (R8), as the classifier extracted it.
         Ref<ImageView> Alpha;
@@ -115,6 +115,10 @@ namespace Veng::Renderer
         Ref<ImageView> BlueNoise;
         /// @brief Each traced or copied pixel's world-space ray length to its hit (R16F), zero for a miss.
         Ref<ImageView> RayLength;
+        /// @brief The denoised reflection (RGBA16F, premultiplied by its confidence), zero at a pixel that is not glossy.
+        Ref<ImageView> Denoised;
+        /// @brief The denoiser's resolved variance (R16F), which the classifier reads the next frame.
+        Ref<ImageView> Variance;
     };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.

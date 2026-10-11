@@ -665,6 +665,26 @@
       "id": "0x6F2923B2CF152214",
       "type": "Shader",
       "source": "shaders/ssr_intersect.comp.shader.json"
+    },
+    {
+      "id": "0x82B4679545912CAB",
+      "type": "Shader",
+      "source": "shaders/ssr_reproject.comp.shader.json"
+    },
+    {
+      "id": "0x0EB7CB7E359D9F47",
+      "type": "Shader",
+      "source": "shaders/ssr_prefilter.comp.shader.json"
+    },
+    {
+      "id": "0x6266D1F301AD3398",
+      "type": "Shader",
+      "source": "shaders/ssr_resolve.comp.shader.json"
+    },
+    {
+      "id": "0x92F4C2F3B6A66F38",
+      "type": "Shader",
+      "source": "shaders/ssr_denoise_history.comp.shader.json"
     }
   ]
 }

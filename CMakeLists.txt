@@ -1984,6 +1984,11 @@ if (VENG_BUILD_TESTS)
             # confidence, a thin board not reflected into the floor behind it, a spent budget
             # missing, the screen-edge fade, and a surface seen from behind never reflected.
             tests/gpu/ssr_intersect.cpp
+            # ssr_denoise.cpp drives the stochastic chain's denoiser: a still view converging with
+            # anti-aliasing off, a normal-mapped floor's reflection holding still under the jitter,
+            # a reflection following its source going and returning, the spatial filter stopping at
+            # a silhouette, and a mirror left unfiltered.
+            tests/gpu/ssr_denoise.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

@@ -1577,7 +1577,7 @@ and 6.6 % (8.7, 7.4); on the same floor normal-mapped, turns 7.1, 9.0 and 12 %, 
 A normal-mapped floor's reflection under translation is where history helps least: each facet's
 reflected content changes with the viewpoint, so the moving history is short and tightly clipped.
 
-#### The stochastic chain classifies tiles, samples each ray's lobe, and intersects it
+#### The stochastic chain classifies tiles, samples each ray's lobe, intersects it, and denoises it
 
 `SceneRendererSettings::SsrMethod` picks which chain SSR runs through: `Legacy`, everything above,
 or `Stochastic`, a second chain (`SsrStochasticChain`) built on the published stochastic
@@ -1586,7 +1586,7 @@ frame, and a denoiser over the 8×8 tiles that need one. `FrameTopology` wires e
 (`SsrActive` or `SsrStochasticActive`); the stochastic one never takes the Legacy chain's temporal
 pass (`SsrTemporal` is false under it). Under `Stochastic` nothing composites a reflection into the
 Final view yet: the frame renders as with SSR off, and the `Reflections` debug view blits the chain's
-radiance target — the intersection's raw, one-sample-per-ray reflection. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
+denoised output. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
 at the HDR tail anchor — and every target is at the render allocation, renderer-owned and imported.
 
 **Classification** (`ssr_classify.comp`, one 64×1 group per 8×8 tile, its local indices remapped so
@@ -1595,12 +1595,13 @@ each 2×2 quad holds four consecutive ones):
 - **α is one quantity.** The classifier squares the specular-anti-aliasing-widened perceptual
   roughness (`SsrRoughness`) once and stores it (`R8`, the extracted α target); a pixel is glossy
   below `SsrMaxRoughness²` and a mirror below `SsrMirrorAlpha` (1e-4). Nothing downstream squares it
-  again.
+  again. A pixel that does not reflect (no surface, or no normal) stores α 1, so nothing downstream
+  takes it for glossy.
 - **Who traces.** Every mirror; each copy group's base ray, the group set by
   `SceneRendererSettings::SsrDensity` (`SsrSamplesPerQuad` One — the quad, based at its even-even
   pixel; Two — each row's pair, based on the quad's diagonal; Four — every pixel); and a glossy pixel
-  the denoiser's variance flags (above 0, read from a variance target the classifier is handed — none
-  yet, so it reads 0). **A group whose designated base is not glossy** — background, or past the
+  the denoiser's variance flags (above 0, the variance the last committed frame resolved; none on
+  the first frame after the targets are created). **A group whose designated base is not glossy** — background, or past the
   cutoff — **is based at its first glossy pixel**, so a quad cut by a silhouette or a roughness edge
   still traces: with the base fixed to the even-even pixel its other glossy pixels would be neither
   traced nor copied, and in a converged still view their variance would never rise to pick them up.
@@ -1611,7 +1612,9 @@ each 2×2 quad holds four consecutive ones):
   append counter, the base broadcast from the first lane — correct at any subgroup width and lane
   order, so it needs no full-subgroup guarantee. A tile holding a glossy pixel (mirrors included) is
   appended by local index 0.
-- **The radiance target (`RGBA16F`) is cleared to zero** for every pixel; what traces fills it.
+- **The radiance target (`RGBA16F`) is cleared to zero** for every pixel; what traces fills it. A
+  tile it does not list takes a zero average radiance (the denoiser's tile-average target), so the
+  denoiser's bilinear reads of the averages never meet a stale one.
 
 **The lists** (`Veng/ssr_ray_list.slang`): a ray is its pixel (x 15 bits, y 14) plus three copy flags
 in bits 29–31; a tile its origin pixel, `x | y << 16`. Four `u32` counters — the ray and tile append
@@ -1672,6 +1675,57 @@ record; one invocation per listed ray):
   both zero for a miss, written to the ray's pixel and to each quad neighbour its copy flags name.
   The classifier clears both targets every frame, so a pixel no ray covers reads zero.
 
+**The denoiser** follows the published stochastic-reflection denoiser: three passes over the listed
+tiles, each one 8×8 workgroup per tile dispatched through the second record, staging the 16×16
+neighbourhood around its tile in workgroup memory (no subgroup operations), then a full-extent history
+pass. Its signal is the intersection's premultiplied radiance `(rgb·c, c)`: the confidence rides as a
+fourth channel through every blend, weight and clip; the luminance statistics and radiance distances
+are taken on `rgb·c`; and a pixel that is not glossy carries no weight in a neighbourhood statistic,
+the spatial filter or a tile average, since its zero is not a sample of a reflection.
+
+- **Reproject** (`ssr_reproject.comp`) finds each glossy pixel's reflection in the last committed
+  frame's denoised output through two candidates. The surface's is `uv − motion + (previous jitter −
+  this jitter) / 2`: the g-buffer's unjittered motion taken back out, with the change of jitter added
+  so the history is read in the jittered raster it was written in. The reflection's is the virtual
+  point a mirror shows the hit at — the pixel's camera-relative position carried a further ray length
+  along its own view ray — projected into last frame through `PrevFromCurDirection` and the clip
+  offset of the camera's move, composed in double on the CPU (`SsrStochasticChain::SetCamera`), so no
+  world-space translation enters the shader. The virtual point wins where its history normal agrees
+  past 0.9999 and its α is at least as close; else the surface's stands while it lies within the 9×9
+  neighbourhood's spread; else there is no history. A normal-and-depth disocclusion factor, a 3×3
+  search and a 2×2 reweighting follow. Without history a pixel restarts (variance 1, so the
+  classifier traces it next frame, one sample); with it the sample count grows to
+  `max(8, 32(1 − e^(−100α)))`. It also writes each tile's luminance-weighted average radiance.
+- **Prefilter** (`ssr_prefilter.comp`) spreads a noisy, non-mirror glossy pixel over fifteen
+  Halton taps within three texels, weighed by normal (`pow(n·n′, 512)`), view depth, distance from the
+  tile average and variance. **The radiance weight carries no bias**: its distance is absolute
+  radiance, so any bias holds a bright reflection below its tile average however settled it is, and a
+  small bright source loses most of its energy; only the variance term damps an outlier in a young or
+  unsettled history.
+- **Resolve** (`ssr_resolve.comp`) blends the filtered value into the reprojected history, clipped
+  (Playdead's ClipAABB, four channels) to a box about the neighbourhood's mean moved a fifth of the
+  way to the tile average, of half-size `(σ + |mean − average|) · 0.7 · 1.4`; a young history leans on
+  the tile average by `1/(samples + 1)`. A glossy pixel whose filtered value is zero still resolves: a
+  miss is a sample of the premultiplied signal, so a reflection hit on few frames accumulates. The
+  variance is resolved in place.
+- **History** (`ssr_denoise_history.comp`) copies every pixel's normal, α and depth and each glossy
+  pixel's sample count into history targets, and clears the output, variance and sample count of
+  every pixel that is not glossy — which also clears every tile the resolve did not visit.
+
+The histories are targets of their own rather than a pair swapped by frame parity, so the raw
+intersection (`SsrTraceTargets::Radiance`) and the denoised output (`GetOutputHandle`,
+`SsrTraceTargets::Denoised`) stay readable at fixed slots; the first frame after `Recreate` keeps no
+history (`CommitHistory` arms it). The g-buffer stores velocity whenever the chain runs, in every
+anti-aliasing mode (`FrameTopology::GBufferStores`).
+
+**What the reference's temporal behaviour costs**, measured at landing on a glossy floor reflecting
+thin emissive bars on a dark wall at 128²: a history of 8–32 samples clipped to a 9×9 box that wide
+contrast loosens responds over several frames — the bars' reflection keeps 39 % a frame after they
+go and is back to 55 % ten frames after they return (27 % on a normal-mapped floor) — and bilinear
+history reads under a fast strafe lag the reflection (12 % under TAA, 27 % without). On a sparse
+signal the clip costs a small, distant, bright source energy: a 0.6° emitter 300 m away keeps about
+half its traced energy on a flat floor and a fifth on a normal-mapped one.
+
 `SsrMaxDistance` and `SsrResolutionScale` do not reach the stochastic chain; `SsrMaxSteps` is its
 per-ray iteration budget and `SsrThickness` the floor of its thickness tolerance.
 
@@ -1689,6 +1743,12 @@ front of it; a spent budget leaving no hit; the vignette fading a mirror's confi
 the screen edge and leaving it whole inside; and a panel seen from above never reflected from below.
 `tests/gpu/ssr_reach.cpp`'s last case pins the distant energy: from 0.3 m above a mirror, an emitter
 300 m away is reflected as fully as one 30 m away.
+`tests/gpu/ssr_denoise.cpp` pins, on the denoised output: a still view whose reflection changes by
+under 0.5 % a frame after 32 frames with anti-aliasing off; a normal-mapped floor's reflection
+deviating by under 5 % from phase to phase under TAA, read where the scene stands (the raw trace's
+deviates by 0.72); a reflection fading and building back frame by frame as its source goes and
+returns; a panel taking under 5 % of the floor's reflection beside its edges while the floor keeps
+what its own rays brought it there; and a mirror's reflected edge as sharp as the trace's.
 
 ### Depth of field and the physical camera
 

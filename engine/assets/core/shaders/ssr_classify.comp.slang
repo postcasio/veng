@@ -1,7 +1,8 @@
 // Stochastic SSR tile classification: decides which pixels trace a reflection ray this frame,
 // compacts them into the ray list, lists every 8x8 tile holding a glossy pixel for the denoiser,
 // extracts each pixel's GGX α, and clears the radiance and ray-length targets the intersect then
-// fills.
+// fills. A tile it does not list takes a zero average radiance, so the denoiser's bilinear reads of
+// the tile averages never meet a stale one.
 //
 // One 64x1 workgroup covers one 8x8 tile, its local indices remapped so each 2x2 quad sits in four
 // consecutive ones (local index ^ 1, ^ 2, ^ 3 are the quad's horizontal, vertical and diagonal
@@ -9,7 +10,8 @@
 //
 // - α is the specular-anti-aliasing-widened perceptual roughness squared (ssr_surface.slang), the
 //   lobe the lighting core shades the pixel with. A pixel reflects when it has a surface (reverse-Z
-//   depth above 0) and a normal; it is glossy below MaxAlpha and a mirror below SsrMirrorAlpha.
+//   depth above 0) and a normal; it is glossy below MaxAlpha and a mirror below SsrMirrorAlpha. A
+//   pixel that does not reflect stores α 1, so nothing downstream takes it for glossy.
 // - A glossy pixel traces when it is a mirror, when it is its copy group's base ray, or when the
 //   denoiser's last-frame variance there is above the threshold. The density sets the groups and
 //   their bases: One, the quad, based at its even-even pixel; Two, each row's pair, based on the
@@ -55,6 +57,7 @@
 [[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Radiance;
 [[vk::binding(4, 3)]] [format("r8")] RWTexture2D<float> g_Alpha;
 [[vk::binding(5, 3)]] [format("r16f")] RWTexture2D<float> g_RayLength;
+[[vk::binding(6, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Average;
 
 struct PushConstants
 {
@@ -206,7 +209,7 @@ void csMain(uint localIndex : SV_GroupIndex, uint3 group : SV_GroupID)
     {
         g_Radiance[pixel] = float4(0.0, 0.0, 0.0, 0.0);
         g_RayLength[pixel] = 0.0;
-        g_Alpha[pixel] = alpha;
+        g_Alpha[pixel] = reflective ? alpha : 1.0;
     }
 
     // Every pixel has added to the tile count.
@@ -216,5 +219,9 @@ void csMain(uint localIndex : SV_GroupIndex, uint3 group : SV_GroupID)
         uint tile;
         InterlockedAdd(g_Counters[SsrTileAppendCounter], 1u, tile);
         g_TileList[tile] = SsrPackTile(pixel);
+    }
+    else if (localIndex == 0u)
+    {
+        g_Average[group.xy] = float4(0.0, 0.0, 0.0, 0.0);
     }
 }

@@ -1363,10 +1363,10 @@ namespace Veng::Renderer
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
             .SsrReflection = m_Topology->SsrActive             ? m_SsrReflectionChainId.Level(0)
-                             : m_Topology->SsrStochasticActive ? m_SsrStochastic->GetRadianceId()
+                             : m_Topology->SsrStochasticActive ? m_SsrStochastic->GetOutputId()
                                                                : ResourceId{},
             .SsrReflectionHandle = m_Topology->SsrStochasticActive
-                                       ? m_SsrStochastic->GetRadianceHandle()
+                                       ? m_SsrStochastic->GetOutputHandle()
                                        : m_Ssr->GetReflectionSampleHandle(),
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
@@ -1418,9 +1418,9 @@ namespace Veng::Renderer
                 (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
             if (declareStochastic)
             {
-                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, lightingTargetId,
-                                         m_DepthHandle, m_NormalHandle, m_OrmHandle,
-                                         lightingTargetHandle);
+                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, m_VelocityId,
+                                         lightingTargetId, m_DepthHandle, m_NormalHandle,
+                                         m_OrmHandle, m_VelocityHandle, lightingTargetHandle);
             }
 
             if (i == tailAnchor)
@@ -2579,8 +2579,9 @@ namespace Veng::Renderer
             dmat4(view.Camera.Projection()) * dmat4(mat4(mat3(view.Camera.View())));
         // In double, so the camera's move since the previous frame keeps its precision however far
         // it is from the world origin.
-        m_Ssr->SetCamera(dvec3(glm::inverse(dmat4(view.Camera.View()))[3]),
-                         m_PreviousDirectionViewProj);
+        const dvec3 ssrCameraPosition = dvec3(glm::inverse(dmat4(view.Camera.View()))[3]);
+        m_Ssr->SetCamera(ssrCameraPosition, m_PreviousDirectionViewProj);
+        m_SsrStochastic->SetCamera(ssrCameraPosition, m_PreviousDirectionViewProj);
         // The jitter is a fraction of the rendered (sub-rect) extent, the resolution actually
         // rasterized; the resolve reads it back from the view block to undo it.
         const vec2 jitterNdc = m_Topology->TaaActive
@@ -3351,6 +3352,7 @@ namespace Veng::Renderer
         // enabling it mid-run does not restart the phase.
         m_Taa->ClearHistoryReset();
         m_Ssr->CommitHistory();
+        m_SsrStochastic->CommitHistory();
         ++m_FrameIndex;
 
         // This frame's worlds + skinning-palette bases become next frame's "previous" for the
