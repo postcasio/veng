@@ -143,13 +143,19 @@ composite's input semantics under it. So the recorder subscribes to `AddSwapChai
 removal, and a headless context has no swap chain. The callback ends a running capture with
 `swap chain changed`, draining the file intact.
 
-## Output lives with the profiler's captures
+## Output is the user's, under the per-user data directory
 
-A capture is named, never pathed: `VideoCaptureSettings::Name` is resolved under
-`Diagnostics::CaptureDirectory()` (the build tree's `captures/`), and only the name's final path
-component is taken, so a name carrying separators cannot escape. An empty name yields
-`<app>-<yyyymmdd-hhmmss>`. This is the profiler's rule, for the profiler's reason: **no capture path is
-ever a tool argument.**
+A recording is the user's file, not a build artefact, so it lands in
+`Capture::VideoDirectory(<app>)` — `UserDataDir(<app>)/videos` (`Veng/Capture/UserMedia.h`), keyed by
+`VideoRecorderHost::Name`, which `Application` fills from `ApplicationInfo::Name`. The host configures
+nothing. `VideoRecorder::GetOutputDirectory()` resolves and creates it on first use and remembers it;
+a `Start` that cannot resolve it refuses with the reason. (The profiler's traces are build artefacts
+and stay in the build tree's `captures/`.)
+
+A capture is named, never pathed: `VideoCaptureSettings::Name` is resolved under that directory, and
+only the name's final path component is taken, so a name carrying separators cannot escape. An empty
+name yields `<app>-<yyyymmdd-hhmmss>`. This is the profiler's rule, for the profiler's reason: **no
+capture path is ever a tool argument.**
 
 ## The panel is the engine's, the window is the host's
 
@@ -169,7 +175,7 @@ advances a finished capture from `Finalizing` to `Off`):
   megabit figure it derives beside it and an outright override, the lockstep checkbox with a frame
   rate enabled only under it, the frame budget, the audio combo, **Include overlay** (off, its
   tooltip saying the overlay is the application's own interface — the panel among it — while a
-  world's HUD is recorded either way), the name field, and the resolved capture directory. A
+  world's HUD is recorded either way), the name field, and the resolved recordings directory. A
   recorder that cannot record draws the reason where the button would be.
 - **Recording** — the same settings drawn disabled above the live figures (codec, encoding, extent,
   frames against the budget, duration, file size, audio blocks) and the two warning rows that appear
@@ -202,8 +208,8 @@ A capture writes a file and drives the application's frame clock, so the two wri
 
 Three properties of the surface follow from rules stated elsewhere and are worth naming here:
 
-- **There is no directory argument, and an unknown key is refused.** The name resolves under
-  `CaptureDirectory()` as above, so a key the schema does not name — `Directory` among them — is a
+- **There is no directory argument, and an unknown key is refused.** The name resolves under the
+  recordings directory as above, so a key the schema does not name — `Directory` among them — is a
   tool error rather than a silently ignored field.
 - **Validation is the handler's.** `McpServer` echoes a tool's `InputSchemaJson` into `tools/list`
   and checks nothing against it, so a zero frame rate, an unknown enumerator, a quality deriving no

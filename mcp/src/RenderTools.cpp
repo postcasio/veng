@@ -242,7 +242,7 @@ namespace Veng::Mcp
                 {
                     return std::unexpected(fmt::format(
                         "unknown setting '{}'; a capture is named, never pathed — the engine "
-                        "resolves 'name' under the capture directory",
+                        "resolves 'name' under the user's recordings directory",
                         key));
                 }
             }
@@ -1019,8 +1019,8 @@ namespace Veng::Mcp
                 "'frame_budget' (stop after this many frames; 0 records until stopped), 'audio' "
                 "(None/Pcm/Aac), 'include_overlay' (whether the application's own interface is "
                 "composited in; off by default), and 'name'. There is no directory argument — "
-                "the engine resolves the name under the capture directory. Returns the capture "
-                "state; a refusal is a tool error carrying the reason.";
+                "the engine resolves the name under the user's recordings directory. Returns the "
+                "capture state; a refusal is a tool error carrying the reason.";
             tool.InputSchemaJson =
                 R"({"type":"object","properties":{)"
                 R"("encoding":{"type":"string","enum":["Auto","Sdr","Hdr10"]},)"

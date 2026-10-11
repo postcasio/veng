@@ -92,6 +92,7 @@ add_library(veng SHARED
         src/Behavior/BehaviorTree.cpp
         src/Behavior/BehaviorTreeRegistry.cpp
         src/Capture/RecorderCore.cpp
+        src/Capture/UserMedia.cpp
         src/Capture/VideoRecorder.cpp
         src/Asset/AssetLoader.cpp
         src/Asset/AssetLoaderRegistry.cpp

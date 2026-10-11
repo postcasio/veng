@@ -10,8 +10,6 @@
 
 #include <Capture/RecorderCore.h>
 
-#include <Veng/Diagnostics/Profiler.h>
-
 #include <support/FakeVideoRecorderBackend.h>
 
 #include <algorithm>
@@ -367,8 +365,9 @@ TEST_CASE("video recorder core: an unnamed capture is named for the app and the 
     CHECK(std::ranges::all_of(name.substr(string("Test-App-").size() + 9),
                               [](const char c) { return c >= '0' && c <= '9'; }));
 
-    // A name is a name, never a path: only its final component reaches the capture directory.
-    const path resolved = ResolveVideoCapturePath("../../elsewhere/run");
+    // A name is a name, never a path: only its final component reaches the recordings directory.
+    const path directory = path("recordings");
+    const path resolved = ResolveVideoCapturePath(directory, "../../elsewhere/run");
     CHECK(resolved.filename() == path("run.mov"));
-    CHECK(resolved.parent_path() == Diagnostics::CaptureDirectory());
+    CHECK(resolved.parent_path() == directory);
 }

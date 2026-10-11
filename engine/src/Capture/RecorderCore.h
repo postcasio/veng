@@ -44,13 +44,14 @@ namespace Veng::Capture
     /// @return The name, with no extension and no directory.
     [[nodiscard]] string DefaultCaptureName(string_view appName, std::time_t when);
 
-    /// @brief Resolves a capture name to a file under Diagnostics::CaptureDirectory().
+    /// @brief Resolves a capture name to a file under @p directory.
     ///
     /// Only the name's final path component is taken, so a name carrying separators cannot escape the
-    /// capture directory — the same rule the profiler's captures follow.
-    /// @param name  The capture's base name, without extension.
+    /// directory — the same rule the profiler's captures follow.
+    /// @param directory  The directory recordings land in (Capture::VideoDirectory).
+    /// @param name       The capture's base name, without extension.
     /// @return The resolved path, with the QuickTime extension.
-    [[nodiscard]] path ResolveVideoCapturePath(string_view name);
+    [[nodiscard]] path ResolveVideoCapturePath(const path& directory, string_view name);
 
     /// @brief Everything RecorderCore::Open needs: the backend, the settings, and the writer's descriptor.
     struct RecorderCoreInfo

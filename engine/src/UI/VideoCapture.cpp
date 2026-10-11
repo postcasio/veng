@@ -2,7 +2,6 @@
 
 #include "../Capture/RecorderCore.h"
 
-#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/UI/Layout.h>
 #include <Veng/UI/Query.h>
 #include <Veng/UI/Scopes.h>
@@ -74,12 +73,12 @@ namespace Veng::UI
         void CodecCombo(VideoCaptureSettings& settings)
         {
             const string preview = Capture::DescribeCodec(settings.Codec, settings.Encoding);
-            if (auto combo = UI::ComboBox("Codec", preview))
+            if (const auto combo = UI::ComboBox("Codec", preview))
             {
                 for (const VideoCodec codec : Codecs)
                 {
                     const bool supported = Capture::CodecSupportsEncoding(codec, settings.Encoding);
-                    auto disabled = UI::Disabled(!supported);
+                    const auto disabled = UI::Disabled(!supported);
                     const string label =
                         supported
                             ? Capture::DescribeCodec(codec, settings.Encoding)
@@ -136,7 +135,7 @@ namespace Veng::UI
                         "Nothing is heard for the capture's duration.");
 
             {
-                auto disabled = UI::Disabled(!settings.Lockstep);
+                const auto disabled = UI::Disabled(!settings.Lockstep);
                 i32 rate = static_cast<i32>(settings.FrameRate);
                 if (UI::Drag("Frame rate", rate,
                              DragOptions{.Speed = 0.25f, .Min = 1.0f, .Max = 240.0f}))
@@ -219,13 +218,15 @@ namespace Veng::UI
         const bool finalizing = live.Status == VideoCaptureStatus::Finalizing;
 
         {
-            auto disabled = UI::Disabled(recording || finalizing);
+            const auto disabled = UI::Disabled(recording || finalizing);
             (void)EnumCombo("Encoding", state.Settings.Encoding, EncodingNames);
             CodecCombo(state.Settings);
             QualityRows(state.Settings, live.Extent);
             CaptureRows(state);
         }
-        UI::TextDisabled(fmt::format("Output: {}", Diagnostics::CaptureDirectory().string()));
+        const Result<path> outputDirectory = recorder.GetOutputDirectory();
+        UI::TextDisabled(outputDirectory ? fmt::format("Output: {}", outputDirectory->string())
+                                         : fmt::format("Output: {}", outputDirectory.error()));
 
         UI::Separator();
 
@@ -236,7 +237,7 @@ namespace Veng::UI
 
         if (finalizing)
         {
-            auto disabled = UI::Disabled();
+            const auto disabled = UI::Disabled();
             UI::Text("Writing file…");
         }
         else if (recording)

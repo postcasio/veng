@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <filesystem>
 
+#include <Veng/Capture/UserMedia.h>
 #include <Veng/Platform/UserPaths.h>
 
 using namespace Veng;
@@ -175,6 +176,25 @@ TEST_CASE("platform_userpaths: the application segment is appended to the resolv
     const Result<path> result = UserDataDir("my-app-segment");
     REQUIRE(result.has_value());
     CHECK(result->filename().string() == "my-app-segment");
+}
+
+TEST_CASE("platform_userpaths: recordings land in a videos folder under the user data directory")
+{
+    const ScratchDir scratch("videos");
+#if defined(_WIN32)
+    const ScopedEnv appData("APPDATA", scratch.Get().string());
+#elif defined(__APPLE__)
+    const ScopedEnv home("HOME", scratch.Get().string());
+#else
+    const ScopedEnv xdgData("XDG_DATA_HOME", scratch.Get().string());
+#endif
+
+    const Result<path> data = UserDataDir("veng-media-test");
+    const Result<path> videos = Capture::VideoDirectory("veng-media-test");
+    REQUIRE(data.has_value());
+    REQUIRE(videos.has_value());
+    CHECK(*videos == *data / string(Capture::VideosFolder));
+    CHECK(std::filesystem::is_directory(*videos));
 }
 
 #if !defined(_WIN32)

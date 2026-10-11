@@ -381,7 +381,8 @@ family registers from the editor side.
   so it rides the same write gate the profiler's captures do. `capture_start` takes the settings as
   an all-optional object (`encoding`, `codec`, `bits_per_pixel`, `bitrate_mbps`, `lockstep`,
   `frame_rate`, `frame_budget`, `audio`, `include_overlay`, `name`) and **no directory** — the
-  engine resolves the name under the capture directory, so a `Directory` key is refused as unknown
+  engine resolves the name under the user's recordings directory (`UserDataDir(<app>)/videos`), so a
+  `Directory` key is refused as unknown
   rather than ignored. Settings validation is the **handler's**: the server echoes `InputSchemaJson`
   into `tools/list` and checks nothing against it, so a zero frame rate, an unknown enumerator, or a
   codec that cannot carry the encoding is a tool error from `Start`. `capture_stop` returns the

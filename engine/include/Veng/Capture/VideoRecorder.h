@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
 #include <Veng/Renderer/CaptureSink.h>
+#include <Veng/Result.h>
 
 namespace Veng::Audio
 {
@@ -105,7 +106,7 @@ namespace Veng::Capture
 
         /// @brief The capture's base name; empty yields "<app>-<yyyymmdd-hhmmss>".
         ///
-        /// Resolved under Diagnostics::CaptureDirectory() with the QuickTime extension; only the
+        /// Resolved under VideoRecorder::GetOutputDirectory() with the QuickTime extension; only the
         /// name's final path component is taken, so a capture never escapes that directory.
         string Name;
     };
@@ -190,7 +191,8 @@ namespace Veng::Capture
         /// @brief Returns the host's frame clock to wall time.
         function<void()> ReleaseFrameClock;
 
-        /// @brief The host's name, used as the stem of a capture whose name was left empty.
+        /// @brief The host's name: the stem of a capture whose name was left empty, and the segment
+        /// its recordings directory resolves under (Capture::VideoDirectory).
         string Name = "veng";
     };
 
@@ -267,6 +269,14 @@ namespace Veng::Capture
         /// @brief Returns the current state, polling the file's size on disk.
         [[nodiscard]] VideoCaptureState GetState() const;
 
+        /// @brief Returns the directory recordings land in, creating it on first use.
+        ///
+        /// `Capture::VideoDirectory(host name)` — the per-user data directory, so a recording is the
+        /// user's file wherever the application runs. Resolved on first call and remembered; Start
+        /// resolves it too and refuses with this error when it cannot.
+        /// @return The ready directory, or why it could not be resolved or created.
+        [[nodiscard]] Result<path> GetOutputDirectory() const;
+
         /// @brief Returns the target this frame's capture composite renders into.
         ///
         /// Takes a fresh pixel buffer from the writer's pool — waiting, bounded, on an encoder that
@@ -327,6 +337,9 @@ namespace Veng::Capture
 
         /// @brief Why the most recent Start refused; empty when the last one was accepted.
         string m_StartError;
+
+        /// @brief The recordings directory once resolved; empty until the first successful resolve.
+        mutable path m_OutputDirectory;
 
         /// @brief Whether this recorder is installed as the compositor's capture sink.
         bool m_SinkInstalled = false;

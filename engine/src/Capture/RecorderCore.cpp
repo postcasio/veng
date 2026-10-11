@@ -1,6 +1,5 @@
 #include "RecorderCore.h"
 
-#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 
 #include <algorithm>
@@ -102,7 +101,7 @@ namespace Veng::Capture
                            parts.tm_sec);
     }
 
-    path ResolveVideoCapturePath(const string_view name)
+    path ResolveVideoCapturePath(const path& directory, const string_view name)
     {
         path leaf = path(string(name)).filename();
         if (leaf.empty())
@@ -110,7 +109,7 @@ namespace Veng::Capture
             leaf = "capture";
         }
         leaf += string(CaptureExtension);
-        return Diagnostics::CaptureDirectory() / leaf;
+        return directory / leaf;
     }
 
     RecorderCore::RecorderCore(Hooks hooks) : m_Hooks(std::move(hooks))

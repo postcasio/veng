@@ -4,6 +4,7 @@
 #include "VideoRecorderBackend.h"
 
 #include <Veng/Audio/AudioDevice.h>
+#include <Veng/Capture/UserMedia.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Backend/MetalInterop.h>
 #include <Veng/Renderer/Context.h>
@@ -13,6 +14,8 @@
 
 #include <ctime>
 #include <utility>
+
+#include <fmt/format.h>
 
 namespace Veng::Capture
 {
@@ -66,6 +69,20 @@ namespace Veng::Capture
     {
         return IsVideoRecorderBackendCompiled() && m_Context.IsExternalTextureImportSupported() &&
                !m_Context.IsHeadless();
+    }
+
+    Result<path> VideoRecorder::GetOutputDirectory() const
+    {
+        if (m_OutputDirectory.empty())
+        {
+            const Result<path> resolved = VideoDirectory(m_Host.Name);
+            if (!resolved)
+            {
+                return resolved;
+            }
+            m_OutputDirectory = *resolved;
+        }
+        return m_OutputDirectory;
     }
 
     CaptureEncoding VideoRecorder::ResolveEncoding(const CaptureEncoding requested) const
@@ -136,6 +153,13 @@ namespace Veng::Capture
             return refuse("The window has no presentable size right now.");
         }
 
+        const Result<path> directory = GetOutputDirectory();
+        if (!directory)
+        {
+            return refuse(
+                fmt::format("There is nowhere to write the recording: {}.", directory.error()));
+        }
+
         const string name = resolved.Name.empty()
                                 ? DefaultCaptureName(m_Host.Name, std::time(nullptr))
                                 : resolved.Name;
@@ -145,7 +169,7 @@ namespace Veng::Capture
             .Settings = resolved,
             .Open =
                 {
-                    .File = ResolveVideoCapturePath(name),
+                    .File = ResolveVideoCapturePath(*directory, name),
                     .Extent = extent,
                     .Device = m_Context.GetExternalDevice(),
                     .Encoding = resolved.Encoding,
