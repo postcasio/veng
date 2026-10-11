@@ -20,6 +20,7 @@
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Text/CaseMapping.h>
 
 #include <fmt/format.h>
 
@@ -2262,22 +2263,8 @@ namespace Veng::Gui
             {
                 return element.Text;
             }
-            // ASCII only: a UTF-8 continuation byte has its high bit set and is left alone, so a
-            // multi-byte codepoint passes through untouched rather than being corrupted a byte at
-            // a time.
-            storage = element.Text;
-            for (char& c : storage)
-            {
-                const auto byte = static_cast<unsigned char>(c);
-                if (casing == TextTransform::Uppercase && byte >= 'a' && byte <= 'z')
-                {
-                    c = static_cast<char>(byte - ('a' - 'A'));
-                }
-                else if (casing == TextTransform::Lowercase && byte >= 'A' && byte <= 'Z')
-                {
-                    c = static_cast<char>(byte + ('a' - 'A'));
-                }
-            }
+            storage = casing == TextTransform::Uppercase ? Veng::Text::UpperCase(element.Text)
+                                                         : Veng::Text::LowerCase(element.Text);
             return storage;
         }
 

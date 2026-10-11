@@ -1215,6 +1215,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_localization.cpp
             tests/unit/glyph_source.cpp
             tests/unit/glyph_packer.cpp
+            tests/unit/text_case_mapping.cpp
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
             tests/unit/gui_surface_input.cpp

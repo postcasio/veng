@@ -643,6 +643,16 @@ TEST_CASE("gui layout: text-transform changes the run measured and drawn, not th
     doc.SetStyle(label, lower);
     doc.Solve(vec2{400.0f, 200.0f});
     CHECK(measured == "hydroponics");
+
+    // The transform maps every script the text path draws, not only ASCII, and may lengthen the
+    // run: the ß of a capitalised run is two letters.
+    doc.SetText(label, "Café straße ΟΔΟΣ жук 東京");
+    doc.SetStyle(label, upper);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "CAFÉ STRASSE ΟΔΟΣ ЖУК 東京");
+    doc.SetStyle(label, lower);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "café straße οδος жук 東京");
 }
 
 TEST_CASE("gui layout: a case transform re-solves the box it changed the width of")

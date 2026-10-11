@@ -744,10 +744,14 @@ document typeset in capitals wants that of its bound values — a station's name
 status line — as much as of the labels it authors, and upper-casing them at the site that sets the
 text would put a presentation choice in the code producing the data. So the transform applies to the
 run that is measured and painted, and `Element::Text` keeps what was authored or bound: a binding, a
-hit-test and `gui.inspect` all still see the real string. It maps **ASCII only** — a UTF-8
-continuation byte carries its high bit and is left alone, so a multi-byte codepoint passes through
-rather than being corrupted a byte at a time, and a locale-correct Unicode mapping (which can change
-a string's *length*) is not something a styling convenience should carry. Changing it is a **layout**
+hit-test and `gui.inspect` all still see the real string. The mapping is the engine's **shared case
+mapper** (`Veng/Text/CaseMapping.h`, `engine/src/Text/CaseMapping.cpp`), the same one the message
+formatter matches an elided word's case with, so the two cannot disagree: `RunOf` decodes the UTF-8,
+maps it and re-encodes it, and an element with no transform still aliases its text with nothing
+allocated. It covers the Unicode simple mappings of Latin (through Extended-B and IPA), Greek and
+Cyrillic, plus the two string-level rules CSS applies — `ß` capitalises to `SS` (so the run can be
+*longer* than the text), and a word-final capital sigma lowers to `ς` — and is locale-independent
+(no Turkish dotted I). Uncased text and ill-formed UTF-8 pass through byte for byte. Changing it is a **layout**
 move, like a font swap: capitals are wider than the lower case they replace, and no numeric property
 comparison can see either, so both are checked explicitly in `UpdateElement`.
 

@@ -124,8 +124,9 @@ Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`
 solved box, meaningful when the box is wider than the run, e.g. a Table cell).
 `text-transform` (`none`/`uppercase`/`lowercase`) draws a run in a different case without
 changing the text the element holds, so a screen set in capitals gets them for its **bound**
-values too and nothing upper-cases strings where they are produced; it maps ASCII only, and it
-is a layout input (capitals are wider). Colors
+values too and nothing upper-cases strings where they are produced; it maps Latin, Greek and
+Cyrillic letters (`Veng/Text/CaseMapping.h`), and it is a layout input (capitals are wider, and
+`ß` capitalises to `SS`). Colors
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
 stylesheet in the pack as type `StyleSheet`.
 

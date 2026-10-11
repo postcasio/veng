@@ -108,6 +108,7 @@ add_library(veng SHARED
         src/Asset/Environment.cpp
         src/Asset/Flipbook.cpp
         src/Asset/Font.cpp
+        src/Text/CaseMapping.cpp
         src/Text/GlyphSource.cpp
         src/Text/GlyphPacker.cpp
         src/Text/GlyphAtlas.cpp
@@ -678,8 +679,10 @@ set(VENG_HOT_PATH_SOURCES
         src/Reflection/TypeRegistry.cpp
         src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
-        # Text: the shaper, and the glyph atlas with its packer and rasterizer.
+        # Text: the shaper, the case mapper a text-transform runs, and the glyph atlas with its
+        # packer and rasterizer.
         src/Asset/Font.cpp
+        src/Text/CaseMapping.cpp
         src/Text/GlyphAtlas.cpp
         src/Text/GlyphPacker.cpp
         src/Text/GlyphSource.cpp

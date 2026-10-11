@@ -860,3 +860,25 @@ top of the header.
   physics queries; only spheres are avoided.
 
 The contracts, the candidate ladder, and its work bound are in the header's doc comments.
+
+## Text case mapping
+
+`Veng/Text/CaseMapping.h` is the engine's one case mapper, and every consumer that changes a
+string's case goes through it — the GUI's `text-transform` (see
+[src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)) and the message formatter's elision, which compares an
+initial case-insensitively and re-cases the elided word to match. So the two cannot disagree about
+a letter.
+
+- **Codepoint level:** `UpperCase(char32_t)` / `LowerCase(char32_t)` are the Unicode **simple**
+  mappings of every codepoint that maps into or out of U+0000–U+04FF: ASCII, Latin-1, Latin
+  Extended-A and -B, IPA Extensions, Greek and Coptic (accented letters included) and Cyrillic.
+  Anything else — digits, punctuation, CJK, a script outside those blocks — maps to itself.
+- **String level:** `UpperCase(string_view)` / `LowerCase(string_view)` take UTF-8 and add what a
+  codepoint cannot express: a lower-case letter with no single capital expands (`ß` → `SS`, and
+  `ŉ`, `ǰ`, `ΐ`, `ΰ` from SpecialCasing.txt), and a capital sigma ending a word lowers to `ς`.
+  Ill-formed UTF-8 is copied through byte for byte. No locale-conditional rule applies.
+
+The tables are compact runs (first, last, stride, delta), generated from the Unicode Character
+Database by `scripts/generate_case_tables.py`; the Unicode version they follow is named beside them
+in `engine/src/Text/CaseMapping.cpp`, and regenerating means fetching that version's
+`UnicodeData.txt` and `SpecialCasing.txt` and pasting the script's output between the markers.

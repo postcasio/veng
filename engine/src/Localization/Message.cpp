@@ -1,4 +1,5 @@
 #include <Veng/Localization/Message.h>
+#include <Veng/Text/CaseMapping.h>
 
 #include <fmt/format.h>
 
@@ -434,64 +435,10 @@ namespace Veng::Localization
             return static_cast<char32_t>(cp);
         }
 
-        /// @brief Lowercases a letter of ASCII, Latin-1 or Latin Extended-A; returns any other
-        /// codepoint unchanged.
-        char32_t LowerCase(char32_t c)
-        {
-            const u32 u = static_cast<u32>(c);
-            if (u >= 'A' && u <= 'Z')
-            {
-                return static_cast<char32_t>(u + 0x20);
-            }
-            if (u >= 0xC0 && u <= 0xDE && u != 0xD7)
-            {
-                return static_cast<char32_t>(u + 0x20);
-            }
-            if (u == 0x178)
-            {
-                return static_cast<char32_t>(0xFF);
-            }
-            // Latin Extended-A pairs each capital with the next codepoint; the parity of the
-            // capital flips at U+0139 and U+014A, and again at U+0179.
-            const bool evenCapital = (u >= 0x100 && u <= 0x137) || (u >= 0x14A && u <= 0x177);
-            const bool oddCapital = (u >= 0x139 && u <= 0x148) || (u >= 0x179 && u <= 0x17E);
-            if ((evenCapital && u % 2 == 0) || (oddCapital && u % 2 == 1))
-            {
-                return static_cast<char32_t>(u + 1);
-            }
-            return c;
-        }
-
-        /// @brief Capitalizes a letter of ASCII, Latin-1 or Latin Extended-A; returns any other
-        /// codepoint unchanged. The inverse of @ref LowerCase.
-        char32_t UpperCase(char32_t c)
-        {
-            const u32 u = static_cast<u32>(c);
-            if (u >= 'a' && u <= 'z')
-            {
-                return static_cast<char32_t>(u - 0x20);
-            }
-            if (u >= 0xE0 && u <= 0xFE && u != 0xF7)
-            {
-                return static_cast<char32_t>(u - 0x20);
-            }
-            if (u == 0xFF)
-            {
-                return static_cast<char32_t>(0x178);
-            }
-            const bool oddSmall = (u >= 0x101 && u <= 0x137) || (u >= 0x14B && u <= 0x177);
-            const bool evenSmall = (u >= 0x13A && u <= 0x148) || (u >= 0x17A && u <= 0x17E);
-            if ((oddSmall && u % 2 == 1) || (evenSmall && u % 2 == 0))
-            {
-                return static_cast<char32_t>(u - 1);
-            }
-            return c;
-        }
-
-        /// @brief True for a capital letter — one @ref LowerCase changes.
+        /// @brief True for a capital letter — one Text::LowerCase changes.
         bool IsCapital(char32_t c)
         {
-            return LowerCase(c) != c;
+            return Text::LowerCase(c) != c;
         }
 
         /// @brief True for a codepoint that belongs to a word: an ASCII letter, or anything from
@@ -517,7 +464,7 @@ namespace Veng::Localization
             usize j = 0;
             while (i < a.size() && j < b.size())
             {
-                if (LowerCase(DecodeUtf8(a, i)) != LowerCase(DecodeUtf8(b, j)))
+                if (Text::LowerCase(DecodeUtf8(a, i)) != Text::LowerCase(DecodeUtf8(b, j)))
                 {
                     return false;
                 }
@@ -540,11 +487,11 @@ namespace Veng::Localization
             {
                 return false;
             }
-            const char32_t folded = LowerCase(first);
+            const char32_t folded = Text::LowerCase(first);
             bool listed = false;
             for (usize k = 0; k < table.Initials.size() && !listed;)
             {
-                listed = LowerCase(DecodeUtf8(table.Initials, k)) == folded;
+                listed = Text::LowerCase(DecodeUtf8(table.Initials, k)) == folded;
             }
             if (!listed)
             {
@@ -591,9 +538,9 @@ namespace Veng::Localization
             for (usize i = 0; i < elided.size();)
             {
                 const char32_t c = DecodeUtf8(elided, i);
-                const bool hasCase = IsCapital(UpperCase(c));
+                const bool hasCase = IsCapital(Text::UpperCase(c));
                 const bool raise = allCapitals || (!capitalized && hasCase);
-                AppendUtf8(out, raise ? UpperCase(c) : c);
+                AppendUtf8(out, raise ? Text::UpperCase(c) : c);
                 capitalized = capitalized || hasCase;
             }
             return out;

@@ -193,16 +193,16 @@ namespace Veng::Gui
     /// `Element::Text` keeps what was authored or bound, so a binding, a hit-test and an inspection
     /// all still see the real string.
     ///
-    /// Only ASCII letters are mapped. The cooked atlas charsets this engine ships are ASCII or
-    /// Latin-1, and a correct Unicode case mapping is locale-dependent and can change a string's
-    /// length — neither is worth carrying for a styling convenience.
+    /// The mapping is the engine's shared case mapper (`Veng/Text/CaseMapping.h`): Latin, Greek
+    /// and Cyrillic, locale-independent, and free to change the run's length (`ß` capitalises to
+    /// `SS`). Text it does not cover, and ill-formed UTF-8, is drawn as it is.
     enum class TextTransform : u8
     {
         /// @brief The run is drawn as it is (the default).
         None,
-        /// @brief ASCII letters are drawn upper-case.
+        /// @brief The run is drawn upper-case (Text::UpperCase).
         Uppercase,
-        /// @brief ASCII letters are drawn lower-case.
+        /// @brief The run is drawn lower-case (Text::LowerCase).
         Lowercase
     };
 

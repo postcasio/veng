@@ -124,8 +124,9 @@ namespace Veng::Localization
     ///   no-break space, two spaces — leaves the word as written, which is how a translator opts
     ///   one field out.
     /// - **The value begins with an eliding initial.** The field's rendered text begins with a
-    ///   letter listed in @ref Initials, compared case-insensitively over ASCII and the Latin-1 and
-    ///   Latin Extended-A letters (so `"é"` in the table matches a value beginning `"É"`). A value
+    ///   letter listed in @ref Initials, compared case-insensitively through the engine's case
+    ///   mapper (`Veng/Text/CaseMapping.h`: Latin, Greek and Cyrillic), so `"é"` in the table
+    ///   matches a value beginning `"É"`. A value
     ///   beginning with a digit, a sign, punctuation or padding never elides.
     /// - **The value's first word is not an initialism.** A first word of two or more letters,
     ///   all of them capitals (`"HD 1234"`, `"ABC-9"`), is read as spelled out letter by letter
