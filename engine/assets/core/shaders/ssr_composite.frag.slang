@@ -411,7 +411,12 @@ Reflected EvaluateReflection(ViewConstants vc, float2 uv)
     float3 viewPos = mul((float3x3)vc.View, relative);
     float cameraDistance = max(length(relative), 1e-6);
     float3 N = surface.Normal;
-    float3 V = -relative / cameraDistance;
+    // The pixel's ray: from the camera under perspective, down the view axis under an orthographic
+    // projection.
+    bool orthographic = vc.Proj[3][3] > 0.5;
+    float3 rayDirection =
+        orthographic ? mul(float3(0.0, 0.0, -1.0), (float3x3)vc.View) : relative / cameraDistance;
+    float3 V = -rayDirection;
 
     // The cone's footprint at the hit, projected to SSR texels from where the hit appears.
     float footprint = 2.0 * hitDistance * tan(ReflectedConeHalfAngle(roughness));
@@ -420,7 +425,6 @@ Reflected EvaluateReflection(ViewConstants vc, float2 uv)
     uint chainLevels;
     reflectionChain.GetDimensions(0u, chainWidth, chainHeight, chainLevels);
     float texelsPerUnit = abs(vc.Proj[1][1]) * 0.5 * float(chainHeight);
-    bool orthographic = vc.Proj[3][3] > 0.5;
     if (!orthographic)
     {
         texelsPerUnit /= max(abs(viewPos.z), 1e-6);
@@ -461,7 +465,6 @@ Reflected EvaluateReflection(ViewConstants vc, float2 uv)
     // The reflected image stands where the reflected ray, unfolded through the surface, ends: along
     // the pixel's own ray, the hit distance past the surface. A plane mirror's image of a point is
     // exactly there, wherever the camera stands.
-    float3 rayDirection = orthographic ? mul(float3(0.0, 0.0, -1.0), (float3x3)vc.View) : -V;
     result.Contribution = reflection.rgb * fresnel * roughnessFade * g_PC.Intensity;
     result.VirtualPosition = relative + rayDirection * hitDistance;
     result.Reflects = true;

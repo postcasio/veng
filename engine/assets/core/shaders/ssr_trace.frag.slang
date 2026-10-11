@@ -198,9 +198,11 @@ TraceOutput fsMain(VSOutput input)
 
     float3 N = mul((float3x3)vc.View, surface.Normal);
 
-    // The camera is at the view-space origin, so the surface's view position is also the view ray
-    // to it; reflect that about the surface normal.
-    float3 R = normalize(reflect(normalize(viewPos), N));
+    // Reflect the pixel's ray about the surface normal: under perspective the camera is at the
+    // view-space origin, so the surface's view position is that ray; under an orthographic
+    // projection every pixel's ray runs down the view axis.
+    float3 viewRay = vc.Proj[3][3] > 0.5 ? float3(0.0, 0.0, -1.0) : normalize(viewPos);
+    float3 R = normalize(reflect(viewRay, N));
 
     // Clamp the ray end so it never crosses the camera plane (view space looks down -Z,
     // so the surface is at z < 0): a ray angled back toward the camera (R.z > 0) would
