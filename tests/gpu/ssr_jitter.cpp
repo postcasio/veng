@@ -10,6 +10,8 @@
 //  - A glossy normal-mapped metal floor reflects emissive bars: through a whole jitter period, the
 //    converged reflection changes by a small fraction of its level each frame. Each jitter phase
 //    samples the normal map somewhere else, and so turns every reflected ray.
+//  - Geometric specular anti-aliasing reaches the reflection: a flat mirror's floor reflects
+//    exactly as with it off, and the normal-mapped floor's does not.
 //  - A mirror floor reflecting the bars under a camera moving sideways shows, at each pose, close to
 //    what a camera converged still there shows: its reflected image moves with the bars' reflected
 //    depth, not with the floor.
@@ -724,6 +726,58 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(residue < c.MaxResidue);
         CHECK(returned > 0.9);
         CHECK(returned < 1.1);
+    }
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr jitter: a reflection widens with the lobe only where the normal varies")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_widening.vengpack");
+
+    // Without anti-aliasing, so each render is one trace; the floor is lit by nothing, so all it
+    // shows is reflection.
+    const Unique<SceneRenderer> traced =
+        MakeRenderer(Context, assets, AntiAliasingMode::None, true);
+    const Unique<SceneRenderer> plain =
+        MakeRenderer(Context, assets, AntiAliasingMode::None, false);
+    for (const f32 strength : {0.0f, 0.3f})
+    {
+        CAPTURE(strength);
+        const BarsScene built = BuildBarsScene(Context, assets, Types, strength);
+        const FloorBand band = LocateFloor(RenderLuma(Context, *plain, *built.World, built.Camera));
+        REQUIRE(band.LastRow > band.FirstRow + 16);
+        const auto render = [&](const f32 variance)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    traced->Execute(cmd,
+                                    Renderer::SceneView{.World = *built.World,
+                                                        .Camera = built.Camera,
+                                                        .Delta = 0.0f,
+                                                        .AmbientFloor = vec3(0.0f),
+                                                        .SsrMaxDistance = 20.0f,
+                                                        .SpecularAntiAliasingVariance = variance});
+                });
+            return DecodeLuma(traced->GetHdrView()->GetImage()->Download());
+        };
+        const vector<f32> widened = render(0.15f);
+        const vector<f32> unwidened = render(0.0f);
+        const f64 change = BandMeanDelta(widened, unwidened, band);
+        CAPTURE(change);
+        if (strength == 0.0f)
+        {
+            // A flat floor's normal does not vary, so its reflection is exactly as without.
+            CHECK(change == 0.0);
+        }
+        else
+        {
+            CHECK(change > 0.0);
+        }
     }
 
     std::filesystem::remove(archive);

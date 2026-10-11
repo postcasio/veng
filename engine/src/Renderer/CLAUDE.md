@@ -301,12 +301,22 @@ knobs — carried in the view block's `AmbientParams.yz` (see "View
 constants"); a zero `σ²` adds exactly nothing, which is how the feature is off. Because it changes the
 surface's roughness it reaches every light's `D` and G, a sized light's widening (which composes in
 `α²`), the LTC lookups and the image-based reflection's mip and BRDF-LUT lookups: a reflection blurs
-where the normal varies. The deferred pass takes the derivatives in uniform control flow, ahead of its
-background return, and zeroes the variance for any pixel whose 2×2 quad holds a background pixel — a
-second fine derivative of the "has surface" edge reaches the quad's diagonal — since the cleared
-normal would read as a huge variance and roughen a silhouette against the sky. **The deferred form's
-known trade**: a quad straddling two different surfaces reads their normal difference as variance, so
-those edge pixels roughen, bounded by `κ`. Detail finer than about two pixels is beyond what the
+where the normal varies. The variance, the widening law and both g-buffer forms below live in
+`Veng/specular_aa.slang`. The deferred pass takes the derivatives in uniform control flow, ahead of its
+background return (`GBufferNormalVariance`), and zeroes the variance for any pixel whose 2×2 quad
+holds a background pixel — a second fine derivative of the "has surface" edge reaches the quad's
+diagonal — since the cleared normal would read as a huge variance and roughen a silhouette against the
+sky. **Screen-space reflections widen by the same term** (`SsrRoughness`, `ssr_surface.slang`), for
+the trace's cutoff and the composite's fade and cone, so a pixel reflects the lobe it is shaded with.
+SSR reads the variance from loads (`GBufferNormalVarianceAt`): it pairs a texel with the other one in
+its 2×2 quad along each axis exactly as a fine derivative does and applies the same quad guard, so it
+is the value the deferred pass shaded that texel with, past early returns and at any trace
+resolution, where a derivative there would pair texels two or four apart. A flat surface keeps its
+roughness exactly. On a magnified normal map, where the normal changes little from one pixel to the
+next, the widened cone stays under the chain's first level and the reflection keeps its sharpness;
+that each jitter phase still turns every ray is the temporal pass's to integrate (below). **The
+deferred form's known trade**: a quad straddling two different surfaces reads their normal difference
+as variance, so those edge pixels roughen, bounded by `κ` — in the deferred pass and in SSR alike. Detail finer than about two pixels is beyond what the
 derivatives resolve and is a normal map's to pre-filter. `tests/gpu/specular_lobe.cpp` pins that a
 flat mirror renders identically with it on and off, that a rippled mirror's reflected energy holds
 under a half-pixel move, and that a sphere's silhouette texels shade as with it off.
@@ -1397,7 +1407,9 @@ only ever an improvement on top.
   of the screen, and a cone wider still clamps there.
 - **The roughness cutoff fades.** A surface rougher than `SsrMaxRoughness` traces nothing and the
   composite adds nothing for it; across the top fifth of `[0, SsrMaxRoughness]` the composite fades
-  the reflection out, so a surface whose roughness crosses the cutoff shows no seam.
+  the reflection out, so a surface whose roughness crosses the cutoff shows no seam. The roughness the
+  cutoff, the fade and the cone take is the one lighting shades the pixel with, widened by geometric
+  specular anti-aliasing (see "Geometric specular anti-aliasing").
 
 What spatial filtering cannot do is recover what the trace never sampled: one ray per SSR texel
 point-samples a small or hard-edged source, so how much of it a reflection carries steps with the
@@ -1542,7 +1554,9 @@ axis puts them; a glossy normal-mapped floor's converged reflection changes by u
 level per frame (0.3 % at landing); a camera moving sideways 0.1 m a frame over a mirror floor shows,
 at the last pose, a reflection within 9 % of what a camera converged still there shows (7.7 %); and
 a still floor's converged reflection of emissive bars keeps under 1 % of them (5 % normal-mapped) a
-frame after they go and is back at their level a frame after they return.
+frame after they go and is back at their level a frame after they return; and with no anti-aliasing
+a flat mirror's reflection is identical with geometric specular anti-aliasing on and off, where a
+normal-mapped one's is not.
 
 Measured at landing on a glossy floor reflecting thin emissive bars at 128², as the mean deviation
 of a moving camera's reflection from one converged still at each pose, relative to the reflection's

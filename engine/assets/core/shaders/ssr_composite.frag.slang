@@ -12,7 +12,8 @@
 //  - The cone's half-angle is where the GGX half-vector distribution (width alpha = roughness^2)
 //    falls to half its peak, tan(theta_h) = alpha * sqrt((sqrt2 - 1) / (1 - sqrt2 * alpha^2)),
 //    doubled for the reflected direction. Past alpha^2 = 1/sqrt2 the lobe never halves, and the
-//    cone is held at its widest.
+//    cone is held at its widest. The roughness is the one the pixel is shaded with, widened by its
+//    normal's variation across the pixel (SsrRoughness), as is the cutoff's fade below.
 //  - Its diameter at the hit is 2 * hitDistance * tan(theta_r), a world size. The reflected hit
 //    is seen along the unfolded ray, cameraDistance + hitDistance from the camera, so that is the
 //    distance the footprint is projected from — a contact reflection stays sharp and a far one
@@ -372,21 +373,22 @@ Reflected EvaluateReflection(ViewConstants vc, float2 uv)
 
     SamplerState reflSamp = g_Samplers[NonUniformResourceIndex(g_PC.ReflectionSampler)];
     Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
-    SsrSurface surface =
-        SsrSurfaceAt(vc, depthTexture, g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)], uv);
+    Texture2D normalTexture = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)];
+    SsrSurface surface = SsrSurfaceAt(vc, depthTexture, normalTexture, uv);
     // The cleared background has nothing to reflect into.
     if (!surface.Valid)
         return result;
 
     // Every read names its level: most sit past an early return, where implicit derivatives are
     // undefined.
-    float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0));
-    float roughness = saturate(orm.g);
+    Texture2D ormTexture = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)];
+    float roughness =
+        saturate(SsrRoughness(vc, depthTexture, normalTexture, ormTexture, surface.Texel));
     if (roughness >= g_PC.MaxRoughness)
         return result;
     float roughnessFade =
         smoothstep(0.0, 1.0, (g_PC.MaxRoughness - roughness) / (RoughnessFadeBand * g_PC.MaxRoughness));
-    float metallic = orm.b;
+    float metallic = ormTexture.Load(int3(surface.Texel, 0)).b;
 
     Texture2D reflectionChain = g_Textures[NonUniformResourceIndex(g_PC.ReflectionTexture)];
     Texture2D distanceChain = g_Textures[NonUniformResourceIndex(g_PC.HitDistanceTexture)];

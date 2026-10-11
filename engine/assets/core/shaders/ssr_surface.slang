@@ -9,6 +9,7 @@
 // point where the two centres coincide. Every read is a point load: a filtered depth or normal would
 // blend the two surfaces either side of a silhouette into one that is neither.
 #include "view_constants.slang"
+#include "Veng/specular_aa.slang"
 
 // How far, in texel widths at the surface, a point may be carried along its tangent plane onto the
 // pixel's ray. A plane seen nearly edge-on, or a silhouette where the normal turns away from the
@@ -76,4 +77,18 @@ SsrSurface SsrSurfaceAt(ViewConstants vc, Texture2D depthTexture, Texture2D norm
     surface.Position = onRay + direction * clamp(carry, -limit, limit);
     surface.Valid = true;
     return surface;
+}
+
+// The roughness the surface at g-buffer texel `texel` reflects with: the g-buffer's, widened by its
+// normal's variation across the pixel exactly as the lighting core widens the lobe it shades that
+// texel with (Veng/specular_aa.slang), so the reflected cone is the shaded lobe's. Unwidened, a
+// glossy normal-mapped surface reflects a cone narrower than its own highlight, and each ray follows
+// whichever normal the raster sampled. A flat surface's roughness is returned untouched. The
+// variance is read from loads, so it holds past an early return and at any trace resolution.
+float SsrRoughness(ViewConstants vc, Texture2D depthTexture, Texture2D normalTexture,
+                   Texture2D ormTexture, int2 texel)
+{
+    float roughness = ormTexture.Load(int3(texel, 0)).g;
+    return WidenRoughnessForGeometry(vc, roughness,
+                                     GBufferNormalVarianceAt(depthTexture, normalTexture, texel));
 }

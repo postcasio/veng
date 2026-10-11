@@ -189,10 +189,11 @@ TraceOutput fsMain(VSOutput input)
     TraceOutput missed = Miss;
     missed.Surface = float4(depth, depth * depth, 1.0, 0.0);
 
-    float roughness =
-        g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0)).g;
+    Texture2D ormTexture = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)];
+    float roughness = SsrRoughness(vc, depthTexture, normalTexture, ormTexture, surface.Texel);
     // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
-    // reflection out smoothly below this cutoff).
+    // reflection out smoothly below this cutoff). The roughness is the composite's, widened as the
+    // pixel is shaded.
     if (roughness > g_PC.MaxRoughness)
         return missed;
 
