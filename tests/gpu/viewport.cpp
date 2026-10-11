@@ -3,7 +3,10 @@
 // wrapper's contract on its own (no Application drive-list, no compositor): a
 // Render over a one-mesh scene produces a correctly-sized output and a valid
 // bindless handle, a region extent change resizes the output (and re-registers
-// the handle), and a null-World Render is a no-op that leaves the output intact.
+// the handle), a null-World Render is a no-op that leaves the output intact, and re-applying
+// settings the renderer clamps to the ones it holds reconfigures nothing.
+
+#include <limits>
 
 #include <doctest/doctest.h>
 
@@ -14,6 +17,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Renderer/Viewport.h>
 
@@ -32,7 +36,7 @@ namespace
 {
     // Builds a cube scene with a materialless MeshRenderer and returns the owning
     // mesh so the caller keeps it resident for the viewport's lifetime.
-    Ref<Mesh> PopulateCubeScene(Context& context, AssetManager& assets, Scene& scene)
+    Ref<Mesh> PopulateCubeScene(Context& context, const AssetManager& assets, Scene& scene)
     {
         const Ref<Mesh> cube = Mesh::BuildSync(context, Primitives::Cube(1.0f), "Viewport Cube");
 
@@ -588,4 +592,45 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Releasing an unheld viewport is a no-op.
     viewport->ReleaseRenderScale();
     CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "viewport: re-applying settings that clamp to the current ones keeps the renderer's "
+    "targets and its temporal history")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    // Shadow resolutions above any device's cap: the renderer clamps them, so what it holds never
+    // equals what was asked for.
+    SceneRendererSettings settings{.AntiAliasing = AntiAliasingMode::TAA};
+    settings.ShadowResolution = std::numeric_limits<u32>::max();
+    settings.PunctualShadowResolution = std::numeric_limits<u32>::max();
+
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = {32, 32}},
+        .Settings = settings,
+        .Role = ViewportRole::Offscreen,
+    });
+    SceneRenderer& renderer = viewport->GetRenderer();
+    REQUIRE(renderer.GetSettings().ShadowResolution < settings.ShadowResolution);
+    REQUIRE(renderer.GetTaaHistoryView() != nullptr);
+
+    const Ref<ImageView> output = renderer.GetOutput();
+    const Ref<ImageView> history = renderer.GetTaaHistoryView();
+    const u64 generation = viewport->GetOutputGeneration();
+
+    // The same request, through the viewport and straight to the renderer: neither reconfigures,
+    // so no target is recreated and the history a temporal resolve accumulated survives.
+    viewport->Configure(settings);
+    renderer.Configure(settings);
+    CHECK(renderer.GetOutput().get() == output.get());
+    CHECK(renderer.GetTaaHistoryView().get() == history.get());
+    CHECK(viewport->GetOutputGeneration() == generation);
+    CHECK(renderer.ClampSettings(settings) == renderer.GetSettings());
 }

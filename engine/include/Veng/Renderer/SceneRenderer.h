@@ -127,12 +127,23 @@ namespace Veng::Renderer
 
         /// @brief Recreates affected resources and recompiles the graph's topology.
         ///
-        /// Invalidates the prior GetOutput() Ref like Resize. ShadowResolution and
-        /// PunctualShadowResolution are clamped to GetMaxShadowResolution() /
-        /// GetMaxPunctualShadowResolution() before any atlas is sized, so an over-large
-        /// request degrades to the largest valid atlas rather than a fatal driver error.
+        /// Invalidates the prior GetOutput() Ref like Resize. The settings are clamped
+        /// (ClampSettings) before they are compared or stored, so an over-large shadow
+        /// resolution degrades to the largest valid atlas rather than a fatal driver error, and
+        /// re-applying settings that clamp to the ones in effect is a no-op that keeps every
+        /// target, the output Ref and the temporal history.
         /// @param settings  New topology and sizing knobs.
         void Configure(const SceneRendererSettings& settings);
+
+        /// @brief Returns the settings as Configure would hold them on this device.
+        ///
+        /// ShadowResolution and PunctualShadowResolution are clamped to GetMaxShadowResolution()
+        /// and GetMaxPunctualShadowResolution(); every other field passes through. A caller deciding
+        /// whether a Configure would change anything compares this against GetSettings().
+        /// @param settings  The requested settings.
+        /// @return The settings clamped to the device.
+        [[nodiscard]] SceneRendererSettings
+        ClampSettings(const SceneRendererSettings& settings) const;
 
         /// @brief Largest directional-cascade tile resolution this device supports.
         ///

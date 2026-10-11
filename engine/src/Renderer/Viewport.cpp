@@ -502,9 +502,10 @@ namespace Veng::Renderer
         m_DebugSettingsPending = false;
 
         // Unchanged settings leave the renderer, the allocation and the output handle exactly as
-        // they stand; the renderer's own Configure is a no-op for them too.
+        // they stand; the renderer's own Configure is a no-op for them too. The renderer holds its
+        // settings clamped to the device, so the comparison is against the clamped request.
         const SceneRendererSettings effective = GetEffectiveSettings();
-        if (effective == m_Renderer->GetSettings())
+        if (m_Renderer->ClampSettings(effective) == m_Renderer->GetSettings())
         {
             return;
         }

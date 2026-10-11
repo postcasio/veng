@@ -2146,22 +2146,30 @@ namespace Veng::Renderer
         return ShadowSystem::GetMaxPunctualShadowResolution(m_Context);
     }
 
+    SceneRendererSettings SceneRenderer::ClampSettings(const SceneRendererSettings& settings) const
+    {
+        SceneRendererSettings clamped = settings;
+        ShadowSystem::ClampResolutions(m_Context, clamped);
+        return clamped;
+    }
+
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
     {
         // A reconfigure that changes nothing costs nothing. Everything below recreates targets,
         // re-registers bindless handles and recompiles the frame graph, so a caller re-applying
         // the configuration it already runs under — a viewport rebound to a world authoring the
-        // same settings — must not pay for it, or present the frame the rebuild disturbs.
-        if (settings == m_Settings)
+        // same settings — must not pay for it, or present the frame the rebuild disturbs. The
+        // comparison is against the clamped request, since that is what was stored.
+        const SceneRendererSettings clamped = ClampSettings(settings);
+        if (clamped == m_Settings)
         {
             return;
         }
-        m_Settings = settings;
+        m_Settings = clamped;
         if (!m_Settings.GBufferShadingOverride)
         {
             m_ShadingOverride->Release();
         }
-        ShadowSystem::ClampResolutions(m_Context, m_Settings);
         // A cull-mode or occlusion change can move what the hi-Z pyramid has to be (full, a
         // stand-in, or nothing); the g-buffer recreate below resizes it anyway, so only an
         // unmoved allocation needs the explicit resize.
