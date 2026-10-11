@@ -474,10 +474,13 @@ extern "C"
 /// SsrMethod and SsrDensity after SsrResolutionScale, and SceneRenderer grows the chain it owns. A
 /// module builds renderer settings and owns viewports, so a stale module reads every later settings
 /// field at a shifted offset.
+/// Version 111 adds the stochastic chain's intersection: SsrTraceTargets, which
+/// SceneRenderer::GetSsrTraceTargets returns by value, grows RayLength. A stale module lays the
+/// returned struct out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 110u
+#define VENG_MODULE_ABI_VERSION 111u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

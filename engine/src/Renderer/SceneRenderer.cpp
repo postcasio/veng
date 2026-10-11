@@ -301,7 +301,8 @@ namespace Veng::Renderer
         // layouts, which must already exist, so the chain is constructed after that subsystem.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
                                  m_GpuCull->GetHiZTailLayout());
-        m_SsrStochastic = SsrStochasticChain::Create(m_Context, m_Assets);
+        m_SsrStochastic = SsrStochasticChain::Create(
+            m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(), m_GpuCull->GetHiZTailLayout());
         // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
@@ -1417,8 +1418,9 @@ namespace Veng::Renderer
                 (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
             if (declareStochastic)
             {
-                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, m_DepthHandle,
-                                         m_NormalHandle, m_OrmHandle);
+                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, lightingTargetId,
+                                         m_DepthHandle, m_NormalHandle, m_OrmHandle,
+                                         lightingTargetHandle);
             }
 
             if (i == tailAnchor)
@@ -2234,7 +2236,9 @@ namespace Veng::Renderer
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_SceneColorAllocExtent, m_DepthView,
                         m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout());
-        m_SsrStochastic->Recreate(m_Settings, m_RenderAllocExtent);
+        m_SsrStochastic->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
+                                  m_GpuCull->GetHiZReduceSetLayout(),
+                                  m_GpuCull->GetHiZTailSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);

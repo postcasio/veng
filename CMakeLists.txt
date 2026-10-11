@@ -1979,6 +1979,11 @@ if (VENG_BUILD_TESTS)
             # pixel once, the tile list, the dispatch records and a dispatch through them, the GGX
             # lobe sampler against its distribution, and the blue-noise tile's spread.
             tests/gpu/ssr_classify.cpp
+            # ssr_intersect.cpp drives the stochastic chain's intersection: a mirror reaching a
+            # wall 800 m away with no reach knob, a small square 300 m away reflected at full
+            # confidence, a thin board not reflected into the floor behind it, a spent budget
+            # missing, the screen-edge fade, and a surface seen from behind never reflected.
+            tests/gpu/ssr_intersect.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

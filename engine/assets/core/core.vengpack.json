@@ -660,6 +660,11 @@
       "id": "0xCDED5EB51013870B",
       "type": "Raw",
       "source": "data/ssr_blue_noise.bin"
+    },
+    {
+      "id": "0x6F2923B2CF152214",
+      "type": "Shader",
+      "source": "shaders/ssr_intersect.comp.shader.json"
     }
   ]
 }

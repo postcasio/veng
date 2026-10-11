@@ -1,4 +1,4 @@
-// Screen-space reflections reach as far as the view authors, without inventing hits. Three cases:
+// Screen-space reflections reach as far as the view authors, without inventing hits. Four cases:
 //
 //  - a mirror floor under a red wall 800 m away reflects the wall's colour once SsrMaxDistance
 //    reaches it, at the default thickness, where a short ray reflects nothing;
@@ -6,7 +6,11 @@
 //    gap beneath it — those rays pass far behind the board — while its true mirror image below
 //    the gap is;
 //  - the step budget, distance and thickness authored on a scene's RenderLook reach the trace when
-//    a viewport presents the scene.
+//    a viewport presents the scene;
+//  - a smooth mirror seen from just above it reflects an emitter 300 m away as fully as one 30 m
+//    away: a reflection does not fade with how far away its hit lies. This case runs the
+//    stochastic chain and reads its raw intersection, which resolves the end of each ray's
+//    screen line in depth.
 //
 // The materials are forward_opaque's untextured parameter block, so a white metal floor reflects
 // exactly the colour it is shown. Skips cleanly (exit 77) on a machine with no Vulkan ICD.
@@ -395,6 +399,154 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(viewport->GetViewState().SsrMaxSteps == 512u);
 
     CHECK(Luma(ReflectionBand(longRay)) > Luma(ReflectionBand(shortRay)) + 0.02f);
+
+    std::filesystem::remove(archive);
+}
+
+namespace
+{
+    // white_plane_pack: the normal-mapped metal (its NormalStrength 0 makes it a flat mirror) and
+    // the brick material, the parent of an unlit emitter.
+    constexpr AssetId MirrorInstanceId{0xBCAE43829219AE51ULL};
+    constexpr AssetId EmitterMaterial{0x000000000000232BULL};
+
+    constexpr uvec2 WideExtent{512, 288};
+
+    // The summed luminance of an RGBA16F target at WideExtent.
+    f64 SumLuma(const vector<u8>& rgba16f)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
+        f64 sum = 0.0;
+        for (usize i = 0; i < static_cast<usize>(WideExtent.x) * WideExtent.y; ++i)
+        {
+            sum += Luma(vec3(glm::unpackHalf1x16(halves[i * 4 + 0]),
+                             glm::unpackHalf1x16(halves[i * 4 + 1]),
+                             glm::unpackHalf1x16(halves[i * 4 + 2])));
+        }
+        return sum;
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ssr reach: a mirror seen from just above it reflects an emitter at range as "
+                  "fully as one nearby")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_ssr_reach_emitter.vengpack";
+    {
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        REQUIRE(Veng::TestSupport::CookCached(
+                    cooker, path(GPU_GBUFFER_FIXTURE_DIR) / "white_plane_pack.json", archive, {},
+                    nullptr, nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                    .has_value());
+    }
+    REQUIRE(assets.Mount(archive).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> mirror =
+        assets.LoadSync<MaterialInstance>(MirrorInstanceId);
+    REQUIRE(mirror.has_value());
+    auto& mirrorParams = const_cast<MaterialInstance&>(*mirror->Get());
+    mirrorParams.SetParam("MetallicFactor", 1.0f);
+    mirrorParams.SetParam("RoughnessFactor", 0.05f);
+    mirrorParams.SetParam("NormalStrength", 0.0f);
+    const AssetResult<AssetHandle<Material>> emitterParent =
+        assets.LoadSync<Material>(EmitterMaterial);
+    REQUIRE(emitterParent.has_value());
+    const AssetHandle<MaterialInstance> emitter = assets.BuildSync<MaterialInstance>(
+        MaterialInstanceInfo{.Name = "Emitter", .Context = &Context, .Parent = *emitterParent});
+    REQUIRE(emitter.IsLoaded());
+    auto& emitterParams = const_cast<MaterialInstance&>(*emitter.Get());
+    emitterParams.SetParam("BaseColorFactor", vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    emitterParams.SetParam("EmissiveFactor", vec4(2.0f, 2.0f, 2.0f, 0.0f));
+
+    // The eye 0.3 m above a white metal mirror, looking 10 degrees down; a square emitter 6
+    // degrees across facing the eye, 6 degrees above its line of sight's horizontal. No light
+    // and no ambient term: everything the mirror shows is reflection. The rays toward a distant
+    // emitter leave the mirror a little ahead of the eye, so on screen each runs into its
+    // vanishing point, and every depth past about a hundred metres falls in its last texel.
+    const vec3 eye(0.0f, 0.3f, 0.0f);
+    const f32 elevation = glm::radians(6.0f);
+    const vec3 sight(0.0f, std::sin(elevation), -std::cos(elevation));
+    const quat facing = glm::angleAxis(glm::radians(90.0f) + elevation, vec3(1.0f, 0.0f, 0.0f));
+    CameraView camera;
+    camera.SetPerspective(glm::radians(70.0f),
+                          static_cast<f32>(WideExtent.x) / static_cast<f32>(WideExtent.y), 0.05f,
+                          2000.0f);
+    const f32 pitch = glm::radians(-10.0f);
+    camera.SetView(eye, eye + vec3(0.0f, std::sin(pitch), -std::cos(pitch)),
+                   vec3(0.0f, 1.0f, 0.0f));
+
+    SceneRendererSettings settings{.Mode = DebugView::Final,
+                                   .Bloom = false,
+                                   .Shadows = false,
+                                   .PunctualShadows = false,
+                                   .SSR = true,
+                                   .AO = false};
+    settings.AntiAliasing = AntiAliasingMode::None;
+    settings.SsrMethod = SceneRendererSettings::SsrTechnique::Stochastic;
+    const Unique<SceneRenderer> renderer =
+        SceneRenderer::Create({.Context = Context,
+                               .Assets = assets,
+                               .OutputFormat = Context.GetOutputFormat(),
+                               .Extent = WideExtent,
+                               .Settings = settings});
+
+    // The share of the emitter's energy its reflection carries, over what a mirror carries:
+    // the solid angle the emitter fills seen from the eye's mirror image, over seen from the eye.
+    // The intersection's radiance, premultiplied by its confidence, is the reflection a white
+    // metal mirror adds; the lit scene beside it, which nothing composites into yet, is the
+    // emitter seen directly.
+    const auto ReflectedShare = [&](const f32 distance) -> f64
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        const Ref<Mesh> floor = Mesh::BuildSync(
+            Context, Primitives::Plane(vec2(10.0f), uvec2(1), *mirror), "Mirror Floor");
+        const f32 side = 2.0f * distance * std::tan(glm::radians(3.0f));
+        const Ref<Mesh> panel =
+            Mesh::BuildSync(Context, Primitives::Plane(vec2(side), uvec2(1), emitter), "Emitter");
+        const Entity floorEntity = scene->CreateEntity();
+        scene->Add<Transform>(floorEntity).Position = vec3(0.0f, 0.0f, -4.5f);
+        scene->Add<MeshRenderer>(floorEntity).Mesh = assets.Adopt(floor);
+        const vec3 centre = eye + sight * distance;
+        const Entity panelEntity = scene->CreateEntity();
+        auto& transform = scene->Add<Transform>(panelEntity);
+        transform.Position = centre;
+        transform.Rotation = facing;
+        scene->Add<MeshRenderer>(panelEntity).Mesh = assets.Adopt(panel);
+
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .AmbientFloor = vec3(0.0f)});
+            });
+        const f64 direct = SumLuma(renderer->GetHdrView()->GetImage()->Download());
+        const f64 reflected =
+            SumLuma(renderer->GetSsrTraceTargets().Radiance->GetImage()->Download());
+
+        const vec3 normal = facing * vec3(0.0f, 1.0f, 0.0f);
+        const auto solidAngle = [&](const vec3& from)
+        {
+            const vec3 toward = from - centre;
+            const f32 length = glm::length(toward);
+            return std::abs(glm::dot(normal, toward)) / (length * length * length);
+        };
+        const f64 mirrorShare = solidAngle(vec3(eye.x, -eye.y, eye.z)) / solidAngle(eye);
+        REQUIRE(direct > 0.0);
+        return reflected / (direct * mirrorShare);
+    };
+
+    const f64 near = ReflectedShare(30.0f);
+    const f64 far = ReflectedShare(300.0f);
+    MESSAGE("reflected share at 30 m " << near << ", at 300 m " << far);
+    // Near, the reflection carries most of what a mirror would (the screen-edge fade and the
+    // texels the emitter's edges straddle take the rest); far away, as much again.
+    CHECK(near > 0.7);
+    CHECK(far > 0.7);
+    CHECK(far > 0.85 * near);
 
     std::filesystem::remove(archive);
 }

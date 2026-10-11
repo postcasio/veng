@@ -1577,7 +1577,7 @@ and 6.6 % (8.7, 7.4); on the same floor normal-mapped, turns 7.1, 9.0 and 12 %, 
 A normal-mapped floor's reflection under translation is where history helps least: each facet's
 reflected content changes with the viewpoint, so the moving history is short and tightly clipped.
 
-#### The stochastic chain classifies tiles and samples each ray's lobe
+#### The stochastic chain classifies tiles, samples each ray's lobe, and intersects it
 
 `SceneRendererSettings::SsrMethod` picks which chain SSR runs through: `Legacy`, everything above,
 or `Stochastic`, a second chain (`SsrStochasticChain`) built on the published stochastic
@@ -1586,7 +1586,7 @@ frame, and a denoiser over the 8×8 tiles that need one. `FrameTopology` wires e
 (`SsrActive` or `SsrStochasticActive`); the stochastic one never takes the Legacy chain's temporal
 pass (`SsrTemporal` is false under it). Under `Stochastic` nothing composites a reflection into the
 Final view yet: the frame renders as with SSR off, and the `Reflections` debug view blits the chain's
-radiance target. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
+radiance target — the intersection's raw, one-sample-per-ray reflection. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
 at the HDR tail anchor — and every target is at the render allocation, renderer-owned and imported.
 
 **Classification** (`ssr_classify.comp`, one 64×1 group per 8×8 tile, its local indices remapped so
@@ -1631,6 +1631,50 @@ generated deterministically by `tools/ssr_blue_noise.py`), read at the pixel's s
 rotated by the golden ratio per frame of the view block's `FrameIndex` (wrapping at 256), so the
 rotation shares no period with the projection jitter.
 
+**The depth pyramid** is the chain's own: `ssr_hiz_reduce.comp` and its one-dispatch tail (the
+Legacy chain's pipelines, on the renderer's hi-Z layouts) reduce the depth target to the nearest
+depth under reverse-Z, level 0 a copy at the render allocation and seven levels at most, since the
+march climbs no higher than level 6.
+
+**Intersection** (`ssr_intersect.comp`, 64 rays a group, dispatched indirectly through the first
+record; one invocation per listed ray):
+
+- **The march works on cell boundaries**, in screen UV plus device depth along the straight
+  screen-space line of the ray, from the pixel's own point. Each iteration meets the current cell's x
+  and y planes and — for a ray heading away from the camera — its depth plane: a ray that leaves the
+  cell above the cell's nearest depth advances to the boundary (a 0.005-texel overshoot) and climbs a
+  level, one that meets the depth plane advances to it and descends, and one already behind the
+  surface descends in place. The march ends when it descends below level 0. A cell at level k is
+  2^k level-0 texels on screen; the pyramid's floor-halved levels cover their cells (each texel's
+  proportional footprint starts at twice its index), so the cell's depth is read clamped into the
+  level. The screen direction is the projection of a point along the view-space ray, as far along as
+  the pixel is from the eye (pulled in for a ray heading back toward the camera, so the point stays in
+  front of it); positions are reconstructed camera-relative through `InvViewRotProj`.
+- **A ray that meets nothing is a miss**: one that spends `SsrMaxSteps` iterations, leaves the screen,
+  or is stopped by low subgroup occupancy (at most an eighth of its subgroup's lanes still marching,
+  the threshold scaled by `WaveGetLaneCount()` so it holds at any subgroup width; a mirror never
+  stops early). None of them has a hit to read.
+- **The end of the line is resolved in depth.** A depth plane is met analytically inside the texel,
+  so even the texel at a ray's vanishing point, which holds every depth from tens of metres to
+  infinity, is hit at the surface's depth. A ray that descends below level 0 behind the surface it
+  stands over crossed that depth either inside the texel — past a cell boundary it overshot onto —
+  where the hit moves back to the crossing, or before the texel, where it passed behind the surface
+  and is judged by the thickness test.
+- **Validation**: a hit off screen, within two pixels of its origin on both axes, over the background
+  (the 2x2 cell at level 1, or the texel itself, at depth 0), or on a surface seen from behind
+  (`dot(normal, ray) > 0`) is a miss. Otherwise the confidence is `(1 − smoothstep(0, t, gap))²`
+  times a vignette 5 % of the height wide (the horizontal one scaled by aspect), the gap the view
+  depth between the hit and the texel's own surface, and `t = max(SsrThickness, 1.5 × the depth one
+  texel of the ray spans where it crossed the surface's depth)` — so the tolerance grows with range
+  and is never taken across the vanishing point's texel.
+- **Output**: the lit scene at the hit texel (a point load) times the confidence, with the confidence
+  in alpha (`RGBA16F`), and the ray's world-space length (`R16F`, capped at the half-float maximum),
+  both zero for a miss, written to the ray's pixel and to each quad neighbour its copy flags name.
+  The classifier clears both targets every frame, so a pixel no ray covers reads zero.
+
+`SsrMaxDistance` and `SsrResolutionScale` do not reach the stochastic chain; `SsrMaxSteps` is its
+per-ray iteration budget and `SsrThickness` the floor of its thickness tolerance.
+
 `SceneRenderer::GetSsrTraceTargets()` exposes the lists, counters, records and targets for tests.
 `tests/gpu/ssr_classify.cpp` pins: one, two and four rays per quad over a glossy floor; none and no
 tile past the cutoff; every pixel of a mirror at every density; every glossy pixel of a floor cut at
@@ -1638,6 +1682,13 @@ a slant traced or copied exactly once and no background pixel either; the tile l
 the tiles holding floor; the records matching the totals, with a dispatch through them visiting each
 ray once; the sampler's mean reflected cosine and below-surface share against a quadrature of the
 visible-normal distribution; and the noise tile's uniform levels and even 8×8 windows.
+`tests/gpu/ssr_intersect.cpp` pins: a mirror floor reflecting a wall 800 m away under a 128-iteration
+budget with no reach knob; a 2° square 300 m away reflected at full confidence on every texel whose
+mirror ray lands inside it; a thin board not reflected into the floor behind it, and reflected in
+front of it; a spent budget leaving no hit; the vignette fading a mirror's confidence to nothing at
+the screen edge and leaving it whole inside; and a panel seen from above never reflected from below.
+`tests/gpu/ssr_reach.cpp`'s last case pins the distant energy: from 0.3 m above a mirror, an emitter
+300 m away is reflected as fully as one 30 m away.
 
 ### Depth of field and the physical camera
 

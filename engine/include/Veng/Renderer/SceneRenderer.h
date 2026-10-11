@@ -113,6 +113,8 @@ namespace Veng::Renderer
         Ref<ImageView> Alpha;
         /// @brief The blue-noise tile the rays draw their lobe samples from (RG8, 128 square).
         Ref<ImageView> BlueNoise;
+        /// @brief Each traced or copied pixel's world-space ray length to its hit (R16F), zero for a miss.
+        Ref<ImageView> RayLength;
     };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.

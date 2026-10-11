@@ -1,6 +1,7 @@
 // Stochastic SSR tile classification: decides which pixels trace a reflection ray this frame,
 // compacts them into the ray list, lists every 8x8 tile holding a glossy pixel for the denoiser,
-// extracts each pixel's GGX α, and clears the radiance target the intersect then fills.
+// extracts each pixel's GGX α, and clears the radiance and ray-length targets the intersect then
+// fills.
 //
 // One 64x1 workgroup covers one 8x8 tile, its local indices remapped so each 2x2 quad sits in four
 // consecutive ones (local index ^ 1, ^ 2, ^ 3 are the quad's horizontal, vertical and diagonal
@@ -53,6 +54,7 @@
 [[vk::binding(2, 3)]] globallycoherent RWStructuredBuffer<uint> g_Counters;
 [[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Radiance;
 [[vk::binding(4, 3)]] [format("r8")] RWTexture2D<float> g_Alpha;
+[[vk::binding(5, 3)]] [format("r16f")] RWTexture2D<float> g_RayLength;
 
 struct PushConstants
 {
@@ -203,6 +205,7 @@ void csMain(uint localIndex : SV_GroupIndex, uint3 group : SV_GroupID)
     if (inside)
     {
         g_Radiance[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+        g_RayLength[pixel] = 0.0;
         g_Alpha[pixel] = alpha;
     }
 
