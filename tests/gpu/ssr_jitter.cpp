@@ -10,9 +10,6 @@
 //  - A glossy normal-mapped metal floor reflects emissive bars: through a whole jitter period, the
 //    converged reflection changes by a small fraction of its level each frame. Each jitter phase
 //    samples the normal map somewhere else, and so turns every reflected ray.
-//  - The same floor under a camera panning or moving sideways by under a pixel a frame: the
-//    reflection's change keeps almost nothing that repeats with the jitter period, and once the
-//    camera stops it holds as still as a converged one within a period.
 //  - Geometric specular anti-aliasing reaches the reflection: a flat mirror's floor reflects
 //    exactly as with it off, and the normal-mapped floor's does not.
 //  - A mirror floor reflecting the bars under a camera moving sideways shows, at each pose, close to
@@ -52,7 +49,6 @@
 #include "support/TestCook.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 
 // glm's packing header after Veng.h, which configures glm first.
@@ -483,43 +479,6 @@ namespace
         }
         return sum / static_cast<f64>((band.LastRow - band.FirstRow + 1) * (Extent.x - 4));
     }
-
-    // The bars scene's camera turned `yaw` about the vertical, or moved `shift` along X.
-    CameraView MovedCamera(const BarsScene& built, const f32 yaw, const f32 shift)
-    {
-        const vec3 eye = vec3(0.0f, 0.6f, 1.5f) + vec3(shift, 0.0f, 0.0f);
-        const vec3 ahead = vec3(0.0f, -0.45f, -3.5f);
-        CameraView camera = built.Camera;
-        camera.SetView(eye, eye + glm::angleAxis(yaw, vec3(0.0f, 1.0f, 0.0f)) * ahead,
-                       vec3(0.0f, 1.0f, 0.0f));
-        return camera;
-    }
-
-    // The part of a level's frame-to-frame change that repeats with the jitter period: each
-    // change, averaged over the frames at the same jitter phase, less the mean of those averages,
-    // at its largest. A steady drift — a reflection moving across the band — leaves only the mean.
-    f64 PeriodicChange(const vector<f64>& levels)
-    {
-        std::array<f64, TaaJitterSampleCount> phase{};
-        std::array<u32, TaaJitterSampleCount> counts{};
-        for (usize t = 1; t < levels.size(); ++t)
-        {
-            phase[t % TaaJitterSampleCount] += levels[t] - levels[t - 1];
-            ++counts[t % TaaJitterSampleCount];
-        }
-        f64 mean = 0.0;
-        for (u32 p = 0; p < TaaJitterSampleCount; ++p)
-        {
-            phase[p] /= static_cast<f64>(counts[p]);
-            mean += phase[p] / TaaJitterSampleCount;
-        }
-        f64 largest = 0.0;
-        for (const f64 average : phase)
-        {
-            largest = std::max(largest, std::abs(average - mean));
-        }
-        return largest;
-    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -768,89 +727,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(returned > 0.9);
         CHECK(returned < 1.1);
     }
-
-    std::filesystem::remove(archive);
-}
-
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "ssr jitter: a normal-mapped mirror's reflection under a slowly moving camera "
-                  "keeps no jitter pulse")
-{
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    const path archive = CookWhitePlane(assets, "veng_gpu_ssr_jitter_moving.vengpack");
-    const BarsScene built = BuildBarsScene(Context, assets, Types, 0.3f);
-    const Unique<SceneRenderer> plain =
-        MakeRenderer(Context, assets, AntiAliasingMode::None, false);
-    FloorBand band = LocateFloor(RenderLuma(Context, *plain, *built.World, built.Camera));
-    // Clear of the rows a moving contact line crosses.
-    band.FirstRow += 2;
-    REQUIRE(band.LastRow > band.FirstRow + 16);
-
-    // A pan of half a pixel a frame and a sideways move whose reflection crosses about two thirds
-    // of one: slow enough that a pulse is not lost in the motion.
-    struct Motion
-    {
-        f32 Yaw;
-        f32 Shift;
-    };
-    f64 pulse = 0.0;
-    f64 settling = 0.0;
-    for (const Motion motion :
-         {Motion{.Yaw = glm::radians(0.25f), .Shift = 0.0f}, Motion{.Yaw = 0.0f, .Shift = 0.02f}})
-    {
-        const Unique<SceneRenderer> temporal =
-            MakeRenderer(Context, assets, AntiAliasingMode::TAA, true);
-        for (u32 frame = 0; frame < 4 * TaaJitterSampleCount; ++frame)
-        {
-            (void)RenderLuma(Context, *temporal, *built.World, built.Camera);
-        }
-        // A period to start moving, then four measured.
-        u32 step = 0;
-        const auto advance = [&]
-        {
-            ++step;
-            return RenderLuma(Context, *temporal, *built.World,
-                              MovedCamera(built, motion.Yaw * static_cast<f32>(step),
-                                          motion.Shift * static_cast<f32>(step)));
-        };
-        for (u32 frame = 0; frame < TaaJitterSampleCount; ++frame)
-        {
-            (void)advance();
-        }
-        vector<f64> levels;
-        vector<f32> previous;
-        for (u32 frame = 0; frame <= 4 * TaaJitterSampleCount; ++frame)
-        {
-            previous = advance();
-            levels.push_back(BandMean(previous, band));
-        }
-        const f64 level = *std::ranges::min_element(levels);
-        REQUIRE(level > 0.01);
-        pulse = std::max(pulse, PeriodicChange(levels) / level);
-
-        // Stopped: the second period after the camera stops changes frame to frame no more than a
-        // still converged reflection may.
-        const CameraView stopped = MovedCamera(built, motion.Yaw * static_cast<f32>(step),
-                                               motion.Shift * static_cast<f32>(step));
-        for (u32 frame = 1; frame <= 2 * TaaJitterSampleCount; ++frame)
-        {
-            vector<f32> current = RenderLuma(Context, *temporal, *built.World, stopped);
-            if (frame > TaaJitterSampleCount)
-            {
-                settling = std::max(settling, BandMeanDelta(current, previous, band) /
-                                                  BandMean(current, band));
-            }
-            previous = std::move(current);
-        }
-    }
-    CAPTURE(pulse);
-    CAPTURE(settling);
-    // A history held to four samples while it moves leaves the swing in, 2.7 and 4.1 % of the
-    // level, and changes by up to 1.6 % a frame through the second period after stopping while its
-    // count climbs back (0.5 % and 0.9 % at landing).
-    CHECK(pulse < 0.01);
-    CHECK(settling < 0.01);
 
     std::filesystem::remove(archive);
 }

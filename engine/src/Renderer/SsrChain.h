@@ -323,8 +323,7 @@ namespace Veng::Renderer
         TextureHandle m_TermHandle;
         /// @brief The term's import, declared by Declare.
         ResourceId m_TermId;
-        /// @brief The reflected image's screen motion and view depth the composite writes beside the
-        /// term.
+        /// @brief The reflected image's screen motion the composite writes beside the term.
         Ref<Image> m_MotionImage;
         /// @brief View over m_MotionImage.
         Ref<ImageView> m_MotionView;

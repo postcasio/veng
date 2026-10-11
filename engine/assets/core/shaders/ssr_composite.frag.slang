@@ -507,8 +507,7 @@ float2 PointMotion(ViewConstants vc, float3 relative)
 struct TermOutput
 {
     float4 Term : SV_Target0;    // the radiance the reflection adds; alpha 1 where one was evaluated
-    float4 Motion : SV_Target1;  // the reflected image's unjittered screen motion since last frame,
-                                 // and its view depth
+    float2 Motion : SV_Target1;  // the reflected image's unjittered screen motion since last frame
 };
 
 // Under a temporal resolve: the reflection term alone, and how far the image it reflects moved on
@@ -521,11 +520,6 @@ TermOutput fsTerm(VSOutput input)
     Reflected reflected = EvaluateReflection(vc, input.v_UV);
     TermOutput output;
     output.Term = float4(reflected.Contribution, reflected.Reflects ? 1.0 : 0.0);
-    output.Motion = float4(0.0, 0.0, 0.0, 0.0);
-    if (reflected.Reflects)
-    {
-        float imageDepth = -mul((float3x3)vc.View, reflected.VirtualPosition).z;
-        output.Motion = float4(PointMotion(vc, reflected.VirtualPosition), imageDepth, 0.0);
-    }
+    output.Motion = reflected.Reflects ? PointMotion(vc, reflected.VirtualPosition) : float2(0.0, 0.0);
     return output;
 }

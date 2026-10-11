@@ -15,17 +15,12 @@
 //    camera reads it back from exactly the pixel it writes, and nothing resamples it.
 //  - Reprojection. The history is read where the reflected image stood last frame: the composite
 //    projects the reflected hit, unfolded through the surface along the pixel's ray, through both
-//    frames' unjittered matrices. A plane mirror's image of a point is exactly there. The motion is
-//    the one of the 3x3 render texels whose reflected image is nearest, as the frame resolve takes
-//    the nearest surface's: a thin reflected feature spreads into texels whose own rays reflect what
-//    lies behind it, which moves slower under a camera translation, and its history would trail.
+//    frames' unjittered matrices. A plane mirror's image of a point is exactly there.
 //  - Accumulation. The history carries a sample count, and each frame takes one share in that
-//    count, so a pixel averages every jitter phase alike rather than weighting the latest. The count
-//    runs to StillSamples, and while the reflected image moves, to as many samples as span
-//    MovingReach pixels of its travel, never fewer than MovingSamples: two jitter periods, so a
-//    moving history still weights every phase alike. What a reflection on a curved or normal-mapped
-//    surface shows changes with the viewpoint, and each reprojected read filters the history a
-//    little, so how long a history stays right depends on how far its image has travelled.
+//    count, so a still pixel averages every jitter phase alike rather than weighting the latest.
+//    The count runs to StillSamples where the history holds still and is held to MovingSamples once
+//    it moves a quarter of a pixel a frame, since every reprojected read filters the history a
+//    little and a moving reflection decorrelates from what it showed.
 //  - Validation. A box built from this frame's 3x3 texels cannot validate a still history: under a
 //    normal-mapped surface those texels swing together from phase to phase, and a history clipped
 //    to them follows the swing. So beside the history runs a fast one, the luminance over about one
@@ -33,9 +28,8 @@
 //    through a period, and leaves it within a frame or two when the neighbourhood really changes.
 //    The history learns how far the fast one strays from it, and loses its count when the fast one
 //    strays several times further — a reflected source that appeared or went, a hit that changed, a
-//    surface newly revealed. A moving history is validated the same way and never clipped to this
-//    frame's box, which would follow the swing. The first period of a history is not validated,
-//    since its spread is not learnt yet.
+//    surface newly revealed. While the history moves, it is also clipped to the frame resolve's own
+//    tight box. The first period of a history is not validated, since its spread is not learnt yet.
 //    A history read off-screen, a pixel that reflected nothing, and the first frame after a recreate
 //    keep no history at all.
 #include "view_constants.slang"
@@ -46,7 +40,7 @@
 struct PushConstants
 {
     uint TermTexture;        // this frame's reflection term (jittered, render allocation); alpha 1 where evaluated
-    uint MotionTexture;      // the reflected image's unjittered motion and view depth (render allocation)
+    uint MotionTexture;      // the reflected image's unjittered screen motion (render allocation)
     uint HistoryTexture;     // the previous accumulation (output allocation); count in alpha
     uint FastTexture;        // the previous fast luminance, and its squared spread about the history
     uint Sampler;            // shared linear clamp sampler (the history's Catmull-Rom taps)
@@ -76,19 +70,20 @@ struct TemporalOutput
 static const float KernelFalloff = 2.29;
 static const float MaxKernelSharpening = 2.5;
 
-// The sample count a pixel's history runs to: a period-long swing of the term at each jitter phase
-// moves the average by about its size over this count each frame.
+// The sample count a still pixel's history runs to: a period-long swing of the term at each jitter
+// phase moves the average by about its size over this count each frame.
 static const float StillSamples = 64.0;
-// How far, in output pixels, the reflected image may travel across the samples a moving history
-// holds, and the fewest samples it is held to: two jitter periods.
-static const float MovingReach = 64.0;
-static const float MovingSamples = 16.0;
+// The sample count a pixel whose history moves MovingPixels a frame is held to.
+static const float MovingSamples = 4.0;
+static const float MovingPixels = 0.25;
 // The fast luminance's sample count: one jitter period.
 static const float FastSamples = 8.0;
 
 // How far past the neighbourhood's own range the fast luminance's box reaches, in its standard
 // deviations.
 static const float ClipSpread = 1.0;
+// The moving history's tight box, in the neighbourhood's standard deviations (taa_resolve.frag's).
+static const float MovingClipSpread = 1.25;
 // How far the fast luminance may stray from the history before the history is doubted: this many
 // times its learnt spread, plus a share of the larger of the two luminances.
 static const float ChangeSpread = 2.5;
@@ -106,6 +101,12 @@ static const float ReflectsFloor = 1e-3;
 float3 RgbToYCoCg(float3 c)
 {
     return float3(0.25 * (c.r + 2.0 * c.g + c.b), 0.5 * (c.r - c.b), 0.25 * (-c.r + 2.0 * c.g - c.b));
+}
+
+float3 YCoCgToRgb(float3 c)
+{
+    const float t = c.x - c.z;
+    return float3(t + c.y, c.x + c.z, t - c.y);
 }
 
 // Five-tap Catmull-Rom read of the history at uv (as taa_resolve.frag reads its own), so a moving
@@ -186,17 +187,16 @@ TemporalOutput fsMain(VSOutput input)
     const int2 centerTexel = int2(floor(samplePos));
     const int2 maxTexel = int2(renderExtent) - 1;
 
-    // The weighted reconstruction, the YCoCg range and moments of the 3x3, and the motion of the
-    // texel whose reflected image is nearest, which the pixel reprojects by.
+    // The weighted reconstruction, the YCoCg range and moments of the 3x3, and the texel nearest
+    // the pixel's position, whose motions the pixel reprojects by.
     float4 termSum = 0.0;
     float weightSum = 0.0;
     float3 m1 = 0.0;
     float3 m2 = 0.0;
     float3 neighborMin = 1e9;
     float3 neighborMax = -1e9;
-    Texture2D motionTexture = g_Textures[NonUniformResourceIndex(g_PC.MotionTexture)];
-    float2 motion = float2(0.0, 0.0);
-    float nearestImage = 1e30;
+    float nearestWeight = -1.0;
+    int2 nearestTexel = clamp(centerTexel, int2(0), maxTexel);
     [unroll]
     for (int y = -1; y <= 1; ++y)
     {
@@ -209,12 +209,10 @@ TemporalOutput fsMain(VSOutput input)
             const float weight = exp(-KernelFalloff * dot(offset, offset));
             termSum += tap * weight;
             weightSum += weight;
-            // A texel that reflected nothing wrote no depth.
-            const float3 imageMotion = motionTexture.Load(int3(texel, 0)).rgb;
-            if (imageMotion.z > 0.0 && imageMotion.z < nearestImage)
+            if (weight > nearestWeight)
             {
-                nearestImage = imageMotion.z;
-                motion = imageMotion.xy;
+                nearestWeight = weight;
+                nearestTexel = texel;
             }
 
             const float3 ycc = RgbToYCoCg(tap.rgb);
@@ -240,7 +238,10 @@ TemporalOutput fsMain(VSOutput input)
     // the nearest one fell between output pixels (at scale 1 the sum never drops below 1).
     const float share = saturate(weightSum);
 
+    const float2 motion =
+        g_Textures[NonUniformResourceIndex(g_PC.MotionTexture)].Load(int3(nearestTexel, 0)).rg;
     const Reprojected previous = ReadHistory(uv, motion);
+    const float moving = saturate(length(motion * float2(g_PC.Extent)) / MovingPixels);
 
     const float3 mean = m1 / 9.0;
     const float3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
@@ -266,11 +267,28 @@ TemporalOutput fsMain(VSOutput input)
                                 floorShare * max(historyLuma, fast) + 1e-4;
         const float excess = abs(fast - historyLuma) / tolerance;
         count *= saturate(1.0 - (excess - 1.0) / ClipReset);
+
+        // A moving history is also clipped to the frame resolve's tight box, along the segment
+        // from its centre.
+        if (moving > 0.0)
+        {
+            const float3 boxMin = max(mean - MovingClipSpread * sigma, neighborMin);
+            const float3 boxMax = min(mean + MovingClipSpread * sigma, neighborMax);
+            const float3 center = 0.5 * (boxMax + boxMin);
+            const float3 extent = 0.5 * (boxMax - boxMin) + 1e-5;
+            const float3 offset = RgbToYCoCg(history) - center;
+            const float3 unit = abs(offset / extent);
+            const float outside = max(unit.x, max(unit.y, unit.z));
+            if (outside > 1.0)
+            {
+                history = lerp(history, YCoCgToRgb(center + offset / outside), moving);
+                count *= lerp(1.0, saturate(1.0 - (outside - 1.0) / ClipReset), moving);
+            }
+        }
     }
 
-    // The long count, or the samples spanning MovingReach pixels of the image's travel.
-    const float travel = length(motion * float2(g_PC.Extent));
-    const float maxCount = clamp(MovingReach / max(travel, 1e-6), MovingSamples, StillSamples);
+    // A still history runs to the long count; a moving one is held to the short one.
+    const float maxCount = lerp(StillSamples, MovingSamples, moving);
     const float newCount = min(count + share, maxCount);
     const float alpha = share / max(newCount, share);
     const float3 resolved = lerp(history, current.rgb, alpha);
