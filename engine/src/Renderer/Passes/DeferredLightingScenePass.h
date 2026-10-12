@@ -14,10 +14,11 @@ namespace Veng::Renderer
     class LightTileCuller;
 
     // The deferred-lighting fragment push block: the g-buffer bindless slots (including the G4
-    // emissive read), the shared sampler, and the view-constants index. The light state — light and
-    // area-vertex bases, count, ambient arm and parameters, LTC LUTs — rides the view block, which
-    // a forward-lit translucent fragment reads too. Matches deferred_lighting.frag PushConstants
-    // byte-for-byte.
+    // emissive read), the shared sampler, the view-constants index, and the scale on the
+    // image-based specular term. The light state — light and area-vertex bases, count, ambient arm
+    // and parameters, LTC LUTs — rides the view block, which a forward-lit translucent fragment
+    // reads too; the specular scale does not, since only the deferred pass drops it. Matches
+    // deferred_lighting.frag PushConstants byte-for-byte.
     struct LightingPushConstants
     {
         u32 AlbedoTexture;
@@ -27,6 +28,7 @@ namespace Veng::Renderer
         u32 EmissiveTexture;
         u32 Sampler;
         u32 ViewConstantsIndex;
+        f32 SpecularIblFactor;
     };
 
     // The SSAO-enabled lighting variant's push block: the base fields plus the AO bindless slot.
@@ -40,6 +42,7 @@ namespace Veng::Renderer
         u32 EmissiveTexture;
         u32 Sampler;
         u32 ViewConstantsIndex;
+        f32 SpecularIblFactor;
         u32 SsaoTexture;
     };
 
@@ -74,14 +77,19 @@ namespace Veng::Renderer
         ///                         outlives the pass.
         /// @param writeToOutput    When true, writes directly to the output target (cascade-debug
         ///                         terminal arm); otherwise writes the HDR target.
+        /// @param specularIblFactor The scale on the image-based specular term: 1, or 0 while the
+        ///                         screen-space reflection composite carries it
+        ///                         (FrameTopology::DeferredSpecularIbl).
         DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
                                   bool useSsao, Ref<DescriptorSet> shadowSet, u32 shadowRingStride,
                                   u32 punctualRingStride, Ref<DescriptorSet> iblSet,
-                                  LightTileCuller* lightTiles = nullptr, bool writeToOutput = false)
+                                  LightTileCuller* lightTiles = nullptr, bool writeToOutput = false,
+                                  f32 specularIblFactor = 1.0f)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
               m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
               m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
-              m_IblSet(std::move(iblSet)), m_LightTiles(lightTiles), m_WriteToOutput(writeToOutput)
+              m_IblSet(std::move(iblSet)), m_LightTiles(lightTiles), m_WriteToOutput(writeToOutput),
+              m_SpecularIblFactor(specularIblFactor)
         {
         }
 
@@ -111,5 +119,7 @@ namespace Veng::Renderer
         LightTileCuller* m_LightTiles = nullptr;
         /// @brief Whether this pass writes directly to the output target.
         bool m_WriteToOutput = false;
+        /// @brief The scale on the image-based specular term.
+        f32 m_SpecularIblFactor = 1.0f;
     };
 }

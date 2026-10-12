@@ -17,14 +17,21 @@
 //     reprojects no history (sample count 1) and a still camera's second frame accumulates onto
 //     it (sample count 2); the variance the temporal resolve writes is what the next frame's
 //     classifier guides its rays by;
+//   - the apply composite adds, to every pixel of the lit colour, the denoised reflection weighted
+//     by the BRDF LUT read at (N·V against the camera's direction, perceptual roughness) with F0
+//     the metallic blend of 0.04 and the base colour — so a pixel reflecting nothing keeps its
+//     colour exactly and the floor gains the sphere it reflects;
 //   - a renderer with SSR off records none of the chain's passes, and with it on records them all
-//     and leaves a finite reflection over several frames, with temporal anti-aliasing off and on.
+//     and leaves a finite reflection over several frames, with temporal anti-aliasing off and on;
+//   - with nothing glossy in view and no image-based lighting, a renderer with SSR on draws the
+//     same frame as one with it off.
 // The expected sets are the reference's selection rule, written out per pixel.
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <span>
 #include <utility>
 #include <vector>
@@ -35,7 +42,12 @@
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
 #include <Veng/Asset/RawAsset.h>
+#include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -47,9 +59,13 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
 #include <gpu/fixture.h>
+
+#include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include "Renderer/SsrChain.h"
 
@@ -59,6 +75,9 @@ using namespace Veng::Renderer;
 namespace
 {
     constexpr AssetId BlueNoiseTablesId{0xFC0C39061564BE4BULL};
+    // The white-plane fixture pack's material, writing RoughnessFactor and MetallicFactor straight
+    // into the g-buffer.
+    constexpr AssetId WhitePlaneInstanceId{0x895443ULL};
 
     // The four kinds of pixel the synthetic g-buffer holds, chosen per pixel by a hash so every
     // quad and tile mixes them. Perceptual roughness 0 is a mirror (alpha 0), 0.4 glossy (alpha
@@ -265,7 +284,9 @@ namespace
         return values;
     }
 
-    // One frame's synthetic g-buffer and lit colour, a value per pixel in row-major order.
+    // One frame's synthetic g-buffer and lit colour, a value per pixel in row-major order. The
+    // metallic channel and the base colour are optional: empty is metallic 0 and a base colour of
+    // 128 in each channel.
     struct SyntheticFrame
     {
         uvec2 Extent{0};
@@ -273,6 +294,8 @@ namespace
         std::vector<vec3> Normal;
         std::vector<u8> Perceptual;
         std::vector<vec3> Color;
+        std::vector<u8> Metallic;
+        std::vector<u8> BaseColor;
     };
 
     // The hashed g-buffer: an upward normal everywhere, the roughness of each pixel's kind, and no
@@ -296,12 +319,18 @@ namespace
     }
 
     // How much of the chain a frame runs: the SSSR passes alone, which leave the intersection's
-    // radiance in radiance A, or the denoiser after them as well.
+    // radiance in radiance A, the denoiser after them as well, or the apply composite after those,
+    // which adds the reflection into the lit colour.
     enum class Stages : u8
     {
         Trace,
         All,
+        Apply,
     };
+
+    // The apply composite's stand-in BRDF LUT edge: its texels hold their own centre coordinates,
+    // (x + 0.5, y + 0.5) / edge, so a bilinear read returns its (clamped) coordinates.
+    constexpr u32 TestLutSize = 64;
 
     // A synthetic frame (with no motion), an environment cube of one colour, and a chain to run
     // over them.
@@ -318,6 +347,8 @@ namespace
         Ref<ImageView> Material;
         Ref<ImageView> Color;
         Ref<ImageView> Velocity;
+        Ref<ImageView> Albedo;
+        TextureHandle AlbedoHandle;
         TextureHandle DepthHandle;
         TextureHandle NormalHandle;
         TextureHandle MaterialHandle;
@@ -337,6 +368,7 @@ namespace
             std::vector<u16> normals(pixels * 4);
             std::vector<u8> material(pixels * 4);
             std::vector<u16> color(pixels * 4);
+            std::vector<u8> albedo(pixels * 4, 128);
             for (usize i = 0; i < pixels; ++i)
             {
                 for (u32 c = 0; c < 3; ++c)
@@ -348,8 +380,16 @@ namespace
                 color[i * 4 + 3] = glm::packHalf1x16(1.0f);
                 material[i * 4 + 0] = 255;
                 material[i * 4 + 1] = frame.Perceptual[i];
-                material[i * 4 + 2] = 0;
+                material[i * 4 + 2] = frame.Metallic.empty() ? 0 : frame.Metallic[i];
                 material[i * 4 + 3] = 0;
+                if (!frame.BaseColor.empty())
+                {
+                    for (u32 c = 0; c < 3; ++c)
+                    {
+                        albedo[i * 4 + c] = frame.BaseColor[i * 3 + c];
+                    }
+                }
+                albedo[i * 4 + 3] = 255;
             }
             Depth =
                 Upload("SSR Test Depth", Format::R32Sfloat, std::as_bytes(std::span(frame.Depth)));
@@ -357,7 +397,11 @@ namespace
                 Upload("SSR Test Normal", Format::RGBA16Sfloat, std::as_bytes(std::span(normals)));
             Material =
                 Upload("SSR Test Material", Format::RGBA8Unorm, std::as_bytes(std::span(material)));
-            Color = Upload("SSR Test Color", Format::RGBA16Sfloat, std::as_bytes(std::span(color)));
+            // A colour attachment too, which the apply composite adds into.
+            Color = Upload("SSR Test Color", Format::RGBA16Sfloat, std::as_bytes(std::span(color)),
+                           ImageUsage::ColorAttachment);
+            Albedo =
+                Upload("SSR Test Albedo", Format::RGBA8Unorm, std::as_bytes(std::span(albedo)));
             const std::vector<u16> velocity(pixels * 2, glm::packHalf1x16(0.0f));
             Velocity =
                 Upload("SSR Test Velocity", Format::RG16Sfloat, std::as_bytes(std::span(velocity)));
@@ -367,6 +411,7 @@ namespace
             MaterialHandle = bindless.Register(Material);
             ColorHandle = bindless.Register(Color);
             VelocityHandle = bindless.Register(Velocity);
+            AlbedoHandle = bindless.Register(Albedo);
 
             const Ref<Image> cube =
                 Image::Create(context, {
@@ -395,6 +440,28 @@ namespace
                                                                  .ViewType = ImageViewType::Cube,
                                                                  .ArrayLayers = 6,
                                                              }));
+
+            std::vector<f32> lut(static_cast<usize>(TestLutSize) * TestLutSize * 2);
+            for (u32 y = 0; y < TestLutSize; ++y)
+            {
+                for (u32 x = 0; x < TestLutSize; ++x)
+                {
+                    const usize i = (static_cast<usize>(y) * TestLutSize + x) * 2;
+                    lut[i + 0] = (static_cast<f32>(x) + 0.5f) / TestLutSize;
+                    lut[i + 1] = (static_cast<f32>(y) + 0.5f) / TestLutSize;
+                }
+            }
+            const Ref<Image> lutImage =
+                Image::Create(context, {
+                                           .Name = "SSR Test BRDF LUT",
+                                           .Extent = {TestLutSize, TestLutSize, 1},
+                                           .Format = Format::RG32Sfloat,
+                                           .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                       });
+            lutImage->UploadSync(
+                std::span(reinterpret_cast<const u8*>(lut.data()), lut.size() * sizeof(f32)));
+            Chain->SetBrdfLut(
+                ImageView::Create(context, {.Name = "SSR Test BRDF LUT", .Image = lutImage}));
         }
 
         ~ChainHarness()
@@ -405,13 +472,15 @@ namespace
             bindless.Release(MaterialHandle);
             bindless.Release(ColorHandle);
             bindless.Release(VelocityHandle);
+            bindless.Release(AlbedoHandle);
         }
 
         ChainHarness(const ChainHarness&) = delete;
         ChainHarness& operator=(const ChainHarness&) = delete;
 
         Ref<ImageView> Upload(const char* name, const Format format,
-                              const std::span<const std::byte> bytes) const
+                              const std::span<const std::byte> bytes,
+                              const ImageUsage extraUsage = ImageUsage{}) const
         {
             const Ref<Image> image =
                 Image::Create(Ctx, {
@@ -420,7 +489,7 @@ namespace
                                        .Format = format,
                                        // TransferSrc for the denoiser's normal-history copy.
                                        .Usage = ImageUsage::Sampled | ImageUsage::TransferSrc |
-                                                ImageUsage::TransferDst,
+                                                ImageUsage::TransferDst | extraUsage,
                                    });
             image->UploadSync(std::span(reinterpret_cast<const u8*>(bytes.data()), bytes.size()));
             return ImageView::Create(Ctx, {.Name = name, .Image = image});
@@ -439,8 +508,11 @@ namespace
                     const ResourceId materialId = graph.Import("Material");
                     const ResourceId colorId = graph.Import("Color");
                     const ResourceId velocityId = graph.Import("Velocity");
+                    const ResourceId albedoId = graph.Import("Albedo");
                     Chain->Import(graph);
                     const SsrGraphInputs graphInputs{
+                        .Albedo = albedoId,
+                        .AlbedoHandle = AlbedoHandle,
                         .Depth = depthId,
                         .Normal = normalId,
                         .Material = materialId,
@@ -452,20 +524,23 @@ namespace
                         .Velocity = velocityId,
                         .VelocityHandle = VelocityHandle,
                     };
-                    if (stages == Stages::All)
+                    switch (stages)
                     {
-                        Chain->Declare(graph, graphInputs);
-                    }
-                    else
-                    {
+                    case Stages::Trace:
                         Chain->DeclareTrace(graph, graphInputs);
+                        break;
+                    case Stages::All:
+                        Chain->DeclareTrace(graph, graphInputs);
+                        Chain->DeclareDenoiser(graph, graphInputs);
+                        break;
+                    case Stages::Apply:
+                        Chain->Declare(graph, graphInputs);
+                        break;
                     }
                     std::vector<RenderGraph::ImportBinding> bindings{
-                        {.Id = depthId, .View = Depth},
-                        {.Id = normalId, .View = Normal},
-                        {.Id = materialId, .View = Material},
-                        {.Id = colorId, .View = Color},
-                        {.Id = velocityId, .View = Velocity}};
+                        {.Id = depthId, .View = Depth},       {.Id = normalId, .View = Normal},
+                        {.Id = materialId, .View = Material}, {.Id = colorId, .View = Color},
+                        {.Id = velocityId, .View = Velocity}, {.Id = albedoId, .View = Albedo}};
                     Chain->AppendImportBindings(bindings);
                     graph.Compile()->Execute(cmd, bindings);
                 });
@@ -596,10 +671,10 @@ namespace
         }
     };
 
-    // The radiance target a frame wrote, as RGBA halves widened to floats.
-    std::vector<vec4> DownloadRadiance(const SsrChain& chain, const u32 index)
+    // An RGBA16F target, widened to floats.
+    std::vector<vec4> DownloadRgba16(const Ref<ImageView>& view)
     {
-        const std::vector<u8> bytes = chain.GetRadianceView(index)->GetImage()->Download();
+        const std::vector<u8> bytes = view->GetImage()->Download();
         const auto* halves = reinterpret_cast<const u16*>(bytes.data());
         std::vector<vec4> texels(bytes.size() / (4 * sizeof(u16)));
         for (usize i = 0; i < texels.size(); ++i)
@@ -609,6 +684,12 @@ namespace
                 glm::unpackHalf1x16(halves[i * 4 + 2]), glm::unpackHalf1x16(halves[i * 4 + 3]));
         }
         return texels;
+    }
+
+    // The radiance target a frame wrote, as RGBA halves widened to floats.
+    std::vector<vec4> DownloadRadiance(const SsrChain& chain, const u32 index)
+    {
+        return DownloadRgba16(chain.GetRadianceView(index));
     }
 
     // A single-channel half-float target, widened to floats.
@@ -1234,6 +1315,73 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     CHECK(rayList == expected.Rays);
 }
 
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr apply: the composite adds the denoised reflection through the BRDF")
+{
+    AssetManager assets(Context, Tasks, Types);
+    FloorScene scene(0);
+    const uvec2 extent = FloorScene::Extent;
+    const usize pixels = static_cast<usize>(extent.x) * extent.y;
+    // Metal and dielectric columns in turn over a coloured base.
+    constexpr std::array<u8, 3> Base{204, 153, 102};
+    scene.Frame.Metallic.resize(pixels);
+    scene.Frame.BaseColor.resize(pixels * 3);
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const usize i = static_cast<usize>(y) * extent.x + x;
+            scene.Frame.Metallic[i] = (x & 1u) != 0u ? 255 : 0;
+            for (u32 c = 0; c < 3; ++c)
+            {
+                scene.Frame.BaseColor[i * 3 + c] = Base[c];
+            }
+        }
+    }
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const SsrChain& chain = *harness.Chain;
+
+    // Two frames of the chain alone give the denoiser a history; the third composites.
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    const u32 radianceIndex = chain.GetRadianceIndex();
+    harness.RunFrame(scene.Inputs(), Stages::Apply);
+    const std::vector<vec4> reflection = DownloadRadiance(chain, radianceIndex);
+    const std::vector<vec4> composited = DownloadRgba16(harness.Color);
+    CHECK(FiniteAndNonNegative(composited));
+
+    // The sample's view direction is the camera's, the view-to-world z axis; the stand-in LUT
+    // returns its read coordinates, clamped to its outermost texel centres.
+    const vec3 view = vec3(glm::inverse(scene.Camera.View())[2]);
+    const f32 lowest = 0.5f / TestLutSize;
+    const f32 highest = 1.0f - lowest;
+    f32 worst = 0.0f;
+    for (usize i = 0; i < pixels; ++i)
+    {
+        const vec3 before{glm::unpackHalf1x16(glm::packHalf1x16(scene.Frame.Color[i].r)),
+                          glm::unpackHalf1x16(glm::packHalf1x16(scene.Frame.Color[i].g)),
+                          glm::unpackHalf1x16(glm::packHalf1x16(scene.Frame.Color[i].b))};
+        const vec3 after{composited[i]};
+        const f32 nDotV = std::clamp(glm::dot(scene.Frame.Normal[i], view), 0.0f, 1.0f);
+        const f32 scale = std::clamp(nDotV, lowest, highest);
+        const f32 bias =
+            std::clamp(static_cast<f32>(scene.Frame.Perceptual[i]) / 255.0f, lowest, highest);
+        const vec3 base = vec3(Base[0], Base[1], Base[2]) / 255.0f;
+        const vec3 f0 =
+            glm::mix(vec3(0.04f), base, static_cast<f32>(scene.Frame.Metallic[i]) / 255.0f);
+        const vec3 expected = before + vec3(reflection[i]) * (f0 * scale + bias);
+        const vec3 error = glm::abs(after - expected) / (vec3(1.0f) + glm::abs(expected));
+        worst = std::max({worst, error.r, error.g, error.b});
+    }
+    CHECK(worst < 2e-3f);
+
+    // The floor under the sphere gains its reflection.
+    const usize gained =
+        std::ranges::count_if(scene.Reflecting, [&](const usize i)
+                              { return composited[i].r > scene.Frame.Color[i].r + 0.01f; });
+    CHECK(gained > 0);
+}
+
 TEST_CASE_FIXTURE(
     Test::GpuFixture,
     "ssr chain: a renderer records the chain's passes with SSR on and none with it off")
@@ -1245,15 +1393,16 @@ TEST_CASE_FIXTURE(
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    constexpr std::array<string_view, 9> Passes{"SSR Depth Downsample",
-                                                "SSR Classify Tiles",
-                                                "SSR Prepare Blue Noise",
-                                                "SSR Prepare Indirect Args",
-                                                "SSR Intersect",
-                                                "SSR Denoiser Reproject",
-                                                "SSR Denoiser Prefilter",
-                                                "SSR Denoiser Resolve Temporal",
-                                                "SSR Denoiser History Copy"};
+    constexpr std::array<string_view, 10> Passes{"SSR Depth Downsample",
+                                                 "SSR Classify Tiles",
+                                                 "SSR Prepare Blue Noise",
+                                                 "SSR Prepare Indirect Args",
+                                                 "SSR Intersect",
+                                                 "SSR Denoiser Reproject",
+                                                 "SSR Denoiser Prefilter",
+                                                 "SSR Denoiser Resolve Temporal",
+                                                 "SSR Denoiser History Copy",
+                                                 "SSR Apply Reflections"};
     struct Case
     {
         bool Ssr;
@@ -1308,4 +1457,78 @@ TEST_CASE_FIXTURE(
             CHECK(finite);
         }
     }
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr apply: with nothing glossy in view and no image-based lighting, SSR on "
+                  "draws the frame SSR off draws")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_ssr_rough_plane.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(
+                cooker, path(GPU_GBUFFER_FIXTURE_DIR) / "white_plane_pack.json", archive, {},
+                nullptr, nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+    REQUIRE(assets.Mount(archive).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(WhitePlaneInstanceId);
+    REQUIRE(material.has_value());
+    // Fully rough, so no pixel is glossy enough to trace.
+    auto& instance = const_cast<MaterialInstance&>(*material->Get());
+    instance.SetParam("RoughnessFactor", 1.0f);
+    instance.SetParam("MetallicFactor", 1.0f);
+
+    // A plane under a sun, lit by the flat ambient floor: no sky, so no image-based lighting.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "SSR Rough Plane");
+    const Entity ground = scene->CreateEntity();
+    scene->Add<Transform>(ground);
+    scene->Add<MeshRenderer>(ground).Mesh = assets.Adopt(plane);
+    const Entity sun = scene->CreateEntity();
+    scene->Add<Light>(sun) = Light{
+        .Type = LightType::Directional,
+        .Direction = glm::normalize(vec3(0.3f, -1.0f, -0.4f)),
+        .Color = vec3(1.0f),
+    };
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 2.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const auto Render = [&](const bool ssr)
+    {
+        SceneRendererSettings settings;
+        settings.Bloom = false;
+        settings.Shadows = false;
+        settings.AO = false;
+        settings.SSR = ssr;
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = {48, 48},
+            .Settings = settings,
+        });
+        for (u32 frame = 0; frame < 3; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(cmd,
+                                      Veng::Renderer::SceneView{.World = *scene, .Camera = camera});
+                });
+        }
+        CHECK(renderer->DidRecordPassLastFrame("SSR Apply Reflections") == ssr);
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    const std::vector<u8> off = Render(false);
+    const std::vector<u8> on = Render(true);
+    REQUIRE(on.size() == off.size());
+    CHECK(on == off);
+
+    std::filesystem::remove(archive);
 }

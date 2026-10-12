@@ -155,6 +155,13 @@ namespace Veng::Renderer
         DofStages Dof = DofStages::None;
         /// @brief The screen-space reflection chain is wired after the opaque lighting.
         bool SsrActive = false;
+        /// @brief The deferred lighting adds the image-based specular term.
+        ///
+        /// Cleared exactly while the reflection chain runs: its composite adds the view's specular
+        /// reflection, environment fallback included, so the lighting the chain traces and
+        /// composites into carries none, as the reference's sample zeroes its specular IBL factor
+        /// for its lighting pass. Forward-lit translucents keep theirs.
+        bool DeferredSpecularIbl = true;
 
         /// @brief Which g-buffer colour channels the g-buffer pass stores for a later reader.
         ///

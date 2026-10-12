@@ -18,6 +18,7 @@ namespace Veng::Renderer
     class Context;
     class DescriptorSet;
     class DescriptorSetLayout;
+    class GraphicsPipeline;
     class Image;
     class ImageView;
     class PipelineLayout;
@@ -115,6 +116,10 @@ namespace Veng::Renderer
     /// @brief The frame resources the reflection chain reads, as the graph and bindless see them.
     struct SsrGraphInputs
     {
+        /// @brief The albedo target (G0), which the apply composite's Fresnel term reads.
+        ResourceId Albedo;
+        /// @brief The albedo target's bindless slot.
+        TextureHandle AlbedoHandle;
         /// @brief The depth target.
         ResourceId Depth;
         /// @brief The world-normal target (G1).
@@ -128,7 +133,7 @@ namespace Veng::Renderer
         /// @brief The occlusion/roughness/metallic target's bindless slot.
         TextureHandle MaterialHandle;
         /// @brief This frame's lit opaque colour (HDR, after the deferred lighting and the sky), which
-        ///        a ray's hit reads.
+        ///        a ray's hit reads and the apply composite adds the reflection into.
         ResourceId Color;
         /// @brief The lit colour's bindless slot.
         TextureHandle ColorHandle;
@@ -146,7 +151,8 @@ namespace Veng::Renderer
     /// passes it declares, in the reference's order: the depth hierarchy (one dispatch per level),
     /// the tile classifier, the blue-noise preparation, the indirect-argument preparation and the
     /// intersection (DeclareTrace), then the denoiser's reprojection, prefilter and temporal resolve
-    /// and the history copies (DeclareDenoiser). The radiance, variance, sample-count and
+    /// and the history copies (DeclareDenoiser), then the sample's apply composite, which adds the
+    /// denoised reflection into the lit colour (DeclareApply). The radiance, variance, sample-count and
     /// average-radiance targets are ping-ponged by the frame's parity, as the reference's hosts do,
     /// and every persistent target is cleared to zero whenever Recreate creates it, the reference's
     /// first-frame clear. After the temporal resolve, this frame's radiance A holds the denoised
@@ -167,6 +173,8 @@ namespace Veng::Renderer
         static constexpr u32 IndirectArgsWords = 6;
         /// @brief The byte offset of the denoiser's dispatch in the indirect-argument buffer.
         static constexpr u32 DenoiserArgsOffset = 12;
+        /// @brief The lit colour's format, which the apply composite's pipeline targets.
+        static constexpr Format ApplyFormat = Format::RGBA16Sfloat;
 
         /// @brief Loads the shaders and the sampler tables and builds the pipelines.
         ///
@@ -197,16 +205,23 @@ namespace Veng::Renderer
         /// @param cube A cube view over every mip of the view's prefiltered specular probe.
         void SetEnvironment(const Ref<ImageView>& cube);
 
+        /// @brief Points the apply composite at the split-sum BRDF LUT.
+        ///
+        /// A no-op for the LUT already bound.
+        /// @param lut The view's BRDF integration LUT (x N·V, y perceptual roughness; rg the scale
+        ///            and bias on F0), left sampled for the fragment stage.
+        void SetBrdfLut(const Ref<ImageView>& lut);
+
         /// @brief Imports the chain's resources into the graph being rebuilt.
         /// @param graph The renderer's internal graph being rebuilt.
         /// @pre Recreate has run.
         void Import(RenderGraph& graph);
 
         /// @brief Declares the chain's passes into the graph, after the passes writing its inputs:
-        ///        DeclareTrace, then DeclareDenoiser.
+        ///        DeclareTrace, then DeclareDenoiser, then DeclareApply.
         /// @param graph  The graph Import declared the resources into.
-        /// @param inputs The g-buffer and lit colour it reads.
-        /// @pre Import has run on @p graph and SetEnvironment has bound a cube.
+        /// @param inputs The g-buffer and lit colour it reads, and the lit colour it composites into.
+        /// @pre Import has run on @p graph, SetEnvironment has bound a cube and SetBrdfLut a LUT.
         void Declare(RenderGraph& graph, const SsrGraphInputs& inputs);
 
         /// @brief Declares the SSSR half of the chain: the depth hierarchy, the classifier, the
@@ -228,6 +243,17 @@ namespace Veng::Renderer
         /// @param inputs The g-buffer it reads; Normal must carry ImageUsage::TransferSrc.
         /// @pre DeclareTrace has run on @p graph.
         void DeclareDenoiser(RenderGraph& graph, const SsrGraphInputs& inputs);
+
+        /// @brief Declares the apply composite: one fullscreen pass over the rendered sub-rect adding
+        ///        `reflection · (F0·brdf.x + brdf.y)` into the lit colour.
+        ///
+        /// The blend is the sample's (colour One + Dst·SrcAlpha, alpha One + One), with the fragment
+        /// writing alpha 1, so the reflection is added to what the colour holds.
+        /// @param graph  The graph DeclareDenoiser declared into.
+        /// @param inputs The g-buffer it reads; Color must carry ImageUsage::ColorAttachment in
+        ///               SsrChain::ApplyFormat.
+        /// @pre DeclareDenoiser has run on @p graph and SetBrdfLut has bound a LUT.
+        void DeclareApply(RenderGraph& graph, const SsrGraphInputs& inputs);
 
         /// @brief Appends this frame's bindings for every resource Import declared.
         ///
@@ -512,6 +538,20 @@ namespace Veng::Renderer
         /// @brief The bound environment cube.
         Ref<ImageView> m_Environment;
 
+        /// @brief The apply composite's pipeline (the fullscreen vertex stage, the sample's blend).
+        Ref<GraphicsPipeline> m_ApplyPipeline;
+        /// @brief Its layout: set 3 + the view direction and g-buffer push block.
+        Ref<PipelineLayout> m_ApplyLayout;
+        /// @brief Its set 3: the reflection, the BRDF LUT and the sample's linear sampler.
+        Ref<DescriptorSetLayout> m_ApplySetLayout;
+        /// @brief The sample's apply sampler: bilinear, nearest mip, clamped.
+        Ref<Sampler> m_ApplySampler;
+        /// @brief The bound BRDF LUT.
+        Ref<ImageView> m_BrdfLut;
+        /// @brief The camera's direction (its backward axis, towards the eye) PrepareFrame wrote,
+        ///        the sample's per-frame viewDirection.
+        vec3 m_ViewDirection{0.0f};
+
         /// @brief The constants ring, host-mapped.
         Ref<Buffer> m_Constants;
         /// @brief The ring's region stride, a multiple of the uniform-buffer offset alignment.
@@ -575,6 +615,8 @@ namespace Veng::Renderer
         std::array<Ref<DescriptorSet>, 2> m_PrefilterSets;
         /// @brief The temporal resolve's set for each frame parity.
         std::array<Ref<DescriptorSet>, 2> m_ResolveSets;
+        /// @brief The apply composite's set for each frame parity (radiance A swaps).
+        std::array<Ref<DescriptorSet>, 2> m_ApplySets;
 
         /// @brief The depth hierarchy's per-level import.
         MipChainId m_DepthHierarchyId;

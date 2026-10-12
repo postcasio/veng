@@ -1,6 +1,7 @@
 #include "EnvironmentIbl.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include <fmt/format.h>
 #include <glm/gtc/packing.hpp>
@@ -156,7 +157,7 @@ namespace Veng::Renderer
                                          .Layers = CubeFaces,
                                          .Format = Format::RGBA16Sfloat,
                                          .Usage = ImageUsage::Sampled | ImageUsage::Storage |
-                                                  ImageUsage::TransferSrc,
+                                                  ImageUsage::TransferSrc | ImageUsage::TransferDst,
                                      });
         m_PrefilterCubeView = ImageView::Create(m_Context, {
                                                                .Name = "IBL Prefilter Cube View",
@@ -362,10 +363,30 @@ namespace Veng::Renderer
         // bind the consumer set before an environment is set (the shader gates the sample on
         // the IblEnabled push flag, so the as-yet-uninitialized contents are never read).
         // The radiance cube is SampleAny because the convolutions below read it with a dispatch
-        // as well as the skybox sampling it in a fragment; the other two have fragment readers only.
+        // as well as the skybox sampling it in a fragment; the irradiance cube has fragment readers
+        // only. The screen-space reflection chain's dispatches sample the prefiltered cube
+        // ungated, scaled by an IBL factor of zero for a view without image-based lighting, so it
+        // starts zeroed rather than undefined.
         cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
         cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleGraphics);
-        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleGraphics);
+        const Ref<Buffer> zeros =
+            Buffer::Create(m_Context, {
+                                          .Name = "IBL Prefilter Clear",
+                                          .Size = static_cast<u64>(PrefilterBaseSize) *
+                                                  PrefilterBaseSize * CubeFaces * 4 * sizeof(u16),
+                                          .Usage = BufferUsage::TransferSrc,
+                                          .HostMapped = true,
+                                      });
+        std::memset(zeros->GetMappedData(), 0, zeros->GetSize());
+        vector<BufferImageCopyRegion> regions;
+        for (u32 mip = 0; mip < PrefilterMips; ++mip)
+        {
+            const u32 size = std::max(PrefilterBaseSize >> mip, 1u);
+            regions.push_back({.BufferOffset = 0, .MipLevel = mip, .Extent = {size, size, 1}});
+        }
+        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::TransferDst);
+        cmd.CopyBufferToImage(zeros, m_PrefilterImage, regions);
+        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleAny);
     }
 
     void EnvironmentIbl::RecordEquirectToCube(CommandBuffer& cmd,
@@ -518,7 +539,8 @@ namespace Veng::Renderer
             });
             cmd.Dispatch(Groups(faceSize), Groups(faceSize), CubeFaces);
         }
-        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleGraphics);
+        // SampleAny: the screen-space reflection chain samples it in its dispatches too.
+        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleAny);
     }
 
     Sh9 EnvironmentIbl::ProjectCubeToIrradianceSh(const std::span<const u8> cubeTexels,

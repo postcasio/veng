@@ -22,6 +22,7 @@ namespace Veng::Renderer
         const Ref<DescriptorSet> shadowSet = m_ShadowSet;
         const u32 shadowRingStride = m_ShadowRingStride;
         const u32 punctualRingStride = m_PunctualRingStride;
+        const f32 specularIblFactor = m_SpecularIblFactor;
 
         // The tile cull reduces the depth this pass reads and writes the masks it reads, so it is
         // declared first; its mask write orders ahead of the read below.
@@ -73,7 +74,7 @@ namespace Veng::Renderer
         builder.Execute(
             [this, albedoHandle, normalHandle, ormHandle, depthHandle, emissiveHandle, ssaoHandle,
              samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride,
-             iblSet](PassContext& inner)
+             specularIblFactor, iblSet](PassContext& inner)
             {
                 const ScenePassContext ctx = Wrap(inner);
                 CommandBuffer& cmd = ctx.Cmd();
@@ -113,6 +114,7 @@ namespace Veng::Renderer
                         .EmissiveTexture = emissiveHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                        .SpecularIblFactor = specularIblFactor,
                         .SsaoTexture = ssaoHandle.Index,
                     });
                 }
@@ -126,6 +128,7 @@ namespace Veng::Renderer
                         .EmissiveTexture = emissiveHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                        .SpecularIblFactor = specularIblFactor,
                     });
                 }
                 cmd.DrawFullscreenTriangle();

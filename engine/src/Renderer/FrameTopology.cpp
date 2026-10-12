@@ -36,6 +36,7 @@ namespace Veng::Renderer
         // Velocity's readers are the temporal resolve, the motion-vector blit and the reflection
         // denoiser's reprojection.
         topology.SsrActive = ResolveSsrActive(settings);
+        topology.DeferredSpecularIbl = !topology.SsrActive;
         topology.GBufferStores.Velocity =
             topology.TaaActive || settings.Mode == DebugView::MotionVectors || topology.SsrActive
                 ? GBufferChannelState::Stored

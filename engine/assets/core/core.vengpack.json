@@ -655,6 +655,11 @@
       "id": "0x8BA2908B318A1267",
       "type": "Shader",
       "source": "shaders/ssr/ssr_denoiser_resolve_temporal.comp.shader.json"
+    },
+    {
+      "id": "0x9E38E45BB3C2850D",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_apply_reflections.frag.shader.json"
     }
   ]
 }

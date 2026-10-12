@@ -161,6 +161,10 @@ namespace Veng::Renderer
         /// @brief The irradiance cube image, exposed for tests reading back the convolved diffuse map.
         [[nodiscard]] const Ref<Image>& GetIrradianceImage() const { return m_IrradianceImage; }
 
+        /// @brief The BRDF integration LUT's sampled view (x N·V, y perceptual roughness), sampled
+        ///        by the fragment stage once EnsureInitialized has run.
+        [[nodiscard]] const Ref<ImageView>& GetBrdfLutView() const { return m_BrdfView; }
+
         /// @brief The BRDF integration LUT image, exposed for tests reading back the split-sum pair.
         [[nodiscard]] const Ref<Image>& GetBrdfLutImage() const { return m_BrdfImage; }
 

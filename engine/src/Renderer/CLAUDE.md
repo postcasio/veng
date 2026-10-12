@@ -1320,13 +1320,19 @@ is one of these:
   no jitter at all), so there is no jitter correction.
 - **D5** — the reference's environment cube is the view's prefiltered specular probe
   (`EnvironmentIbl`), sampled the reference's way (mip `sqrt(α) · log2(width)`), and its `iblFactor`
-  is the view's IBL intensity — 0 for a view whose ambient arm is not IBL.
+  is the view's IBL intensity — 0 for a view whose ambient arm is not IBL. The chain samples the cube
+  in that case too, so `EnvironmentIbl` zeroes it at initialization and leaves it sampled for compute
+  as well as fragments (`SampleAny`).
+- **D6** — the sample's "specular IBL factor 0 for the lighting pass while SSSR is on" is a per-view
+  flag the deferred lighting reads: `FrameTopology::DeferredSpecularIbl`, cleared exactly while the
+  chain runs, reaches `DeferredLightingScenePass` as the push block's `SpecularIblFactor`, which
+  scales the ambient arm's specular term (only the IBL arm has one). So the lit colour the trace reads
+  and the composite adds into carries no specular IBL, as the reference's does. The view block is
+  untouched, so forward-lit translucents, drawn after the composite, keep their probe specular.
 
 The intersection's low-occupancy exit counts the active lanes of the device's own subgroup (32 on
 Apple GPUs), which is the reference's permutation for hardware it cannot force to wave64 — a choice
-among its permutations, not a deviation. The trace reads this frame's lit opaque colour as the
-deferred lighting wrote it, specular IBL included: the reference's sample zeroes its specular IBL
-while SSSR runs (D6), and no per-view flag carries that yet.
+among its permutations, not a deviation.
 
 The reference's coordinate helpers flip y between UV and NDC (Direct3D's NDC is y-up); the engine's
 NDC is y-down like UV, so the flip is omitted — a change of convention, not of behaviour. A load
@@ -1341,9 +1347,9 @@ different one. The 32-bit path is ported; the `FFX_HALF` permutation is not.
 without reflections holds none of its pipelines, tables or targets and declares none of its passes.
 `SsrScenePass` places its passes in the pass list, after the opaque lighting and the sky and ahead of
 the translucent composite — the reference sample's order. `SsrChain::Declare` is `DeclareTrace`
-(passes 1–5, `ffx_sssr.cpp`) then `DeclareDenoiser` (passes 6–9, `ffx_denoiser.cpp`); a test that
-inspects the intersection's own output declares the first half alone. The passes, in the reference's
-dispatch order:
+(passes 1–5, `ffx_sssr.cpp`), then `DeclareDenoiser` (passes 6–9, `ffx_denoiser.cpp`), then
+`DeclareApply` (pass 10, the sample's `sssrrendermodule.cpp`); a test that inspects an intermediate
+output declares the earlier halves alone. The passes, in the reference's dispatch order:
 
 1. **`SSR Depth Downsample`** ×levels (`ssr_depth_downsample.comp`, D2) — level 0 copies the depth;
    each later level holds the nearest (reverse-Z: largest) of its parent's 2×2 children, a child past
@@ -1409,6 +1415,20 @@ dispatch order:
 9. **`SSR Denoiser History Copy`** (transfer) — this frame's g-buffer normal, extracted roughness and
    depth-hierarchy level 0 into the normal, roughness and depth histories next frame's reprojection
    samples. The g-buffer normal therefore carries `TransferSrc` (`GBuffer::NormalUsage`).
+10. **`SSR Apply Reflections`** (`ssr_apply_reflections.frag`, the sample's
+    `sssr_apply_reflections.hlsl`) — one fullscreen draw over the rendered sub-rect into the lit
+    colour (`PassIO::Hdr`: the TAA lit target under TAA, ahead of the resolve), with the sample's
+    blend (colour `One + Dst·SrcAlpha`, alpha `One + One`) and alpha 1 written, so it adds
+    `reflection · (F0·brdf.x + brdf.y)`, F0 = `lerp(0.04, albedo, metallic)`, to what the lit colour
+    holds. `brdf` is the engine's split-sum LUT (`EnvironmentIbl::GetBrdfLutView`, x N·V, y perceptual
+    roughness), read at (`saturate(N·V)`, perceptual roughness) through a bilinear, nearest-mip,
+    clamped sampler — the sample reads its own table at (N·V, 1 − perceptual roughness), the same entry
+    through that table's axes, and sets no address mode. V is the sample's per-frame `viewDirection`,
+    the camera's direction (the view-to-world z axis, towards the eye), not a per-pixel vector. The
+    sample's linear samples at the pixel centre are loads at the fragment's pixel; the g-buffer's
+    perceptual roughness and signed normal are its `sqrt(alphaRoughness)` and `2n − 1` decodes. The
+    sample's intensity slider (1 for correctness) and reflection-target view are its UI and are not
+    ported.
 
 **The denoiser's bindings follow the reference's two hosts exactly**, including what they read from
 last frame. With A this frame's write target and B the other: the reprojection reads radiance A and
@@ -1465,8 +1485,10 @@ listed tile, the resolve's output in rgb and its blue channel again in a; elsewh
 classifier's value (a rough pixel's environment, or zero) with a 0. Alpha carries nothing a consumer
 reads. It holds until next frame's prefilter reuses the target as radiance B.
 `SceneRenderer::GetSsrReflectionView()` returns it after `Execute`. The reference's host copies it to
-a separate output target; here the apply pass samples radiance A within the same frame, so the copy
-has no reader and is not made.
+a separate output target; here the apply pass loads radiance A within the same frame, so the copy
+has no reader and is not made. Outside the listed tiles, then, a rough pixel's composite is the
+environment along its mirror direction through the BRDF — the specular IBL D6 took out of the
+lighting — and every other pixel's is zero.
 
 The ping-pong follows the reference's parity: on an odd frame index radiance, variance, sample count
 and average A are target 0 and B target 1; on an even one, 1 and 0. A `Recreate` at a new extent
@@ -1478,11 +1500,25 @@ tunables (`SsrSamplesPerQuad`, `SsrRoughnessThreshold`, `SsrVarianceThreshold`,
 `SsrVarianceGuidedTracing`, `SsrDepthBufferThickness`, `SsrMaxTraversalIntersections`,
 `SsrMinTraversalOccupancy`, `SsrTemporalStabilityFactor` — the reference sample's UI set, with its
 defaults and ranges) ride `SceneView` / `ViewState` / `RenderLook` like the other per-frame knobs;
-the reference's most detailed mip (0) is its default in the constants block. No pass composites
-the reflection. `tests/gpu/ssr_chain.cpp` drives the passes on a synthetic g-buffer and checks each
-output against the reference's rule, the intersection on a mirror floor beside a lit sphere, and the
-denoiser over several frames (finite output, the zero early-out, the first frame's and a still
-camera's second frame's sample counts, and the variance ping-pong into the classifier).
+the reference's most detailed mip (0) is its default in the constants block.
+
+**The settings surface is the sample's and nothing else.** `SceneRendererSettings::SSR` (off by
+default, so a renderer that does not ask for reflections allocates and declares nothing) is the
+topology toggle; the eight knobs above are the per-frame ones (defaults 1 ray per quad, roughness
+threshold 0.2 in α, variance threshold 0, variance-guided tracing on, thickness 0.015, 128
+iterations, occupancy 4, stability 0.7). There is no intensity and no reach distance. A level opts in
+through its `render` block, which seeds the scene's `RenderLook` by field name — `"SSR": true`,
+`"SsrSamplesPerQuad": 4`, and the rest under their `RenderLook` names — and the presenting viewport
+resolves it into the topology and the view like any look field.
+
+`tests/gpu/ssr_chain.cpp` drives the passes on a synthetic g-buffer and checks each output against
+the reference's rule, the intersection on a mirror floor beside a lit sphere, the denoiser over
+several frames (finite output, the zero early-out, the first frame's and a still camera's second
+frame's sample counts, and the variance ping-pong into the classifier), and the composite against
+its formula through a stand-in LUT (a pixel reflecting nothing keeps its colour exactly, a flagged
+surface is untouched); and that a renderer records the whole chain only with SSR on and, with nothing
+glossy in view and no image-based lighting, draws the frame it draws with SSR off.
+`tests/unit/frame_topology.cpp` pins that D6's flag clears exactly while the chain is wired.
 
 ### Depth of field and the physical camera
 

@@ -789,11 +789,14 @@ namespace Veng::Renderer
         {
         case DebugView::Final:
         {
+            // While the reflection chain runs, its composite carries the view's specular
+            // reflection, so the deferred lighting leaves the image-based specular out.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), lightTiles));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles, /*writeToOutput=*/false,
+                m_Topology->DeferredSpecularIbl ? 1.0f : 0.0f));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
             // before the TAA/bloom tail so the sky resolves, refracts, and tonemaps with the
@@ -2178,6 +2181,7 @@ namespace Veng::Renderer
             }
             m_Ssr->Recreate(m_RenderAllocExtent);
             m_Ssr->SetEnvironment(m_SkyResolver->GetIbl().GetPrefilterCubeView());
+            m_Ssr->SetBrdfLut(m_SkyResolver->GetIbl().GetBrdfLutView());
         }
         else
         {

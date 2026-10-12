@@ -116,15 +116,19 @@ TEST_CASE("frame topology: the reflection chain is wired exactly when SSR is on 
     SceneRendererSettings settings = ModeOnly(DebugView::Final);
     CHECK_FALSE(Resolve(settings).SsrActive);
     CHECK_FALSE(ResolveSsrActive(settings));
+    CHECK(Resolve(settings).DeferredSpecularIbl);
 
+    // The deferred lighting drops its image-based specular exactly while the chain runs.
     settings.SSR = true;
     CHECK(Resolve(settings).SsrActive);
     CHECK(ResolveSsrActive(settings));
+    CHECK_FALSE(Resolve(settings).DeferredSpecularIbl);
 
     // The lean path wires nothing but its prepass, whatever the toggle says.
     settings.Path = RenderPath::GeometryDepthNormal;
     CHECK_FALSE(Resolve(settings).SsrActive);
     CHECK_FALSE(ResolveSsrActive(settings));
+    CHECK(Resolve(settings).DeferredSpecularIbl);
 }
 
 TEST_CASE("frame topology: the scene composites for Final and Bloom alone")
@@ -163,6 +167,7 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         CHECK_FALSE(topology.AutoExposureActive);
         CHECK(topology.Dof != DofStages::Full);
         CHECK_FALSE(topology.SsrActive);
+        CHECK(topology.DeferredSpecularIbl);
         // Refraction survives only on the Bloom arm, which composites the whole scene.
         CHECK(topology.RefractionActive == (settings.Mode == DebugView::Bloom));
     }

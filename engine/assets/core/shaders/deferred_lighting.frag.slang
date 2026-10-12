@@ -51,6 +51,8 @@ struct PushConstants
     uint EmissiveTexture;     // G4 emissive bindless index
     uint Sampler;             // shared sampler index
     uint ViewConstantsIndex;  // current view's view-constants region (carries the light state)
+    float SpecularIblFactor;  // scale on the image-based specular term: 0 while the screen-space
+                              // reflection composite carries it
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
 #endif
@@ -171,6 +173,8 @@ float4 fsMain(VSOutput input) : SV_Target
 #endif
 
     LightingResult ambient = EvaluateAmbientLighting(vc, surface, ambientOcclusion);
+    // Only the image-based arm carries an ambient specular term.
+    ambient.Specular *= g_PC.SpecularIblFactor;
 
 #if VE_DEBUG_IBL
     // The IBL-contribution debug arm: the ambient term alone, unlit, so the environment

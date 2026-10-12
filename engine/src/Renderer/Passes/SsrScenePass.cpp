@@ -7,6 +7,8 @@ namespace Veng::Renderer
     void SsrScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         m_Chain.Declare(graph, SsrGraphInputs{
+                                   .Albedo = io.GBufferAlbedo,
+                                   .AlbedoHandle = io.AlbedoHandle,
                                    .Depth = io.GBufferDepth,
                                    .Normal = io.GBufferNormal,
                                    .Material = io.GBufferOrm,

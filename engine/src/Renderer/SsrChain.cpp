@@ -1,5 +1,7 @@
 #include "SsrChain.h"
 
+#include "SceneRendererIds.h"
+
 #include <algorithm>
 #include <bit>
 #include <cstring>
@@ -17,6 +19,7 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/DeviceCapabilities.h>
 #include <Veng/Renderer/GBuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
@@ -39,6 +42,7 @@ namespace Veng::Renderer
         constexpr AssetId ReprojectCompId{0x887C840639DEAE97ULL};
         constexpr AssetId PrefilterCompId{0x34C2D07665F81AACULL};
         constexpr AssetId ResolveTemporalCompId{0x8BA2908B318A1267ULL};
+        constexpr AssetId ApplyReflectionsFragId{0x9E38E45BB3C2850DULL};
         constexpr AssetId BlueNoiseTablesId{0xFC0C39061564BE4BULL};
 
         // The Sobol table's extent (256 samples of 256 dimensions) and the scrambling tile's (an
@@ -78,6 +82,16 @@ namespace Veng::Renderer
         {
             u32 NormalTexture;
             u32 MotionVectorTexture;
+        };
+
+        // The apply composite's push block, matching ssr_apply_reflections.frag PushConstants.
+        struct ApplyPush
+        {
+            vec4 ViewDirection;
+            u32 BaseColorTexture;
+            u32 NormalTexture;
+            u32 MaterialTexture;
+            u32 Padding;
         };
 
         [[nodiscard]] u32 DivideRoundingUp(const u32 value, const u32 divisor)
@@ -364,6 +378,81 @@ namespace Veng::Renderer
         m_ResolvePipeline = CreatePipeline(m_Context, assets, ResolveTemporalCompId,
                                            "Denoiser Resolve Temporal", m_ResolveLayout);
 
+        m_ApplySetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Apply Reflections Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                               },
+                       });
+        m_ApplyLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Apply Reflections Layout",
+                .DescriptorSetLayouts = {m_ApplySetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<ApplyPush>(ShaderStage::Fragment)},
+            });
+        {
+            const AssetResult<AssetHandle<Veng::Shader>> vertex =
+                assets.LoadSync<Veng::Shader>(FullscreenVertId);
+            VE_ASSERT(vertex.has_value(), "SsrChain: fullscreen vertex shader load failed: {}",
+                      vertex.error().Detail);
+            const AssetResult<AssetHandle<Veng::Shader>> fragment =
+                assets.LoadSync<Veng::Shader>(ApplyReflectionsFragId);
+            VE_ASSERT(fragment.has_value(), "SsrChain: Apply Reflections shader load failed: {}",
+                      fragment.error().Detail);
+            // The sample's blend: colour One + Dst·SrcAlpha, alpha One + One.
+            m_ApplyPipeline = GraphicsPipeline::Create(
+                m_Context,
+                {
+                    .Name = "SSR Apply Reflections Pipeline",
+                    .ColorAttachments = {{.Format = ApplyFormat,
+                                          .Blend =
+                                              {
+                                                  .Enable = true,
+                                                  .SrcColorFactor = BlendFactor::One,
+                                                  .DstColorFactor = BlendFactor::SrcAlpha,
+                                                  .ColorOp = BlendOp::Add,
+                                                  .SrcAlphaFactor = BlendFactor::One,
+                                                  .DstAlphaFactor = BlendFactor::One,
+                                                  .AlphaOp = BlendOp::Add,
+                                              }}},
+                    .PipelineLayout = m_ApplyLayout,
+                    .ShaderStages =
+                        {
+                            {.Stage = ShaderStage::Vertex, .Module = vertex.value().Get()->Module},
+                            {.Stage = ShaderStage::Fragment,
+                             .Module = fragment.value().Get()->Module},
+                        },
+                });
+        }
+
+        // The sample's apply sampler: MinMagLinearMipPoint. It sets no address mode; the composite
+        // reads the LUT at saturated coordinates, so it clamps.
+        m_ApplySampler = Sampler::Create(m_Context, {
+                                                        .Name = "SSR Apply Reflections Sampler",
+                                                        .MagFilter = Filter::Linear,
+                                                        .MinFilter = Filter::Linear,
+                                                        .MipmapMode = MipmapMode::Nearest,
+                                                        .AddressModeU = AddressMode::ClampToEdge,
+                                                        .AddressModeV = AddressMode::ClampToEdge,
+                                                        .AddressModeW = AddressMode::ClampToEdge,
+                                                        .AnisotropyEnabled = false,
+                                                        .MaxAnisotropy = 1.0f,
+                                                    });
+
         // The reference denoiser's one sampler: bilinear, nearest mip, clamped on every axis.
         m_DenoiserSampler = Sampler::Create(m_Context, {
                                                            .Name = "SSR Denoiser Linear Sampler",
@@ -625,6 +714,19 @@ namespace Veng::Renderer
         }
     }
 
+    void SsrChain::SetBrdfLut(const Ref<ImageView>& lut)
+    {
+        if (lut == m_BrdfLut)
+        {
+            return;
+        }
+        m_BrdfLut = lut;
+        if (m_DepthHierarchy != nullptr)
+        {
+            BuildSets();
+        }
+    }
+
     void SsrChain::BuildSets()
     {
         // Fresh sets rather than rewritten ones, so no set a frame still in flight bound changes.
@@ -647,6 +749,19 @@ namespace Veng::Renderer
             const u32 radiance = parity != 0 ? 0u : 1u;
             const u32 varianceHistory = parity != 0 ? 1u : 0u;
             BuildDenoiserSets(parity);
+            m_ApplySets[parity] = nullptr;
+            if (m_BrdfLut != nullptr)
+            {
+                const Ref<DescriptorSet> apply =
+                    DescriptorSet::Create(m_Context, {
+                                                         .Name = "SSR Apply Reflections Set",
+                                                         .Layout = m_ApplySetLayout,
+                                                     });
+                apply->Write(0, m_Radiance[radiance]);
+                apply->Write(1, m_BrdfLut);
+                apply->Write(2, m_ApplySampler);
+                m_ApplySets[parity] = apply;
+            }
             m_ClassifySets[parity] = nullptr;
             m_IntersectSets[parity] = nullptr;
             if (m_Environment == nullptr)
@@ -869,12 +984,16 @@ namespace Veng::Renderer
         std::memcpy(static_cast<u8*>(m_Constants->GetMappedData()) + ConstantsOffset(), &constants,
                     sizeof(constants));
         m_RenderSize = inputs.RenderSize;
+        // The sample's viewDirection is its camera's direction, the view-to-world z axis: under a
+        // right-handed view looking down -z, the camera's backward axis, towards the eye.
+        m_ViewDirection = vec3(constants.InvView[2]);
     }
 
     void SsrChain::Declare(RenderGraph& graph, const SsrGraphInputs& inputs)
     {
         DeclareTrace(graph, inputs);
         DeclareDenoiser(graph, inputs);
+        DeclareApply(graph, inputs);
     }
 
     void SsrChain::DeclareTrace(RenderGraph& graph, const SsrGraphInputs& inputs)
@@ -1165,5 +1284,47 @@ namespace Veng::Renderer
                     cmd.CopyImage(m_DepthHierarchy, m_DepthHistory->GetImage());
                 });
         }
+    }
+
+    void SsrChain::DeclareApply(RenderGraph& graph, const SsrGraphInputs& inputs)
+    {
+        VE_ASSERT(m_BrdfLut != nullptr, "SsrChain::DeclareApply: no BRDF LUT is bound");
+
+        RenderGraph::PassBuilder builder = graph.AddPass("SSR Apply Reflections");
+        builder
+            .Color({
+                .Resource = inputs.Color,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            })
+            .Sample(m_RadianceId)
+            .Sample(inputs.Albedo)
+            .Sample(inputs.Normal)
+            .Sample(inputs.Material);
+        const TextureHandle albedo = inputs.AlbedoHandle;
+        const TextureHandle normal = inputs.NormalHandle;
+        const TextureHandle material = inputs.MaterialHandle;
+        builder.Execute(
+            [this, albedo, normal, material](PassContext& pass)
+            {
+                CommandBuffer& cmd = pass.Cmd();
+                cmd.BindPipeline(m_ApplyPipeline);
+                cmd.SetViewport({0, 0}, m_RenderSize);
+                cmd.SetScissor({0, 0}, m_RenderSize);
+                m_Context.GetBindlessRegistry().Bind(cmd);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {m_ApplySets[m_FrameIndex & 1u]},
+                    .FirstSet = 3,
+                    .PipelineBindPoint = PipelineBindPoint::Graphics,
+                });
+                cmd.PushConstants(ApplyPush{
+                    .ViewDirection = vec4(m_ViewDirection, 0.0f),
+                    .BaseColorTexture = albedo.Index,
+                    .NormalTexture = normal.Index,
+                    .MaterialTexture = material.Index,
+                    .Padding = 0,
+                });
+                cmd.DrawFullscreenTriangle();
+            });
     }
 }
