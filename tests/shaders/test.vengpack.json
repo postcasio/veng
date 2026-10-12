@@ -100,16 +100,6 @@
       "id": "0xB48AAF3AE6866C42",
       "type": "Shader",
       "source": "dispatch_visit.comp.shader.json"
-    },
-    {
-      "id": "0xA3338D14AAC995BC",
-      "type": "Shader",
-      "source": "ssr_ray_visit.comp.shader.json"
-    },
-    {
-      "id": "0x6356EE0051FD4F95",
-      "type": "Shader",
-      "source": "ssr_lobe_sample.comp.shader.json"
     }
   ]
 }

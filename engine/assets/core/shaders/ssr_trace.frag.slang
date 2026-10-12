@@ -20,11 +20,11 @@
 // resolution; the g-buffer it reads is full-resolution (SSR disables the dynamic-resolution
 // sub-rect).
 //
-// Everything the trace reads is the rasterized frame — the depth, the g-buffer, and the lit scene
-// colour ahead of any temporal resolve — so each texel's ray leaves its surface on the texel's own
-// ray (ssr_surface.slang), is marched through the projection the scene rasterized with, and reads
-// its hit where the march found it. Under a temporal resolve that projection is jittered, and SSR's
-// temporal pass (ssr_temporal.frag) integrates the jitter out of the reflection.
+// Each texel's ray leaves the surface on its unjittered ray (ssr_surface.slang) and is marched in
+// the rasterized frame, through the jittered projection over the jittered depth, where every depth
+// it compares against lies. The scene colour it reads is the temporal resolve's output when one
+// runs, reconstructed at unjittered positions, so the hit is read back JitterNdc / 2 from where the
+// march found it. With no temporal resolve the jitter is zero and the two frames coincide.
 //
 // A crossing — in front of the stored surface one test, behind it the next — is a hit when the gap
 // behind it is under the larger of Thickness and StepToleranceScale times the depth the ray itself
@@ -189,21 +189,18 @@ TraceOutput fsMain(VSOutput input)
     TraceOutput missed = Miss;
     missed.Surface = float4(depth, depth * depth, 1.0, 0.0);
 
-    Texture2D ormTexture = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)];
-    float roughness = SsrRoughness(vc, depthTexture, normalTexture, ormTexture, surface.Texel);
+    float roughness =
+        g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Load(int3(surface.Texel, 0)).g;
     // Very rough surfaces reflect nothing coherent; skip the trace (the composite fades the
-    // reflection out smoothly below this cutoff). The roughness is the composite's, widened as the
-    // pixel is shaded.
+    // reflection out smoothly below this cutoff).
     if (roughness > g_PC.MaxRoughness)
         return missed;
 
     float3 N = mul((float3x3)vc.View, surface.Normal);
 
-    // Reflect the pixel's ray about the surface normal: under perspective the camera is at the
-    // view-space origin, so the surface's view position is that ray; under an orthographic
-    // projection every pixel's ray runs down the view axis.
-    float3 viewRay = vc.Proj[3][3] > 0.5 ? float3(0.0, 0.0, -1.0) : normalize(viewPos);
-    float3 R = normalize(reflect(viewRay, N));
+    // The camera is at the view-space origin, so the surface's view position is also the view ray
+    // to it; reflect that about the surface normal.
+    float3 R = normalize(reflect(normalize(viewPos), N));
 
     // Clamp the ray end so it never crosses the camera plane (view space looks down -Z,
     // so the surface is at z < 0): a ray angled back toward the camera (R.z > 0) would
@@ -359,7 +356,8 @@ TraceOutput fsMain(VSOutput input)
     if (!hit)
         return missed;
 
-    // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span.
+    // The reflected colour, prefiltered over the footprint the neighbouring rays' hits span and
+    // read where the scene colour holds the hit: unjittered, as the temporal resolve wrote it.
     Texture2D sceneColor = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)];
     uint sceneWidth;
     uint sceneHeight;
@@ -385,24 +383,25 @@ TraceOutput fsMain(VSOutput input)
         spreadY = TapSpread(NeighbourLanding(vc, startUV + float2(0.0, texel.y), depth, viewPos, N,
                                              hitPos, hitNormal, hitUV, sceneSize));
     }
+    float2 resolvedUV = hitUV - vc.JitterNdc.xy * 0.5;
     float3 reflected;
     if (all(spreadX == 0.0) && all(spreadY == 0.0))
     {
-        reflected = sceneColor.SampleLevel(samp, hitUV, 0.0).rgb;
+        reflected = sceneColor.SampleLevel(samp, resolvedUV, 0.0).rgb;
     }
     else
     {
         float2 offsetA = (spreadX + spreadY) / sceneSize;
         float2 offsetB = (spreadX - spreadY) / sceneSize;
-        reflected = 0.25 * (sceneColor.SampleLevel(samp, hitUV + offsetA, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV - offsetA, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV + offsetB, 0.0).rgb +
-                            sceneColor.SampleLevel(samp, hitUV - offsetB, 0.0).rgb);
+        reflected = 0.25 * (sceneColor.SampleLevel(samp, resolvedUV + offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV - offsetA, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV + offsetB, 0.0).rgb +
+                            sceneColor.SampleLevel(samp, resolvedUV - offsetB, 0.0).rgb);
     }
 
     // Fade the contribution as the hit nears the screen border (the reflected detail
     // runs off-screen there) so reflections vanish smoothly rather than clipping.
-    float2 edge = smoothstep(0.0, 0.15, hitUV) * (1.0 - smoothstep(0.85, 1.0, hitUV));
+    float2 edge = smoothstep(0.0, 0.15, resolvedUV) * (1.0 - smoothstep(0.85, 1.0, resolvedUV));
     float confidence = edge.x * edge.y;
 
     TraceOutput output = missed;

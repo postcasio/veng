@@ -23,7 +23,6 @@
 #include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Types.h>
 
-#include "FrameTopology.h"
 #include "MipTail.h"
 
 namespace Veng::Renderer
@@ -35,8 +34,6 @@ namespace Veng::Renderer
         constexpr AssetId SsrTraceFragId{0xBDBD7BC71B2B1E74ULL};
         constexpr AssetId SsrBlurDownCompId{0xEE0EED485023A7F6ULL};
         constexpr AssetId SsrCompositeFragId{0x50D9ECEAE45E31A1ULL};
-        constexpr AssetId SsrCompositeTermFragId{0x41160D6C6F1A7E7DULL};
-        constexpr AssetId SsrTemporalFragId{0x10C795C4790585FBULL};
         constexpr AssetId SsrHiZReduceCompId{0x93DA6E42B3B5479AULL};
         constexpr AssetId SsrHiZReduceTailCompId{0x7737782FD6CC04D1ULL};
 
@@ -72,10 +69,6 @@ namespace Veng::Renderer
         // Single-channel float for the max-Z pyramid; under reverse-Z the reduction stores
         // the nearest surface, which is the max depth.
         constexpr Format HiZFormat = Format::R32Sfloat;
-        // The reflected image's screen motion, a UV delta like the g-buffer's velocity channel.
-        constexpr Format MotionFormat = Format::RG16Sfloat;
-        // The history's fast luminance and that luminance's squared spread about the history.
-        constexpr Format FastFormat = Format::RG16Sfloat;
 
         // The mip chains run until their short axis reaches two texels; one level more is a single
         // row or column, across which the composite's B-spline has nothing to reconstruct.
@@ -155,23 +148,6 @@ namespace Veng::Renderer
             u32 SurfaceTexture;
             u32 Pad0;
             u32 Pad1;
-            vec4 PrevClipTranslation;
-        };
-
-        // The SSR temporal push, matching ssr_temporal.frag PushConstants: the term, motion and
-        // both history slots, the shared sampler, the view-constants region, the history-validity
-        // flag, and the output/history extent (eight 4-byte fields ahead of it keep it aligned).
-        struct SsrTemporalPush
-        {
-            u32 TermTexture;
-            u32 MotionTexture;
-            u32 HistoryTexture;
-            u32 FastTexture;
-            u32 Sampler;
-            u32 ViewConstantsIndex;
-            u32 HistoryValid;
-            u32 Pad0;
-            uvec2 Extent;
         };
     }
 
@@ -200,10 +176,6 @@ namespace Veng::Renderer
             LoadShader(SsrTraceFragId, "SSR trace fragment");
         const AssetHandle<Veng::Shader> ssrCompositeFs =
             LoadShader(SsrCompositeFragId, "SSR composite fragment");
-        const AssetHandle<Veng::Shader> ssrCompositeTermFs =
-            LoadShader(SsrCompositeTermFragId, "SSR composite term fragment");
-        const AssetHandle<Veng::Shader> ssrTemporalFs =
-            LoadShader(SsrTemporalFragId, "SSR temporal fragment");
         const AssetHandle<Veng::Shader> ssrBlurCs =
             LoadShader(SsrBlurDownCompId, "SSR blur downsample");
         const AssetHandle<Veng::Shader> ssrHiZReduceCs =
@@ -268,23 +240,6 @@ namespace Veng::Renderer
         m_CompositePipeline =
             MakePipeline("SceneRenderer SSR Composite Pipeline", m_CompositeLayout, ssrCompositeFs,
                          {{.Format = HdrFormat}});
-        m_CompositeTermPipeline =
-            MakePipeline("SceneRenderer SSR Composite Term Pipeline", m_CompositeLayout,
-                         ssrCompositeTermFs, {{.Format = HdrFormat}, {.Format = MotionFormat}});
-
-        // The temporal pass writes the next history outright and adds its result onto the resolved
-        // scene, leaving that target's alpha as the resolve wrote it.
-        m_TemporalLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer SSR Temporal Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<SsrTemporalPush>(
-                               ShaderStage::Fragment)},
-                       });
-        m_TemporalPipeline =
-            MakePipeline("SceneRenderer SSR Temporal Pipeline", m_TemporalLayout, ssrTemporalFs,
-                         {{.Format = HdrFormat},
-                          {.Format = FastFormat},
-                          {.Format = HdrFormat, .Blend = BlendState::AlphaAdditive()}});
 
         const auto ComputeBinding = [](const u32 binding, const DescriptorType type)
         {
@@ -330,16 +285,6 @@ namespace Veng::Renderer
         bindless.Release(m_HitDistanceSampleHandle);
         bindless.Release(m_SurfaceSampleHandle);
         bindless.Release(m_HiZSampleHandle);
-        bindless.Release(m_TermHandle);
-        bindless.Release(m_MotionHandle);
-        for (const TextureHandle& handle : m_HistoryHandles)
-        {
-            bindless.Release(handle);
-        }
-        for (const TextureHandle& handle : m_FastHandles)
-        {
-            bindless.Release(handle);
-        }
     }
 
     uvec2 SsrChain::RenderExtent() const
@@ -356,17 +301,12 @@ namespace Veng::Renderer
     }
 
     void SsrChain::Recreate(const SceneRendererSettings& settings, const uvec2 extent,
-                            const uvec2 historyExtent, const Ref<ImageView>& depthView,
+                            const Ref<ImageView>& depthView,
                             const Ref<DescriptorSetLayout>& hiZReduceSetLayout,
                             const Ref<DescriptorSetLayout>& hiZTailSetLayout)
     {
         m_Extent = extent;
-        m_HistoryExtent = glm::max(historyExtent, uvec2(1));
         m_ResolutionScale = static_cast<u8>(settings.SsrResolutionScale);
-        m_Temporal = ResolveSsrTemporal(settings);
-        // A recreated (or released) history holds nothing a resolve may reproject.
-        m_HistoryReset = true;
-        m_HistoryParity = 0;
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_SceneHandle);
@@ -374,43 +314,18 @@ namespace Veng::Renderer
         bindless.Release(m_HitDistanceSampleHandle);
         bindless.Release(m_SurfaceSampleHandle);
         bindless.Release(m_HiZSampleHandle);
-        bindless.Release(m_TermHandle);
-        bindless.Release(m_MotionHandle);
-        for (TextureHandle& handle : m_HistoryHandles)
-        {
-            bindless.Release(handle);
-            handle = {};
-        }
-        for (TextureHandle& handle : m_FastHandles)
-        {
-            bindless.Release(handle);
-            handle = {};
-        }
-        m_TermHandle = {};
-        m_MotionHandle = {};
         m_SceneHandle = {};
         m_ReflectionSampleHandle = {};
         m_HitDistanceSampleHandle = {};
         m_SurfaceSampleHandle = {};
         m_HiZSampleHandle = {};
 
-        // The temporal targets exist only under a temporal resolve, and the scene-color
-        // intermediate only without one.
-        m_SceneImage.reset();
-        m_SceneView.reset();
-        m_TermImage.reset();
-        m_TermView.reset();
-        m_MotionImage.reset();
-        m_MotionView.reset();
-        m_HistoryImages = {};
-        m_HistoryViews = {};
-        m_FastImages = {};
-        m_FastViews = {};
-
         // SSR targets exist only when SSR runs (the toggle or the Reflections debug arm).
         const bool ssrWanted = settings.SSR || settings.Mode == DebugView::Reflections;
         if (!ssrWanted)
         {
+            m_SceneImage.reset();
+            m_SceneView.reset();
             m_ReflectionImage.reset();
             m_ReflectionMips.clear();
             m_ReflectionSampleView.reset();
@@ -430,44 +345,17 @@ namespace Veng::Renderer
             return;
         }
 
-        // Builds a single-level target and registers its view.
-        const auto CreateTarget = [&](const string& name, const uvec2 size, const Format format,
-                                      Ref<Image>& image, Ref<ImageView>& view) -> TextureHandle
-        {
-            image = Image::Create(m_Context, {
-                                                 .Name = name,
-                                                 .Extent = {size.x, size.y, 1},
-                                                 .Format = format,
-                                                 .Usage = HdrUsage,
-                                             });
-            view = ImageView::Create(m_Context, {.Name = name + " View", .Image = image});
-            return bindless.Register(view);
-        };
-        if (m_Temporal)
-        {
-            // The term and its motion are the jittered render's; the history is the resolve's
-            // unjittered output allocation.
-            m_TermHandle = CreateTarget("SceneRenderer SSR Term", m_Extent, HdrFormat, m_TermImage,
-                                        m_TermView);
-            m_MotionHandle = CreateTarget("SceneRenderer SSR Motion", m_Extent, MotionFormat,
-                                          m_MotionImage, m_MotionView);
-            for (u32 i = 0; i < 2; ++i)
-            {
-                m_HistoryHandles[i] =
-                    CreateTarget(fmt::format("SceneRenderer SSR History {}", i), m_HistoryExtent,
-                                 HdrFormat, m_HistoryImages[i], m_HistoryViews[i]);
-                m_FastHandles[i] =
-                    CreateTarget(fmt::format("SceneRenderer SSR History Fast {}", i),
-                                 m_HistoryExtent, FastFormat, m_FastImages[i], m_FastViews[i]);
-            }
-        }
-        else
-        {
-            // The lit scene color SSR reads: lighting writes here, and the composite reflects into
-            // it and writes the target the tail reads.
-            m_SceneHandle = CreateTarget("SceneRenderer SSR Scene", m_Extent, HdrFormat,
-                                         m_SceneImage, m_SceneView);
-        }
+        // The lit scene color SSR reads: lighting/TAA writes here, the composite reflects into
+        // it and writes the HDR target, so the bloom/tonemap tail is unchanged.
+        m_SceneImage = Image::Create(m_Context, {
+                                                    .Name = "SceneRenderer SSR Scene",
+                                                    .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                    .Format = HdrFormat,
+                                                    .Usage = HdrUsage,
+                                                });
+        m_SceneView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer SSR Scene View", .Image = m_SceneImage});
+        m_SceneHandle = bindless.Register(m_SceneView);
 
         // The trace, max-Z pyramid, and blur chain run at the SSR resolution (the scene color
         // above stays full-res: the trace samples it by reflected UV, the composite by logical UV).
@@ -637,10 +525,9 @@ namespace Veng::Renderer
     }
 
     void SsrChain::Declare(RenderGraph& graph, const ResourceId sceneId,
-                           const TextureHandle sceneHandle, const MipChainId reflectionChainId,
-                           const MipChainId hiZChainId, const ResourceId albedoId,
-                           const ResourceId normalId, const ResourceId ormId,
-                           const ResourceId depthId, const ResourceId hdrId,
+                           const MipChainId reflectionChainId, const MipChainId hiZChainId,
+                           const ResourceId albedoId, const ResourceId normalId,
+                           const ResourceId ormId, const ResourceId depthId, const ResourceId hdrId,
                            const TextureHandle depthHandle, const TextureHandle normalHandle,
                            const TextureHandle ormHandle, const TextureHandle albedoHandle,
                            const SamplerHandle samplerHandle)
@@ -652,22 +539,6 @@ namespace Veng::Renderer
         const MipChainId distanceChainId = m_HitDistanceChainId;
         m_SurfaceChainId = graph.ImportImageMips("SceneRenderer SSR Surface", mipCount);
         const MipChainId surfaceChainId = m_SurfaceChainId;
-        m_TermId = ResourceId{};
-        m_MotionId = ResourceId{};
-        m_HistoryReadId = ResourceId{};
-        m_HistoryWriteId = ResourceId{};
-        m_FastReadId = ResourceId{};
-        m_FastWriteId = ResourceId{};
-        m_TemporalSamplerHandle = samplerHandle;
-        if (m_Temporal)
-        {
-            m_TermId = graph.Import("SceneRenderer SSR Term");
-            m_MotionId = graph.Import("SceneRenderer SSR Motion");
-            m_HistoryReadId = graph.Import("SceneRenderer SSR History Read");
-            m_HistoryWriteId = graph.Import("SceneRenderer SSR History Write");
-            m_FastReadId = graph.Import("SceneRenderer SSR Fast Read");
-            m_FastWriteId = graph.Import("SceneRenderer SSR Fast Write");
-        }
 
         // Max-Z reduction: build this frame's closest-surface pyramid from the depth target
         // before the trace. One dispatch per mip above the coarse tail, and one for the tail; mip 0
@@ -749,6 +620,7 @@ namespace Veng::Renderer
         // write the reflected scene radiance and the hit distance, premultiplied by the hit's
         // confidence, into both chains' mip 0.
         {
+            const TextureHandle sceneHandle = m_SceneHandle;
             const TextureHandle hizHandle = m_HiZSampleHandle;
 
             RenderGraph::PassBuilder traceBuilder = graph.AddPass("SSR Trace");
@@ -853,44 +725,28 @@ namespace Veng::Renderer
                     });
         }
 
-        // Composite: weight the reflection, blurred by its cone's footprint, and fold it into the
-        // scene color the tail reads, or under a temporal resolve write it as the term the temporal
-        // pass accumulates.
+        // Composite: fold the reflection, blurred by its cone's footprint, into the scene color and
+        // write the HDR target the bloom/tonemap tail reads.
         {
+            const TextureHandle sceneHandle = m_SceneHandle;
             const TextureHandle reflectionHandle = m_ReflectionSampleHandle;
             const TextureHandle distanceHandle = m_HitDistanceSampleHandle;
             const TextureHandle surfaceHandle = m_SurfaceSampleHandle;
             const SamplerHandle reflSamplerHandle = m_ReflectionSamplerHandle;
 
             RenderGraph::PassBuilder builder = graph.AddPass("SSR Composite");
-            if (m_Temporal)
-            {
-                builder
-                    .Color({
-                        .Resource = m_TermId,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-                    })
-                    .Color({
-                        .Resource = m_MotionId,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-                    });
-            }
-            else
-            {
-                builder
-                    .Color({
-                        .Resource = hdrId,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-                    })
-                    .Sample(sceneId);
-            }
-            builder.Sample(albedoId).Sample(normalId).Sample(ormId).Sample(depthId);
+            builder
+                .Color({
+                    .Resource = hdrId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Sample(sceneId)
+                .Sample(albedoId)
+                .Sample(normalId)
+                .Sample(ormId)
+                .Sample(depthId);
             // Every level of either chain the composite may read must be ShaderReadOnly.
             for (u32 level = 0; level < mipCount; level++)
             {
@@ -911,7 +767,7 @@ namespace Veng::Renderer
                     const SceneView& view = *viewPtr;
                     const uvec2 renderExtent = view.RenderExtent;
 
-                    cmd.BindPipeline(m_Temporal ? m_CompositeTermPipeline : m_CompositePipeline);
+                    cmd.BindPipeline(m_CompositePipeline);
                     cmd.SetViewport({0, 0}, renderExtent);
                     cmd.SetScissor({0, 0}, renderExtent);
                     registry.Bind(cmd);
@@ -930,93 +786,9 @@ namespace Veng::Renderer
                         .MaxRoughness = view.SsrMaxRoughness,
                         .MipCount = mipCount,
                         .SurfaceTexture = surfaceHandle.Index,
-                        .PrevClipTranslation = m_PrevClipTranslation,
                     });
                     cmd.DrawFullscreenTriangle();
                 });
         }
-    }
-
-    void SsrChain::DeclareTemporal(RenderGraph& graph, const ResourceId sceneId)
-    {
-        VE_ASSERT(m_Temporal && m_TermId.IsValid(),
-                  "SsrChain::DeclareTemporal: the chain was not declared for a temporal resolve");
-        graph.AddPass("SSR Temporal")
-            .Color({
-                .Resource = m_HistoryWriteId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-            })
-            .Color({
-                .Resource = m_FastWriteId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-            })
-            .Color({
-                .Resource = sceneId,
-                .Load = LoadOp::Load,
-                .Store = StoreOp::Store,
-            })
-            .Sample(m_TermId)
-            .Sample(m_MotionId)
-            .Sample(m_HistoryReadId)
-            .Sample(m_FastReadId)
-            .Execute(
-                [this](PassContext& inner)
-                {
-                    CommandBuffer& cmd = inner.Cmd();
-                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                    cmd.BindPipeline(m_TemporalPipeline);
-                    // The pass reconstructs the resolve's whole output allocation, as the resolve
-                    // does; the term is read through the view block's render sub-rect.
-                    cmd.SetViewport({0, 0}, m_HistoryExtent);
-                    cmd.SetScissor({0, 0}, m_HistoryExtent);
-                    registry.Bind(cmd);
-                    cmd.PushConstants(SsrTemporalPush{
-                        .TermTexture = m_TermHandle.Index,
-                        .MotionTexture = m_MotionHandle.Index,
-                        .HistoryTexture = m_HistoryHandles[m_HistoryParity].Index,
-                        .FastTexture = m_FastHandles[m_HistoryParity].Index,
-                        .Sampler = m_TemporalSamplerHandle.Index,
-                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .HistoryValid = m_HistoryReset ? 0u : 1u,
-                        .Extent = m_HistoryExtent,
-                    });
-                    cmd.DrawFullscreenTriangle();
-                });
-    }
-
-    void SsrChain::AppendTemporalBindings(std::vector<RenderGraph::ImportBinding>& bindings) const
-    {
-        if (!m_Temporal || !m_TermId.IsValid())
-        {
-            return;
-        }
-        bindings.push_back({.Id = m_TermId, .View = m_TermView});
-        bindings.push_back({.Id = m_MotionId, .View = m_MotionView});
-        bindings.push_back({.Id = m_HistoryReadId, .View = m_HistoryViews[m_HistoryParity]});
-        bindings.push_back({.Id = m_HistoryWriteId, .View = m_HistoryViews[1 - m_HistoryParity]});
-        bindings.push_back({.Id = m_FastReadId, .View = m_FastViews[m_HistoryParity]});
-        bindings.push_back({.Id = m_FastWriteId, .View = m_FastViews[1 - m_HistoryParity]});
-    }
-
-    void SsrChain::SetCamera(const dvec3& cameraPosition, const dmat4& previousDirectionViewProj)
-    {
-        m_CameraPosition = cameraPosition;
-        m_PrevClipTranslation = vec4(previousDirectionViewProj *
-                                     glm::dvec4(cameraPosition - m_PreviousCameraPosition, 0.0));
-    }
-
-    void SsrChain::CommitHistory()
-    {
-        m_PreviousCameraPosition = m_CameraPosition;
-        if (!m_Temporal)
-        {
-            return;
-        }
-        m_HistoryParity = 1 - m_HistoryParity;
-        m_HistoryReset = false;
     }
 }

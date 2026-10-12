@@ -26,7 +26,6 @@
 #include "Veng/sh.slang"
 #include "Veng/light_flags.slang"
 #include "Veng/ltc.slang"
-#include "Veng/specular_aa.slang"
 
 #include "Veng/ibl_maps.slang"
 
@@ -75,15 +74,29 @@ struct LightingResult
     float3 Specular;
 };
 
+// How far a shading normal varies across this pixel, |dN/dx|² + |dN/dy|²: the variance geometric
+// specular anti-aliasing widens the lobe by (MakeLightingSurface). It takes screen-space
+// derivatives, so it is called from a fragment stage in uniform control flow. Fine derivatives, so
+// a pixel's variance comes from its own row and column neighbours.
+float NormalScreenVariance(float3 normal)
+{
+    float3 du = ddx_fine(normal);
+    float3 dv = ddy_fine(normal);
+    return dot(du, du) + dot(dv, dv);
+}
+
 // Builds the surface a lighting evaluation shades.
 //
 // normalVariance is the shading normal's screen-space variance (NormalScreenVariance). Geometric
-// specular anti-aliasing (Veng/specular_aa.slang) widens the GGX width by it once, here, so every
-// light's D and G, a sized light's widening and the image-based reflection's mip and BRDF lookups
-// all see the widened roughness:
-//     alpha² = saturate(alpha² + GeometricSpecularWidening(normalVariance))
-// The result is converted back to perceptual roughness, which is what Roughness holds and every
-// reader expects.
+// specular anti-aliasing (Kaplanyan 2016; Tokuyoshi and Kaplanyan 2019, as Filament's
+// normalFiltering ships it) widens the GGX width by it once, here, so every light's D and G, a
+// sized light's widening and the image-based reflection's mip and BRDF lookups all see the widened
+// roughness:
+//     alpha² = saturate(alpha² + min(2 · σ² · normalVariance, κ))
+// with σ² and κ the view block's AmbientParams.y and .z. A highlight narrower than the normal's
+// variation across one pixel lands on it one frame and misses it the next; the widened one covers
+// the pixel. A zero σ² adds exactly nothing. The result is converted back to perceptual roughness,
+// which is what Roughness holds and every reader expects.
 LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 normal,
                                     float3 view, float3 albedo, float roughness, float metallic,
                                     bool declinesShadowMaps, bool declinesEnvironmentLighting,
@@ -96,7 +109,7 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     s.Albedo = albedo;
     float floored = clamp(roughness, 0.04, 1.0);
     float alpha = floored * floored;
-    float kernel = GeometricSpecularWidening(vc, normalVariance);
+    float kernel = min(2.0 * vc.AmbientParams.y * normalVariance, vc.AmbientParams.z);
     s.Roughness = sqrt(sqrt(saturate(alpha * alpha + kernel)));
     s.Metallic = metallic;
     // Metallic workflow: dielectrics reflect a flat 0.04, metals tint specular by albedo; diffuse

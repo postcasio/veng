@@ -198,8 +198,8 @@ TEST_CASE("frame topology: the anti-aliasing mode wires exactly one resolve on F
 
 TEST_CASE("frame topology: the temporal predicates separate TAA from its upscaling mode")
 {
-    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only
-    // whether the resolve may be the promotion (TAAU alone).
+    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only the
+    // viewport's native-allocation routing (TAAU alone).
     SceneRendererSettings settings;
 
     settings.AntiAliasing = AntiAliasingMode::None;
@@ -218,91 +218,6 @@ TEST_CASE("frame topology: the temporal predicates separate TAA from its upscali
     settings.AntiAliasing = AntiAliasingMode::FXAA;
     CHECK_FALSE(settings.UsesTaa());
     CHECK_FALSE(settings.UsesTaaUpscaling());
-}
-
-TEST_CASE("frame topology: a temporal-upscaling resolve promotes unless a composited depth of "
-          "field follows it")
-{
-    SceneRendererSettings settings = ModeOnly(DebugView::Final);
-    settings.AntiAliasing = AntiAliasingMode::TAAU;
-    CHECK(ResolveTemporalUpscalePromotes(settings));
-
-    // SSR reconstructs its reflection at the resolve's own output allocation, so it leaves the
-    // promotion alone.
-    settings.SSR = true;
-    CHECK(ResolveTemporalUpscalePromotes(settings));
-    CHECK(ResolveFrameTopology(settings, SkyTopologyInput{}).TaaUpscalePromotes);
-
-    // The depth-of-field chain reads the resolved scene colour beside render-resolution depth.
-    settings.DepthOfField = true;
-    CHECK_FALSE(ResolveTemporalUpscalePromotes(settings));
-
-    // Plain TAA never promotes at the resolve.
-    settings.DepthOfField = false;
-    settings.AntiAliasing = AntiAliasingMode::TAA;
-    CHECK_FALSE(ResolveTemporalUpscalePromotes(settings));
-}
-
-TEST_CASE("frame topology: SSR resolves its own reflection exactly when a temporal resolve runs")
-{
-    // A temporal resolve reprojects by the surface's motion, so a reflection inside its history
-    // lags; SSR then accumulates the reflection itself and adds it after the resolve.
-    for (const AntiAliasingMode mode :
-         {AntiAliasingMode::None, AntiAliasingMode::FXAA, AntiAliasingMode::TAA,
-          AntiAliasingMode::CMAA2, AntiAliasingMode::TAAU})
-    {
-        for (const bool ssr : {false, true})
-        {
-            for (const DebugView view : {DebugView::Final, DebugView::Reflections})
-            {
-                SceneRendererSettings settings = ModeOnly(view);
-                settings.AntiAliasing = mode;
-                settings.SSR = ssr;
-                const FrameTopology topology = ResolveFrameTopology(settings, SkyTopologyInput{});
-                CAPTURE(static_cast<int>(mode));
-                CAPTURE(ssr);
-                CAPTURE(static_cast<int>(view));
-                CHECK(topology.SsrTemporal == (topology.SsrActive && topology.TaaActive));
-                CHECK(topology.SsrTemporal == ResolveSsrTemporal(settings));
-            }
-        }
-    }
-}
-
-TEST_CASE("frame topology: SSR runs through exactly the chain its technique names")
-{
-    using Technique = SceneRendererSettings::SsrTechnique;
-    for (const Technique technique : {Technique::Legacy, Technique::Stochastic})
-    {
-        for (const AntiAliasingMode mode : {AntiAliasingMode::None, AntiAliasingMode::TAA})
-        {
-            for (const bool ssr : {false, true})
-            {
-                for (const DebugView view : {DebugView::Final, DebugView::Reflections})
-                {
-                    SceneRendererSettings settings = ModeOnly(view);
-                    settings.AntiAliasing = mode;
-                    settings.SSR = ssr;
-                    settings.SsrMethod = technique;
-                    const FrameTopology topology = Resolve(settings);
-                    CAPTURE(static_cast<int>(technique));
-                    CAPTURE(static_cast<int>(mode));
-                    CAPTURE(ssr);
-                    CAPTURE(static_cast<int>(view));
-                    const bool runs =
-                        (view == DebugView::Final && ssr) || view == DebugView::Reflections;
-                    CHECK(topology.SsrActive == (runs && technique == Technique::Legacy));
-                    CHECK(topology.SsrStochasticActive ==
-                          (runs && technique == Technique::Stochastic));
-                    // The stochastic chain keeps no history of its own past the resolve.
-                    if (technique == Technique::Stochastic)
-                    {
-                        CHECK_FALSE(topology.SsrTemporal);
-                    }
-                }
-            }
-        }
-    }
 }
 
 TEST_CASE("frame topology: every sky source selects exactly one display path")
@@ -438,40 +353,27 @@ TEST_CASE("frame topology: the resolve is stateless")
 
 TEST_CASE("frame topology: velocity is stored only where something reads it")
 {
-    // Velocity's readers are the temporal resolve, the motion-vector blit and the stochastic
-    // reflection denoiser; every other colour channel is stored in every configuration.
+    // Velocity's readers are the temporal resolve and the motion-vector blit; every other colour
+    // channel is stored in every configuration.
     constexpr std::array modes{AntiAliasingMode::None, AntiAliasingMode::FXAA,
                                AntiAliasingMode::TAA, AntiAliasingMode::CMAA2,
                                AntiAliasingMode::TAAU};
-    using Technique = SceneRendererSettings::SsrTechnique;
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         for (const AntiAliasingMode aa : modes)
         {
-            for (const Technique technique : {Technique::Legacy, Technique::Stochastic})
-            {
-                SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
-                settings.AntiAliasing = aa;
-                settings.SSR = true;
-                settings.SsrMethod = technique;
-                const FrameTopology topology = Resolve(settings);
-                CAPTURE(DebugViewNames[arm]);
-                CAPTURE(static_cast<int>(aa));
-                CAPTURE(static_cast<int>(technique));
+            SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
+            settings.AntiAliasing = aa;
+            const FrameTopology topology = Resolve(settings);
+            CAPTURE(DebugViewNames[arm]);
+            CAPTURE(static_cast<int>(aa));
 
-                const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors ||
-                                  topology.SsrStochasticActive;
-                CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
-                // The denoiser reprojects by velocity in every anti-aliasing mode.
-                if (topology.SsrStochasticActive)
-                {
-                    CHECK(topology.GBufferStores.Velocity == GBufferChannelState::Stored);
-                }
+            const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors;
+            CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
 
-                GBufferChannelStates others = topology.GBufferStores;
-                others.Velocity = GBufferChannelState::Stored;
-                CHECK(others == GBufferChannelStates{});
-            }
+            GBufferChannelStates others = topology.GBufferStores;
+            others.Velocity = GBufferChannelState::Stored;
+            CHECK(others == GBufferChannelStates{});
         }
     }
 

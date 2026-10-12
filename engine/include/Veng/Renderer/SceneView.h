@@ -214,9 +214,9 @@ namespace Veng::Renderer
 
         /// @brief The valid extent of the HDR scene colour at the tail anchor; set each Execute.
         ///
-        /// The band between the temporal resolve and the promotion — SSR's composite or temporal
-        /// pass, the HDR-placed point fields, the depth-of-field composite — writes the scene
-        /// colour, and which extent that is depends on where the promotion sits. With a temporal-upscaling
+        /// The band between the temporal resolve and the promotion — the SSR composite, the
+        /// HDR-placed point fields, the depth-of-field composite — writes the scene colour, and
+        /// which extent that is depends on where the promotion sits. With a temporal-upscaling
         /// resolve it is PostResolveExtent (that resolve already reconstructed the allocation);
         /// with a plain temporal resolve it is the full render allocation the resolve reconstructs;
         /// with none it is RenderExtent, the rasterized sub-rect. A caller's value is overwritten.

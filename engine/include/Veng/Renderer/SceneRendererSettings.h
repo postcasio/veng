@@ -137,11 +137,9 @@ namespace Veng::Renderer
     /// result up to the post-resolve allocation: the reconstruction is temporal, the upscale
     /// spatial. TAAU resolves at the post-resolve allocation, so its history is allocation-sized and
     /// **the resolve is the promotion** — a jittered sub-native render accumulated straight into the
-    /// native image, with no second resample behind it. A TAAU frame that also wires a composited
-    /// depth-of-field chain resolves like TAA instead (the chain reads render-resolution depth beside
-    /// the resolved scene colour), degrading the reconstruction to spatial and keeping everything
-    /// else. SSR reconstructs its reflection at the resolve's own output allocation, so it composes
-    /// with either.
+    /// native image, with no second resample behind it. A TAAU frame that also wires SSR or a
+    /// composited depth-of-field chain resolves like TAA instead (those read render-resolution depth
+    /// beside the scene colour), degrading the reconstruction to spatial and keeping everything else.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.
@@ -227,33 +225,6 @@ namespace Veng::Renderer
             Half,
             /// @brief Trace at a quarter of the render resolution per axis (a sixteenth the pixels).
             Quarter,
-        };
-
-        /// @brief Which screen-space-reflection chain runs while SSR is on.
-        ///
-        /// Two chains stand side by side: the deterministic one-ray-per-texel trace with its blur
-        /// chain and temporal pass, and the stochastic one that classifies tiles, samples the GGX
-        /// lobe per ray from blue noise and denoises the result.
-        enum class SsrTechnique : u8
-        {
-            /// @brief The mirror-ray trace, cone-footprint blur chain and reflection history.
-            Legacy,
-            /// @brief Tile classification, GGX-lobe ray sampling and a reflections denoiser.
-            Stochastic,
-        };
-
-        /// @brief How many of each 2x2 pixel quad's glossy pixels trace a ray of their own (the stochastic chain).
-        ///
-        /// An untraced pixel copies its quad's base ray, and the denoiser reconstructs the rest. A
-        /// mirror traces every pixel at every density, since the denoiser does not filter it.
-        enum class SsrSamplesPerQuad : u8
-        {
-            /// @brief One ray per quad: the even-even pixel.
-            One,
-            /// @brief Two rays per quad: the diagonal pair.
-            Two,
-            /// @brief Four rays per quad: every pixel.
-            Four,
         };
 
         /// @brief Selects the top-level render path; GeometryDepthNormal ignores DebugView Mode.
@@ -382,12 +353,10 @@ namespace Veng::Renderer
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
-        /// passes between lighting and the bloom/tonemap tail. With no temporal resolve the lit
-        /// scene color is routed through an intermediate the SSR composite reflects into; under one
-        /// the reflection is kept out of the resolve's history and accumulated by SSR's own temporal
-        /// pass, reprojected by the reflected image's motion, which adds it to the resolved scene.
-        /// SsrIntensity / SsrMaxDistance / SsrThickness / SsrMaxRoughness / SsrMaxSteps are
-        /// per-frame values on SceneView and do not recompile.
+        /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
+        /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
+        /// / SsrThickness / SsrMaxRoughness / SsrMaxSteps are per-frame values on SceneView and do
+        /// not recompile.
         /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
         /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
         /// trace itself.
@@ -400,20 +369,6 @@ namespace Veng::Renderer
         /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
         /// when SSR is inactive.
         SsrResolution SsrResolutionScale = SsrResolution::Half;
-
-        /// @brief Which screen-space-reflection chain runs while SSR is on.
-        ///
-        /// A topology change: the two chains wire different passes and allocate different targets,
-        /// so a change recompiles. Under Stochastic nothing composites the reflection into the frame:
-        /// the frame renders as with SSR off, and the Reflections debug view shows the chain's
-        /// radiance target. Ignored when SSR is inactive.
-        SsrTechnique SsrMethod = SsrTechnique::Legacy;
-
-        /// @brief How many rays each 2x2 quad of glossy pixels traces under the stochastic chain.
-        ///
-        /// A topology change, so a change recompiles. Defaults to One. Ignored by the Legacy chain
-        /// and when SSR is inactive.
-        SsrSamplesPerQuad SsrDensity = SsrSamplesPerQuad::One;
 
         /// @brief Whether the depth-of-field battery runs.
         ///
@@ -578,9 +533,9 @@ namespace Veng::Renderer
 
         /// @brief Whether the temporal resolve is acting as an upscaler (render below native).
         ///
-        /// TAAU-only: the renderer reads this to let the resolve reconstruct the post-resolve
-        /// allocation directly, as the promotion. Under TAA a spatial promotion follows the resolve,
-        /// so it returns false there.
+        /// TAAU-only: the viewport reads this to pin the allocation to native and route the render
+        /// scale into the rendered sub-rect, so the resolve reconstructs the native image. TAA leaves
+        /// the render scale an allocation scale, so it returns false there.
         /// @return True only for AntiAliasingMode::TAAU.
         [[nodiscard]] bool UsesTaaUpscaling() const
         {
@@ -648,17 +603,6 @@ VE_ENUMERATOR(Half)
 VE_ENUMERATOR(Quarter)
 VE_ENUM_END();
 
-VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrTechnique, 0x0ABE6F1D0A72637CULL)
-VE_ENUMERATOR(Legacy)
-VE_ENUMERATOR(Stochastic)
-VE_ENUM_END();
-
-VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrSamplesPerQuad, 0xC6ADA8D0ACE2402FULL)
-VE_ENUMERATOR(One)
-VE_ENUMERATOR(Two)
-VE_ENUMERATOR(Four)
-VE_ENUM_END();
-
 // Reflected so a field-masked override set (FieldOverrides) and a reflected-field settings surface
 // can address every field without listing them. Category groups the fields into the sections a
 // settings surface draws; the render path is chosen at Create, so it reads but does not edit.
@@ -693,8 +637,6 @@ VE_FIELD(ShadowCasterMinTexels, .DisplayName = "Shadow caster min texels", .Disp
 VE_FIELD(SSR, .DisplayName = "Screen-space reflections", .Category = "Screen-space reflections")
 VE_FIELD(SsrResolutionScale, .DisplayName = "SSR trace resolution",
          .Category = "Screen-space reflections")
-VE_FIELD(SsrMethod, .DisplayName = "SSR technique", .Category = "Screen-space reflections")
-VE_FIELD(SsrDensity, .DisplayName = "SSR rays per quad", .Category = "Screen-space reflections")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of field", .Category = "Depth of field")
 VE_FIELD(Refraction, .DisplayName = "Refraction (scene-color grab)", .Category = "Refraction")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction blur (grab mip chain)",

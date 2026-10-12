@@ -357,16 +357,6 @@
       "source": "shaders/ssr_composite.frag.shader.json"
     },
     {
-      "id": "0x41160D6C6F1A7E7D",
-      "type": "Shader",
-      "source": "shaders/ssr_composite_term.frag.shader.json"
-    },
-    {
-      "id": "0x10C795C4790585FB",
-      "type": "Shader",
-      "source": "shaders/ssr_temporal.frag.shader.json"
-    },
-    {
       "id": "0x93DA6E42B3B5479A",
       "type": "Shader",
       "source": "shaders/ssr_hiz_reduce.comp.shader.json"
@@ -645,46 +635,6 @@
       "id": "0x27644C3AE58BB0D3",
       "type": "Raw",
       "source": "data/ltc_lut.bin"
-    },
-    {
-      "id": "0xC652F35EA7002748",
-      "type": "Shader",
-      "source": "shaders/ssr_classify.comp.shader.json"
-    },
-    {
-      "id": "0x7D76AEC62D2E44D4",
-      "type": "Shader",
-      "source": "shaders/ssr_prepare_args.comp.shader.json"
-    },
-    {
-      "id": "0xCDED5EB51013870B",
-      "type": "Raw",
-      "source": "data/ssr_blue_noise.bin"
-    },
-    {
-      "id": "0x6F2923B2CF152214",
-      "type": "Shader",
-      "source": "shaders/ssr_intersect.comp.shader.json"
-    },
-    {
-      "id": "0x82B4679545912CAB",
-      "type": "Shader",
-      "source": "shaders/ssr_reproject.comp.shader.json"
-    },
-    {
-      "id": "0x0EB7CB7E359D9F47",
-      "type": "Shader",
-      "source": "shaders/ssr_prefilter.comp.shader.json"
-    },
-    {
-      "id": "0x6266D1F301AD3398",
-      "type": "Shader",
-      "source": "shaders/ssr_resolve.comp.shader.json"
-    },
-    {
-      "id": "0x92F4C2F3B6A66F38",
-      "type": "Shader",
-      "source": "shaders/ssr_denoise_history.comp.shader.json"
     }
   ]
 }

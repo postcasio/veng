@@ -1,15 +1,14 @@
-// The surface an SSR trace texel or composite pixel reflects from, taken on the pixel's ray in the
-// rasterized frame. SSR traces and composites ahead of any temporal resolve, so the g-buffer, the
-// scene colour it reflects and the target it writes all stand where the raster put them; under a
-// temporal resolve SSR's own temporal pass reconstructs the reflection at unjittered positions.
+// The surface an SSR trace texel or composite pixel reflects from, taken on the pixel's unjittered
+// ray. SSR composites after the temporal resolve, which reconstructs the scene at unjittered
+// positions, so a reflection traced from the jittered g-buffer as it lies would follow the jitter.
 //
-// The g-buffer texel holding the pixel's position was sampled at its own centre, which a trace
-// below the render resolution places up to a texel away from the pixel's ray, so its point is
-// carried along its tangent plane onto the ray — exact for a plane at any angle, and the texel's own
-// point where the two centres coincide. Every read is a point load: a filtered depth or normal would
-// blend the two surfaces either side of a silhouette into one that is neither.
+// The g-buffer texel holding the pixel's unjittered position is the one the jitter moved it into
+// (uv + JitterNdc / 2). That texel's surface was sampled at its own centre, up to a texel away from
+// the pixel's ray, so its point is carried along its tangent plane onto the ray — exact for a plane
+// at any angle, and with no temporal resolve (JitterNdc zero, the texel centred on the pixel) the
+// texel's own point. Every read is a point load: a filtered depth or normal would blend the two
+// surfaces either side of a silhouette into one that is neither.
 #include "view_constants.slang"
-#include "Veng/specular_aa.slang"
 
 // How far, in texel widths at the surface, a point may be carried along its tangent plane onto the
 // pixel's ray. A plane seen nearly edge-on, or a silhouette where the normal turns away from the
@@ -20,20 +19,20 @@ static const float MaxSurfaceCarryTexels = 16.0;
 // The surface at one screen position.
 struct SsrSurface
 {
-    float3 Position;  // camera-relative position, on the pixel's ray
+    float3 Position;  // camera-relative position, on the pixel's unjittered ray
     float3 Normal;    // world-space unit normal
     int2 Texel;       // the g-buffer texel it was read from, for the material reads beside it
     bool Valid;       // false over the cleared background or a texel with no normal
 };
 
-// The camera-relative position of a rasterized screen UV at a device depth.
+// The camera-relative position of a rasterized (jittered) screen UV at a device depth.
 float3 RelativePosition(ViewConstants vc, float2 uv, float depth)
 {
     float4 relativeH = mul(vc.InvViewRotProj, float4(uv * 2.0 - 1.0, depth, 1.0));
     return relativeH.xyz / relativeH.w;
 }
 
-// The surface at screen UV `uv`, from the g-buffer's depth and world-normal targets.
+// The surface at unjittered screen UV `uv`, from the g-buffer's depth and world-normal targets.
 SsrSurface SsrSurfaceAt(ViewConstants vc, Texture2D depthTexture, Texture2D normalTexture, float2 uv)
 {
     SsrSurface surface;
@@ -47,7 +46,8 @@ SsrSurface SsrSurfaceAt(ViewConstants vc, Texture2D depthTexture, Texture2D norm
     uint levels;
     depthTexture.GetDimensions(0u, width, height, levels);
     float2 size = float2(width, height);
-    int2 texel = clamp(int2(floor(uv * size)), int2(0, 0), int2(width, height) - 1);
+    float2 rasterUV = uv + vc.JitterNdc.xy * 0.5;
+    int2 texel = clamp(int2(floor(rasterUV * size)), int2(0, 0), int2(width, height) - 1);
     surface.Texel = texel;
 
     // Reverse-Z: the cleared background sits at depth 0.
@@ -64,8 +64,8 @@ SsrSurface SsrSurfaceAt(ViewConstants vc, Texture2D depthTexture, Texture2D norm
     float3 sampled = RelativePosition(vc, texelUV, depth);
     // The pixel's ray, from its point at the texel's depth toward one further away, so a
     // perspective and an orthographic projection give it alike.
-    float3 onRay = RelativePosition(vc, uv, depth);
-    float3 direction = RelativePosition(vc, uv, depth * 0.5) - onRay;
+    float3 onRay = RelativePosition(vc, rasterUV, depth);
+    float3 direction = RelativePosition(vc, rasterUV, depth * 0.5) - onRay;
     float directionLength = max(length(direction), 1e-20);
     direction /= directionLength;
     float carry = 0.0;
@@ -77,18 +77,4 @@ SsrSurface SsrSurfaceAt(ViewConstants vc, Texture2D depthTexture, Texture2D norm
     surface.Position = onRay + direction * clamp(carry, -limit, limit);
     surface.Valid = true;
     return surface;
-}
-
-// The roughness the surface at g-buffer texel `texel` reflects with: the g-buffer's, widened by its
-// normal's variation across the pixel exactly as the lighting core widens the lobe it shades that
-// texel with (Veng/specular_aa.slang), so the reflected cone is the shaded lobe's. Unwidened, a
-// glossy normal-mapped surface reflects a cone narrower than its own highlight, and each ray follows
-// whichever normal the raster sampled. A flat surface's roughness is returned untouched. The
-// variance is read from loads, so it holds past an early return and at any trace resolution.
-float SsrRoughness(ViewConstants vc, Texture2D depthTexture, Texture2D normalTexture,
-                   Texture2D ormTexture, int2 texel)
-{
-    float roughness = ormTexture.Load(int3(texel, 0)).g;
-    return WidenRoughnessForGeometry(vc, roughness,
-                                     GBufferNormalVarianceAt(depthTexture, normalTexture, texel));
 }

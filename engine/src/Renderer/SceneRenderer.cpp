@@ -51,7 +51,6 @@
 #include "Passes/RibbonScenePass.h"
 #include "Passes/SpriteScenePass.h"
 #include "SsrChain.h"
-#include "SsrStochasticChain.h"
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
 #include "PostResolveUpscale.h"
@@ -301,8 +300,6 @@ namespace Veng::Renderer
         // layouts, which must already exist, so the chain is constructed after that subsystem.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
                                  m_GpuCull->GetHiZTailLayout());
-        m_SsrStochastic = SsrStochasticChain::Create(
-            m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(), m_GpuCull->GetHiZTailLayout());
         // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
@@ -480,25 +477,17 @@ namespace Veng::Renderer
         m_VelocityId = velocityId;
         m_EmissiveId = emissiveId;
 
-        // With SSR on and no temporal resolve, the lit scene color lands in an intermediate the SSR
-        // composite reflects into before writing the HDR target the bloom/tonemap tail reads. Under
-        // a temporal resolve lighting writes the resolve's lit target, which the trace reflects, and
-        // the reflection is accumulated by SSR itself and added after the resolve (SsrTemporal).
+        // With SSR on, the lit scene color lands in an intermediate the SSR composite reflects
+        // into before writing the HDR target — so SSR slots in exactly where TAA does, and the
+        // bloom/tonemap tail still reads the HDR target unchanged.
         m_SsrSceneId = ResourceId{};
         if (m_Topology->SsrActive)
         {
-            if (!m_Topology->SsrTemporal)
-            {
-                m_SsrSceneId = graph.Import("SceneRenderer SSR Scene");
-            }
+            m_SsrSceneId = graph.Import("SceneRenderer SSR Scene");
             m_SsrReflectionChainId = graph.ImportImageMips("SceneRenderer SSR Reflection",
                                                            m_Ssr->GetReflectionMipCount());
             m_SsrHiZChainId =
                 graph.ImportImageMips("SceneRenderer SSR MinZ", m_Ssr->GetHiZMipCount());
-        }
-        if (m_Topology->SsrStochasticActive)
-        {
-            m_SsrStochastic->Import(graph);
         }
         // Depth of field splices in the same way: the tail writes the chain's scene-color
         // intermediate and the composite writes the HDR target, so bloom, metering, and tonemap
@@ -530,12 +519,10 @@ namespace Veng::Renderer
 
         // The id the HDR tail writes before the DoF composite hands the HDR target on.
         const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
-        // What the temporal anchor reads: the lit target under a temporal resolve, else the scene
-        // color directly. With no resolve the SSR composite writes it when SSR runs; otherwise the
-        // scene chain does.
-        const ResourceId anchorId = m_Topology->TaaActive ? litId : dofTargetId;
-        const bool ssrIntoScene = m_Topology->SsrActive && !m_Topology->SsrTemporal;
-        const ResourceId lightingTargetId = ssrIntoScene ? m_SsrSceneId : anchorId;
+        const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
+        // The scene chain writes whatever the temporal anchor reads: the lit target under a
+        // temporal resolve, else the scene color directly.
+        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
 
         // The pre-bloom post-process effect chain ping-pongs between two HDR targets. The finished
         // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, SSR / point
@@ -646,10 +633,10 @@ namespace Veng::Renderer
 
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
-        const TextureHandle anchorHandle =
-            m_Topology->TaaActive ? m_Taa->GetLitHandle() : dofTargetHandle;
+        const TextureHandle sceneColorHandle =
+            m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle;
         const TextureHandle lightingTargetHandle =
-            ssrIntoScene ? m_Ssr->GetSceneHandle() : anchorHandle;
+            m_Topology->TaaActive ? m_Taa->GetLitHandle() : sceneColorHandle;
 
         ResourceId shadowId{};
         if (m_Topology->ShadowActive)
@@ -721,12 +708,9 @@ namespace Veng::Renderer
         m_SkyMaterialPass = nullptr;
         m_IblCubeDebugPass = nullptr;
 
-        // The pass index the HDR tail (point fields, bloom sweep, and the SSR chain when no
-        // temporal resolve runs) is declared before: the tonemap in the Final arm (set
-        // below), else the terminal pass.
+        // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
+        // before: the tonemap in the Final arm (set below), else the terminal pass.
         optional<usize> hdrTailAnchor;
-        // The pass index the SSR chain is declared before under a temporal resolve: the resolve.
-        optional<usize> ssrAnchor;
 
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
@@ -924,28 +908,24 @@ namespace Veng::Renderer
             }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
-            // between lighting and the bloom/tonemap tail. The SSR chain is declared ahead of it,
-            // tracing the lit target and writing the reflection term, and its temporal pass right
-            // after it, adding the accumulated reflection once the history copy has read the scene.
+            // between lighting and the bloom/tonemap tail.
             if (m_Topology->TaaActive)
             {
-                if (m_Topology->SsrActive || m_Topology->SsrStochasticActive)
-                {
-                    ssrAnchor = m_Passes.size();
-                }
+                // The resolve writes the scene-color target SSR reads (the HDR target directly
+                // when SSR is off); the SSR composite then writes the HDR target.
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
-                    taaHistoryId, dofTargetId, depthId, velocityId, m_Taa->GetLitHandle(),
-                    dofTargetHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
+                    taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
+                    sceneColorHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
                     m_Taa->GetHistoryResetPointer(), m_Taa->GetExposurePointer(),
                     sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
-            // as part of the HDR tail — after the TAA resolve and SSR's reflection, before the bloom
+            // as part of the HDR tail — after the TAA resolve and SSR composite, before the bloom
             // sweep — so the fields' additive radiance rolls off through the tone curve and
             // blooms. Declared at the tail anchor (not pushed here), since only the anchor point
-            // sits between the last scene-colour writer and the bloom read of the final HDR target.
+            // sits between the SSR composite and the bloom read of the final HDR target.
             if (m_PointFieldActive)
             {
                 m_PointFieldPass = CreateUnique<PointFieldScenePass>(
@@ -1362,12 +1342,8 @@ namespace Veng::Renderer
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
-            .SsrReflection = m_Topology->SsrActive             ? m_SsrReflectionChainId.Level(0)
-                             : m_Topology->SsrStochasticActive ? m_SsrStochastic->GetOutputId()
-                                                               : ResourceId{},
-            .SsrReflectionHandle = m_Topology->SsrStochasticActive
-                                       ? m_SsrStochastic->GetOutputHandle()
-                                       : m_Ssr->GetReflectionSampleHandle(),
+            .SsrReflection = m_Topology->SsrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
+            .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
             .SamplerHandle = m_SamplerHandle,
@@ -1390,8 +1366,8 @@ namespace Veng::Renderer
             m_GpuCull->DeclareCull(graph, &m_Internal->Plan);
         }
 
-        // The HDR tail — point fields, bloom sweep, and the SSR chain when no temporal resolve
-        // follows it — is declared just before the pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
+        // The HDR tail — SSR composite, point fields, bloom sweep — is declared just before the
+        // pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
         // debug arm. Anchoring on that pass (not the list's last) keeps the tail ahead of the
         // tonemap even when a post-tonemap pass (DebugDraw) follows, since execution follows
         // declaration order.
@@ -1401,35 +1377,20 @@ namespace Veng::Renderer
             const Unique<ScenePass>& pass = m_Passes[i];
             pass->Configure(m_Settings);
 
-            // SSR traces the lit scene ahead of the resolve when one runs, else at the head of the
-            // HDR tail, where its composite writes the target the tail reads.
-            const bool declareSsr = m_Topology->SsrActive &&
-                                    (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
-            if (declareSsr)
-            {
-                m_Ssr->Declare(graph, ssrIntoScene ? m_SsrSceneId : litId,
-                               ssrIntoScene ? m_Ssr->GetSceneHandle() : m_Taa->GetLitHandle(),
-                               m_SsrReflectionChainId, m_SsrHiZChainId, m_AlbedoId, m_NormalId,
-                               m_OrmId, m_DepthId, anchorId, m_DepthHandle, m_NormalHandle,
-                               m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
-            }
-            const bool declareStochastic =
-                m_Topology->SsrStochasticActive &&
-                (ssrAnchor.has_value() ? i == *ssrAnchor : i == tailAnchor);
-            if (declareStochastic)
-            {
-                m_SsrStochastic->Declare(graph, m_DepthId, m_NormalId, m_OrmId, m_VelocityId,
-                                         lightingTargetId, m_DepthHandle, m_NormalHandle,
-                                         m_OrmHandle, m_VelocityHandle, lightingTargetHandle);
-            }
-
             if (i == tailAnchor)
             {
-                // The point fields accumulate over the finished scene color; the bloom sweep then
-                // reads the finished HDR.
+                // SSR composes the reflected scene color into the HDR target; the point fields
+                // accumulate over that; the bloom sweep then reads the finished HDR.
+                if (m_Topology->SsrActive)
+                {
+                    m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
+                                   m_AlbedoId, m_NormalId, m_OrmId, m_DepthId, dofTargetId,
+                                   m_DepthHandle, m_NormalHandle, m_OrmHandle, m_AlbedoHandle,
+                                   m_SamplerHandle);
+                }
                 if (m_PointFieldPass != nullptr)
                 {
-                    // The fields write the last scene-color target of the tail, not the pre-resolve
+                    // The fields write the last scene-color target of the tail, not the pre-TAA/SSR
                     // lit target the in-list passes see as io.Hdr.
                     PassIO fieldIo = io;
                     fieldIo.Hdr = dofTargetId;
@@ -1510,13 +1471,6 @@ namespace Veng::Renderer
             }
 
             pass->Declare(graph, io);
-
-            // The reflection is added after the resolve's history copy has read the scene, so it
-            // never enters the resolve's history.
-            if (m_Topology->SsrTemporal && ssrAnchor.has_value() && i == *ssrAnchor)
-            {
-                m_Ssr->DeclareTemporal(graph, dofTargetId);
-            }
         }
 
         // The hi-Z reduction runs last so it reduces this frame's completed depth, and only where
@@ -2234,11 +2188,8 @@ namespace Veng::Renderer
             m_Bloom->Release();
         }
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
-        m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_SceneColorAllocExtent, m_DepthView,
+        m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
                         m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout());
-        m_SsrStochastic->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
-                                  m_GpuCull->GetHiZReduceSetLayout(),
-                                  m_GpuCull->GetHiZTailSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);
@@ -2577,11 +2528,6 @@ namespace Veng::Renderer
         // that has not turned reprojects its background through the identity, to double precision.
         const dmat4 directionViewProj =
             dmat4(view.Camera.Projection()) * dmat4(mat4(mat3(view.Camera.View())));
-        // In double, so the camera's move since the previous frame keeps its precision however far
-        // it is from the world origin.
-        const dvec3 ssrCameraPosition = dvec3(glm::inverse(dmat4(view.Camera.View()))[3]);
-        m_Ssr->SetCamera(ssrCameraPosition, m_PreviousDirectionViewProj);
-        m_SsrStochastic->SetCamera(ssrCameraPosition, m_PreviousDirectionViewProj);
         // The jitter is a fraction of the rendered (sub-rect) extent, the resolution actually
         // rasterized; the resolve reads it back from the view block to undo it.
         const vec2 jitterNdc = m_Topology->TaaActive
@@ -3247,14 +3193,7 @@ namespace Veng::Renderer
         }
         if (m_Topology->SsrActive)
         {
-            if (m_Topology->SsrTemporal)
-            {
-                m_Ssr->AppendTemporalBindings(bindings);
-            }
-            else
-            {
-                bindings.push_back({.Id = m_SsrSceneId, .View = m_Ssr->GetSceneView()});
-            }
+            bindings.push_back({.Id = m_SsrSceneId, .View = m_Ssr->GetSceneView()});
             // Each reflection mip binds its per-frame view to its per-mip import slot (the trace
             // writes mip 0, the blur the rest).
             const std::vector<Ref<ImageView>>& reflectionMips = m_Ssr->GetReflectionMipViews();
@@ -3280,10 +3219,6 @@ namespace Veng::Renderer
             {
                 bindings.push_back({.Id = m_SsrHiZChainId.Level(level), .View = hiZMips[level]});
             }
-        }
-        if (m_Topology->SsrStochasticActive)
-        {
-            m_SsrStochastic->AppendBindings(bindings);
         }
         if (m_Topology->DofWired())
         {
@@ -3351,8 +3286,6 @@ namespace Veng::Renderer
         // reproject against it. Advance the jitter sequence regardless of the TAA toggle so
         // enabling it mid-run does not restart the phase.
         m_Taa->ClearHistoryReset();
-        m_Ssr->CommitHistory();
-        m_SsrStochastic->CommitHistory();
         ++m_FrameIndex;
 
         // This frame's worlds + skinning-palette bases become next frame's "previous" for the
@@ -3565,10 +3498,6 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
     {
         return m_Shadows->GetPunctualView();
-    }
-    SsrTraceTargets SceneRenderer::GetSsrTraceTargets() const
-    {
-        return m_SsrStochastic->GetTargets();
     }
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {

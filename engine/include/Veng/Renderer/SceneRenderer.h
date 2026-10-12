@@ -55,7 +55,6 @@ namespace Veng::Renderer
     class PostResolveUpscale;
     class AaResolve;
     class SsrChain;
-    class SsrStochasticChain;
     class DofChain;
     class RefractionGrab;
     class HalfResTranslucency;
@@ -90,35 +89,6 @@ namespace Veng::Renderer
         ///        (PackedSceneLights::Lights order): set when that light can reach a surface the
         ///        tile shows.
         vector<u32> Masks;
-    };
-
-    /// @brief The stochastic screen-space-reflection chain's work lists and targets, for tests and tooling.
-    ///
-    /// Renderer-owned, at the render allocation, and invalidated by Resize and Configure. Every
-    /// member is null unless the chain runs (SSR under SsrTechnique::Stochastic). The lists and
-    /// counters follow Veng/ssr_ray_list.slang's layout.
-    struct SsrTraceTargets
-    {
-        /// @brief One packed ray per tracing pixel, the first Counters[1] of them this frame's.
-        Ref<Buffer> RayList;
-        /// @brief One packed 8x8 tile origin per tile holding a glossy pixel, the first Counters[3] of them this frame's.
-        Ref<Buffer> TileList;
-        /// @brief Four u32 counters: the ray and tile append slots (0 and 2) and their totals (1 and 3).
-        Ref<Buffer> Counters;
-        /// @brief Six u32: the intersect's and then the denoiser's dispatch-indirect records.
-        Ref<Buffer> Arguments;
-        /// @brief The intersection's raw radiance target (RGBA16F, premultiplied by its confidence).
-        Ref<ImageView> Radiance;
-        /// @brief Each pixel's GGX alpha (R8), as the classifier extracted it.
-        Ref<ImageView> Alpha;
-        /// @brief The blue-noise tile the rays draw their lobe samples from (RG8, 128 square).
-        Ref<ImageView> BlueNoise;
-        /// @brief Each traced or copied pixel's world-space ray length to its hit (R16F), zero for a miss.
-        Ref<ImageView> RayLength;
-        /// @brief The denoised reflection (RGBA16F, premultiplied by its confidence), zero at a pixel that is not glossy.
-        Ref<ImageView> Denoised;
-        /// @brief The denoiser's resolved variance (R16F), which the classifier reads the next frame.
-        Ref<ImageView> Variance;
     };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
@@ -503,13 +473,6 @@ namespace Veng::Renderer
         /// lighting pass. Renderer-owned; invalidated by Resize and Configure. Exposed for
         /// the render-pass handoff and for tests inspecting the atlas extent.
         [[nodiscard]] Ref<ImageView> GetPunctualShadowView() const;
-
-        /// @brief Returns the stochastic screen-space-reflection chain's lists and targets.
-        ///
-        /// Exposed for tests and tooling. Every member is null unless SSR runs under
-        /// SsrTechnique::Stochastic; invalidated by Resize and Configure.
-        /// @return The chain's current lists, counters, arguments and targets.
-        [[nodiscard]] SsrTraceTargets GetSsrTraceTargets() const;
 
         /// @brief Returns the immediate-mode debug-draw accumulator for this renderer.
         ///
@@ -1004,16 +967,11 @@ namespace Veng::Renderer
 
         /// @brief The screen-space-reflection chain — scene-color intermediate, mip chain, min-Z pyramid, and sweep.
         ///
-        /// Its min-Z reduce pipelines build on the GPU cull subsystem's hi-Z reduce and tail
-        /// layouts, so it is constructed after the GPU cull subsystem exists; Recreate rebuilds the
-        /// chain at the SsrResolution scale after the g-buffer depth and HDR targets.
+        /// Its blur pipeline layout reserves the bloom down/up set layout and its min-Z reduce
+        /// pipeline builds on the GPU cull subsystem's hi-Z reduce layout, so it is constructed after
+        /// the GPU cull subsystem and the bloom subsystem exist; Recreate rebuilds the chain at the
+        /// SsrResolution scale after the g-buffer depth and HDR targets.
         Unique<SsrChain> m_Ssr;
-
-        /// @brief The stochastic screen-space-reflection chain — tile classification, the ray and tile lists, and their dispatch arguments.
-        ///
-        /// Wired in place of m_Ssr under SsrTechnique::Stochastic; Recreate sizes it to the render
-        /// allocation after the g-buffer.
-        Unique<SsrStochasticChain> m_SsrStochastic;
 
         /// @brief The depth-of-field battery — half-resolution layers, tile records, gather/fill
         ///        targets, and the composite that folds them over the lit HDR.

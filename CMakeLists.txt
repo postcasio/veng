@@ -1849,8 +1849,6 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_ray_visit.comp.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_lobe_sample.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1870,9 +1868,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_ray_visit.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ssr_lobe_sample.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1968,27 +1964,9 @@ if (VENG_BUILD_TESTS)
             # no SSR texel grid in a glossy reflection at any sub-texel camera offset, and nothing
             # carried across a silhouette from either side, by a glossy reflection or a rough one.
             tests/gpu/ssr_upsample.cpp
-            # ssr_jitter.cpp drives reflections under TAA: through a jitter period a mirror's side and
-            # far edges keep to where a supersampled render puts them and a normal-mapped mirror's
-            # converged reflection holds still, a moving camera's reflection keeps to the reflected
-            # depth and leaves no smear behind it once it stops, and a converged reflection follows
-            # its source going and returning.
+            # ssr_jitter.cpp drives a mirror's reflection through a TAA jitter period: every frame,
+            # its side and far edges keep to where the unjittered render puts them.
             tests/gpu/ssr_jitter.cpp
-            # ssr_classify.cpp drives the stochastic reflection chain's front: the rays each density
-            # traces per quad, the roughness cutoff and the mirror, copies covering every glossy
-            # pixel once, the tile list, the dispatch records and a dispatch through them, the GGX
-            # lobe sampler against its distribution, and the blue-noise tile's spread.
-            tests/gpu/ssr_classify.cpp
-            # ssr_intersect.cpp drives the stochastic chain's intersection: a mirror reaching a
-            # wall 800 m away with no reach knob, a small square 300 m away reflected at full
-            # confidence, a thin board not reflected into the floor behind it, a spent budget
-            # missing, the screen-edge fade, and a surface seen from behind never reflected.
-            tests/gpu/ssr_intersect.cpp
-            # ssr_denoise.cpp drives the stochastic chain's denoiser: a still view converging with
-            # anti-aliasing off, a normal-mapped floor's reflection holding still under the jitter,
-            # a reflection following its source going and returning, the spatial filter stopping at
-            # a silhouette, and a mirror left unfiltered.
-            tests/gpu/ssr_denoise.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

@@ -105,7 +105,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
-  `PostResolveUpscale`, `SsrChain`, `SsrStochasticChain`, `DofChain`,
+  `PostResolveUpscale`, `SsrChain`, `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
@@ -301,22 +301,12 @@ knobs — carried in the view block's `AmbientParams.yz` (see "View
 constants"); a zero `σ²` adds exactly nothing, which is how the feature is off. Because it changes the
 surface's roughness it reaches every light's `D` and G, a sized light's widening (which composes in
 `α²`), the LTC lookups and the image-based reflection's mip and BRDF-LUT lookups: a reflection blurs
-where the normal varies. The variance, the widening law and both g-buffer forms below live in
-`Veng/specular_aa.slang`. The deferred pass takes the derivatives in uniform control flow, ahead of its
-background return (`GBufferNormalVariance`), and zeroes the variance for any pixel whose 2×2 quad
-holds a background pixel — a second fine derivative of the "has surface" edge reaches the quad's
-diagonal — since the cleared normal would read as a huge variance and roughen a silhouette against the
-sky. **Screen-space reflections widen by the same term** (`SsrRoughness`, `ssr_surface.slang`), for
-the trace's cutoff and the composite's fade and cone, so a pixel reflects the lobe it is shaded with.
-SSR reads the variance from loads (`GBufferNormalVarianceAt`): it pairs a texel with the other one in
-its 2×2 quad along each axis exactly as a fine derivative does and applies the same quad guard, so it
-is the value the deferred pass shaded that texel with, past early returns and at any trace
-resolution, where a derivative there would pair texels two or four apart. A flat surface keeps its
-roughness exactly. On a magnified normal map, where the normal changes little from one pixel to the
-next, the widened cone stays under the chain's first level and the reflection keeps its sharpness;
-that each jitter phase still turns every ray is the temporal pass's to integrate (below). **The
-deferred form's known trade**: a quad straddling two different surfaces reads their normal difference
-as variance, so those edge pixels roughen, bounded by `κ` — in the deferred pass and in SSR alike. Detail finer than about two pixels is beyond what the
+where the normal varies. The deferred pass takes the derivatives in uniform control flow, ahead of its
+background return, and zeroes the variance for any pixel whose 2×2 quad holds a background pixel — a
+second fine derivative of the "has surface" edge reaches the quad's diagonal — since the cleared
+normal would read as a huge variance and roughen a silhouette against the sky. **The deferred form's
+known trade**: a quad straddling two different surfaces reads their normal difference as variance, so
+those edge pixels roughen, bounded by `κ`. Detail finer than about two pixels is beyond what the
 derivatives resolve and is a normal map's to pre-filter. `tests/gpu/specular_lobe.cpp` pins that a
 flat mirror renders identically with it on and off, that a rippled mirror's reflected energy holds
 under a half-pixel move, and that a sphere's silhouette texels shade as with it off.
@@ -369,13 +359,10 @@ projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
 tail already samples) and a **history-copy** pass (the resolve's output → the persisted history for
-next frame). Under a composited depth of field the resolve writes the scene intermediate the chain
-composites from, not the HDR target, and the copy reads that intermediate by its own bindless slot:
-read back from the HDR target, which the composite writes later in the frame, the history would
-carry the previous frame's composite and the resolve would follow the jitter. SSR traces the lit
-target ahead of the resolve and adds its own accumulated reflection to the resolve's output after
-the history copy, so no reflection enters the resolve's history (see "Under a temporal resolve, a
-reflection is resolved by its own history").
+next frame). Under SSR or a composited depth of field the resolve writes the scene intermediate
+those composite from, not the HDR target, and the copy reads that intermediate by its own bindless
+slot: read back from the HDR target, which the composite writes later in the frame, the history
+would carry the previous frame's composite and the resolve would follow the jitter.
 
 **The jitter is an NDC translation, published, and taken back out by the resolve.** Each period's
 offsets have their mean subtracted (`TaaJitterPeriodMean`), so the eight phases sum to zero and the
@@ -411,8 +398,7 @@ The Karis luminance weights are taken on the **exposed** luminance (the tonemap'
 so their damping does not depend on the scene's absolute HDR scale.
 
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
-both modes and with SSR's reflection added after it (under TAA, and under TAAU over a half-size
-render allocation), the converged resolve changes by under a few
+both modes and under TAA with SSR compositing after it, the converged resolve changes by under a few
 half-float steps per frame inside geometry and in the open sky, a star keeps its place to 0.05
 output px, and an edge to 0.1.
 Motion is **per-object** and **folded into the g-buffer pass**: velocity is a fourth g-buffer
@@ -474,11 +460,10 @@ the tail with the scene. A debug view (`Mode != Final`) pins the render allocati
 post-resolve one: its passes read the g-buffer at full-screen UVs while writing the output, and it
 already forces the per-frame render scale to 1 for the same reason.
 
-Between the two sits the **HDR scene colour** — what the temporal resolve (or, with none, the SSR
-composite), SSR's temporal pass, the HDR-placed point fields and the depth-of-field composite write.
-It is allocated in the render allocation, except under a promoting temporal-upscaling resolve
-(below), where it is the post-resolve one; `SceneView::SceneColorExtent` is its valid extent this
-frame. The temporal resolve's history and SSR's own history pair live in it too.
+Between the two sits the **HDR scene colour** — what the temporal resolve, the SSR composite, the
+HDR-placed point fields and the depth-of-field composite write. It is allocated in the render
+allocation, except under a promoting temporal-upscaling resolve (below), where it is the
+post-resolve one; `SceneView::SceneColorExtent` is its valid extent this frame.
 
 **The promotion is the bridge, and it is a pass only when the two differ.** `SceneUpscaleScenePass`
 reads the finished HDR scene colour and writes a post-resolve-allocation copy the tail reads —
@@ -566,15 +551,12 @@ So the render scale is spent the same way in both (it sizes the render allocatio
 sub-rect under dynamic resolution) and the viewport no longer knows the mode at all — the branch that
 pinned its allocation to native under TAAU is gone, along with the `Configure` resize debounce it
 needed. `ResolveTemporalUpscalePromotes` (`FrameTopology.h`, a pure function of the settings) is what
-decides: it is TAAU **unless** the frame also wires a composited depth-of-field chain. The chain sits
-between the temporal anchor and the tail and reads render-resolution depth beside the scene colour,
-so a resolve that promoted at the anchor would hand it allocation-resolution colour; such a frame
-resolves at the render allocation like TAA and takes the spatial promotion instead, which degrades
-the reconstruction from temporal to spatial and keeps every other property. SSR does not constrain
-it: its composite writes the reflection term at the render allocation, and its temporal pass
-reconstructs that term at the resolve's own output allocation exactly as the resolve reconstructs
-the scene, so a TAAU frame with SSR still reconstructs the post-resolve allocation directly (SSR
-holds the per-frame render scale at 1, so the reduction is a static render allocation).
+decides: it is TAAU **unless** the frame also wires SSR or a composited depth-of-field chain. Those
+two sit between the temporal anchor and the tail and read render-resolution depth beside the scene
+colour, so a resolve that promoted at the anchor would hand them allocation-resolution colour; such a
+frame resolves at the render allocation like TAA and takes the spatial promotion instead. That
+degrades the reconstruction from temporal to spatial and keeps every other property, where the same
+combination previously gave up scaling altogether.
 
 #### Spatial anti-aliasing — FXAA and CMAA2
 
@@ -1407,9 +1389,7 @@ only ever an improvement on top.
   of the screen, and a cone wider still clamps there.
 - **The roughness cutoff fades.** A surface rougher than `SsrMaxRoughness` traces nothing and the
   composite adds nothing for it; across the top fifth of `[0, SsrMaxRoughness]` the composite fades
-  the reflection out, so a surface whose roughness crosses the cutoff shows no seam. The roughness the
-  cutoff, the fade and the cone take is the one lighting shades the pixel with, widened by geometric
-  specular anti-aliasing (see "Geometric specular anti-aliasing").
+  the reflection out, so a surface whose roughness crosses the cutoff shows no seam.
 
 What spatial filtering cannot do is recover what the trace never sampled: one ray per SSR texel
 point-samples a small or hard-edged source, so how much of it a reflection carries steps with the
@@ -1495,273 +1475,31 @@ its edges, and the floor keeps over nine tenths of it — read plainly, the pane
 floor keeps half. What it does not change is the trace's own screen-space occlusion: a floor ray
 that passes behind the panel on screen still misses.
 
-#### Under a temporal resolve, a reflection is resolved by its own history
+#### Under a temporal resolve, a reflection stands at unjittered positions
 
-The frame's temporal resolve reprojects each pixel by its surface's motion, but a reflected image
-moves with the reflected geometry's depth. A camera turn moves both alike (a rotation's
-reprojection does not depend on depth); a camera translation does not, and a reflection inside the
-resolve's history lags behind it, bounded only by the variance clip. A glossy normal-mapped surface
-adds a second problem: each jitter phase samples the normal map somewhere else and so turns every
-reflected ray, and an exponential history that admits a tenth of each frame leaves that
-period-long swing a visible pulse. So **under a temporal resolve (`FrameTopology::SsrTemporal`)
-the reflection is kept out of the resolve's history and resolved by one of its own**:
+SSR composites after the TAA resolve, which reconstructs the scene at unjittered positions, but the
+g-buffer and depth it traces are the jittered raster. Traced from that raster as it lies, a
+reflection follows the jitter frame to frame — a mirror magnifies it, by most of a pixel — and
+nothing after the resolve integrates it. So the trace and the composite meet the two frames at
+their ends (`ssr_surface.slang`), and with no temporal resolve `JitterNdc` is zero and both ends
+reduce to the texel as rasterized:
 
-- **The trace and composite stand in the jittered frame.** Lighting writes the resolve's lit
-  target, which the trace reflects; everything the trace and composite read is the jittered raster,
-  so each texel's surface is its own (`ssr_surface.slang`), the ray marches through the jittered
-  projection, and the hit is read where the march found it. The composite (`ssr_composite` `fsTerm`)
-  writes the reflection term rather than the lit scene, and beside it the **reflected image's
-  motion**: the hit, unfolded through the surface along the pixel's ray (a plane mirror's image of a
-  point is exactly there), projected through this frame's unjittered projection and the previous
-  frame's. The previous projection is taken camera-relative — the view block's
-  `PrevFromCurDirection` plus the clip offset of the camera's move, composed in double on the CPU
-  (`SsrChain::SetCamera`) — so no world-space translation enters the shader.
-- **The temporal pass (`ssr_temporal.frag`) runs after the resolve's history copy** and adds its
-  result onto the resolved scene colour (an alpha-additive second attachment), so the resolve's
-  history never holds a reflection. It reconstructs the term at each output pixel's unjittered
-  position with the resolve's own Gaussian over the 3×3 render texels, narrowed the same way under
-  upscaling, so its history is unjittered and covers the resolve's output allocation: a still camera
-  reads it back from exactly the pixel it writes, and TAAU composes with it.
-- **It counts its samples.** The history (`RGBA16F`, ping-ponged) carries the term and a sample
-  count, and each frame takes one share in that count, so a still pixel averages every jitter phase
-  alike — up to 64 samples, where a period-long swing moves the average by about its size over 64
-  each frame. A history moving a quarter of a pixel a frame or more is held to 4 samples and also
-  clipped to the resolve's own tight YCoCg box: a reprojected read filters the history a little each
-  frame, and a moving reflection decorrelates from what it showed. **The moving clip is what stops
-  smear, and the validation below cannot stand in for it.** The validation compares luminance alone,
-  so a reprojection that lands the wrong colour or structure at the same luminance passes it; and it
-  learns its tolerance from how far the fast luminance strays from the history, so an error that
-  persists is learnt into the tolerance and accepted. A moving history kept long and unclipped
-  therefore carries whatever an imperfect reprojection — a normal-mapped or curved surface, reflected
-  content at several depths — left behind, for seconds after the camera stops.
-- **It validates against a fast history, not against this frame's neighbourhood alone.** On a
-  normal-mapped surface the 3×3 texels swing together from phase to phase, so a history clipped to
-  them follows the swing — which is what left the resolve its pulse. Beside the history runs a fast
-  luminance (`RG16F`, ping-ponged with it) accumulating about one jitter period and clipped to the
-  neighbourhood's range every frame: through a period it only ripples about the history's mean, and
-  it leaves it within a frame when the neighbourhood really changes. The history learns the fast
-  luminance's spread about it and loses its count in proportion to how far past 2.5 times that
-  spread (plus 5 % of the level) the fast one strays — a reflected source appearing or going, a hit
-  that changed, a surface newly revealed. While a history learns (its first period) the floor
-  starts at half its level, wide enough for a jitter swing and narrow enough for a source appearing.
-  A read off-screen, a pixel that reflects nothing, and the first frame after a `Recreate` keep no
-  history at all. A reflected object's own motion is not reprojected — the reflected scene is taken
-  as still — and is left to this validation.
+- **The surface is taken on the pixel's unjittered ray.** The texel holding the pixel's unjittered
+  position is the one the jitter moved it into (`uv + JitterNdc / 2`); its depth and normal are
+  point-loaded, and its point is carried along its tangent plane onto the unjittered ray — exact
+  for a plane at any angle. The carry is capped at 16 texel widths: past that the plane is seen
+  edge-on, where the reflected ray runs almost along the view ray and where it starts barely moves
+  what it hits. The trace, the composite's pixel, and every joint tap take the surface this way.
+- **The march stays in the rasterized frame**, through the jittered projection over the jittered
+  depth and max-Z pyramid, where every depth it compares against lies.
+- **The hit is read back where the resolve put it**, `JitterNdc / 2` from where the march found it,
+  since the scene colour the trace reads is the resolve's output.
 
-With no temporal resolve none of this runs: there is no jitter to integrate, the composite folds
-the reflection into the scene as it always did, and a reflection is exactly what one frame traced.
-The cost under a temporal resolve is one fullscreen pass at the output allocation and five targets
-— the term (`RGBA16F`) and motion (`RG16F`) at the render allocation in place of the
-scene-colour intermediate, and the two history pairs at the output allocation.
-
-`tests/gpu/ssr_jitter.cpp` pins the result under TAA: through a whole jitter period a mirror's
-reflected colour borders keep to a fraction of a pixel of where a render supersampled four times per
-axis puts them; a glossy normal-mapped floor's converged reflection changes by under 1 % of its
-level per frame (0.3 % at landing); a camera moving sideways 0.1 m a frame over a mirror floor shows,
-at the last pose, a reflection within 9 % of what a camera converged still there shows (7.7 %); a
-glossy normal-mapped floor reflecting panels of several colours at several depths, under a camera
-moving sideways 0.05 m a frame and then turning 1° a frame, keeps every 8×8 tile within 25 % of the
-brightest tile of a still converged render at that pose while it moves (15 %) and within 4 % through
-the second jitter period after it stops (2.1 %) — measured in RGB per tile, since a smear is local
-and may keep its luminance, and failed by a long unclipped moving history (51 % and 8.7 %); and
-a still floor's converged reflection of emissive bars keeps under 1 % of them (5 % normal-mapped) a
-frame after they go and is back at their level a frame after they return; and with no anti-aliasing
-a flat mirror's reflection is identical with geometric specular anti-aliasing on and off, where a
-normal-mapped one's is not.
-
-Measured at landing on a glossy floor reflecting thin emissive bars at 128², as the mean deviation
-of a moving camera's reflection from one converged still at each pose, relative to the reflection's
-level (the bars seen directly, through the frame's resolve, in brackets): on a mirror, turns of 1,
-3 and 6° a frame 3.6, 5.0 and 8.6 % (4.7, 6.2, 8.8), sideways moves of 0.02 and 0.1 m a frame 6.1
-and 6.6 % (8.7, 7.4); on the same floor normal-mapped, turns 7.1, 9.0 and 12 %, moves 11 and 18 %.
-A normal-mapped floor's reflection under translation is where history helps least: each facet's
-reflected content changes with the viewpoint, so the moving history is short and tightly clipped.
-
-#### The stochastic chain classifies tiles, samples each ray's lobe, intersects it, and denoises it
-
-`SceneRendererSettings::SsrMethod` picks which chain SSR runs through: `Legacy`, everything above,
-or `Stochastic`, a second chain (`SsrStochasticChain`) built on the published stochastic
-screen-space-reflection design — one GGX-sampled ray per traced pixel, a ray list compacted per
-frame, and a denoiser over the 8×8 tiles that need one. `FrameTopology` wires exactly one of the two
-(`SsrActive` or `SsrStochasticActive`); the stochastic one never takes the Legacy chain's temporal
-pass (`SsrTemporal` is false under it). Under `Stochastic` nothing composites a reflection into the
-Final view yet: the frame renders as with SSR off, and the `Reflections` debug view blits the chain's
-denoised output. The chain is declared where the Legacy one is — ahead of the temporal resolve, else
-at the HDR tail anchor — and every target is at the render allocation, renderer-owned and imported.
-
-**Classification** (`ssr_classify.comp`, one 64×1 group per 8×8 tile, its local indices remapped so
-each 2×2 quad holds four consecutive ones):
-
-- **α is one quantity.** The classifier squares the specular-anti-aliasing-widened perceptual
-  roughness (`SsrRoughness`) once and stores it (`R8`, the extracted α target); a pixel is glossy
-  below `SsrMaxRoughness²` and a mirror below `SsrMirrorAlpha` (1e-4). Nothing downstream squares it
-  again. A pixel that does not reflect (no surface, or no normal) stores α 1, so nothing downstream
-  takes it for glossy.
-- **Who traces.** Every mirror; each copy group's base ray, the group set by
-  `SceneRendererSettings::SsrDensity` (`SsrSamplesPerQuad` One — the quad, based at its even-even
-  pixel; Two — each row's pair, based on the quad's diagonal; Four — every pixel); and a glossy pixel
-  the denoiser's variance flags (above 0, the variance the last committed frame resolved; none on
-  the first frame after the targets are created). **A group whose designated base is not glossy** — background, or past the
-  cutoff — **is based at its first glossy pixel**, so a quad cut by a silhouette or a roughness edge
-  still traces: with the base fixed to the even-even pixel its other glossy pixels would be neither
-  traced nor copied, and in a converged still view their variance would never rise to pick them up.
-- **Copies.** A glossy, non-mirror pixel tracing nothing is named by a copy flag on its group's base
-  ray; each pixel's state is exchanged through workgroup memory, not across subgroup lanes, whose
-  order relative to the local index Vulkan does not promise.
-- **Compaction is per subgroup**: a prefix count of the lanes tracing, one atomic per subgroup on the
-  append counter, the base broadcast from the first lane — correct at any subgroup width and lane
-  order, so it needs no full-subgroup guarantee. A tile holding a glossy pixel (mirrors included) is
-  appended by local index 0.
-- **The radiance target (`RGBA16F`) is cleared to zero** for every pixel; what traces fills it. A
-  tile it does not list takes a zero average radiance (the denoiser's tile-average target), so the
-  denoiser's bilinear reads of the averages never meet a stale one.
-
-**The lists** (`Veng/ssr_ray_list.slang`): a ray is its pixel (x 15 bits, y 14) plus three copy flags
-in bits 29–31; a tile its origin pixel, `x | y << 16`. Four `u32` counters — the ray and tile append
-slots and their totals — start at zero (a host-visible buffer, written at `Recreate`).
-`ssr_prepare_args.comp` (one invocation) writes two dispatch-indirect records,
-`[(rays + 63) / 64, 1, 1, tiles, 1, 1]`, moves each total into its count slot, and zeroes the append
-slots for the next frame. Both passes declare the counters read and written, so the graph orders
-the appends after the previous frame's rotation.
-
-**Ray directions** (`Veng/ssr_sample.slang`): `SampleGgxVndf` is Heitz's 2018 sampler of the GGX
-distribution of visible normals (isotropic), and `SampleReflectionVector` reflects the view ray about
-a normal it draws in the surface's tangent frame; a mirror reflects about the normal itself. The lobe
-is not truncated and no pdf is kept, so a grazing view reflects part of its lobe below the surface.
-The 2D sample is **`SsrBlueNoise`**: the core pack's 128² two-channel void-and-cluster tile
-(`data/ssr_blue_noise.bin`, a `Raw` asset uploaded `RG8` the first time the chain is allocated,
-generated deterministically by `tools/ssr_blue_noise.py`), read at the pixel's stratum centre and
-rotated by the golden ratio per frame of the view block's `FrameIndex` (wrapping at 256), so the
-rotation shares no period with the projection jitter.
-
-**The depth pyramid** is the chain's own: `ssr_hiz_reduce.comp` and its one-dispatch tail (the
-Legacy chain's pipelines, on the renderer's hi-Z layouts) reduce the depth target to the nearest
-depth under reverse-Z, level 0 a copy at the render allocation and seven levels at most, since the
-march climbs no higher than level 6.
-
-**Intersection** (`ssr_intersect.comp`, 64 rays a group, dispatched indirectly through the first
-record; one invocation per listed ray):
-
-- **The march works on cell boundaries**, in screen UV plus device depth along the straight
-  screen-space line of the ray, from the pixel's own point. Each iteration meets the current cell's x
-  and y planes and — for a ray heading away from the camera — its depth plane: a ray that leaves the
-  cell above the cell's nearest depth advances to the boundary (a 0.005-texel overshoot) and climbs a
-  level, one that meets the depth plane advances to it and descends, and one already behind the
-  surface descends in place. The march ends when it descends below level 0. A cell at level k is
-  2^k level-0 texels on screen; the pyramid's floor-halved levels cover their cells (each texel's
-  proportional footprint starts at twice its index), so the cell's depth is read clamped into the
-  level. The screen direction is the projection of a point along the view-space ray, as far along as
-  the pixel is from the eye (pulled in for a ray heading back toward the camera, so the point stays in
-  front of it); positions are reconstructed camera-relative through `InvViewRotProj`.
-- **A ray that meets nothing is a miss**: one that spends `SsrMaxSteps` iterations, leaves the screen,
-  or is stopped by low subgroup occupancy (at most an eighth of its subgroup's lanes still marching,
-  the threshold scaled by `WaveGetLaneCount()` so it holds at any subgroup width; a mirror never
-  stops early). None of them has a hit to read.
-- **The end of the line is resolved in depth.** A depth plane is met analytically inside the texel,
-  so even the texel at a ray's vanishing point, which holds every depth from tens of metres to
-  infinity, is hit at the surface's depth. A ray that descends below level 0 behind the surface it
-  stands over crossed that depth either inside the texel — past a cell boundary it overshot onto —
-  where the hit moves back to the crossing, or before the texel, where it passed behind the surface
-  and is judged by the thickness test.
-- **Validation**: a hit off screen, within two pixels of its origin on both axes, over the background
-  (the 2x2 cell at level 1, or the texel itself, at depth 0), or on a surface seen from behind
-  (`dot(normal, ray) > 0`) is a miss. Otherwise the confidence is `(1 − smoothstep(0, t, gap))²`
-  times a vignette 5 % of the height wide (the horizontal one scaled by aspect), the gap the view
-  depth between the hit and the texel's own surface, and `t = max(SsrThickness, 1.5 × the depth one
-  texel of the ray spans where it crossed the surface's depth)` — so the tolerance grows with range
-  and is never taken across the vanishing point's texel.
-- **Output**: the lit scene at the hit texel (a point load) times the confidence, with the confidence
-  in alpha (`RGBA16F`), and the ray's world-space length (`R16F`, capped at the half-float maximum),
-  both zero for a miss, written to the ray's pixel and to each quad neighbour its copy flags name.
-  The classifier clears both targets every frame, so a pixel no ray covers reads zero.
-
-**The denoiser** follows the published stochastic-reflection denoiser's spatial half and replaces its
-temporal half: three passes over the listed tiles, each one 8×8 workgroup per tile dispatched through
-the second record, staging the neighbourhood around its tile in workgroup memory (no subgroup
-operations), then a full-extent history pass. Its signal is the intersection's premultiplied radiance
-`(rgb·c, c)`: the confidence rides as a fourth channel through every blend, weight and clip; the
-luminance statistics and radiance distances are taken on `rgb·c`; and a pixel that is not glossy
-carries no weight in a neighbourhood statistic, the spatial filter or a tile average, since its zero
-is not a sample of a reflection.
-
-- **Reproject** (`ssr_reproject.comp`) finds each glossy pixel's reflection in the last committed
-  frame's denoised output at one of two positions. The surface's is `uv − motion + (previous jitter −
-  this jitter) / 2`: the g-buffer's unjittered motion taken back out, with the change of jitter added
-  so the history is read in the jittered raster it was written in. The reflection's is the virtual
-  point a mirror shows the hit at — the pixel's camera-relative position carried a further ray length
-  along its own view ray — projected into last frame through `PrevFromCurDirection` and the clip
-  offset of the camera's move, composed in double on the CPU (`SsrStochasticChain::SetCamera`), so no
-  world-space translation enters the shader. The virtual point is read where last frame's normal
-  there agrees past 0.9999, at least as well as the surface's, and its α is as close; else the
-  surface's position is. **The read is Catmull-Rom** (nine bilinear fetches; `catmull_rom.slang`,
-  shared with the TAA resolve), so thin, sharp reflected content is not blurred by every fractional
-  reprojection.
-  **Whether a history exists is geometry's call alone, never colour's**: the normal-and-depth
-  disocclusion factor (a 3×3 search, a 2×2 rebuild), and a hit-jump test — last frame's ray lengths
-  over the history's footprint and this frame's over the pixel's 3×3 must overlap within ×2 (the ray
-  length history is a target of its own). **The sample count is capped by how far the history can be
-  trusted**: the still cap `max(8, 32(1 − e^(−100α)))`, divided by `1 + motion / 2 px + misplacement /
-  0.25 px` and floored at 2, the motion being how far the reflected image moved this frame and the
-  misplacement how far from the virtual point the history was read. Without history a pixel restarts
-  (variance 1, so the classifier traces it next frame, one sample). It also writes each tile's
-  luminance-weighted average radiance, which the spatial filter weighs against.
-- **Prefilter** (`ssr_prefilter.comp`) spreads a noisy, non-mirror glossy pixel over fifteen
-  Halton taps within three texels, weighed by normal (`pow(n·n′, 512)`), view depth, distance from the
-  tile average and variance. **The radiance weight carries no bias**: its distance is absolute
-  radiance, so any bias holds a bright reflection below its tile average however settled it is, and a
-  small bright source loses most of its energy; only the variance term damps an outlier in a young or
-  unsettled history.
-- **Resolve** (`ssr_resolve.comp`) clips the reprojected history to a box built from the filtered
-  frame's 3×3 glossy neighbours in YCoCg — mean ± 1.25σ within the neighbourhood's range, **widened to
-  hold the pixel's own filtered value** (else a still, sparse source loses its peaks every frame) —
-  with Playdead's ClipAABB on the colour and **the confidence clamped on its own axis** (clipped with
-  the colour, a confidence just outside a narrow range drags the colour toward a bright neighbour's
-  across a silhouette), then blends `1 − 1/samples` of it. No colour-learnt tolerance takes part. A
-  glossy pixel whose filtered value is zero still resolves: a miss is a sample of the premultiplied
-  signal, so a reflection hit on few frames accumulates. The variance is resolved in place.
-- **History** (`ssr_denoise_history.comp`) copies every pixel's normal, α, depth and ray length and
-  each glossy pixel's sample count into history targets, and clears the output, variance and sample
-  count of every pixel that is not glossy — which also clears every tile the resolve did not visit.
-
-The histories are targets of their own rather than a pair swapped by frame parity, so the raw
-intersection (`SsrTraceTargets::Radiance`) and the denoised output (`GetOutputHandle`,
-`SsrTraceTargets::Denoised`) stay readable at fixed slots; the first frame after `Recreate` keeps no
-history (`CommitHistory` arms it). The g-buffer stores velocity whenever the chain runs, in every
-anti-aliasing mode (`FrameTopology::GBufferStores`).
-
-**What the tight history buys and costs**, measured at landing on a glossy floor reflecting thin
-emissive bars on a dark wall at 128²: a vanished source is gone from the reflection the next frame,
-while a returning one builds back at the blend's pace (44–47 % ten frames on), since the gaps between
-the bars keep the box's lower bound dark; a still view's reflection level changes under 0.5 % a frame
-and a pixel's under 1 %. Against the published resolve's bilinear history and 9×9 box it smears and
-lags less under motion and flickers more when still. The spatial filter, not the clip, is where a
-small distant source loses most of its energy: its variance weight is the centre pixel's alone, so a
-flickering bright pixel spreads over stable dark neighbours that gather little of it back.
-
-`SsrMaxDistance` and `SsrResolutionScale` do not reach the stochastic chain; `SsrMaxSteps` is its
-per-ray iteration budget and `SsrThickness` the floor of its thickness tolerance.
-
-`SceneRenderer::GetSsrTraceTargets()` exposes the lists, counters, records and targets for tests.
-`tests/gpu/ssr_classify.cpp` pins: one, two and four rays per quad over a glossy floor; none and no
-tile past the cutoff; every pixel of a mirror at every density; every glossy pixel of a floor cut at
-a slant traced or copied exactly once and no background pixel either; the tile list naming exactly
-the tiles holding floor; the records matching the totals, with a dispatch through them visiting each
-ray once; the sampler's mean reflected cosine and below-surface share against a quadrature of the
-visible-normal distribution; and the noise tile's uniform levels and even 8×8 windows.
-`tests/gpu/ssr_intersect.cpp` pins: a mirror floor reflecting a wall 800 m away under a 128-iteration
-budget with no reach knob; a 2° square 300 m away reflected at full confidence on every texel whose
-mirror ray lands inside it; a thin board not reflected into the floor behind it, and reflected in
-front of it; a spent budget leaving no hit; the vignette fading a mirror's confidence to nothing at
-the screen edge and leaving it whole inside; and a panel seen from above never reflected from below.
-`tests/gpu/ssr_reach.cpp`'s last case pins the distant energy: from 0.3 m above a mirror, an emitter
-300 m away is reflected as fully as one 30 m away.
-`tests/gpu/ssr_denoise.cpp` pins, on the denoised output: a still view whose reflection level changes
-by under 0.5 % a frame after 32 frames with anti-aliasing off, and each pixel's by under 1.5 %; a
-normal-mapped floor's reflection deviating by under 5 % from phase to phase under TAA, read where the
-scene stands (the raw trace's deviates by 0.72); a reflection gone the frame after its source goes and
-building back frame by frame as it returns; a panel taking none of the floor's reflection beside its
-edges while the floor keeps what its own rays brought it there; and a mirror's reflected edge as sharp
-as the trace's.
+What this cannot remove is the raster's own coverage: whether a ray grazing a silhouette hits
+depends on which texels the jittered raster covered, and that moves by up to half a texel a frame.
+`tests/gpu/ssr_jitter.cpp` pins the rest: under TAA, through a whole jitter period, a mirror's
+reflected colour borders — inside a surface, where every ray hits — keep to a fraction of a pixel
+of where the render with no anti-aliasing puts them.
 
 ### Depth of field and the physical camera
 
