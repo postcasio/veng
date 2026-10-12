@@ -34,7 +34,7 @@ namespace Veng::Renderer
     /// it, translucents blend over it, and TAA resolves the per-pixel march jitter.
     ///
     /// The g-buffer depth is sampled through set-0 bindless; each field's 3D texture + sampler bind
-    /// through a dedicated per-pass set (set 1), never set-0 bindless — a Texture3D in set 0's Metal
+    /// through a dedicated per-pass set (set 3), never set-0 bindless — a Texture3D in set 0's Metal
     /// argument buffer is a MoltenVK risk the engine refuses (the IBL-cubemap precedent). The fields
     /// are borrowed from the renderer's resolved set (refilled each Execute); an empty set makes the
     /// pass a per-frame no-op, and the pass is inserted only while a live field exists, so a fieldless
@@ -82,11 +82,11 @@ namespace Veng::Renderer
         /// @brief Shared sampler bindless handle for the depth sample.
         SamplerHandle m_SamplerHandle;
 
-        /// @brief The fullscreen march pipeline (set 0 bindless + set 1 volume, (ONE, SRC_ALPHA) blend).
+        /// @brief The fullscreen march pipeline (set 3 volume, (ONE, SRC_ALPHA) blend).
         Ref<GraphicsPipeline> m_Pipeline;
-        /// @brief Shared layout (set 0 bindless reserved + set 1 volume + push block).
+        /// @brief Shared layout (sets 0-2 bindless + set 3 volume + push block).
         Ref<PipelineLayout> m_Layout;
-        /// @brief Set-1 layout: binding 0 the 3D sampled image, binding 1 the sampler.
+        /// @brief Set-3 layout: binding 0 the 3D sampled image, binding 1 the sampler.
         Ref<DescriptorSetLayout> m_SetLayout;
 
         /// @brief The g-buffer depth bindless slot, resolved in Declare.

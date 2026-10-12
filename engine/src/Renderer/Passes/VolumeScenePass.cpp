@@ -58,7 +58,7 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> fs =
             LoadShader(assets, VolumeFieldFragId, "volume march fragment");
 
-        // Set 1 binding 0: the field's 3D sampled image; binding 1: its sampler — a closed,
+        // Set 3 binding 0: the field's 3D sampled image; binding 1: its sampler — a closed,
         // per-field dedicated set off bindless (a Type3D descriptor in set 0's Metal argument buffer
         // is the MoltenVK risk the engine refuses, the IBL-cubemap precedent).
         m_SetLayout = DescriptorSetLayout::Create(m_Context,
