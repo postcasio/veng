@@ -458,19 +458,20 @@ namespace Veng::Renderer
         /// and Configure. Exposed for tests inspecting temporal accumulation.
         [[nodiscard]] Ref<ImageView> GetTaaHistoryView() const;
 
-        /// @brief Returns the screen-space reflection radiance the last Execute's intersection
+        /// @brief Returns the denoised screen-space reflection the last Execute's temporal resolve
         ///        wrote, or null when Settings.SSR does not wire the chain.
         ///
-        /// RGBA16F at the render allocation: the reflected radiance in rgb, the ray's world-space
-        /// length in a. Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
-        [[nodiscard]] Ref<ImageView> GetSsrRadianceView() const;
+        /// RGBA16F at the render allocation: the reflected radiance in rgb; alpha carries nothing
+        /// a consumer reads. Holds it until the next Execute's denoiser reuses the target.
+        /// Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetSsrReflectionView() const;
 
         /// @brief Returns the per-object velocity target (g-buffer channel G3).
         ///
         /// RG screen-space motion vectors written by the surface pass as a fourth g-buffer
         /// channel every frame (not a separate prepass, never null). The g-buffer pass stores
-        /// the channel only when something reads it — the TAA/TAAU resolve or the MotionVectors
-        /// debug view — so under any other configuration the view's contents are undefined after
+        /// the channel only when something reads it — the TAA/TAAU resolve, the MotionVectors
+        /// debug view or the screen-space reflection denoiser — so under any other configuration the view's contents are undefined after
         /// a frame. Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetVelocityView() const;
 

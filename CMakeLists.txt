@@ -1953,8 +1953,9 @@ if (VENG_BUILD_TESTS)
             # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
             # depth hierarchy's reduction, the classifier's ray and tile lists against the
             # selection rule, the indirect arguments, the blue-noise tile, the intersection's
-            # environment fallback, reflected hit and quad copies, and a renderer recording the
-            # chain only with SSR on, with and without TAA.
+            # environment fallback, reflected hit and quad copies, the denoiser's finite output,
+            # zero early-out, first-frame and accumulated sample counts and variance ping-pong,
+            # and a renderer recording the chain only with SSR on, with and without TAA.
             tests/gpu/ssr_chain.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a

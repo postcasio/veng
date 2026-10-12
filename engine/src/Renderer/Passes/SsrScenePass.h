@@ -19,7 +19,8 @@ namespace Veng::Renderer
         /// @param chain The chain; must outlive the pass.
         explicit SsrScenePass(SsrChain& chain) : m_Chain(chain) {}
 
-        /// @brief Declares the chain's passes, reading the g-buffer and Hdr slots of @p io.
+        /// @brief Declares the chain's passes, reading the g-buffer, Velocity and Hdr slots of
+        ///        @p io.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:

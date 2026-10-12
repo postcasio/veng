@@ -53,8 +53,8 @@ namespace Veng::Renderer
         /// RG: the per-pixel UV displacement from the previous frame's screen position to
         /// this frame's (curUV - prevUV). The fourth g-buffer MRT channel — the surface
         /// fragment writes it as SV_Target3 alongside G0/G1/G2 every frame, so motion vectors
-        /// cost no second geometry pass; the TAA resolve and the MotionVectors debug blit read
-        /// it. Signed float to carry motion in either direction across the full UV range.
+        /// cost no second geometry pass; the TAA resolve, the MotionVectors debug blit and the
+        /// screen-space reflection denoiser read it. Signed float to carry motion in either direction across the full UV range.
         inline constexpr Format VelocityFormat = Format::RG16Sfloat;
 
         /// @brief G4 — HDR emissive radiance, written by the surface pass as SV_Target4.
@@ -77,6 +77,12 @@ namespace Veng::Renderer
         /// RenderGraph::Compile asserts a sampled target carries ImageUsage::Sampled,
         /// so these flags are load-bearing.
         inline constexpr ImageUsage ColorUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
+
+        /// @brief Usage flags for the world-normal attachment (G1).
+        ///
+        /// ColorUsage plus TransferSrc: the screen-space reflection denoiser copies the frame's
+        /// normal into its history at the end of the chain.
+        inline constexpr ImageUsage NormalUsage = ColorUsage | ImageUsage::TransferSrc;
 
         /// @brief Usage flags for the depth attachment.
         ///

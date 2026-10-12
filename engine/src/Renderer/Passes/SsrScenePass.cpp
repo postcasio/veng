@@ -15,6 +15,8 @@ namespace Veng::Renderer
                                    .MaterialHandle = io.OrmHandle,
                                    .Color = io.Hdr,
                                    .ColorHandle = io.HdrHandle,
+                                   .Velocity = io.Velocity,
+                                   .VelocityHandle = io.VelocityHandle,
                                });
     }
 }

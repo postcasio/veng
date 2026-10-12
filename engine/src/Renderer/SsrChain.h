@@ -27,8 +27,9 @@ namespace Veng::Renderer
     ///        flight.
     ///
     /// The reference's cbSSSR, less the g-buffer decode parameters the engine's fixed g-buffer
-    /// layout settles at the load. Mirrors SsrConstants in ssr/ssr_common.slang field for field,
-    /// under std140.
+    /// layout settles at the load, followed by the denoiser's render size, the one field of its
+    /// cbDenoiserReflections the block does not already carry. Mirrors SsrConstants in
+    /// ssr/ssr_common.slang field for field, under std140.
     struct SsrConstants
     {
         /// @brief Inverse of the rasterized view-projection.
@@ -69,10 +70,15 @@ namespace Veng::Renderer
         u32 SamplesPerQuad = 1;
         /// @brief Non-zero when variance-guided tracing is on.
         u32 TemporalVarianceGuidedTracingEnabled = 0;
-        /// @brief std140 tail padding.
+        /// @brief std140 alignment of DenoiserRenderSize.
         u32 Padding = 0;
+        /// @brief The denoiser's render size: the extent the chain's resources are allocated at,
+        ///        which the reference's host gives its denoiser as the context's window size.
+        uvec2 DenoiserRenderSize{0};
+        /// @brief One over DenoiserRenderSize.
+        vec2 DenoiserInverseRenderSize{0.0f};
     };
-    static_assert(sizeof(SsrConstants) == 448, "SsrConstants must match ssr_common.slang (std140)");
+    static_assert(sizeof(SsrConstants) == 464, "SsrConstants must match ssr_common.slang (std140)");
 
     /// @brief The view-dependent inputs a frame of the reflection chain runs with.
     struct SsrFrameInputs
@@ -102,6 +108,8 @@ namespace Veng::Renderer
         u32 MaxTraversalIntersections = 128;
         /// @brief SceneView::SsrMinTraversalOccupancy.
         u32 MinTraversalOccupancy = 4;
+        /// @brief SceneView::SsrTemporalStabilityFactor.
+        f32 TemporalStabilityFactor = 0.7f;
     };
 
     /// @brief The frame resources the reflection chain reads, as the graph and bindless see them.
@@ -124,17 +132,25 @@ namespace Veng::Renderer
         ResourceId Color;
         /// @brief The lit colour's bindless slot.
         TextureHandle ColorHandle;
+        /// @brief The motion-vector target (G3), curUV - prevUV, which the denoiser's reprojection
+        ///        reads.
+        ResourceId Velocity;
+        /// @brief The motion-vector target's bindless slot.
+        TextureHandle VelocityHandle;
     };
 
     /// @brief Owns the screen-space reflection chain: its targets, lists, counters and passes.
     ///
-    /// A port of FidelityFX SSSR (SDK v1.1.4) onto the frame graph, its resources at the render
-    /// allocation, created only while the renderer wires reflections. The passes it declares, in
-    /// the reference's order: the depth hierarchy (one dispatch per level), the tile classifier,
-    /// the blue-noise preparation, the indirect-argument preparation and the intersection. The
-    /// radiance and variance targets are ping-ponged by the frame's parity, as the reference's host
-    /// does, and are cleared to zero whenever Recreate creates them, the reference's first-frame
-    /// clear. See the renderer's CLAUDE.md for the chain and its deviations from the reference.
+    /// A port of FidelityFX SSSR and its reflection denoiser (SDK v1.1.4) onto the frame graph, its
+    /// resources at the render allocation, created only while the renderer wires reflections. The
+    /// passes it declares, in the reference's order: the depth hierarchy (one dispatch per level),
+    /// the tile classifier, the blue-noise preparation, the indirect-argument preparation and the
+    /// intersection (DeclareTrace), then the denoiser's reprojection, prefilter and temporal resolve
+    /// and the history copies (DeclareDenoiser). The radiance, variance, sample-count and
+    /// average-radiance targets are ping-ponged by the frame's parity, as the reference's hosts do,
+    /// and every persistent target is cleared to zero whenever Recreate creates it, the reference's
+    /// first-frame clear. After the temporal resolve, this frame's radiance A holds the denoised
+    /// reflection. See the renderer's CLAUDE.md for the chain and its deviations from the reference.
     class SsrChain
     {
     public:
@@ -149,6 +165,8 @@ namespace Veng::Renderer
         /// @brief Words in the indirect-argument buffer: the intersection's dispatch, then the
         ///        denoiser's.
         static constexpr u32 IndirectArgsWords = 6;
+        /// @brief The byte offset of the denoiser's dispatch in the indirect-argument buffer.
+        static constexpr u32 DenoiserArgsOffset = 12;
 
         /// @brief Loads the shaders and the sampler tables and builds the pipelines.
         ///
@@ -167,9 +185,9 @@ namespace Veng::Renderer
 
         /// @brief Creates the extent-sized resources for a render allocation, or keeps them.
         ///
-        /// A changed extent recreates every one of them, clears the radiance and variance targets
-        /// to zero and starts the frame count over, as the reference does when its context is
-        /// recreated for a new size.
+        /// A changed extent recreates every one of them, clears every persistent target to zero
+        /// and starts the frame count over, as the reference does when its context is recreated
+        /// for a new size.
         /// @param extent The render allocation in pixels.
         void Recreate(uvec2 extent);
 
@@ -184,15 +202,36 @@ namespace Veng::Renderer
         /// @pre Recreate has run.
         void Import(RenderGraph& graph);
 
-        /// @brief Declares the chain's passes into the graph, after the passes writing its inputs.
+        /// @brief Declares the chain's passes into the graph, after the passes writing its inputs:
+        ///        DeclareTrace, then DeclareDenoiser.
         /// @param graph  The graph Import declared the resources into.
-        /// @param inputs The g-buffer it reads.
+        /// @param inputs The g-buffer and lit colour it reads.
         /// @pre Import has run on @p graph and SetEnvironment has bound a cube.
         void Declare(RenderGraph& graph, const SsrGraphInputs& inputs);
 
+        /// @brief Declares the SSSR half of the chain: the depth hierarchy, the classifier, the
+        ///        blue-noise and indirect-argument preparation and the intersection.
+        ///
+        /// Leaves the intersection's radiance in radiance A, which DeclareDenoiser replaces with the
+        /// denoised reflection.
+        /// @param graph  The graph Import declared the resources into.
+        /// @param inputs The g-buffer and lit colour it reads.
+        /// @pre Import has run on @p graph and SetEnvironment has bound a cube.
+        void DeclareTrace(RenderGraph& graph, const SsrGraphInputs& inputs);
+
+        /// @brief Declares the denoiser half of the chain: the reprojection, the prefilter, the
+        ///        temporal resolve and the depth, normal and roughness history copies.
+        ///
+        /// Each of the three passes is one 8x8 workgroup per listed tile, dispatched indirectly
+        /// from the argument buffer's second command.
+        /// @param graph  The graph DeclareTrace declared into.
+        /// @param inputs The g-buffer it reads; Normal must carry ImageUsage::TransferSrc.
+        /// @pre DeclareTrace has run on @p graph.
+        void DeclareDenoiser(RenderGraph& graph, const SsrGraphInputs& inputs);
+
         /// @brief Appends this frame's bindings for every resource Import declared.
         ///
-        /// The radiance and variance imports bind the targets this frame's parity selects.
+        /// The ping-pong imports bind the targets this frame's parity selects.
         /// @param bindings The frame's import bindings.
         void AppendImportBindings(vector<RenderGraph::ImportBinding>& bindings) const;
 
@@ -260,10 +299,82 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetVarianceHistoryIndex() const { return 1u - GetVarianceIndex(); }
 
         /// @brief The import this frame's radiance (A) binds to, declared by the last Import.
+        ///
+        /// The intersection writes it, and the temporal resolve overwrites it with the denoised
+        /// reflection: rgb the reflected radiance. Its alpha is the blue channel again on every pixel
+        /// of a listed tile (the reference stores rgb.xyzz) and, elsewhere, the classifier's 0.
         [[nodiscard]] ResourceId GetRadianceId() const { return m_RadianceId; }
+
+        /// @brief The import of the denoised reflection the temporal resolve writes: radiance A.
+        [[nodiscard]] ResourceId GetReflectionId() const { return m_RadianceId; }
+
+        /// @brief The import this frame's radiance history (B) binds to: last frame's denoised
+        ///        reflection, which the prefilter overwrites with its own output.
+        [[nodiscard]] ResourceId GetRadianceHistoryId() const { return m_RadianceHistoryId; }
+
+        /// @brief The import this frame's variance (A) binds to, which the reprojection and the
+        ///        temporal resolve write and next frame's classifier reads.
+        [[nodiscard]] ResourceId GetVarianceId() const { return m_VarianceId; }
 
         /// @brief The import this frame's variance history (B) binds to.
         [[nodiscard]] ResourceId GetVarianceHistoryId() const { return m_VarianceHistoryId; }
+
+        /// @brief One of the two sample-count targets (R16F).
+        /// @param index 0 or 1, the reference's SampleCount0 / SampleCount1.
+        [[nodiscard]] const Ref<ImageView>& GetSampleCountView(u32 index) const
+        {
+            return m_SampleCount[index];
+        }
+
+        /// @brief The sample-count target this frame's reprojection writes.
+        [[nodiscard]] u32 GetSampleCountIndex() const
+        {
+            return (m_FrameIndex & 1u) != 0u ? 0u : 1u;
+        }
+
+        /// @brief The sample-count target this frame reads: the one last frame's reprojection wrote.
+        ///
+        /// The temporal resolve reads it too, as the reference's host binds it.
+        [[nodiscard]] u32 GetSampleCountHistoryIndex() const { return 1u - GetSampleCountIndex(); }
+
+        /// @brief One of the two 8x8 average-radiance targets (B10G11R11, an eighth of the
+        ///        allocation rounded up).
+        /// @param index 0 or 1, the reference's AverageRadiance0 / AverageRadiance1.
+        [[nodiscard]] const Ref<ImageView>& GetAverageRadianceView(u32 index) const
+        {
+            return m_AverageRadiance[index];
+        }
+
+        /// @brief The average-radiance target this frame's reprojection writes.
+        [[nodiscard]] u32 GetAverageRadianceIndex() const
+        {
+            return (m_FrameIndex & 1u) != 0u ? 0u : 1u;
+        }
+
+        /// @brief The average-radiance target the prefilter and the temporal resolve read: the one
+        ///        last frame's reprojection wrote, as the reference's host binds it.
+        [[nodiscard]] u32 GetAverageRadianceHistoryIndex() const
+        {
+            return 1u - GetAverageRadianceIndex();
+        }
+
+        /// @brief The reprojected radiance (RGBA16F; rgb read).
+        [[nodiscard]] const Ref<ImageView>& GetReprojectedRadianceView() const
+        {
+            return m_ReprojectedRadiance;
+        }
+
+        /// @brief The depth history: last frame's depth-hierarchy level 0 (R32F).
+        [[nodiscard]] const Ref<ImageView>& GetDepthHistoryView() const { return m_DepthHistory; }
+
+        /// @brief The normal history: last frame's world normal (the g-buffer's G1 format).
+        [[nodiscard]] const Ref<ImageView>& GetNormalHistoryView() const { return m_NormalHistory; }
+
+        /// @brief The roughness history: last frame's extracted roughness (R8, alpha).
+        [[nodiscard]] const Ref<ImageView>& GetRoughnessHistoryView() const
+        {
+            return m_RoughnessHistory;
+        }
 
         /// @brief The classifier's extracted roughness, in alpha (R8).
         [[nodiscard]] const Ref<ImageView>& GetExtractedRoughnessView() const
@@ -316,6 +427,10 @@ namespace Veng::Renderer
         /// @brief Builds the per-extent descriptor sets against the current resources.
         void BuildSets();
 
+        /// @brief Builds the three denoiser passes' sets for one frame parity.
+        /// @param parity The frame index's parity (1 for odd frames).
+        void BuildDenoiserSets(u32 parity);
+
         /// @brief The dynamic offset of this frame's constants region.
         [[nodiscard]] u32 ConstantsOffset() const;
 
@@ -364,6 +479,33 @@ namespace Veng::Renderer
         /// @brief Its set 3: constants, environment, depth hierarchy, extracted roughness, blue
         ///        noise, the ray list, the counters, radiance.
         Ref<DescriptorSetLayout> m_IntersectSetLayout;
+        /// @brief The denoiser's reprojection pipeline.
+        Ref<ComputePipeline> m_ReprojectPipeline;
+        /// @brief Its layout: set 3 + the normal and motion-vector push block.
+        Ref<PipelineLayout> m_ReprojectLayout;
+        /// @brief Its set 3: constants, sampler, depth hierarchy, radiance A and B, variance B,
+        ///        sample-count history, extracted roughness, the depth, normal and roughness
+        ///        histories, then the variance A, sample-count, average and reprojected-radiance
+        ///        targets and the tile list.
+        Ref<DescriptorSetLayout> m_ReprojectSetLayout;
+        /// @brief The denoiser's prefilter pipeline.
+        Ref<ComputePipeline> m_PrefilterPipeline;
+        /// @brief Its layout: set 3 + the normal push block.
+        Ref<PipelineLayout> m_PrefilterLayout;
+        /// @brief Its set 3: constants, sampler, depth hierarchy, radiance A, variance A,
+        ///        average-radiance history, extracted roughness, then radiance B, variance B and
+        ///        the tile list.
+        Ref<DescriptorSetLayout> m_PrefilterSetLayout;
+        /// @brief The denoiser's temporal-resolve pipeline.
+        Ref<ComputePipeline> m_ResolvePipeline;
+        /// @brief Its layout: set 3.
+        Ref<PipelineLayout> m_ResolveLayout;
+        /// @brief Its set 3: constants, sampler, radiance B, variance B, sample-count history,
+        ///        average-radiance history, extracted roughness, reprojected radiance, then
+        ///        radiance A, variance A and the tile list.
+        Ref<DescriptorSetLayout> m_ResolveSetLayout;
+        /// @brief The denoiser's sampler: bilinear, nearest mip, clamped.
+        Ref<Sampler> m_DenoiserSampler;
 
         /// @brief The environment cube's sampler: trilinear, clamped in U and V, wrapped in W.
         Ref<Sampler> m_EnvironmentSampler;
@@ -396,6 +538,18 @@ namespace Veng::Renderer
         std::array<Ref<ImageView>, 2> m_Variance;
         /// @brief The extracted roughness (R8, alpha).
         Ref<ImageView> m_ExtractedRoughness;
+        /// @brief The sample-count ping-pong pair (R16F).
+        std::array<Ref<ImageView>, 2> m_SampleCount;
+        /// @brief The 8x8 average-radiance ping-pong pair (B10G11R11).
+        std::array<Ref<ImageView>, 2> m_AverageRadiance;
+        /// @brief The reprojected radiance (RGBA16F).
+        Ref<ImageView> m_ReprojectedRadiance;
+        /// @brief The depth history (R32F).
+        Ref<ImageView> m_DepthHistory;
+        /// @brief The normal history (the g-buffer's G1 format).
+        Ref<ImageView> m_NormalHistory;
+        /// @brief The roughness history (R8).
+        Ref<ImageView> m_RoughnessHistory;
         /// @brief The ray list (one word per pixel of the allocation).
         Ref<Buffer> m_RayList;
         /// @brief The denoiser tile list (one word per pixel of the allocation, as the reference).
@@ -415,13 +569,39 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_IndirectArgsSet;
         /// @brief The intersection's set for each frame parity (radiance A swaps).
         std::array<Ref<DescriptorSet>, 2> m_IntersectSets;
+        /// @brief The reprojection's set for each frame parity.
+        std::array<Ref<DescriptorSet>, 2> m_ReprojectSets;
+        /// @brief The prefilter's set for each frame parity.
+        std::array<Ref<DescriptorSet>, 2> m_PrefilterSets;
+        /// @brief The temporal resolve's set for each frame parity.
+        std::array<Ref<DescriptorSet>, 2> m_ResolveSets;
 
         /// @brief The depth hierarchy's per-level import.
         MipChainId m_DepthHierarchyId;
         /// @brief This frame's radiance (A) import.
         ResourceId m_RadianceId;
+        /// @brief This frame's radiance history (B) import.
+        ResourceId m_RadianceHistoryId;
+        /// @brief This frame's variance (A) import.
+        ResourceId m_VarianceId;
         /// @brief This frame's variance history (B) import.
         ResourceId m_VarianceHistoryId;
+        /// @brief The sample-count target this frame writes.
+        ResourceId m_SampleCountId;
+        /// @brief The sample-count target this frame reads.
+        ResourceId m_SampleCountHistoryId;
+        /// @brief The average-radiance target this frame writes.
+        ResourceId m_AverageRadianceId;
+        /// @brief The average-radiance target this frame reads.
+        ResourceId m_AverageRadianceHistoryId;
+        /// @brief The reprojected radiance import.
+        ResourceId m_ReprojectedRadianceId;
+        /// @brief The depth history import.
+        ResourceId m_DepthHistoryId;
+        /// @brief The normal history import.
+        ResourceId m_NormalHistoryId;
+        /// @brief The roughness history import.
+        ResourceId m_RoughnessHistoryId;
         /// @brief The extracted roughness import.
         ResourceId m_ExtractedRoughnessId;
         /// @brief The blue-noise import.

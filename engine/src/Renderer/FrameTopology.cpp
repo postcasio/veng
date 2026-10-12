@@ -33,9 +33,11 @@ namespace Veng::Renderer
         topology.FxaaActive = aaFinal && settings.AntiAliasing == AntiAliasingMode::FXAA;
         topology.Cmaa2Active = aaFinal && settings.AntiAliasing == AntiAliasingMode::CMAA2;
 
-        // Velocity's only readers are the temporal resolve and the motion-vector blit.
+        // Velocity's readers are the temporal resolve, the motion-vector blit and the reflection
+        // denoiser's reprojection.
+        topology.SsrActive = ResolveSsrActive(settings);
         topology.GBufferStores.Velocity =
-            topology.TaaActive || settings.Mode == DebugView::MotionVectors
+            topology.TaaActive || settings.Mode == DebugView::MotionVectors || topology.SsrActive
                 ? GBufferChannelState::Stored
                 : GBufferChannelState::Discarded;
 
@@ -129,7 +131,6 @@ namespace Veng::Renderer
         topology.RefractionBlurActive = topology.RefractionActive && settings.RefractionBlur;
 
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
-        topology.SsrActive = ResolveSsrActive(settings);
 
         // The tile cull serves every lighting pass that shades direct light: the composited arms,
         // and the CoC arm, which force-wires lighting as the input it inspects.

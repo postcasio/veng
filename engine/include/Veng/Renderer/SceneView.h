@@ -489,6 +489,12 @@ namespace Veng::Renderer
         ///
         /// Written to the reflection constants each Execute.
         u32 SsrMinTraversalOccupancy = 4;
+        /// @brief How strongly the screen-space reflection denoiser's temporal resolve holds its
+        ///        history against this frame's signal, in [0, 1].
+        ///
+        /// Scales the box the history is clipped into. Written to the reflection constants each
+        /// Execute.
+        f32 SsrTemporalStabilityFactor = 0.7f;
 
         /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
         ///

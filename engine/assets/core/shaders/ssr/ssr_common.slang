@@ -32,7 +32,9 @@
 
 // The reference's cbSSSR, less the g-buffer decode parameters (the normal unpack pair, the
 // roughness channel and its perceptual flag), which the engine's fixed g-buffer layout settles at
-// the load. Mirrors the renderer's SsrConstants (SsrChain.h) field for field; std140.
+// the load, followed by the one field of the denoiser's cbDenoiserReflections it does not share:
+// the denoiser's render size. Mirrors the renderer's SsrConstants (SsrChain.h) field for field;
+// std140.
 struct SsrConstants
 {
     float4x4 InvViewProjection;
@@ -55,6 +57,8 @@ struct SsrConstants
     uint SamplesPerQuad;
     uint TemporalVarianceGuidedTracingEnabled;
     uint Padding;
+    uint2 DenoiserRenderSize;
+    float2 DenoiserInverseRenderSize;
 };
 
 // Every pass that reads the constants binds them at binding 0 of its own set 3, at this frame's

@@ -415,8 +415,8 @@ surface vertex stage additionally skins the previous position through the previo
 vector for geometry (camera **and** object motion) and the direction reprojection above for the
 cleared background. Because velocity is a g-buffer channel it is **always
 written and always allocated** (the cost is one extra `RG16Sfloat` target plus a clip-position
-write, not a second geometry pass); with TAA off it is written but unread, and the `MotionVectors`
-debug arm blits it directly. The opaque material contract is therefore **G0/G1/G2/G3/G4** —
+write, not a second geometry pass); with TAA off it is written but unread unless the reflection
+denoiser runs, and the `MotionVectors` debug arm blits it directly. The opaque material contract is therefore **G0/G1/G2/G3/G4** —
 velocity is the fourth MRT channel of the surface output, not a separate pass, and emissive (G4)
 is the fifth. History is **YCoCg
 variance-clipped** to the 3×3 neighborhood, sampled with a **Catmull-Rom** filter, and blended
@@ -1298,8 +1298,8 @@ extreme texel, and zero from a `NaN` or `inf`.
 
 ### Screen-space reflections: a port of FidelityFX SSSR
 
-**The reflection chain is AMD FidelityFX SSSR (SDK v1.1.4, MIT) translated onto the frame graph,
-not an engine design.** Every function, constant, branch, format and default is the reference's;
+**The reflection chain is AMD FidelityFX SSSR and its reflection denoiser (SDK v1.1.4, MIT)
+translated onto the frame graph, not an engine design.** Every function, constant, branch, format and default is the reference's;
 the shaders under `assets/core/shaders/ssr/` name the reference file each ports and carry AMD's
 notice. Where the port departs from the reference, an engine contract forced it, and the departure
 is one of these:
@@ -1310,7 +1310,14 @@ is one of these:
 - **D2** — the depth hierarchy is built one level per dispatch, not by SPD's single pass, whose quad
   operations have the same lane-order dependence. Its contents are SPD's.
 - **D3** — roughness is converted once, `α = r²`, where the classifier loads the g-buffer's
-  perceptual roughness; everything downstream reads α, as the reference's "roughness" is.
+  perceptual roughness; everything downstream reads α, as the reference's "roughness" is (the
+  denoiser's loads and its roughness history never square it).
+- **D4** — the engine's motion vectors are `curUV − prevUV` (`ComputeMotionVector`, in the engine's
+  y-down UV); the reprojection loads them with the reference's `motionVectorScale` fixed at −1 on both
+  axes, giving its `uv + motion = previous uv`. Velocity is stored whenever SSR runs, anti-aliasing off
+  included (`FrameTopology::GBufferStores`). The engine's motion vectors are unjittered over a
+  jittered raster, which is the FidelityFX convention the denoiser assumes (the reference sample runs
+  no jitter at all), so there is no jitter correction.
 - **D5** — the reference's environment cube is the view's prefiltered specular probe
   (`EnvironmentIbl`), sampled the reference's way (mip `sqrt(α) · log2(width)`), and its `iblFactor`
   is the view's IBL intensity — 0 for a view whose ambient arm is not IBL.
@@ -1324,14 +1331,19 @@ while SSSR runs (D6), and no per-view flag carries that yet.
 The reference's coordinate helpers flip y between UV and NDC (Direct3D's NDC is y-up); the engine's
 NDC is y-down like UV, so the flip is omitted — a change of convention, not of behaviour. A load
 past a texture's extent returns 0 and a store past it is dropped, Direct3D's semantics, which the
-reference relies on along the last row and column of tiles.
+reference relies on along the last row and column of tiles and in the denoiser's 16×16 tile aprons.
+The reference's `isnan`/`isinf` tests are written as an exponent-bit test (`DenoiserIsFinite`),
+since the engine's shader compile may fold the intrinsics away under fast math — the same test, not a
+different one. The 32-bit path is ported; the `FFX_HALF` permutation is not.
 
 **`SsrChain` owns the whole vertical** (`SsrChain.{h,cpp}`), created only while
 `ResolveSsrActive(settings)` holds (`Settings.SSR` in the shaded path's Final view), so a renderer
 without reflections holds none of its pipelines, tables or targets and declares none of its passes.
 `SsrScenePass` places its passes in the pass list, after the opaque lighting and the sky and ahead of
-the translucent composite — the reference sample's order. The passes, in the reference's dispatch
-order (`ffx_sssr.cpp`):
+the translucent composite — the reference sample's order. `SsrChain::Declare` is `DeclareTrace`
+(passes 1–5, `ffx_sssr.cpp`) then `DeclareDenoiser` (passes 6–9, `ffx_denoiser.cpp`); a test that
+inspects the intersection's own output declares the first half alone. The passes, in the reference's
+dispatch order:
 
 1. **`SSR Depth Downsample`** ×levels (`ssr_depth_downsample.comp`, D2) — level 0 copies the depth;
    each later level holds the nearest (reverse-Z: largest) of its parent's 2×2 children, a child past
@@ -1365,14 +1377,68 @@ order (`ffx_sssr.cpp`):
    load, read only when confidence > 0) and the ray's world-space length in a, at the ray's pixel
    and at each quad neighbour its copy flags name. The reference's `valid_hit` is always true and
    is kept so.
+6. **`SSR Denoiser Reproject`** (`ssr_denoiser_reproject.comp`, D3/D4) — dispatched indirectly from
+   byte 12, one 8×8 group per listed tile (the tile list gives its first pixel; threads remapped by
+   `ffxRemapForWaveReduction`), each group loading a 16×16 apron of radiance A into workgroup
+   memory as packed halves. For each glossy pixel: the 9×9 Gaussian statistics (`exp(−3i²/25)` per
+   axis) of this frame's radiance; two history candidates — the surface (`uv + motion`) and the
+   virtual hit point (the view ray lengthened by the ray length, projected through the previous
+   view-projection); the hit candidate wins when its history normal's similarity exceeds 0.9999, is
+   at least the surface's and its history roughness is closer, else the surface's when
+   `|hist − μ|² < 1.5·|σ²|`, else none (disocclusion factor 0). The factor
+   `exp(−|1 − n·n′|·1.4)·exp(−|Δz|/z)`, below 0.9, takes the best of a 3×3 search, then a 2×2
+   bilinear footprint weighted by occlusion over 0.45, then 0. Writes the reprojected radiance,
+   variance A (`lerp(temporal variance, history variance, 1/n)`) and the sample count
+   `n = min(max(8, 32·(1 − e^(−100α))), history·factor + 1)`, or 0, 1, 1 on a disocclusion or off
+   screen; and reduces the tile's radiance (30 % towards the reprojection where history was kept),
+   weighted `max(e^(−0.3·luma), 0.01)` with non-finite or off-screen pixels dropped, into the
+   8×8 average.
+7. **`SSR Denoiser Prefilter`** (`ssr_denoiser_prefilter.comp`) — same dispatch. A glossy, non-mirror
+   pixel with variance above zero resolves from itself and 15 Halton(2, 3) taps within 3 pixels,
+   weighted `pow(n·n′, 512)` · `exp(−|Δz|·z·4)` · `max(exp(−(0.6 + 0.1·var)·|avg − L|), 0.01)` ·
+   `max(0.1, 1 − e^(−4.4·var))` (the centre by its radiance weight alone, variance accumulating
+   with w²); every other pixel copies through. Writes radiance B and variance B.
+8. **`SSR Denoiser Resolve Temporal`** (`ssr_denoiser_resolve_temporal.comp`) — same dispatch. A
+   prefiltered radiance summing under 1e-4 resolves to 0 (variance 0). A glossy pixel clips its
+   reprojected history (Playdead's `ClipAABB`, with its notice) into a box of half-size
+   `(σ + |μ − avg|)·stability·1.4` about `lerp(μ, avg, 0.2)` (9×9 statistics of the prefiltered
+   radiance), blends its signal towards the average by `1/(n + 1)` and clips it to `avg ± that`,
+   then outputs `lerp(signal, clipped history, 1 − 1/max(n, 1))` and the variance likewise; a
+   non-finite result is zeroed. Any other pixel keeps its prefiltered radiance and variance. Writes
+   radiance A (rgb.xyzz, the reference's store) and variance A.
+9. **`SSR Denoiser History Copy`** (transfer) — this frame's g-buffer normal, extracted roughness and
+   depth-hierarchy level 0 into the normal, roughness and depth histories next frame's reprojection
+   samples. The g-buffer normal therefore carries `TransferSrc` (`GBuffer::NormalUsage`).
+
+**The denoiser's bindings follow the reference's two hosts exactly**, including what they read from
+last frame. With A this frame's write target and B the other: the reprojection reads radiance A and
+B, variance B and the sample-count history, and writes variance A, the sample count and the
+average; the prefilter reads radiance A, variance A and the *average history* (the one last frame's
+reprojection wrote — the reference binds its average SRV and UAV by the same parity for all three
+passes) and writes radiance B and variance B; the temporal resolve reads radiance B, variance B,
+the *sample-count history* and the average history, and writes radiance A and variance A. So the
+temporal resolve blends by last frame's sample count, not this frame's, and the first frame after
+creation, reading the cleared count, outputs zero for every glossy pixel. Variance A, written last by
+the temporal resolve, is next frame's variance B, which the classifier's variance-guided tracing
+reads.
+
+The denoiser's render size is the chain's allocation extent (`SsrConstants::DenoiserRenderSize`),
+which is what the reference's host gives it — its context's window size — while the SSSR passes use
+this frame's rendered size. The two agree at render scale 1, the only configuration the reference
+sample runs; under a dynamic-resolution sub-rect the denoiser maps UVs over the whole allocation as
+the reference's would.
 
 **Resources** (all render-allocation sized unless stated; "persistent" outlives the frame):
 
 | Resource | Format | Lifetime | Graph id |
 |---|---|---|---|
 | Depth hierarchy | `R32Sfloat`, `min(7, ⌈log2 max(w,h)⌉)` levels | per frame, overwritten | `GetDepthHierarchyId()` (per level) |
-| Radiance 0 / 1 | `RGBA16Sfloat`: rgb radiance, a ray length | persistent ping-pong, zeroed at creation | `GetRadianceId()` binds A |
-| Variance 0 / 1 | `R16Sfloat` | persistent ping-pong, zeroed at creation | `GetVarianceHistoryId()` binds B |
+| Radiance 0 / 1 | `RGBA16Sfloat` (see below) | persistent ping-pong, zeroed at creation | `GetRadianceId()` binds A, `GetRadianceHistoryId()` B |
+| Variance 0 / 1 | `R16Sfloat` | persistent ping-pong, zeroed at creation | `GetVarianceId()` binds A, `GetVarianceHistoryId()` B |
+| Sample count 0 / 1 | `R16Sfloat` | persistent ping-pong, zeroed at creation | written / history imports (internal) |
+| Average radiance 0 / 1 | `B10G11R11Ufloat`, ⌈w/8⌉×⌈h/8⌉ | persistent ping-pong, zeroed at creation | written / history imports (internal) |
+| Reprojected radiance | `RGBA16Sfloat` (rgb) | persistent, zeroed at creation | internal |
+| Depth / normal / roughness history | `R32Sfloat` / G1's format / `R8Unorm` | persistent, zeroed at creation | internal |
 | Extracted roughness | `R8Unorm` (α) | per frame | `GetExtractedRoughnessId()` |
 | Blue noise | `RG8Unorm`, 128² | per frame | `GetBlueNoiseId()` |
 | Ray list | `u32` per pixel | per frame | `GetRayListId()` |
@@ -1382,30 +1448,41 @@ order (`ffx_sssr.cpp`):
 | Sobol / scrambling tables | `R32Uint`, 256² / 512×256 | static | not imported |
 | Constants (`SsrConstants`) | std140, one region per frame in flight | per frame | dynamic UBO |
 
-The chain reads the g-buffer's depth, world normal and ORM, and the lit colour, through
-`SsrGraphInputs`; `SsrScenePass` hands it `PassIO::Hdr` / `HdrHandle`, the target the opaque
+The chain reads the g-buffer's depth, world normal, ORM and motion vectors, and the lit colour,
+through `SsrGraphInputs`; `SsrScenePass` hands it `PassIO::Hdr` / `HdrHandle`, the target the opaque
 lighting and the sky wrote at that point in the list (the TAA lit target under TAA, the DoF scene
-target under a composited DoF).
+target under a composited DoF), and `PassIO::Velocity` / `VelocityHandle`.
 
 **What radiance A holds per pixel after the intersection:** a traced pixel and every quad neighbour
 its ray copies to hold the ray's result (rgb radiance, a ray length); a rough reflective pixel holds
 classify's environment along its mirror direction (a 0); every other pixel holds zero — background,
 off-screen, and a glossy pixel that neither traced nor was copied to (its quad's base pixel was not
-glossy and reflective). `SceneRenderer::GetSsrRadianceView()` returns the target the last `Execute`
-wrote.
+glossy and reflective).
 
-The ping-pong follows the reference's parity: on an odd frame index radiance A is target 0 and the
-variance history B is target 1; on an even one, 1 and 0. A `Recreate` at a new extent zeroes the
-radiance and variance targets and restarts the frame index — the reference's first-frame clear. The
-per-frame tunables (`SsrSamplesPerQuad`, `SsrRoughnessThreshold`, `SsrVarianceThreshold`,
+**What radiance A holds after the temporal resolve — the denoised reflection the apply composite
+reads** (`SsrChain::GetReflectionId()`, the same import as `GetRadianceId()`): on every pixel of a
+listed tile, the resolve's output in rgb and its blue channel again in a; elsewhere the
+classifier's value (a rough pixel's environment, or zero) with a 0. Alpha carries nothing a consumer
+reads. It holds until next frame's prefilter reuses the target as radiance B.
+`SceneRenderer::GetSsrReflectionView()` returns it after `Execute`. The reference's host copies it to
+a separate output target; here the apply pass samples radiance A within the same frame, so the copy
+has no reader and is not made.
+
+The ping-pong follows the reference's parity: on an odd frame index radiance, variance, sample count
+and average A are target 0 and B target 1; on an even one, 1 and 0. A `Recreate` at a new extent
+zeroes every persistent target and restarts the frame index — the reference's first-frame clears.
+The reference leaves the depth, normal and roughness histories uninitialized; they are cleared with
+the rest, to the g-buffer's own "no surface" (depth 0 under reverse-Z, a zero normal), so the first
+frame's history describes an empty frame and every glossy pixel is disoccluded. The per-frame
+tunables (`SsrSamplesPerQuad`, `SsrRoughnessThreshold`, `SsrVarianceThreshold`,
 `SsrVarianceGuidedTracing`, `SsrDepthBufferThickness`, `SsrMaxTraversalIntersections`,
-`SsrMinTraversalOccupancy` — the reference sample's UI set, with its defaults and ranges) ride
-`SceneView` / `ViewState` / `RenderLook` like the other per-frame knobs; the reference's other
-tunables (temporal stability 0.7, most detailed mip 0) are its defaults in the constants block. No
-pass reads the chain's outputs, and nothing writes the variance targets, so the variance-guided path
-sees zero history. `tests/gpu/ssr_chain.cpp` drives the passes on a synthetic g-buffer and checks
-each output against the reference's rule, and the intersection on a mirror floor beside a lit
-sphere.
+`SsrMinTraversalOccupancy`, `SsrTemporalStabilityFactor` — the reference sample's UI set, with its
+defaults and ranges) ride `SceneView` / `ViewState` / `RenderLook` like the other per-frame knobs;
+the reference's most detailed mip (0) is its default in the constants block. No pass composites
+the reflection. `tests/gpu/ssr_chain.cpp` drives the passes on a synthetic g-buffer and checks each
+output against the reference's rule, the intersection on a mirror floor beside a lit sphere, and the
+denoiser over several frames (finite output, the zero early-out, the first frame's and a still
+camera's second frame's sample counts, and the variance ping-pong into the classifier).
 
 ### Depth of field and the physical camera
 
@@ -2052,9 +2129,9 @@ store at the end of the pass is the bandwidth, and a channel with no reader can 
 tile memory. The decision is `FrameTopology::GBufferStores`, one `GBufferChannelState`
 (`Stored` / `Discarded`) per colour channel, resolved with the rest of the topology. Albedo, normal,
 ORM and emissive are always stored (lighting reads them; the debug arms read some), as is
-depth. **Velocity is stored only when the TAA/TAAU resolve or the `MotionVectors` arm is wired**;
-under every other configuration — the default `AntiAliasingMode::None`, FXAA, CMAA2, every other
-debug arm — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
+depth. **Velocity is stored only when the TAA/TAAU resolve, the `MotionVectors` arm or the
+screen-space reflection chain is wired**; under every other configuration — the default
+`AntiAliasingMode::None`, FXAA, CMAA2, every other debug arm, with SSR off — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
 its contents are undefined after the frame. On an immediate-mode GPU the discard costs and saves
 nothing.
 

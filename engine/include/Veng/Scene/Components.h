@@ -1792,6 +1792,12 @@ namespace Veng
         /// The default matches the renderer's own ViewState default.
         /// @see Renderer::SceneView::SsrMinTraversalOccupancy
         u32 SsrMinTraversalOccupancy = 4;
+        /// @brief How strongly the reflection denoiser's temporal resolve holds its history, fed
+        ///        into the per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrTemporalStabilityFactor
+        f32 SsrTemporalStabilityFactor = 0.7f;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale, fed into the
         ///        per-frame SceneView; zero turns it off.
         ///
@@ -2415,6 +2421,8 @@ VE_FIELD(SsrMaxTraversalIntersections, .DisplayName = "SSR Max Traversal Iterati
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0, .Max = 256})
 VE_FIELD(SsrMinTraversalOccupancy, .DisplayName = "SSR Min Traversal Occupancy",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0, .Max = 32})
+VE_FIELD(SsrTemporalStabilityFactor, .DisplayName = "SSR Temporal Stability",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA Variance",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA Threshold",

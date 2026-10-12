@@ -372,7 +372,7 @@ namespace Veng::Renderer
                            .Name = "SceneRenderer GBuffer Normal",
                            .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
                            .Format = GBuffer::NormalFormat,
-                           .Usage = GBuffer::ColorUsage,
+                           .Usage = GBuffer::NormalUsage,
                        });
         m_NormalView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});

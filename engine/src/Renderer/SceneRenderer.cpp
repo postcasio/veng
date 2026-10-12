@@ -2665,6 +2665,7 @@ namespace Veng::Renderer
                     .DepthBufferThickness = resolvedView.SsrDepthBufferThickness,
                     .MaxTraversalIntersections = resolvedView.SsrMaxTraversalIntersections,
                     .MinTraversalOccupancy = resolvedView.SsrMinTraversalOccupancy,
+                    .TemporalStabilityFactor = resolvedView.SsrTemporalStabilityFactor,
                 });
             }
         }
@@ -3477,7 +3478,7 @@ namespace Veng::Renderer
     {
         return m_Taa->GetHistoryView();
     }
-    Ref<ImageView> SceneRenderer::GetSsrRadianceView() const
+    Ref<ImageView> SceneRenderer::GetSsrReflectionView() const
     {
         // The frame count advanced after the Execute, so the target it wrote is now the history.
         return m_Ssr != nullptr ? m_Ssr->GetRadianceView(m_Ssr->GetRadianceHistoryIndex())

@@ -16,6 +16,7 @@
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/DeviceCapabilities.h>
+#include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
@@ -35,6 +36,9 @@ namespace Veng::Renderer
         constexpr AssetId PrepareBlueNoiseCompId{0xFEB489746A920429ULL};
         constexpr AssetId PrepareIndirectArgsCompId{0x4E213E0E322BFDDEULL};
         constexpr AssetId IntersectCompId{0xAFE1A70F03527034ULL};
+        constexpr AssetId ReprojectCompId{0x887C840639DEAE97ULL};
+        constexpr AssetId PrefilterCompId{0x34C2D07665F81AACULL};
+        constexpr AssetId ResolveTemporalCompId{0x8BA2908B318A1267ULL};
         constexpr AssetId BlueNoiseTablesId{0xFC0C39061564BE4BULL};
 
         // The Sobol table's extent (256 samples of 256 dimensions) and the scrambling tile's (an
@@ -42,8 +46,7 @@ namespace Veng::Renderer
         constexpr uvec2 SobolExtent{256, 256};
         constexpr uvec2 ScramblingTileExtent{512, 256};
 
-        // The reference's defaults for the tunables the view does not carry.
-        constexpr f32 DefaultTemporalStabilityFactor = 0.7f;
+        // The reference's default for the one tunable the view does not carry.
         constexpr u32 DefaultMostDetailedMip = 0;
 
         // The depth-hierarchy push block, matching ssr_depth_downsample.comp PushConstants.
@@ -67,6 +70,14 @@ namespace Veng::Renderer
         {
             u32 NormalTexture;
             u32 ColorTexture;
+        };
+
+        // The reprojection's and prefilter's push block, matching ssr_denoiser_callbacks
+        // DenoiserPushConstants (the prefilter reads only the normal).
+        struct DenoiserPush
+        {
+            u32 NormalTexture;
+            u32 MotionVectorTexture;
         };
 
         [[nodiscard]] u32 DivideRoundingUp(const u32 value, const u32 divisor)
@@ -155,8 +166,8 @@ namespace Veng::Renderer
                       ShaderStage::Compute, SubgroupOperation::Basic | SubgroupOperation::Ballot),
                   "SsrChain: the device does not run basic and ballot subgroup operations in "
                   "compute shaders");
-        for (const Format format :
-             {Format::RGBA16Sfloat, Format::R16Sfloat, Format::R8Unorm, Format::RG8Unorm})
+        for (const Format format : {Format::RGBA16Sfloat, Format::R16Sfloat, Format::R8Unorm,
+                                    Format::RG8Unorm, Format::B10G11R11Ufloat})
         {
             VE_ASSERT(m_Context.IsFormatStorageImageSupported(format),
                       "SsrChain: format {} is not a storage-image format on this device",
@@ -266,6 +277,105 @@ namespace Veng::Renderer
             });
         m_IntersectPipeline =
             CreatePipeline(m_Context, assets, IntersectCompId, "Intersect", m_IntersectLayout);
+
+        m_ReprojectSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Denoiser Reproject Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::Sampler),
+                                   Binding(2, DescriptorType::SampledImage),
+                                   Binding(3, DescriptorType::SampledImage),
+                                   Binding(4, DescriptorType::SampledImage),
+                                   Binding(5, DescriptorType::SampledImage),
+                                   Binding(6, DescriptorType::SampledImage),
+                                   Binding(7, DescriptorType::SampledImage),
+                                   Binding(8, DescriptorType::SampledImage),
+                                   Binding(9, DescriptorType::SampledImage),
+                                   Binding(10, DescriptorType::SampledImage),
+                                   Binding(11, DescriptorType::StorageImage),
+                                   Binding(12, DescriptorType::StorageImage),
+                                   Binding(13, DescriptorType::StorageImage),
+                                   Binding(14, DescriptorType::StorageBuffer),
+                                   Binding(15, DescriptorType::StorageImage),
+                               },
+                       });
+        m_ReprojectLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Denoiser Reproject Layout",
+                .DescriptorSetLayouts = {m_ReprojectSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<DenoiserPush>(ShaderStage::Compute)},
+            });
+        m_ReprojectPipeline = CreatePipeline(m_Context, assets, ReprojectCompId,
+                                             "Denoiser Reproject", m_ReprojectLayout);
+
+        m_PrefilterSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Denoiser Prefilter Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::Sampler),
+                                   Binding(2, DescriptorType::SampledImage),
+                                   Binding(3, DescriptorType::SampledImage),
+                                   Binding(4, DescriptorType::SampledImage),
+                                   Binding(5, DescriptorType::SampledImage),
+                                   Binding(6, DescriptorType::SampledImage),
+                                   Binding(7, DescriptorType::StorageImage),
+                                   Binding(8, DescriptorType::StorageImage),
+                                   Binding(9, DescriptorType::StorageBuffer),
+                               },
+                       });
+        m_PrefilterLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Denoiser Prefilter Layout",
+                .DescriptorSetLayouts = {m_PrefilterSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<DenoiserPush>(ShaderStage::Compute)},
+            });
+        m_PrefilterPipeline = CreatePipeline(m_Context, assets, PrefilterCompId,
+                                             "Denoiser Prefilter", m_PrefilterLayout);
+
+        m_ResolveSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Denoiser Resolve Temporal Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::Sampler),
+                                   Binding(2, DescriptorType::SampledImage),
+                                   Binding(3, DescriptorType::SampledImage),
+                                   Binding(4, DescriptorType::SampledImage),
+                                   Binding(5, DescriptorType::SampledImage),
+                                   Binding(6, DescriptorType::SampledImage),
+                                   Binding(7, DescriptorType::SampledImage),
+                                   Binding(8, DescriptorType::StorageImage),
+                                   Binding(9, DescriptorType::StorageImage),
+                                   Binding(10, DescriptorType::StorageBuffer),
+                               },
+                       });
+        m_ResolveLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SSR Denoiser Resolve Temporal Layout",
+                                                  .DescriptorSetLayouts = {m_ResolveSetLayout},
+                                              });
+        m_ResolvePipeline = CreatePipeline(m_Context, assets, ResolveTemporalCompId,
+                                           "Denoiser Resolve Temporal", m_ResolveLayout);
+
+        // The reference denoiser's one sampler: bilinear, nearest mip, clamped on every axis.
+        m_DenoiserSampler = Sampler::Create(m_Context, {
+                                                           .Name = "SSR Denoiser Linear Sampler",
+                                                           .MagFilter = Filter::Linear,
+                                                           .MinFilter = Filter::Linear,
+                                                           .MipmapMode = MipmapMode::Nearest,
+                                                           .AddressModeU = AddressMode::ClampToEdge,
+                                                           .AddressModeV = AddressMode::ClampToEdge,
+                                                           .AddressModeW = AddressMode::ClampToEdge,
+                                                           .AnisotropyEnabled = false,
+                                                           .MaxAnisotropy = 1.0f,
+                                                       });
 
         // The reference's environment sampler: trilinear, clamped in U and V, wrapped in W, with no
         // level clamp.
@@ -416,9 +526,33 @@ namespace Veng::Renderer
             CreateTarget(m_Context, "SSR Extracted Roughness", extent, Format::R8Unorm,
                          ImageUsage::Storage | ImageUsage::Sampled | ImageUsage::TransferSrc);
 
-        // The reference clears radiance and variance on its first frame; the first frame of these
-        // targets is the one after they are created. One zeroed staging buffer the size of the
-        // widest target serves all four copies.
+        const uvec2 averageExtent{DivideRoundingUp(extent.x, 8), DivideRoundingUp(extent.y, 8)};
+        for (u32 i = 0; i < 2; ++i)
+        {
+            m_SampleCount[i] =
+                CreateTarget(m_Context, fmt::format("SSR Denoiser Sample Count {}", i), extent,
+                             Format::R16Sfloat, targetUsage);
+            m_AverageRadiance[i] =
+                CreateTarget(m_Context, fmt::format("SSR Denoiser Average Radiance {}", i),
+                             averageExtent, Format::B10G11R11Ufloat, targetUsage);
+        }
+        m_ReprojectedRadiance = CreateTarget(m_Context, "SSR Denoiser Reprojected Radiance", extent,
+                                             Format::RGBA16Sfloat, targetUsage);
+        const ImageUsage historyUsage =
+            ImageUsage::Sampled | ImageUsage::TransferSrc | ImageUsage::TransferDst;
+        m_DepthHistory = CreateTarget(m_Context, "SSR Denoiser Depth History", extent,
+                                      Format::R32Sfloat, historyUsage);
+        m_NormalHistory = CreateTarget(m_Context, "SSR Denoiser Normal History", extent,
+                                       GBuffer::NormalFormat, historyUsage);
+        m_RoughnessHistory = CreateTarget(m_Context, "SSR Denoiser Roughness History", extent,
+                                          Format::R8Unorm, historyUsage);
+
+        // The reference clears radiance, variance, sample count, average radiance and reprojected
+        // radiance on its first frame, and leaves the depth, normal and roughness histories
+        // uninitialized; the first frame of these targets is the one after they are created, and
+        // the histories are cleared with the rest, to the g-buffer's own "no surface" (depth 0
+        // under reverse-Z, a zero normal). One zeroed staging buffer the size of the widest target
+        // serves every copy.
         {
             const usize bytes = static_cast<usize>(extent.x) * extent.y * 8;
             const Ref<Buffer> zeros =
@@ -429,8 +563,10 @@ namespace Veng::Renderer
                                           });
             const vector<u8> zeroBytes(bytes, 0);
             zeros->UploadSync(zeroBytes);
-            const std::array<Ref<ImageView>, 4> cleared{m_Radiance[0], m_Radiance[1], m_Variance[0],
-                                                        m_Variance[1]};
+            const std::array<Ref<ImageView>, 12> cleared{
+                m_Radiance[0],         m_Radiance[1],    m_Variance[0],        m_Variance[1],
+                m_SampleCount[0],      m_SampleCount[1], m_AverageRadiance[0], m_AverageRadiance[1],
+                m_ReprojectedRadiance, m_DepthHistory,   m_NormalHistory,      m_RoughnessHistory};
             m_Context.RecordSetupCommands(
                 [cleared, zeros](CommandBuffer& cmd)
                 {
@@ -510,6 +646,7 @@ namespace Veng::Renderer
             // the reference's host selects them.
             const u32 radiance = parity != 0 ? 0u : 1u;
             const u32 varianceHistory = parity != 0 ? 1u : 0u;
+            BuildDenoiserSets(parity);
             m_ClassifySets[parity] = nullptr;
             m_IntersectSets[parity] = nullptr;
             if (m_Environment == nullptr)
@@ -568,6 +705,76 @@ namespace Veng::Renderer
         m_IndirectArgsSet->Write(1, m_IndirectArgs);
     }
 
+    void SsrChain::BuildDenoiserSets(const u32 parity)
+    {
+        // The reference's hosts select by the frame's parity: odd frames write radiance, variance,
+        // sample count and average 0 and read their 1, even frames the other way round.
+        const u32 written = parity != 0 ? 0u : 1u;
+        const u32 read = 1u - written;
+
+        const Ref<DescriptorSet> reproject =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SSR Denoiser Reproject Set",
+                                                 .Layout = m_ReprojectSetLayout,
+                                             });
+        reproject->Write(0, m_Constants, 0, sizeof(SsrConstants));
+        reproject->Write(1, m_DenoiserSampler);
+        reproject->Write(2, m_DepthHierarchyView);
+        reproject->Write(3, m_Radiance[written]);
+        reproject->Write(4, m_Radiance[read]);
+        reproject->Write(5, m_Variance[read]);
+        reproject->Write(6, m_SampleCount[read]);
+        reproject->Write(7, m_ExtractedRoughness);
+        reproject->Write(8, m_DepthHistory);
+        reproject->Write(9, m_NormalHistory);
+        reproject->Write(10, m_RoughnessHistory);
+        reproject->Write(11, m_Variance[written]);
+        reproject->Write(12, m_SampleCount[written]);
+        reproject->Write(13, m_AverageRadiance[written]);
+        reproject->Write(14, m_DenoiserTileList);
+        reproject->Write(15, m_ReprojectedRadiance);
+        m_ReprojectSets[parity] = reproject;
+
+        // The prefilter reads the variance the reprojection wrote and writes its result over the
+        // radiance and variance histories, as the reference's host swaps them between the passes.
+        const Ref<DescriptorSet> prefilter =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SSR Denoiser Prefilter Set",
+                                                 .Layout = m_PrefilterSetLayout,
+                                             });
+        prefilter->Write(0, m_Constants, 0, sizeof(SsrConstants));
+        prefilter->Write(1, m_DenoiserSampler);
+        prefilter->Write(2, m_DepthHierarchyView);
+        prefilter->Write(3, m_Radiance[written]);
+        prefilter->Write(4, m_Variance[written]);
+        prefilter->Write(5, m_AverageRadiance[read]);
+        prefilter->Write(6, m_ExtractedRoughness);
+        prefilter->Write(7, m_Radiance[read]);
+        prefilter->Write(8, m_Variance[read]);
+        prefilter->Write(9, m_DenoiserTileList);
+        m_PrefilterSets[parity] = prefilter;
+
+        // The temporal resolve reads the prefilter's output and writes the denoised reflection and
+        // its variance into this frame's radiance and variance.
+        const Ref<DescriptorSet> resolve =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SSR Denoiser Resolve Temporal Set",
+                                                 .Layout = m_ResolveSetLayout,
+                                             });
+        resolve->Write(0, m_Constants, 0, sizeof(SsrConstants));
+        resolve->Write(1, m_DenoiserSampler);
+        resolve->Write(2, m_Radiance[read]);
+        resolve->Write(3, m_Variance[read]);
+        resolve->Write(4, m_SampleCount[read]);
+        resolve->Write(5, m_AverageRadiance[read]);
+        resolve->Write(6, m_ExtractedRoughness);
+        resolve->Write(7, m_ReprojectedRadiance);
+        resolve->Write(8, m_Radiance[written]);
+        resolve->Write(9, m_Variance[written]);
+        resolve->Write(10, m_DenoiserTileList);
+        m_ResolveSets[parity] = resolve;
+    }
+
     u32 SsrChain::ConstantsOffset() const
     {
         return m_Context.GetCurrentFrameInFlight() * m_ConstantsStride;
@@ -579,7 +786,17 @@ namespace Veng::Renderer
         m_DepthHierarchyId =
             graph.ImportImageMips("SSR Depth Hierarchy", GetDepthHierarchyLevels());
         m_RadianceId = graph.Import("SSR Radiance");
+        m_RadianceHistoryId = graph.Import("SSR Radiance History");
+        m_VarianceId = graph.Import("SSR Variance");
         m_VarianceHistoryId = graph.Import("SSR Variance History");
+        m_SampleCountId = graph.Import("SSR Denoiser Sample Count");
+        m_SampleCountHistoryId = graph.Import("SSR Denoiser Sample Count History");
+        m_AverageRadianceId = graph.Import("SSR Denoiser Average Radiance");
+        m_AverageRadianceHistoryId = graph.Import("SSR Denoiser Average Radiance History");
+        m_ReprojectedRadianceId = graph.Import("SSR Denoiser Reprojected Radiance");
+        m_DepthHistoryId = graph.Import("SSR Denoiser Depth History");
+        m_NormalHistoryId = graph.Import("SSR Denoiser Normal History");
+        m_RoughnessHistoryId = graph.Import("SSR Denoiser Roughness History");
         m_ExtractedRoughnessId = graph.Import("SSR Extracted Roughness");
         m_BlueNoiseId = graph.Import("SSR Blue Noise");
         m_RayListId = graph.ImportBuffer("SSR Ray List");
@@ -597,7 +814,21 @@ namespace Veng::Renderer
         }
         bindings.push_back({.Id = m_RadianceId, .View = m_Radiance[GetRadianceIndex()]});
         bindings.push_back(
+            {.Id = m_RadianceHistoryId, .View = m_Radiance[GetRadianceHistoryIndex()]});
+        bindings.push_back({.Id = m_VarianceId, .View = m_Variance[GetVarianceIndex()]});
+        bindings.push_back(
             {.Id = m_VarianceHistoryId, .View = m_Variance[GetVarianceHistoryIndex()]});
+        bindings.push_back({.Id = m_SampleCountId, .View = m_SampleCount[GetSampleCountIndex()]});
+        bindings.push_back(
+            {.Id = m_SampleCountHistoryId, .View = m_SampleCount[GetSampleCountHistoryIndex()]});
+        bindings.push_back(
+            {.Id = m_AverageRadianceId, .View = m_AverageRadiance[GetAverageRadianceIndex()]});
+        bindings.push_back({.Id = m_AverageRadianceHistoryId,
+                            .View = m_AverageRadiance[GetAverageRadianceHistoryIndex()]});
+        bindings.push_back({.Id = m_ReprojectedRadianceId, .View = m_ReprojectedRadiance});
+        bindings.push_back({.Id = m_DepthHistoryId, .View = m_DepthHistory});
+        bindings.push_back({.Id = m_NormalHistoryId, .View = m_NormalHistory});
+        bindings.push_back({.Id = m_RoughnessHistoryId, .View = m_RoughnessHistory});
         bindings.push_back({.Id = m_ExtractedRoughnessId, .View = m_ExtractedRoughness});
         bindings.push_back({.Id = m_BlueNoiseId, .View = m_BlueNoise});
         bindings.push_back({.Id = m_RayListId, .Buffer = m_RayList});
@@ -622,7 +853,7 @@ namespace Veng::Renderer
             .RenderSize = inputs.RenderSize,
             .InverseRenderSize = vec2(1.0f) / vec2(inputs.RenderSize),
             .IblFactor = inputs.IblFactor,
-            .TemporalStabilityFactor = DefaultTemporalStabilityFactor,
+            .TemporalStabilityFactor = inputs.TemporalStabilityFactor,
             .DepthBufferThickness = inputs.DepthBufferThickness,
             .RoughnessThreshold = inputs.RoughnessThreshold,
             .VarianceThreshold = inputs.VarianceThreshold,
@@ -632,6 +863,8 @@ namespace Veng::Renderer
             .MostDetailedMip = DefaultMostDetailedMip,
             .SamplesPerQuad = inputs.SamplesPerQuad,
             .TemporalVarianceGuidedTracingEnabled = inputs.VarianceGuidedTracing ? 1u : 0u,
+            .DenoiserRenderSize = m_Extent,
+            .DenoiserInverseRenderSize = vec2(1.0f) / vec2(m_Extent),
         };
         std::memcpy(static_cast<u8*>(m_Constants->GetMappedData()) + ConstantsOffset(), &constants,
                     sizeof(constants));
@@ -640,7 +873,13 @@ namespace Veng::Renderer
 
     void SsrChain::Declare(RenderGraph& graph, const SsrGraphInputs& inputs)
     {
-        VE_ASSERT(m_Environment != nullptr, "SsrChain::Declare: no environment cube is bound");
+        DeclareTrace(graph, inputs);
+        DeclareDenoiser(graph, inputs);
+    }
+
+    void SsrChain::DeclareTrace(RenderGraph& graph, const SsrGraphInputs& inputs)
+    {
+        VE_ASSERT(m_Environment != nullptr, "SsrChain::DeclareTrace: no environment cube is bound");
 
         // The depth hierarchy, one level per dispatch: level 0 copies the depth, each later level
         // reduces the one before it.
@@ -790,6 +1029,140 @@ namespace Veng::Renderer
                     cmd.PushConstants(push);
                     // The argument pass wrote [(rays + 63) / 64, 1, 1] at byte 0.
                     cmd.DispatchIndirect(m_IndirectArgs, 0);
+                });
+        }
+    }
+
+    void SsrChain::DeclareDenoiser(RenderGraph& graph, const SsrGraphInputs& inputs)
+    {
+        const u32 levels = GetDepthHierarchyLevels();
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Denoiser Reproject");
+            builder.IndirectRead(m_IndirectArgsId);
+            builder.StorageBufferRead(m_DenoiserTileListId);
+            builder.Sample(inputs.Normal);
+            builder.Sample(inputs.Velocity);
+            for (u32 level = 0; level < levels; ++level)
+            {
+                builder.Sample(m_DepthHierarchyId.Level(level));
+            }
+            builder.Sample(m_RadianceId);
+            builder.Sample(m_RadianceHistoryId);
+            builder.Sample(m_VarianceHistoryId);
+            builder.Sample(m_SampleCountHistoryId);
+            builder.Sample(m_ExtractedRoughnessId);
+            builder.Sample(m_DepthHistoryId);
+            builder.Sample(m_NormalHistoryId);
+            builder.Sample(m_RoughnessHistoryId);
+            builder.StorageWrite(m_VarianceId);
+            builder.StorageWrite(m_SampleCountId);
+            builder.StorageWrite(m_AverageRadianceId);
+            builder.StorageWrite(m_ReprojectedRadianceId);
+            const DenoiserPush push{
+                .NormalTexture = inputs.NormalHandle.Index,
+                .MotionVectorTexture = inputs.VelocityHandle.Index,
+            };
+            builder.Execute(
+                [this, push](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_ReprojectPipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_ReprojectSets[m_FrameIndex & 1u]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.PushConstants(push);
+                    cmd.DispatchIndirect(m_IndirectArgs, DenoiserArgsOffset);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Denoiser Prefilter");
+            builder.IndirectRead(m_IndirectArgsId);
+            builder.StorageBufferRead(m_DenoiserTileListId);
+            builder.Sample(inputs.Normal);
+            for (u32 level = 0; level < levels; ++level)
+            {
+                builder.Sample(m_DepthHierarchyId.Level(level));
+            }
+            builder.Sample(m_RadianceId);
+            builder.Sample(m_VarianceId);
+            builder.Sample(m_AverageRadianceHistoryId);
+            builder.Sample(m_ExtractedRoughnessId);
+            builder.StorageWrite(m_RadianceHistoryId);
+            builder.StorageWrite(m_VarianceHistoryId);
+            const DenoiserPush push{
+                .NormalTexture = inputs.NormalHandle.Index,
+                .MotionVectorTexture = inputs.VelocityHandle.Index,
+            };
+            builder.Execute(
+                [this, push](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_PrefilterPipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_PrefilterSets[m_FrameIndex & 1u]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.PushConstants(push);
+                    cmd.DispatchIndirect(m_IndirectArgs, DenoiserArgsOffset);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder =
+                graph.AddComputePass("SSR Denoiser Resolve Temporal");
+            builder.IndirectRead(m_IndirectArgsId);
+            builder.StorageBufferRead(m_DenoiserTileListId);
+            builder.Sample(m_RadianceHistoryId);
+            builder.Sample(m_VarianceHistoryId);
+            builder.Sample(m_SampleCountHistoryId);
+            builder.Sample(m_AverageRadianceHistoryId);
+            builder.Sample(m_ExtractedRoughnessId);
+            builder.Sample(m_ReprojectedRadianceId);
+            builder.StorageWrite(m_RadianceId);
+            builder.StorageWrite(m_VarianceId);
+            builder.Execute(
+                [this](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_ResolvePipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_ResolveSets[m_FrameIndex & 1u]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.DispatchIndirect(m_IndirectArgs, DenoiserArgsOffset);
+                });
+        }
+
+        // The reference's host copies this frame's normal, extracted roughness and depth (the
+        // hierarchy's level 0) into the histories next frame's reprojection reads.
+        {
+            RenderGraph::PassBuilder builder = graph.AddTransferPass("SSR Denoiser History Copy");
+            builder.TransferSrc(inputs.Normal);
+            builder.TransferSrc(m_ExtractedRoughnessId);
+            builder.TransferSrc(m_DepthHierarchyId.Level(0));
+            builder.TransferDst(m_NormalHistoryId);
+            builder.TransferDst(m_RoughnessHistoryId);
+            builder.TransferDst(m_DepthHistoryId);
+            const ResourceId normal = inputs.Normal;
+            builder.Execute(
+                [this, normal](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.CopyImage(pass.Resolved(normal).GetImage(), m_NormalHistory->GetImage());
+                    cmd.CopyImage(m_ExtractedRoughness->GetImage(), m_RoughnessHistory->GetImage());
+                    cmd.CopyImage(m_DepthHierarchy, m_DepthHistory->GetImage());
                 });
         }
     }

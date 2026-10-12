@@ -740,6 +740,7 @@ namespace Veng::Renderer
             .SsrDepthBufferThickness = state.SsrDepthBufferThickness,
             .SsrMaxTraversalIntersections = state.SsrMaxTraversalIntersections,
             .SsrMinTraversalOccupancy = state.SsrMinTraversalOccupancy,
+            .SsrTemporalStabilityFactor = state.SsrTemporalStabilityFactor,
             .DofFocusDistance = state.DofFocusDistance,
             .DofAperture = state.DofAperture,
             .DofCocScale = state.DofCocScale,

@@ -11,8 +11,14 @@
 //   - on a mirror floor beside a small lit sphere, the intersection's radiance is finite and
 //     non-negative everywhere, a ray leaving the screen holds exactly the environment term, and
 //     the floor reflects the sphere; on a glossy floor every quad copy holds its base ray's value;
+//   - over several frames of the whole chain the denoised reflection and its variance stay finite
+//     and non-negative; a pixel whose radiance is zero all along resolves to exactly zero (the
+//     temporal resolve's early-out) even inside a denoised tile; the first frame after creation
+//     reprojects no history (sample count 1) and a still camera's second frame accumulates onto
+//     it (sample count 2); the variance the temporal resolve writes is what the next frame's
+//     classifier guides its rays by;
 //   - a renderer with SSR off records none of the chain's passes, and with it on records them all
-//     and leaves finite radiance, with temporal anti-aliasing off and on.
+//     and leaves a finite reflection over several frames, with temporal anti-aliasing off and on.
 // The expected sets are the reference's selection rule, written out per pixel.
 
 #include <algorithm>
@@ -112,6 +118,15 @@ namespace
         std::vector<u32> Tiles; // packed, sorted
     };
 
+    // A pixel as the classifier sees it: reflective (depth past the far plane), its alpha, and its
+    // variance history.
+    struct ClassifiedPixel
+    {
+        bool Reflective = false;
+        f32 Alpha = 1.0f;
+        f32 Variance = 0.0f;
+    };
+
     bool IsBaseRay(const u32 x, const u32 y, const u32 samplesPerQuad)
     {
         switch (samplesPerQuad)
@@ -125,21 +140,20 @@ namespace
         }
     }
 
-    // The reference's per-pixel rule (ffx_sssr_classify_tiles.h) over the synthetic g-buffer.
-    ExpectedClassification Classify(const uvec2 extent, const u32 samplesPerQuad, const bool guided,
+    // The reference's per-pixel rule (ffx_sssr_classify_tiles.h) over any g-buffer.
+    template <typename PixelAt>
+    ExpectedClassification Classify(const uvec2 extent, const PixelAt& pixelAt,
+                                    const u32 samplesPerQuad, const bool guided,
                                     const f32 varianceThreshold)
     {
         const auto Inside = [extent](const u32 x, const u32 y)
         { return x < extent.x && y < extent.y; };
         const auto Reflective = [&](const u32 x, const u32 y)
-        { return Inside(x, y) && KindAt(x, y) != Kind::Background; };
+        { return Inside(x, y) && pixelAt(x, y).Reflective; };
         const auto Glossy = [&](const u32 x, const u32 y)
-        { return Inside(x, y) && AlphaOf(KindAt(x, y)) < 0.2f; };
+        { return Inside(x, y) && pixelAt(x, y).Alpha < 0.2f; };
         const auto NeedsDenoiser = [&](const u32 x, const u32 y)
-        {
-            return Reflective(x, y) && Glossy(x, y) &&
-                   !(Inside(x, y) && AlphaOf(KindAt(x, y)) < 0.0001f);
-        };
+        { return Reflective(x, y) && Glossy(x, y) && !(pixelAt(x, y).Alpha < 0.0001f); };
         const auto NeedsRay = [&](const u32 x, const u32 y)
         {
             bool needsRay = Reflective(x, y) && Glossy(x, y);
@@ -147,7 +161,7 @@ namespace
             needsRay = needsRay && (!denoise || IsBaseRay(x, y, samplesPerQuad));
             if (guided && denoise && !needsRay)
             {
-                needsRay = (HasVariance(x, y) ? 1.0f : 0.0f) > varianceThreshold;
+                needsRay = pixelAt(x, y).Variance > varianceThreshold;
             }
             return needsRay;
         };
@@ -194,6 +208,21 @@ namespace
         std::ranges::sort(expected.Rays);
         std::ranges::sort(expected.Tiles);
         return expected;
+    }
+
+    // The hashed g-buffer's pixels, with variance history on the hashed third.
+    ExpectedClassification Classify(const uvec2 extent, const u32 samplesPerQuad, const bool guided,
+                                    const f32 varianceThreshold)
+    {
+        return Classify(
+            extent,
+            [](const u32 x, const u32 y)
+            {
+                return ClassifiedPixel{.Reflective = KindAt(x, y) != Kind::Background,
+                                       .Alpha = AlphaOf(KindAt(x, y)),
+                                       .Variance = HasVariance(x, y) ? 1.0f : 0.0f};
+            },
+            samplesPerQuad, guided, varianceThreshold);
     }
 
     std::vector<u32> Words(const std::vector<u8>& bytes)
@@ -266,7 +295,16 @@ namespace
         return frame;
     }
 
-    // A synthetic frame, an environment cube of one colour, and a chain to run over them.
+    // How much of the chain a frame runs: the SSSR passes alone, which leave the intersection's
+    // radiance in radiance A, or the denoiser after them as well.
+    enum class Stages : u8
+    {
+        Trace,
+        All,
+    };
+
+    // A synthetic frame (with no motion), an environment cube of one colour, and a chain to run
+    // over them.
     struct ChainHarness
     {
         static constexpr vec3 EnvironmentColor{0.25f, 0.5f, 1.0f};
@@ -279,10 +317,12 @@ namespace
         Ref<ImageView> Normal;
         Ref<ImageView> Material;
         Ref<ImageView> Color;
+        Ref<ImageView> Velocity;
         TextureHandle DepthHandle;
         TextureHandle NormalHandle;
         TextureHandle MaterialHandle;
         TextureHandle ColorHandle;
+        TextureHandle VelocityHandle;
 
         ChainHarness(Context& context, AssetManager& assets, const uvec2 extent,
                      const std::vector<f32>& depth)
@@ -318,11 +358,15 @@ namespace
             Material =
                 Upload("SSR Test Material", Format::RGBA8Unorm, std::as_bytes(std::span(material)));
             Color = Upload("SSR Test Color", Format::RGBA16Sfloat, std::as_bytes(std::span(color)));
+            const std::vector<u16> velocity(pixels * 2, glm::packHalf1x16(0.0f));
+            Velocity =
+                Upload("SSR Test Velocity", Format::RG16Sfloat, std::as_bytes(std::span(velocity)));
             BindlessRegistry& bindless = context.GetBindlessRegistry();
             DepthHandle = bindless.Register(Depth);
             NormalHandle = bindless.Register(Normal);
             MaterialHandle = bindless.Register(Material);
             ColorHandle = bindless.Register(Color);
+            VelocityHandle = bindless.Register(Velocity);
 
             const Ref<Image> cube =
                 Image::Create(context, {
@@ -360,6 +404,7 @@ namespace
             bindless.Release(NormalHandle);
             bindless.Release(MaterialHandle);
             bindless.Release(ColorHandle);
+            bindless.Release(VelocityHandle);
         }
 
         ChainHarness(const ChainHarness&) = delete;
@@ -373,14 +418,16 @@ namespace
                                        .Name = name,
                                        .Extent = {Extent.x, Extent.y, 1},
                                        .Format = format,
-                                       .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                       // TransferSrc for the denoiser's normal-history copy.
+                                       .Usage = ImageUsage::Sampled | ImageUsage::TransferSrc |
+                                                ImageUsage::TransferDst,
                                    });
             image->UploadSync(std::span(reinterpret_cast<const u8*>(bytes.data()), bytes.size()));
             return ImageView::Create(Ctx, {.Name = name, .Image = image});
         }
 
         // Runs one frame of the chain: the constants, the passes, the frame count.
-        void RunFrame(const SsrFrameInputs& inputs) const
+        void RunFrame(const SsrFrameInputs& inputs, const Stages stages = Stages::Trace) const
         {
             Chain->PrepareFrame(inputs);
             Ctx.ImmediateCommands(
@@ -391,22 +438,34 @@ namespace
                     const ResourceId normalId = graph.Import("Normal");
                     const ResourceId materialId = graph.Import("Material");
                     const ResourceId colorId = graph.Import("Color");
+                    const ResourceId velocityId = graph.Import("Velocity");
                     Chain->Import(graph);
-                    Chain->Declare(graph, SsrGraphInputs{
-                                              .Depth = depthId,
-                                              .Normal = normalId,
-                                              .Material = materialId,
-                                              .DepthHandle = DepthHandle,
-                                              .NormalHandle = NormalHandle,
-                                              .MaterialHandle = MaterialHandle,
-                                              .Color = colorId,
-                                              .ColorHandle = ColorHandle,
-                                          });
+                    const SsrGraphInputs graphInputs{
+                        .Depth = depthId,
+                        .Normal = normalId,
+                        .Material = materialId,
+                        .DepthHandle = DepthHandle,
+                        .NormalHandle = NormalHandle,
+                        .MaterialHandle = MaterialHandle,
+                        .Color = colorId,
+                        .ColorHandle = ColorHandle,
+                        .Velocity = velocityId,
+                        .VelocityHandle = VelocityHandle,
+                    };
+                    if (stages == Stages::All)
+                    {
+                        Chain->Declare(graph, graphInputs);
+                    }
+                    else
+                    {
+                        Chain->DeclareTrace(graph, graphInputs);
+                    }
                     std::vector<RenderGraph::ImportBinding> bindings{
                         {.Id = depthId, .View = Depth},
                         {.Id = normalId, .View = Normal},
                         {.Id = materialId, .View = Material},
-                        {.Id = colorId, .View = Color}};
+                        {.Id = colorId, .View = Color},
+                        {.Id = velocityId, .View = Velocity}};
                     Chain->AppendImportBindings(bindings);
                     graph.Compile()->Execute(cmd, bindings);
                 });
@@ -550,6 +609,33 @@ namespace
                 glm::unpackHalf1x16(halves[i * 4 + 2]), glm::unpackHalf1x16(halves[i * 4 + 3]));
         }
         return texels;
+    }
+
+    // A single-channel half-float target, widened to floats.
+    std::vector<f32> DownloadHalves(const Ref<ImageView>& view)
+    {
+        const std::vector<u8> bytes = view->GetImage()->Download();
+        const auto* halves = reinterpret_cast<const u16*>(bytes.data());
+        std::vector<f32> values(bytes.size() / sizeof(u16));
+        for (usize i = 0; i < values.size(); ++i)
+        {
+            values[i] = glm::unpackHalf1x16(halves[i]);
+        }
+        return values;
+    }
+
+    // The tiles a frame's classifier listed for the denoiser, as the first pixel of each.
+    std::vector<uvec2> ListedTiles(const SsrChain& chain)
+    {
+        const u32 tiles = Words(chain.GetRayCounter()->Download())[3];
+        std::vector<u32> list = Words(chain.GetDenoiserTileList()->Download());
+        list.resize(std::min<usize>(tiles, list.size()));
+        std::vector<uvec2> first;
+        for (const u32 tile : list)
+        {
+            first.emplace_back(tile & 0xFFFFu, tile >> 16);
+        }
+        return first;
     }
 
     bool FiniteAndNonNegative(const std::vector<vec4>& texels)
@@ -908,6 +994,246 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     CHECK(mismatches == 0);
 }
 
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr denoiser: the denoised reflection and its variance stay finite and "
+                  "non-negative over several frames")
+{
+    AssetManager assets(Context, Tasks, Types);
+    // A mirror floor and a glossy one (perceptual 0.3, alpha 0.09), the second denoised.
+    for (const u8 perceptual : {u8{0}, u8{77}})
+    {
+        CAPTURE(perceptual);
+        const FloorScene scene(perceptual);
+        const ChainHarness harness(Context, assets, scene.Frame);
+        const SsrChain& chain = *harness.Chain;
+        bool finite = true;
+        bool variancesFinite = true;
+        for (u32 frame = 0; frame < 4; ++frame)
+        {
+            const u32 radianceIndex = chain.GetRadianceIndex();
+            const u32 varianceIndex = chain.GetVarianceIndex();
+            harness.RunFrame(scene.Inputs(), Stages::All);
+            finite = finite && FiniteAndNonNegative(DownloadRadiance(chain, radianceIndex));
+            for (const f32 variance : DownloadHalves(chain.GetVarianceView(varianceIndex)))
+            {
+                variancesFinite = variancesFinite && std::isfinite(variance) && variance >= 0.0f;
+            }
+        }
+        CHECK(finite);
+        CHECK(variancesFinite);
+    }
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr denoiser: a pixel whose radiance is zero all along resolves to zero")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const FloorScene scene(77);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const SsrChain& chain = *harness.Chain;
+    const uvec2 extent = FloorScene::Extent;
+
+    // Background pixels: the classifier writes them zero radiance every frame and no ray copies to
+    // them. Those inside a listed tile share it with glossy floor pixels, so the temporal resolve
+    // runs over them with a nonzero tile average and only its early-out keeps them at zero.
+    std::vector<usize> background;
+    for (usize i = 0; i < scene.Frame.Depth.size(); ++i)
+    {
+        if (scene.Frame.Depth[i] == 0.0f)
+        {
+            background.push_back(i);
+        }
+    }
+    usize nonZero = 0;
+    usize inListedTiles = 0;
+    for (u32 frame = 0; frame < 4; ++frame)
+    {
+        const u32 radianceIndex = chain.GetRadianceIndex();
+        harness.RunFrame(scene.Inputs(), Stages::All);
+        const std::vector<vec4> radiance = DownloadRadiance(chain, radianceIndex);
+        for (const usize i : background)
+        {
+            nonZero += vec3(radiance[i]) == vec3(0.0f) ? 0u : 1u;
+        }
+        if (frame == 0)
+        {
+            for (const uvec2 tile : ListedTiles(chain))
+            {
+                for (u32 y = tile.y; y < std::min(tile.y + 8, extent.y); ++y)
+                {
+                    for (u32 x = tile.x; x < std::min(tile.x + 8, extent.x); ++x)
+                    {
+                        inListedTiles +=
+                            scene.Frame.Depth[static_cast<usize>(y) * extent.x + x] == 0.0f ? 1u
+                                                                                            : 0u;
+                    }
+                }
+            }
+        }
+    }
+    REQUIRE(inListedTiles > 0);
+    CHECK(nonZero == 0);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr denoiser: the first frame reprojects no history and a still camera's "
+                  "second frame accumulates onto it")
+{
+    AssetManager assets(Context, Tasks, Types);
+    // The mirror floor: a ray leaving the screen holds exactly the environment, so where a pixel's
+    // whole 9x9 neighbourhood escapes, the reprojection's local statistics are one colour.
+    const FloorScene scene(0);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const SsrChain& chain = *harness.Chain;
+    const uvec2 extent = FloorScene::Extent;
+
+    std::vector<bool> escaping(static_cast<usize>(extent.x) * extent.y, false);
+    for (const usize i : scene.Escaping)
+    {
+        escaping[i] = true;
+    }
+    std::vector<usize> uniform;
+    for (const usize i : scene.Escaping)
+    {
+        const i32 x = static_cast<i32>(i % extent.x);
+        const i32 y = static_cast<i32>(i / extent.x);
+        bool all = x >= 4 && y >= 4 && x + 4 < static_cast<i32>(extent.x) &&
+                   y + 4 < static_cast<i32>(extent.y);
+        for (i32 j = -4; all && j <= 4; ++j)
+        {
+            for (i32 k = -4; all && k <= 4; ++k)
+            {
+                all = escaping[static_cast<usize>(y + j) * extent.x + static_cast<usize>(x + k)];
+            }
+        }
+        if (all)
+        {
+            uniform.push_back(i);
+        }
+    }
+    REQUIRE(uniform.size() >= 8);
+
+    // The first frame after creation: the cleared history describes no surface, so every such
+    // pixel is disoccluded and starts its count at one with no reprojected radiance.
+    const u32 firstCount = chain.GetSampleCountIndex();
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    const std::vector<f32> first = DownloadHalves(chain.GetSampleCountView(firstCount));
+    const std::vector<u8> reprojectedBytes =
+        chain.GetReprojectedRadianceView()->GetImage()->Download();
+    const auto* reprojected = reinterpret_cast<const u16*>(reprojectedBytes.data());
+    usize notOne = 0;
+    usize notZero = 0;
+    for (const usize i : uniform)
+    {
+        notOne += first[i] == 1.0f ? 0u : 1u;
+        for (u32 c = 0; c < 3; ++c)
+        {
+            notZero += glm::unpackHalf1x16(reprojected[i * 4 + c]) == 0.0f ? 0u : 1u;
+        }
+    }
+    CHECK(notOne == 0);
+    CHECK(notZero == 0);
+
+    // The second frame, from the same camera: the histories the first frame copied match, so the
+    // count reprojected from the first frame's target grows by one. Checked where every texel a
+    // bilinear tap could reach counted one on the first frame.
+    std::vector<bool> counted(escaping.size(), false);
+    for (const usize i : uniform)
+    {
+        counted[i] = true;
+    }
+    std::vector<usize> interior;
+    for (const usize i : uniform)
+    {
+        const usize x = i % extent.x;
+        const usize y = i / extent.x;
+        bool all = true;
+        for (usize j = y - 1; all && j <= y + 1; ++j)
+        {
+            for (usize k = x - 1; all && k <= x + 1; ++k)
+            {
+                all = counted[j * extent.x + k];
+            }
+        }
+        if (all)
+        {
+            interior.push_back(i);
+        }
+    }
+    REQUIRE(interior.size() >= 4);
+    const u32 secondCount = chain.GetSampleCountIndex();
+    REQUIRE(secondCount != firstCount);
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    const std::vector<f32> second = DownloadHalves(chain.GetSampleCountView(secondCount));
+    usize notTwo = 0;
+    for (const usize i : interior)
+    {
+        notTwo += std::abs(second[i] - 2.0f) < 0.01f ? 0u : 1u;
+    }
+    CHECK(notTwo == 0);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr denoiser: the variance the temporal resolve writes guides the next "
+                  "frame's rays")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const FloorScene scene(77);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const SsrChain& chain = *harness.Chain;
+    const uvec2 extent = FloorScene::Extent;
+
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    const u32 varianceIndex = chain.GetVarianceIndex();
+    harness.RunFrame(scene.Inputs(), Stages::All);
+    const std::vector<f32> variance = DownloadHalves(chain.GetVarianceView(varianceIndex));
+    // The target this frame wrote is the one the next frame's classifier reads.
+    REQUIRE(chain.GetVarianceHistoryIndex() == varianceIndex);
+
+    const auto PixelAt = [&](const u32 x, const u32 y)
+    {
+        const usize i = static_cast<usize>(y) * extent.x + x;
+        const f32 perceptual = static_cast<f32>(scene.Frame.Perceptual[i]) / 255.0f;
+        return ClassifiedPixel{.Reflective = scene.Frame.Depth[i] > 0.0f,
+                               .Alpha = perceptual * perceptual,
+                               .Variance = variance[i]};
+    };
+    // A threshold between two of the values the guided pixels hold, so the written variance
+    // decides some of them each way.
+    std::vector<f32> guided;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const ClassifiedPixel pixel = PixelAt(x, y);
+            if (pixel.Reflective && pixel.Alpha < 0.2f && pixel.Alpha >= 0.0001f &&
+                !IsBaseRay(x, y, 1))
+            {
+                guided.push_back(pixel.Variance);
+            }
+        }
+    }
+    std::ranges::sort(guided);
+    const auto [first, last] = std::ranges::unique(guided);
+    guided.erase(first, last);
+    REQUIRE(guided.size() >= 2);
+    const usize middle = guided.size() / 2;
+    const f32 threshold = 0.5f * (guided[middle - 1] + guided[middle]);
+
+    SsrFrameInputs inputs = scene.Inputs();
+    inputs.SamplesPerQuad = 1;
+    inputs.VarianceGuidedTracing = true;
+    inputs.VarianceThreshold = threshold;
+    harness.RunFrame(inputs, Stages::All);
+
+    const ExpectedClassification expected = Classify(extent, PixelAt, 1, true, threshold);
+    const u32 rays = Words(chain.GetRayCounter()->Download())[1];
+    std::vector<u32> rayList = Words(chain.GetRayList()->Download());
+    rayList.resize(std::min<usize>(rays, rayList.size()));
+    std::ranges::sort(rayList);
+    CHECK(rayList == expected.Rays);
+}
+
 TEST_CASE_FIXTURE(
     Test::GpuFixture,
     "ssr chain: a renderer records the chain's passes with SSR on and none with it off")
@@ -919,9 +1245,15 @@ TEST_CASE_FIXTURE(
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    constexpr std::array<string_view, 5> Passes{"SSR Depth Downsample", "SSR Classify Tiles",
+    constexpr std::array<string_view, 9> Passes{"SSR Depth Downsample",
+                                                "SSR Classify Tiles",
                                                 "SSR Prepare Blue Noise",
-                                                "SSR Prepare Indirect Args", "SSR Intersect"};
+                                                "SSR Prepare Indirect Args",
+                                                "SSR Intersect",
+                                                "SSR Denoiser Reproject",
+                                                "SSR Denoiser Prefilter",
+                                                "SSR Denoiser Resolve Temporal",
+                                                "SSR Denoiser History Copy"};
     struct Case
     {
         bool Ssr;
@@ -946,18 +1278,22 @@ TEST_CASE_FIXTURE(
             .Extent = {32, 32},
             .Settings = settings,
         });
-        Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                renderer->Execute(cmd,
-                                  Veng::Renderer::SceneView{.World = *scene, .Camera = camera});
-            });
+        // Several frames, so the denoiser runs over history of its own.
+        for (u32 frame = 0; frame < 3; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(cmd,
+                                      Veng::Renderer::SceneView{.World = *scene, .Camera = camera});
+                });
+        }
         for (const string_view pass : Passes)
         {
             CAPTURE(pass);
             CHECK(renderer->DidRecordPassLastFrame(pass) == ssr);
         }
-        const Ref<ImageView> radiance = renderer->GetSsrRadianceView();
+        const Ref<ImageView> radiance = renderer->GetSsrReflectionView();
         REQUIRE((radiance != nullptr) == ssr);
         if (radiance != nullptr)
         {

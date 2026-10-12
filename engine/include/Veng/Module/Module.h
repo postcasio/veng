@@ -486,10 +486,12 @@ extern "C"
 /// Version 116 grows SceneView, Viewport::ViewState and RenderLook by SsrDepthBufferThickness,
 /// SsrMaxTraversalIntersections and SsrMinTraversalOccupancy, the reflection march's knobs, so a
 /// stale module lays views and looks out short.
+/// Version 117 grows SceneView, Viewport::ViewState and RenderLook by SsrTemporalStabilityFactor,
+/// the reflection denoiser's history weight, so a stale module lays views and looks out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 116u
+#define VENG_MODULE_ABI_VERSION 117u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

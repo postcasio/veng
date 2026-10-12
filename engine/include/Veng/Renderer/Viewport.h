@@ -172,6 +172,10 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::SsrMinTraversalOccupancy
         u32 SsrMinTraversalOccupancy = 4;
+        /// @brief How strongly the reflection denoiser's temporal resolve holds its history.
+        ///
+        /// @see SceneView::SsrTemporalStabilityFactor
+        f32 SsrTemporalStabilityFactor = 0.7f;
         /// @brief Depth-of-field focus plane distance in metres.
         ///
         /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by
@@ -1474,6 +1478,10 @@ VE_FIELD(SsrMaxTraversalIntersections, .DisplayName = "SSR max traversal iterati
          .Category = "Screen-space reflections")
 VE_FIELD(SsrMinTraversalOccupancy, .DisplayName = "SSR min traversal occupancy",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 32.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrTemporalStabilityFactor, .DisplayName = "SSR temporal stability",
+         .Tooltip = "How strongly the reflection denoiser holds its history against this frame",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
          .Category = "Screen-space reflections")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF focus distance",
          .Display = {.Min = 0.01, .Max = 1000.0}, .Category = "Depth of field")

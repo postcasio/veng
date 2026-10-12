@@ -364,8 +364,8 @@ TEST_CASE("frame topology: the resolve is stateless")
 
 TEST_CASE("frame topology: velocity is stored only where something reads it")
 {
-    // Velocity's readers are the temporal resolve and the motion-vector blit; every other colour
-    // channel is stored in every configuration.
+    // Velocity's readers are the temporal resolve, the motion-vector blit and the reflection
+    // denoiser; every other colour channel is stored in every configuration.
     constexpr std::array modes{AntiAliasingMode::None, AntiAliasingMode::FXAA,
                                AntiAliasingMode::TAA, AntiAliasingMode::CMAA2,
                                AntiAliasingMode::TAAU};
@@ -379,7 +379,8 @@ TEST_CASE("frame topology: velocity is stored only where something reads it")
             CAPTURE(DebugViewNames[arm]);
             CAPTURE(static_cast<int>(aa));
 
-            const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors;
+            const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors ||
+                              topology.SsrActive;
             CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
 
             GBufferChannelStates others = topology.GBufferStores;
@@ -396,6 +397,13 @@ TEST_CASE("frame topology: velocity is stored only where something reads it")
     CHECK(Resolve(taa).GBufferStores.Velocity == GBufferChannelState::Stored);
     taa.AntiAliasing = AntiAliasingMode::TAAU;
     CHECK(Resolve(taa).GBufferStores.Velocity == GBufferChannelState::Stored);
+
+    // The reflection denoiser reprojects by it with anti-aliasing off too.
+    SceneRendererSettings ssr;
+    ssr.SSR = true;
+    ssr.AntiAliasing = AntiAliasingMode::None;
+    CHECK(Resolve(ssr).SsrActive);
+    CHECK(Resolve(ssr).GBufferStores.Velocity == GBufferChannelState::Stored);
 }
 
 TEST_CASE("frame topology: the light-tile cull runs exactly where lighting shades direct light")

@@ -60,6 +60,7 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.SsrDepthBufferThickness == defaults.SsrDepthBufferThickness);
     CHECK(view.SsrMaxTraversalIntersections == defaults.SsrMaxTraversalIntersections);
     CHECK(view.SsrMinTraversalOccupancy == defaults.SsrMinTraversalOccupancy);
+    CHECK(view.SsrTemporalStabilityFactor == defaults.SsrTemporalStabilityFactor);
     CHECK(settings.SSR == Renderer::SceneRendererSettings{}.SSR);
     // No dirt unless a look asks for it.
     CHECK(view.LensDirtIntensity == 0.0f);
@@ -152,6 +153,7 @@ namespace
         look.SsrDepthBufferThickness = 0.025f;
         look.SsrMaxTraversalIntersections = 64;
         look.SsrMinTraversalOccupancy = 8;
+        look.SsrTemporalStabilityFactor = 0.4f;
         look.DofFocusDistance = 4.0f;
         look.DofAperture = 0.03f;
         look.DofMaxCoc = 9.0f;
@@ -208,6 +210,7 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.SsrDepthBufferThickness == direct.SsrDepthBufferThickness);
     CHECK(carried.SsrMaxTraversalIntersections == direct.SsrMaxTraversalIntersections);
     CHECK(carried.SsrMinTraversalOccupancy == direct.SsrMinTraversalOccupancy);
+    CHECK(carried.SsrTemporalStabilityFactor == direct.SsrTemporalStabilityFactor);
     CHECK(carried.DofFocusDistance == direct.DofFocusDistance);
     CHECK(carried.DofAperture == direct.DofAperture);
     CHECK(carried.DofMaxCoc == direct.DofMaxCoc);

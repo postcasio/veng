@@ -91,6 +91,7 @@ namespace Veng
         view.SsrDepthBufferThickness = look.SsrDepthBufferThickness;
         view.SsrMaxTraversalIntersections = look.SsrMaxTraversalIntersections;
         view.SsrMinTraversalOccupancy = look.SsrMinTraversalOccupancy;
+        view.SsrTemporalStabilityFactor = look.SsrTemporalStabilityFactor;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -128,6 +129,7 @@ namespace Veng
         view.SsrDepthBufferThickness = resolved.SsrDepthBufferThickness;
         view.SsrMaxTraversalIntersections = resolved.SsrMaxTraversalIntersections;
         view.SsrMinTraversalOccupancy = resolved.SsrMinTraversalOccupancy;
+        view.SsrTemporalStabilityFactor = resolved.SsrTemporalStabilityFactor;
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;
