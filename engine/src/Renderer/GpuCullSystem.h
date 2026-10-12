@@ -32,17 +32,14 @@ namespace Veng::Renderer
     /// be tested against, the history-validity gate spans both, and the GPU-band tests exercise
     /// them together. The pyramid is held only while the occlusion test reads it (IsHiZReduced): a
     /// full chain then, a one-texel stand-in the cull set binds while the GPU cull runs without the
-    /// occlusion test, and nothing at all under CullMode::CPU. It owns the max-Z reduction (set layout, pipeline layout, compute pipeline,
-    /// pyramid image + per-mip storage views + whole-chain sampled view + reduction sets), the
-    /// cross-frame history-validity state, the cull compute cluster (candidate/indirect/count
-    /// buffers, the compute pipeline/layout/set), the active cull mode after the device-support
-    /// fallback, and the per-frame dispatch + readback state.
+    /// occlusion test, and nothing at all under CullMode::CPU. It owns the min-Z reduction (set
+    /// layout, pipeline layout, compute pipeline, pyramid image + per-mip storage views + whole-chain
+    /// sampled view + reduction sets), the cross-frame history-validity state, the cull compute
+    /// cluster (candidate/indirect/count buffers, the compute pipeline/layout/set), the active cull
+    /// mode after the device-support fallback, and the per-frame dispatch + readback state.
     ///
-    /// The hi-Z reduce and coarse-tail pipeline layouts and set layouts are borrowed by the SSR
-    /// chain's min-Z reduce (its pipelines are built on the pipeline layouts and its sets allocate
-    /// from the set layouts), so this subsystem is constructed before the SSR chain, and its layouts
-    /// are exposed by reference. The pyramid is recreated from the g-buffer create/recreate tail so its
-    /// reduction sets bind the fresh depth view.
+    /// The pyramid is recreated from the g-buffer create/recreate tail so its reduction sets bind
+    /// the fresh depth view.
     class GpuCullSystem
     {
     public:
@@ -111,7 +108,7 @@ namespace Veng::Renderer
         /// @param plan  Borrowed per-frame draw plan the pass reads at record time (cull mode + slots).
         void DeclareCull(RenderGraph& graph, const GBufferDrawPlan* plan);
 
-        /// @brief Declares the max-Z reduction compute chain into the graph after the tail passes.
+        /// @brief Declares the min-Z reduction compute chain into the graph after the tail passes.
         ///
         /// One dispatch per mip: mip 0 reads @p depthId, mip n>0 reads pyramid mip n-1, each writing
         /// its hi-Z mip — except the coarse tail (MipTailFirstLevel), which one dispatch reduces in a
@@ -171,30 +168,6 @@ namespace Veng::Renderer
         /// @brief Captures @p current as the previous state and clears the reset gate for next frame.
         /// @param current This frame's camera state.
         void CommitHistory(const HiZHistoryState& current);
-
-        /// @brief The hi-Z reduce pipeline layout the SSR min-Z reduce pipeline builds on.
-        [[nodiscard]] const Ref<PipelineLayout>& GetHiZReduceLayout() const
-        {
-            return m_HiZReduceLayout;
-        }
-
-        /// @brief The hi-Z reduce set layout the SSR min-Z reduce sets allocate from.
-        [[nodiscard]] const Ref<DescriptorSetLayout>& GetHiZReduceSetLayout() const
-        {
-            return m_HiZReduceSetLayout;
-        }
-
-        /// @brief The coarse-tail pipeline layout the SSR min-Z tail pipeline builds on.
-        [[nodiscard]] const Ref<PipelineLayout>& GetHiZTailLayout() const
-        {
-            return m_HiZTailLayout;
-        }
-
-        /// @brief The coarse-tail set layout the SSR min-Z tail set allocates from.
-        [[nodiscard]] const Ref<DescriptorSetLayout>& GetHiZTailSetLayout() const
-        {
-            return m_HiZTailSetLayout;
-        }
 
         /// @brief The cull mode actually in effect, after the device-support fallback.
         [[nodiscard]] SceneRendererSettings::CullMode GetActiveCull() const { return m_ActiveCull; }
@@ -262,14 +235,14 @@ namespace Veng::Renderer
         /// @brief The pyramid extent (set by ResizeHiZ); drives the reduction dispatch sizing.
         uvec2 m_Extent{1};
 
-        /// @brief Compute pipeline that reduces one depth/hi-Z mip into the next (max-Z).
+        /// @brief Compute pipeline that reduces one depth/hi-Z mip into the next (min-Z).
         Ref<ComputePipeline> m_HiZReducePipeline;
         /// @brief Layout for m_HiZReducePipeline: set 1 (sampled source + storage dest) + push block.
         Ref<PipelineLayout> m_HiZReduceLayout;
         /// @brief Set-1 layout for the reduction: binding 0 sampled source, binding 1 storage dest.
         Ref<DescriptorSetLayout> m_HiZReduceSetLayout;
 
-        /// @brief Hi-Z depth pyramid: a max-Z mip chain reduced from the depth target.
+        /// @brief Hi-Z depth pyramid: a min-Z mip chain reduced from the depth target.
         Ref<Image> m_HiZImage;
         /// @brief One storage view per hi-Z mip level (the reduction writes each).
         vector<Ref<ImageView>> m_HiZMips;

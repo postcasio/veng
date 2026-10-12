@@ -54,7 +54,6 @@ namespace Veng::Renderer
     class TaaResolve;
     class PostResolveUpscale;
     class AaResolve;
-    class SsrChain;
     class DofChain;
     class RefractionGrab;
     class HalfResTranslucency;
@@ -413,7 +412,7 @@ namespace Veng::Renderer
 
         /// @brief Returns the whole-chain sampled view of the hi-Z depth pyramid.
         ///
-        /// The max-Z mip chain reduced from the depth target each Execute while the GPU cull's
+        /// The min-Z mip chain reduced from the depth target each Execute while the GPU cull's
         /// occlusion test reads it (CullMode::GPU with Occlusion on), and held only then: with
         /// Occlusion off the GPU cull binds a one-texel stand-in, and under CullMode::CPU (or on the
         /// GeometryDepthNormal path) there is none and this is null. Renderer-owned and persisted
@@ -726,8 +725,8 @@ namespace Veng::Renderer
 
         /// @brief Resolves this Execute's dynamic-resolution sub-rect from the view's render scale.
         ///
-        /// A debug view, SSR, GPU hi-Z occlusion, or a composited depth-of-field chain behind a
-        /// temporal resolve each force full resolution (they do not carry the sub-rect sampling),
+        /// A debug view, GPU hi-Z occlusion, or a composited depth-of-field chain behind a temporal
+        /// resolve each force full resolution (they do not carry the sub-rect sampling),
         /// so the scale applies only on the plain Final path.
         /// @param view  The frame's scene view (its RenderScale is the requested multiplier).
         /// @return The sub-rect extent and its UV mapping into the allocation.
@@ -755,7 +754,7 @@ namespace Veng::Renderer
         ///
         /// The always-bound g-buffer / HDR / output / velocity / emissive imports plus the
         /// conditionally-declared battery imports (TAA, picking, shadows, bloom, auto-exposure,
-        /// SSAO, refraction, SSR, hi-Z, and the GPU-cull indirect buffer) — appended only when the
+        /// SSAO, refraction, hi-Z, and the GPU-cull indirect buffer) — appended only when the
         /// matching pass was wired, so the binding set matches the compiled graph's declared imports.
         /// @return The per-frame import bindings passed to CompiledGraph::Execute.
         [[nodiscard]] vector<RenderGraph::ImportBinding> BuildImportBindings();
@@ -960,18 +959,9 @@ namespace Veng::Renderer
         ///
         /// Owns the hi-Z reduce set/pipeline layouts + reduce pipeline, the pyramid image/views/sets,
         /// the cull compute cluster (candidate/indirect/count buffers, pipeline/layout/set), the
-        /// cross-frame history-validity state, and the active cull mode. The SSR chain borrows its
-        /// hi-Z reduce layouts, so it is constructed before the SSR chain; its pyramid is recreated
+        /// cross-frame history-validity state, and the active cull mode. Its pyramid is recreated
         /// from the g-buffer create/recreate tail (ResizeHiZ binds the fresh depth view).
         Unique<GpuCullSystem> m_GpuCull;
-
-        /// @brief The screen-space-reflection chain — scene-color intermediate, mip chain, min-Z pyramid, and sweep.
-        ///
-        /// Its blur pipeline layout reserves the bloom down/up set layout and its min-Z reduce
-        /// pipeline builds on the GPU cull subsystem's hi-Z reduce layout, so it is constructed after
-        /// the GPU cull subsystem and the bloom subsystem exist; Recreate rebuilds the chain at the
-        /// SsrResolution scale after the g-buffer depth and HDR targets.
-        Unique<SsrChain> m_Ssr;
 
         /// @brief The depth-of-field battery — half-resolution layers, tile records, gather/fill
         ///        targets, and the composite that folds them over the lit HDR.
@@ -1143,8 +1133,9 @@ namespace Veng::Renderer
 
         /// @brief The point-field pass, held outside m_Passes and declared at the HDR tail anchor.
         ///
-        /// The fields accumulate into the final HDR between the SSR composite and the bloom
-        /// sweep — a position only the tail anchor occupies, so the pass cannot ride the list.
+        /// The fields accumulate into the scene colour between the temporal resolve and the
+        /// depth-of-field composite and bloom sweep — a position only the tail anchor occupies, so
+        /// the pass cannot ride the list.
         /// Null unless the Final arm is built while a live HdrTail-placed field exists
         /// (m_PointFieldActive).
         Unique<ScenePass> m_PointFieldPass;
@@ -1360,8 +1351,6 @@ namespace Veng::Renderer
         ResourceId m_ShadowId;
         /// @brief Imported id for the SSAO target.
         ResourceId m_SsaoId;
-        /// @brief Imported id for the SSR lit scene-color intermediate.
-        ResourceId m_SsrSceneId;
         /// @brief Imported id for the depth-of-field near-field prefiltered layer.
         ResourceId m_DofNearId;
         /// @brief Imported id for the depth-of-field far-field prefiltered layer.
@@ -1390,10 +1379,6 @@ namespace Veng::Renderer
         ResourceId m_HalfResLayerId;
         /// @brief Imported id for the half-res translucent reduced depth target.
         ResourceId m_HalfResDepthReducedId;
-        /// @brief Per-mip subresource handle for the SSR reflection pyramid (trace + blur).
-        MipChainId m_SsrReflectionChainId;
-        /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).
-        MipChainId m_SsrHiZChainId;
         /// @brief Imported id for the post-tonemap LDR intermediate a spatial AA resolve reads.
         ///
         /// Under FXAA/CMAA2 the tonemap writes this (AaResolve owns the backing image) instead of

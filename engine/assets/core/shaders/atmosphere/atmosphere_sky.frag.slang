@@ -1,7 +1,7 @@
 // Atmosphere sky: fills the cleared-depth background with the precomputed atmospheric
 // scattering sampled along each pixel's view ray, plus the sun disk, compositing over the lit
 // scene color. Occupies the same slot as the cubemap skybox — a fullscreen pass after
-// deferred lighting, before the bloom/SSR/tonemap tail — so the procedural sky and the cubemap
+// deferred lighting, before the bloom/tonemap tail — so the procedural sky and the cubemap
 // skybox are interchangeable sky sources in one place.
 //
 // The depth target is sampled through set-0 bindless; the scattering total + transmittance

@@ -22,8 +22,8 @@ namespace Veng::Renderer
     ///        the precomputed atmospheric scattering, compositing over the lit scene color.
     ///
     /// Occupies the same slot as SkyboxScenePass — after deferred lighting (writing the same
-    /// scene-color target, LoadOp::Load) and before the bloom/SSR/tonemap tail, so the sky
-    /// tonemaps and reflects with the scene. It samples the g-buffer depth through bindless and
+    /// scene-color target, LoadOp::Load) and before the bloom/tonemap tail, so the sky
+    /// resolves and tonemaps with the scene. It samples the g-buffer depth through bindless and
     /// discards foreground pixels, and reads the scattering total + transmittance LUTs from the
     /// renderer's atmosphere set (bound at set 1). The sun direction and Atmosphere parameters
     /// ride the per-frame SceneView; the pass is a no-op (everything discarded) unless the
@@ -65,7 +65,7 @@ namespace Veng::Renderer
     ///        in the sky slot, compositing its radiance over the lit scene color.
     ///
     /// Occupies the same slot as SkyScenePass / SkyboxScenePass — after deferred lighting (writing
-    /// the scene-color target, LoadOp::Load) and before the bloom/SSR/tonemap tail — so an authored
+    /// the scene-color target, LoadOp::Load) and before the bloom/tonemap tail — so an authored
     /// sky is a peer sky source to the cubemap skybox and the procedural atmosphere. Mirrors the
     /// PostProcessScenePass pattern: it builds a GraphicsPipeline from the Sky material's fragment
     /// shader against the renderer's scene-color format, binds set 0 (bindless), and pushes the

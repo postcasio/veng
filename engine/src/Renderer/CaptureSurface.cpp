@@ -195,7 +195,7 @@ namespace Veng::Renderer
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
-        ///        faces, and the capture samples pre-tonemap HDR, so bloom/AO/SSR are dropped.
+        ///        faces, and the capture samples pre-tonemap HDR, so bloom/AO are dropped.
         ///
         /// Shadows are the one battery the authoring surface can ask back, because an enclosed
         /// interior renders flooded without them (see CaptureSurface::Shadows). Both shadow flags
@@ -208,7 +208,6 @@ namespace Veng::Renderer
             settings.Shadows = shadows;
             settings.PunctualShadows = shadows;
             settings.AO = false;
-            settings.SSR = false;
             // A probe wants no game screen effect baked into its faces, and dropping them also keeps
             // the probe's six per-frame Executes off the main view's per-viewport MaterialInstance.
             settings.PostProcessEffects = false;

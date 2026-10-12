@@ -259,7 +259,6 @@ namespace Veng
         registry.Register<Renderer::AntiAliasingMode>();
         registry.Register<Renderer::RenderPath>();
         registry.Register<Renderer::SceneRendererSettings::CullMode>();
-        registry.Register<Renderer::SceneRendererSettings::SsrResolution>();
 
         // The scene's one authored sky, resolved by the renderer per Execute. SkySource and its
         // alternatives (EnvironmentSky / AtmosphereSky / MaterialSky), SkyLighting, and

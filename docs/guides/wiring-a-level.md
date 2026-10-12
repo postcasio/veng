@@ -81,7 +81,7 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   picks the mode. Further mode parameters are the game's own components, authored
   on the world prefab beside the config.
 - **`render`** — the scene's `RenderLook`: the renderer's view-wide knobs (exposure,
-  the tone curve, bloom, shadows, SSAO, SSR, depth of field, the ambient floor). A
+  the tone curve, bloom, shadows, SSAO, depth of field, the ambient floor). A
   *reflected, tolerantly-serialized* struct, not a renderer type — a new field never
   invalidates existing level blobs, and the renderer stays untouched. Loading seeds it
   onto the settings entity as a component, and every viewport presenting the scene
@@ -91,8 +91,8 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   metering** envelope — `AutoExposureMaxLuminance`, `AutoExposureLowPercentile`,
   `AutoExposureHighPercentile` — authored beside the other post knobs; absent, each
   falls back to the engine default, so metering is level data rather than a value
-  assigned in C++. hello-triangle's level lifts the bloom knee (`BloomThreshold`) and
-  turns SSR on here rather than in code.
+  assigned in C++. hello-triangle's level lifts the bloom knee (`BloomThreshold`) here
+  rather than in code.
 
 The game mode itself is **rule systems over mode-state components** — not an
 object, no registry, no ABI bump. A game authors whatever mode-state components its

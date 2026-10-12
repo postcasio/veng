@@ -147,9 +147,9 @@ namespace Veng::Renderer
         [[nodiscard]] const Ref<ImageView>& GetFarFillView() const { return m_FarFillView; }
         /// @brief The lit scene-color intermediate the composite reads and defocuses.
         ///
-        /// Present only when the chain is fully wired: lighting (and any SSR composite or point
-        /// field) writes here instead of the HDR target, and the composite writes the HDR target,
-        /// so the bloom/tonemap tail is unchanged.
+        /// Present only when the chain is fully wired: lighting (and any point field) writes here
+        /// instead of the HDR target, and the composite writes the HDR target, so the bloom/tonemap
+        /// tail is unchanged.
         [[nodiscard]] const Ref<ImageView>& GetSceneView() const { return m_SceneView; }
 
         /// @brief Bindless slot for the signed-radius/view-depth target (the CoC debug arm blits it).

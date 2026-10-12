@@ -31,7 +31,6 @@ namespace
         settings.Shadows = false;
         settings.PunctualShadows = false;
         settings.AO = false;
-        settings.SSR = false;
         settings.DepthOfField = false;
         settings.AntiAliasing = AntiAliasingMode::None;
         settings.AutoExposure = false;
@@ -54,9 +53,6 @@ TEST_CASE("frame topology: a debug arm force-wires its producing battery with th
     const FrameTopology ao = Resolve(ModeOnly(DebugView::AO));
     CHECK(ao.SsaoActive);
     CHECK_FALSE(ao.SsaoFold);
-
-    const FrameTopology reflections = Resolve(ModeOnly(DebugView::Reflections));
-    CHECK(reflections.SsrActive);
 
     // Cascades blits a per-fragment tint, so the shadow pass must run to write the
     // cascade constants the tint indexes.
@@ -134,7 +130,6 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
     settings.Shadows = true;
     settings.PunctualShadows = true;
     settings.AO = true;
-    settings.SSR = true;
     settings.DepthOfField = true;
     settings.AntiAliasing = AntiAliasingMode::TAA;
     settings.AutoExposure = true;
@@ -150,9 +145,7 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         CHECK_FALSE(topology.Cmaa2Active);
         CHECK_FALSE(topology.AutoExposureActive);
         CHECK(topology.Dof != DofStages::Full);
-        // SSR and refraction survive only on the arms that own them: the Reflections
-        // blit needs its trace, and the Bloom arm composites the whole scene.
-        CHECK(topology.SsrActive == (settings.Mode == DebugView::Reflections));
+        // Refraction survives only on the Bloom arm, which composites the whole scene.
         CHECK(topology.RefractionActive == (settings.Mode == DebugView::Bloom));
     }
 }
@@ -390,13 +383,13 @@ TEST_CASE("frame topology: velocity is stored only where something reads it")
 TEST_CASE("frame topology: the light-tile cull runs exactly where lighting shades direct light")
 {
     // The arms whose lighting pass shades direct light into an image someone reads: the two that
-    // composite the scene, and the two that force-wire lighting as the input they inspect. The
-    // cascade and IBL-contribution variants run lighting but discard its direct term.
+    // composite the scene, and the CoC arm, which force-wires lighting as the input it inspects.
+    // The cascade and IBL-contribution variants run lighting but discard its direct term.
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         const auto mode = static_cast<DebugView>(arm);
-        const bool shadesDirect = mode == DebugView::Final || mode == DebugView::Bloom ||
-                                  mode == DebugView::Reflections || mode == DebugView::CoC;
+        const bool shadesDirect =
+            mode == DebugView::Final || mode == DebugView::Bloom || mode == DebugView::CoC;
         SceneRendererSettings settings = ModeOnly(mode);
         CAPTURE(DebugViewNames[arm]);
         CHECK(Resolve(settings).LightTileCullActive == shadesDirect);

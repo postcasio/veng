@@ -55,7 +55,6 @@ namespace Veng::Renderer
             Ao,
             Bloom,
             MotionVectors,
-            Reflections,
             Emissive
         };
 

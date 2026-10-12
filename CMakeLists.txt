@@ -1950,23 +1950,6 @@ if (VENG_BUILD_TESTS)
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
-            tests/gpu/ssr_min_z_tail.cpp
-            # ssr_reach.cpp drives the SSR trace at range: a mirror floor reflecting a wall 800 m
-            # away, a thin near board not reflected into the floor behind it, and a RenderLook's
-            # SSR knobs reaching a presenting viewport's trace.
-            tests/gpu/ssr_reach.cpp
-            # ssr_rough.cpp drives rough reflections: a small emitter's blur keeping its shape under
-            # sub-pixel motion, no texel grid in a rough reflection, the same apparent blur at Full
-            # and Half SSR resolution, a narrower blur where the reflected ray is short, and a
-            # mirror staying sharp with its screen-edge fade intact.
-            tests/gpu/ssr_rough.cpp
-            # ssr_upsample.cpp drives a reflection magnified past a Half trace at half render scale:
-            # no SSR texel grid in a glossy reflection at any sub-texel camera offset, and nothing
-            # carried across a silhouette from either side, by a glossy reflection or a rough one.
-            tests/gpu/ssr_upsample.cpp
-            # ssr_jitter.cpp drives a mirror's reflection through a TAA jitter period: every frame,
-            # its side and far edges keep to where the unjittered render puts them.
-            tests/gpu/ssr_jitter.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.

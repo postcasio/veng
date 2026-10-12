@@ -135,15 +135,6 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the emissive target (always valid — written every frame).
         TextureHandle EmissiveHandle;
 
-        /// @brief SSR reflection target (mip 0) produced by the SSR trace; blitted by the Reflections debug arm.
-        ///
-        /// Valid only when the SSR pass is wired (Final + Settings.SSR, or the Reflections debug
-        /// mode). The debug blit declares .Sample so the graph derives the attachment → shader-read
-        /// transition. An invalid handle means no SSR pass is active.
-        ResourceId SsrReflection;
-        /// @brief Bindless slot for the SSR reflection sample view; invalid when SSR is off.
-        TextureHandle SsrReflectionHandle;
-
         /// @brief Half-resolution signed circle-of-confusion target; blitted by the CoC debug arm.
         ///
         /// Valid only when the depth-of-field chain is wired (Final + Settings.DepthOfField, or the

@@ -50,7 +50,6 @@
 #include "Passes/DofCompositeScenePass.h"
 #include "Passes/RibbonScenePass.h"
 #include "Passes/SpriteScenePass.h"
-#include "SsrChain.h"
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
 #include "PostResolveUpscale.h"
@@ -287,21 +286,16 @@ namespace Veng::Renderer
         m_Aa = AaResolve::Create(m_Context, m_Assets, m_OutputFormat);
         m_Refraction = RefractionGrab::Create(m_Context, m_Assets);
         m_HalfResTranslucent = HalfResTranslucency::Create(m_Context, m_Assets);
-        // The GPU cull subsystem owns the hi-Z reduce layouts the SSR chain's min-Z reduce borrows,
-        // so it is constructed before the SSR chain (and resolves the active cull mode). Its hi-Z
-        // reduce pipeline creation is not frame-observable, so building it here rather than in
-        // CreatePipelines is the settled pipeline-order relaxation.
+        // The GPU cull subsystem resolves the active cull mode. Its hi-Z reduce pipeline creation is
+        // not frame-observable, so building it here rather than in CreatePipelines is the settled
+        // pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
-        // The SSR chain's min-Z reduce pipeline builds on the GPU cull subsystem's hi-Z reduce
-        // layouts, which must already exist, so the chain is constructed after that subsystem.
-        m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
-                                 m_GpuCull->GetHiZTailLayout());
-        // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
-        // set layout, so it is likewise constructed after the bloom subsystem.
+        // The depth-of-field chain's tile and fill pipeline layouts reserve the bloom down/up set
+        // layout, so it is constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
 
         ResolveAllocationExtents();
@@ -333,7 +327,7 @@ namespace Veng::Renderer
     {
         // Invariant: this hand-list holds only the spine handles the renderer registers directly —
         // the g-buffer channels, HDR, the bloom mask, LTC LUTs, and the shared sampler. Every battery subsystem
-        // (shadows, bloom, SSR, GPU cull, picking, sky, ...) owns and releases its own bindless
+        // (shadows, bloom, depth of field, GPU cull, picking, sky, ...) owns and releases its own bindless
         // handles in its own destructor, so a new subsystem handle never has to be appended here.
         // Released before their images retire.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
@@ -477,21 +471,9 @@ namespace Veng::Renderer
         m_VelocityId = velocityId;
         m_EmissiveId = emissiveId;
 
-        // With SSR on, the lit scene color lands in an intermediate the SSR composite reflects
-        // into before writing the HDR target — so SSR slots in exactly where TAA does, and the
-        // bloom/tonemap tail still reads the HDR target unchanged.
-        m_SsrSceneId = ResourceId{};
-        if (m_Topology->SsrActive)
-        {
-            m_SsrSceneId = graph.Import("SceneRenderer SSR Scene");
-            m_SsrReflectionChainId = graph.ImportImageMips("SceneRenderer SSR Reflection",
-                                                           m_Ssr->GetReflectionMipCount());
-            m_SsrHiZChainId =
-                graph.ImportImageMips("SceneRenderer SSR MinZ", m_Ssr->GetHiZMipCount());
-        }
-        // Depth of field splices in the same way: the tail writes the chain's scene-color
-        // intermediate and the composite writes the HDR target, so bloom, metering, and tonemap
-        // read the id they always did and no extra copy appears.
+        // Depth of field splices in through an intermediate: the tail writes the chain's
+        // scene-color intermediate and the composite writes the HDR target, so bloom, metering, and
+        // tonemap read the id they always did and no extra copy appears.
         m_DofSceneId = ResourceId{};
         m_DofNearId = ResourceId{};
         m_DofFarId = ResourceId{};
@@ -519,14 +501,13 @@ namespace Veng::Renderer
 
         // The id the HDR tail writes before the DoF composite hands the HDR target on.
         const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
-        const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
         // The scene chain writes whatever the temporal anchor reads: the lit target under a
         // temporal resolve, else the scene color directly.
-        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
+        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : dofTargetId;
 
         // The pre-bloom post-process effect chain ping-pongs between two HDR targets. The finished
-        // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, SSR / point
-        // fields / the DoF composite, produced) feeds the first effect, and the last effect's output
+        // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, the point
+        // fields or the DoF composite, produced) feeds the first effect, and the last effect's output
         // replaces the scene-color id every downstream pre-bloom consumer reads (bloom,
         // auto-exposure, the bloom-off tonemap). With no effect active it is m_HdrId unchanged.
         m_PpEffectIdA = ResourceId{};
@@ -567,7 +548,7 @@ namespace Veng::Renderer
         }
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
-        // intermediate the TAA/SSR routing picked; the handle is the bindless side of that id.
+        // intermediate the TAA/DoF routing picked; the handle is the bindless side of that id.
         m_RefractionSceneId = ResourceId{};
         m_RefractionDepthId = ResourceId{};
         m_RefractionMipIds.clear();
@@ -633,10 +614,8 @@ namespace Veng::Renderer
 
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
-        const TextureHandle sceneColorHandle =
-            m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle;
         const TextureHandle lightingTargetHandle =
-            m_Topology->TaaActive ? m_Taa->GetLitHandle() : sceneColorHandle;
+            m_Topology->TaaActive ? m_Taa->GetLitHandle() : dofTargetHandle;
 
         ResourceId shadowId{};
         if (m_Topology->ShadowActive)
@@ -708,7 +687,7 @@ namespace Veng::Renderer
         m_SkyMaterialPass = nullptr;
         m_IblCubeDebugPass = nullptr;
 
-        // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
+        // The pass index the HDR tail (point fields, DoF composite, bloom sweep) is declared
         // before: the tonemap in the Final arm (set below), else the terminal pass.
         optional<usize> hdrTailAnchor;
 
@@ -810,7 +789,7 @@ namespace Veng::Renderer
                 m_SkyResolver->GetIbl().GetSet(), lightTiles));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
-            // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
+            // before the TAA/bloom tail so the sky resolves, refracts, and tonemaps with the
             // scene. An environment source samples its radiance cube; an atmosphere source samples
             // the procedural LUTs; a material source runs the authored Sky-domain material.
             if (m_Topology->SkyboxWanted)
@@ -911,21 +890,22 @@ namespace Veng::Renderer
             // between lighting and the bloom/tonemap tail.
             if (m_Topology->TaaActive)
             {
-                // The resolve writes the scene-color target SSR reads (the HDR target directly
-                // when SSR is off); the SSR composite then writes the HDR target.
+                // The resolve writes the scene-color intermediate a composited depth-of-field chain
+                // reads (the HDR target directly without one); the DoF composite then writes the
+                // HDR target.
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
-                    taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
-                    sceneColorHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
+                    taaHistoryId, dofTargetId, depthId, velocityId, m_Taa->GetLitHandle(),
+                    dofTargetHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
                     m_Taa->GetHistoryResetPointer(), m_Taa->GetExposurePointer(),
                     sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
-            // as part of the HDR tail — after the TAA resolve and SSR composite, before the bloom
-            // sweep — so the fields' additive radiance rolls off through the tone curve and
+            // as part of the HDR tail — after the TAA resolve, before the DoF composite and the
+            // bloom sweep — so the fields' additive radiance rolls off through the tone curve and
             // blooms. Declared at the tail anchor (not pushed here), since only the anchor point
-            // sits between the SSR composite and the bloom read of the final HDR target.
+            // sits between the temporal resolve and the bloom read of the final HDR target.
             if (m_PointFieldActive)
             {
                 m_PointFieldPass = CreateUnique<PointFieldScenePass>(
@@ -1261,21 +1241,10 @@ namespace Veng::Renderer
                 m_Context, m_DebugBlits->Motion, tailExtent,
                 FullscreenBlitScenePass::Source::MotionVectors));
             break;
-        case DebugView::Reflections:
-            // Lighting writes the scene-color intermediate the force-wired SSR trace reflects
-            // (DeclareSsr, before this blit); the blit shows the raw reflection target.
-            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
-                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), lightTiles));
-            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Albedo, tailExtent,
-                FullscreenBlitScenePass::Source::Reflections));
-            break;
         case DebugView::CoC:
-            // The chain's prefilter reads the lit HDR, so lighting is force-wired here as the
-            // Reflections arm force-wires it; the force-wired prefilter and tile dilation then
-            // write the signed-radius target this blit shows as a near/far ramp.
+            // The chain's prefilter reads the lit HDR, so lighting is force-wired here; the
+            // force-wired prefilter and tile dilation then write the signed-radius target this blit
+            // shows as a near/far ramp.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
@@ -1342,8 +1311,6 @@ namespace Veng::Renderer
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
-            .SsrReflection = m_Topology->SsrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
-            .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
             .SamplerHandle = m_SamplerHandle,
@@ -1366,7 +1333,7 @@ namespace Veng::Renderer
             m_GpuCull->DeclareCull(graph, &m_Internal->Plan);
         }
 
-        // The HDR tail — SSR composite, point fields, bloom sweep — is declared just before the
+        // The HDR tail — point fields, DoF composite, bloom sweep — is declared just before the
         // pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
         // debug arm. Anchoring on that pass (not the list's last) keeps the tail ahead of the
         // tonemap even when a post-tonemap pass (DebugDraw) follows, since execution follows
@@ -1379,19 +1346,12 @@ namespace Veng::Renderer
 
             if (i == tailAnchor)
             {
-                // SSR composes the reflected scene color into the HDR target; the point fields
-                // accumulate over that; the bloom sweep then reads the finished HDR.
-                if (m_Topology->SsrActive)
-                {
-                    m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
-                                   m_AlbedoId, m_NormalId, m_OrmId, m_DepthId, dofTargetId,
-                                   m_DepthHandle, m_NormalHandle, m_OrmHandle, m_AlbedoHandle,
-                                   m_SamplerHandle);
-                }
+                // The point fields accumulate into the scene color, the DoF composite folds it into
+                // the HDR target, and the bloom sweep then reads the finished HDR.
                 if (m_PointFieldPass != nullptr)
                 {
-                    // The fields write the last scene-color target of the tail, not the pre-TAA/SSR
-                    // lit target the in-list passes see as io.Hdr.
+                    // The fields write the scene-color target of the tail, not the pre-TAA lit
+                    // target the in-list passes see as io.Hdr.
                     PassIO fieldIo = io;
                     fieldIo.Hdr = dofTargetId;
                     m_PointFieldPass->Declare(graph, fieldIo);
@@ -2187,9 +2147,6 @@ namespace Veng::Renderer
         {
             m_Bloom->Release();
         }
-        // The min-Z reduce sets bind the fresh depth view from the g-buffer.
-        m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
-                        m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, ResolveSceneComposited(m_Settings), m_RenderAllocExtent);
@@ -2922,14 +2879,14 @@ namespace Veng::Renderer
         // Scale applies only on the Final path with the sub-rect-aware battery set. The temporal
         // (TAA/TAAU) resolve is sub-rect-aware — it reconstructs the full allocation from the
         // sub-rect, which is what makes TAAU an upscaler — so it does not force full resolution.
-        // The exclusions do not carry the sub-rect sampling and each forces full resolution
-        // (correct, just no scaling): the GPU hi-Z occlusion test and the SSR trace. Bloom runs
-        // downstream of the promotion, so neither kernel sees the sub-rect. A composited
-        // depth-of-field chain joins them only behind a temporal resolve:
+        // The GPU hi-Z occlusion test does not carry the sub-rect sampling and forces full
+        // resolution (correct, just no scaling). Bloom runs downstream of the promotion, so neither
+        // kernel sees the sub-rect. A composited depth-of-field chain joins it only behind a
+        // temporal resolve:
         // that resolve reconstructs the whole render allocation, so the chain would read
         // allocation-resolution scene colour through the sub-rect map its depth reads need.
         const bool drsSupported =
-            m_Settings.Mode == DebugView::Final && !m_Settings.SSR &&
+            m_Settings.Mode == DebugView::Final &&
             !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
               m_Settings.Occlusion) &&
             !(m_Topology->DofComposited() && m_Topology->TaaActive);
@@ -3190,35 +3147,6 @@ namespace Veng::Renderer
                 {.Id = m_HalfResLayerId, .View = m_HalfResTranslucent->GetLayerView()});
             bindings.push_back(
                 {.Id = m_HalfResDepthReducedId, .View = m_HalfResTranslucent->GetDepthView()});
-        }
-        if (m_Topology->SsrActive)
-        {
-            bindings.push_back({.Id = m_SsrSceneId, .View = m_Ssr->GetSceneView()});
-            // Each reflection mip binds its per-frame view to its per-mip import slot (the trace
-            // writes mip 0, the blur the rest).
-            const std::vector<Ref<ImageView>>& reflectionMips = m_Ssr->GetReflectionMipViews();
-            for (u32 level = 0; level < reflectionMips.size(); level++)
-            {
-                bindings.push_back(
-                    {.Id = m_SsrReflectionChainId.Level(level), .View = reflectionMips[level]});
-            }
-            const std::vector<Ref<ImageView>>& distanceMips = m_Ssr->GetHitDistanceMipViews();
-            for (u32 level = 0; level < distanceMips.size(); level++)
-            {
-                bindings.push_back({.Id = m_Ssr->GetHitDistanceChainId().Level(level),
-                                    .View = distanceMips[level]});
-            }
-            const std::vector<Ref<ImageView>>& surfaceMips = m_Ssr->GetSurfaceMipViews();
-            for (u32 level = 0; level < surfaceMips.size(); level++)
-            {
-                bindings.push_back(
-                    {.Id = m_Ssr->GetSurfaceChainId().Level(level), .View = surfaceMips[level]});
-            }
-            const std::vector<Ref<ImageView>>& hiZMips = m_Ssr->GetHiZMipViews();
-            for (u32 level = 0; level < hiZMips.size(); level++)
-            {
-                bindings.push_back({.Id = m_SsrHiZChainId.Level(level), .View = hiZMips[level]});
-            }
         }
         if (m_Topology->DofWired())
         {

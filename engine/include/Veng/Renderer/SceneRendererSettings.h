@@ -77,8 +77,6 @@ namespace Veng::Renderer
         Bloom,
         /// @brief Per-object velocity (g-buffer channel G3) as an optical-flow field.
         MotionVectors,
-        /// @brief Raw SSR reflection target (rgb radiance times hit confidence, force-wires the SSR pass).
-        Reflections,
         /// @brief The authored emissive g-buffer channel (G4) alone.
         Emissive,
         /// @brief Signed circle of confusion (force-wires the depth-of-field prefilter + tiles).
@@ -96,12 +94,24 @@ namespace Veng::Renderer
     /// The single source of truth for the "View" combo in both the engine debug panel and the
     /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
     /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
-    inline constexpr std::array<string_view, 19> DebugViewNames{
-        "Final",          "Albedo",          "Normal",           "Depth",
-        "Roughness",      "Metallic",        "Occlusion",        "AO",
-        "Shadows",        "Cascades",        "Punctual shadows", "Bloom",
-        "Motion vectors", "Reflections",     "Emissive",         "Circle of confusion",
-        "IBL irradiance", "IBL source cube", "IBL contribution"};
+    inline constexpr std::array<string_view, 18> DebugViewNames{"Final",
+                                                                "Albedo",
+                                                                "Normal",
+                                                                "Depth",
+                                                                "Roughness",
+                                                                "Metallic",
+                                                                "Occlusion",
+                                                                "AO",
+                                                                "Shadows",
+                                                                "Cascades",
+                                                                "Punctual shadows",
+                                                                "Bloom",
+                                                                "Motion vectors",
+                                                                "Emissive",
+                                                                "Circle of confusion",
+                                                                "IBL irradiance",
+                                                                "IBL source cube",
+                                                                "IBL contribution"};
     static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::IblContribution) + 1,
                   "DebugViewNames must list every DebugView arm in declaration order.");
 
@@ -137,9 +147,9 @@ namespace Veng::Renderer
     /// result up to the post-resolve allocation: the reconstruction is temporal, the upscale
     /// spatial. TAAU resolves at the post-resolve allocation, so its history is allocation-sized and
     /// **the resolve is the promotion** — a jittered sub-native render accumulated straight into the
-    /// native image, with no second resample behind it. A TAAU frame that also wires SSR or a
-    /// composited depth-of-field chain resolves like TAA instead (those read render-resolution depth
-    /// beside the scene colour), degrading the reconstruction to spatial and keeping everything else.
+    /// native image, with no second resample behind it. A TAAU frame that also wires a composited
+    /// depth-of-field chain resolves like TAA instead (the chain reads render-resolution depth beside
+    /// the scene colour), degrading the reconstruction to spatial and keeping everything else.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.
@@ -209,22 +219,6 @@ namespace Veng::Renderer
             CPU,
             /// @brief BVH frustum descent + GPU hi-Z occlusion + vkCmdDrawIndexedIndirect.
             GPU,
-        };
-
-        /// @brief Resolution the SSR trace, min-Z pyramid, and blur chain run at.
-        ///
-        /// The trace is SSR's dominant cost; running it at a fraction of the render
-        /// resolution cuts that roughly quadratically. The g-buffer it reads stays
-        /// full-resolution (sampled by normalized UV) and the composite upsamples the
-        /// reflection back to full resolution, so only the reflection working set shrinks.
-        enum class SsrResolution : u8
-        {
-            /// @brief Trace at the full render resolution.
-            Full,
-            /// @brief Trace at half the render resolution per axis (quarter the pixels).
-            Half,
-            /// @brief Trace at a quarter of the render resolution per axis (a sixteenth the pixels).
-            Quarter,
         };
 
         /// @brief Selects the top-level render path; GeometryDepthNormal ignores DebugView Mode.
@@ -349,26 +343,6 @@ namespace Veng::Renderer
         /// whose texels are largest, are where it trips. 0 draws every caster. Recompile-safe: it
         /// changes which casters a cascade draws, not the atlas or the topology.
         f32 ShadowCasterMinTexels = 1.0f;
-
-        /// @brief Whether screen-space reflections run.
-        ///
-        /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
-        /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
-        /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
-        /// / SsrThickness / SsrMaxRoughness / SsrMaxSteps are per-frame values on SceneView and do
-        /// not recompile.
-        /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
-        /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
-        /// trace itself.
-        bool SSR = false;
-
-        /// @brief Resolution the SSR trace/min-Z/blur chain runs at relative to the render target.
-        ///
-        /// A topology change: it resizes the SSR reflection chain and min-Z pyramid, so a change
-        /// recompiles. Defaults to Half — the trace cost falls ~4x and the composite upsamples the
-        /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
-        /// when SSR is inactive.
-        SsrResolution SsrResolutionScale = SsrResolution::Half;
 
         /// @brief Whether the depth-of-field battery runs.
         ///
@@ -566,7 +540,6 @@ VE_ENUMERATOR(Cascades)
 VE_ENUMERATOR(PunctualShadows)
 VE_ENUMERATOR(Bloom)
 VE_ENUMERATOR(MotionVectors)
-VE_ENUMERATOR(Reflections)
 VE_ENUMERATOR(Emissive)
 VE_ENUMERATOR(CoC)
 VE_ENUMERATOR(EnvironmentIrradiance)
@@ -595,12 +568,6 @@ VE_ENUM_END();
 VE_ENUM(::Veng::Renderer::SceneRendererSettings::CullMode, 0xF097C435E1F04F2FULL)
 VE_ENUMERATOR(CPU)
 VE_ENUMERATOR(GPU)
-VE_ENUM_END();
-
-VE_ENUM(::Veng::Renderer::SceneRendererSettings::SsrResolution, 0x0FBF897EC03530AFULL)
-VE_ENUMERATOR(Full)
-VE_ENUMERATOR(Half)
-VE_ENUMERATOR(Quarter)
 VE_ENUM_END();
 
 // Reflected so a field-masked override set (FieldOverrides) and a reflected-field settings surface
@@ -634,9 +601,6 @@ VE_FIELD(MinShadowDistance, .DisplayName = "Min shadow distance", .Display = {.M
          .Category = "Shadows")
 VE_FIELD(ShadowCasterMinTexels, .DisplayName = "Shadow caster min texels", .Display = {.Min = 0.0},
          .Category = "Shadows")
-VE_FIELD(SSR, .DisplayName = "Screen-space reflections", .Category = "Screen-space reflections")
-VE_FIELD(SsrResolutionScale, .DisplayName = "SSR trace resolution",
-         .Category = "Screen-space reflections")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of field", .Category = "Depth of field")
 VE_FIELD(Refraction, .DisplayName = "Refraction (scene-color grab)", .Category = "Refraction")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction blur (grab mip chain)",

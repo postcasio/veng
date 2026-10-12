@@ -23,8 +23,8 @@ namespace Veng::Renderer
     {
         /// @brief Blits the albedo g-buffer channel.
         ///
-        /// Reused for the Bloom, Emissive, and Reflections sources — the source is a push value,
-        /// the pipeline the same fullscreen blit.
+        /// Reused for the Bloom and Emissive sources — the source is a push value, the pipeline the
+        /// same fullscreen blit.
         Ref<GraphicsPipeline> Albedo;
         /// @brief Layout the albedo blit pipeline was built against.
         Ref<PipelineLayout> AlbedoLayout;

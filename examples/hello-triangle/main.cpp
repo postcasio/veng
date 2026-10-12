@@ -878,12 +878,11 @@ protected:
             }
         }
 
-        // The sample's look — exposure, the lifted bloom knee that makes the weak lights bloom, SSR
-        // off the gradient-roughness ground plane — is the level's render block, seeded as the
-        // scene's RenderLook and resolved by the viewport presenting it. HT_DEBUG_VIEW pins a debug
-        // visualization by its DebugView enum index (the headless capture has no combo), which a
-        // look does not own: it overrides the Final mode so a g-buffer/battery target can be
-        // captured and inspected.
+        // The sample's look — exposure and the lifted bloom knee that makes the weak lights bloom —
+        // is the level's render block, seeded as the scene's RenderLook and resolved by the
+        // viewport presenting it. HT_DEBUG_VIEW pins a debug visualization by its DebugView enum
+        // index (the headless capture has no combo), which a look does not own: it overrides the
+        // Final mode so a g-buffer/battery target can be captured and inspected.
         if (const char* dv = std::getenv("HT_DEBUG_VIEW"))
         {
             Renderer::SceneRendererSettings settings = GetManagedViewports().Get(0)->GetSettings();

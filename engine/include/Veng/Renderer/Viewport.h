@@ -8,7 +8,6 @@
 #include <Veng/Renderer/DynamicResolution.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportId.h>
@@ -133,22 +132,6 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::LensDirtIntensity
         f32 LensDirtIntensity = 0.0f;
-        /// @brief SSR reflection mix scale (ignored while the renderer's SSR pass is off).
-        f32 SsrIntensity = 1.0f;
-        /// @brief SSR maximum ray length in view-space units.
-        ///
-        /// @see SceneView::SsrMaxDistance
-        f32 SsrMaxDistance = 12.0f;
-        /// @brief SSR view-space depth gap always accepted as a ray hit (the near-range floor).
-        ///
-        /// @see SceneView::SsrThickness
-        f32 SsrThickness = 0.5f;
-        /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
-        f32 SsrMaxRoughness = 0.8f;
-        /// @brief SSR per-ray depth-test budget (and hi-Z probe budget).
-        ///
-        /// @see SceneView::SsrMaxSteps
-        u32 SsrMaxSteps = DefaultSsrMaxSteps;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale; zero turns it off.
         ///
         /// @see SceneView::SpecularAntiAliasingVariance
@@ -266,7 +249,7 @@ namespace Veng::Renderer
 
         /// @brief Writes the view overrides over @p view, then clamps its GPU loop bounds.
         ///
-        /// SsrMaxSteps, DofMaxCoc and DofRingCount are clamped as they are at every other entry,
+        /// DofMaxCoc and DofRingCount are clamped as they are at every other entry,
         /// since an override reaches the shaders as directly as a look does.
         /// @param view  The composed view (pushed, then the look's knobs) the overrides win over.
         void ApplyTo(ViewState& view) const;
@@ -1429,28 +1412,6 @@ VE_FIELD(LensDirt, .DisplayName = "Lens dirt",
          .Tooltip = "Greyscale mask the bloom lights, fitted over the frame", .Category = "Bloom")
 VE_FIELD(LensDirtIntensity, .DisplayName = "Lens dirt intensity",
          .Display = {.Min = 0.0, .Max = 4.0}, .Category = "Bloom")
-VE_FIELD(SsrIntensity, .DisplayName = "SSR intensity", .Display = {.Min = 0.0, .Max = 4.0},
-         .Category = "Screen-space reflections")
-VE_FIELD(SsrMaxDistance, .DisplayName = "SSR max distance",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider,
-                     .Min = 0.1,
-                     .Max = 100000.0,
-                     .Logarithmic = true},
-         .Category = "Screen-space reflections")
-VE_FIELD(SsrThickness, .DisplayName = "SSR thickness",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider,
-                     .Min = 0.001,
-                     .Max = 1000.0,
-                     .Logarithmic = true},
-         .Category = "Screen-space reflections")
-VE_FIELD(SsrMaxRoughness, .DisplayName = "SSR max roughness",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
-         .Category = "Screen-space reflections")
-VE_FIELD(SsrMaxSteps, .DisplayName = "SSR max steps",
-         .Display = {.Min = 1.0,
-                     .Max = static_cast<f64>(::Veng::Renderer::SsrMaxStepsCeiling),
-                     .Step = 1.0},
-         .Category = "Screen-space reflections")
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA variance",
          .Tooltip = "Screen-space normal variance scale; zero turns specular anti-aliasing off",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},

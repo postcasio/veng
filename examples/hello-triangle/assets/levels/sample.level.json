@@ -8,7 +8,6 @@
     "BloomIntensity": 1.5,
     "BloomThreshold": 0.5,
     "Exposure": 1.0,
-    "SSR": true,
     "Shadows": true
   },
   "systems": [

@@ -76,7 +76,7 @@ namespace
     }
 
     // A scene: one green self-lit cube directly below the origin (world -Y), on the given layer.
-    Unique<Scene> BuildScene(Context& context, AssetManager& assets, TypeRegistry& types,
+    Unique<Scene> BuildScene(Context& context, const AssetManager& assets, TypeRegistry& types,
                              const AssetHandle<MaterialInstance>& material, RenderLayer layer,
                              vector<Ref<Mesh>>& meshes)
     {
@@ -99,14 +99,13 @@ namespace
         settings.Shadows = false;
         settings.PunctualShadows = false;
         settings.AO = false;
-        settings.SSR = false;
         settings.PostProcessEffects = false;
         settings.AntiAliasing = AntiAliasingMode::None;
         return settings;
     }
 
     // Downloads all six irradiance-cube layers into one tightly-packed RGBA16F buffer (layer-major).
-    std::vector<u8> DownloadIrradiance(Context& context, EnvironmentIbl& ibl)
+    std::vector<u8> DownloadIrradiance(Context& context, const EnvironmentIbl& ibl)
     {
         const u32 faceSize = EnvironmentIbl::GetIrradianceFaceSize();
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8;
@@ -157,7 +156,7 @@ namespace
 
     // Sweeps a fresh cube-publishing capture over `scene` with the given layer mask, then convolves
     // the published cube through the real IBL path and returns the downloaded irradiance.
-    std::vector<u8> CaptureAndConvolve(Context& context, AssetManager& assets, Scene& scene,
+    std::vector<u8> CaptureAndConvolve(Context& context, AssetManager& assets, const Scene& scene,
                                        u32 layerMask, EnvironmentIbl& ibl)
     {
         const Unique<SceneCapture> capture = SceneCapture::Create({
@@ -243,7 +242,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
     CHECK(capture->GetCubeRevision() == 0);
 
-    auto pushFace = [&]()
+    const auto pushFace = [&]()
     {
         capture->SetView({.World = scene.get(), .VisibleLayers = AllRenderLayers});
         Context.ImmediateCommands([&](CommandBuffer& cmd) { capture->Render(cmd); });

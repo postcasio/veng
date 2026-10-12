@@ -137,7 +137,7 @@ namespace Veng::Renderer
     /// Its renderer comes from the compositor's ModelPortraitPool, keyed by Extent and Output, at
     /// most one new build per frame shared with the capture pre-pass, and renders inside the frame's
     /// view budget ahead of the captures; a portrait the budget cannot seat keeps its last render.
-    /// The renderer is lean — no bloom, AO, SSR, shadows, post effects or anti-aliasing. Destroying
+    /// The renderer is lean — no bloom, AO, shadows, post effects or anti-aliasing. Destroying
     /// or disabling the component returns the renderer to the pool, hands its slots back and drops
     /// the private scene.
     ///

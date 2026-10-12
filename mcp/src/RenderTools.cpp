@@ -724,8 +724,8 @@ namespace Veng::Mcp
                 // forces full resolution (ResolveRenderScale), so the effective extent is valid_extent
                 // regardless of render_scale. The temporal (TAA/TAAU) resolve is sub-rect-aware and no
                 // longer forces full resolution, but depth of field composited after it does.
-                const bool subRectApplied = !s.SSR && !(cullGpu && s.Occlusion) && !debugView &&
-                                            !(s.UsesTaa() && s.DepthOfField);
+                const bool subRectApplied =
+                    !(cullGpu && s.Occlusion) && !debugView && !(s.UsesTaa() && s.DepthOfField);
                 Json result = {
                     {"visible", renderer.GetLastVisibleCount()},
                     {"frustum_survived", renderer.GetFrustumSurvivedCount()},
@@ -743,7 +743,6 @@ namespace Veng::Mcp
                     {"render_features",
                      {{"aa", Veng::string(Renderer::AntiAliasingModeNames[static_cast<Veng::usize>(
                                  s.AntiAliasing)])},
-                      {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},
                       {"debug_view", debugView},

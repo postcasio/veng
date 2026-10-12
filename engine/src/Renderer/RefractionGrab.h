@@ -87,7 +87,7 @@ namespace Veng::Renderer
         /// The renderer calls this at both Rebuild arms that composite the scene, ahead of the
         /// translucent pass, when refraction is active.
         /// @param passes       The renderer's pass list to append into.
-        /// @param sourceId     Lit scene-color source id (whichever intermediate the TAA/SSR routing picked).
+        /// @param sourceId     Lit scene-color source id (whichever intermediate the TAA/DoF routing picked).
         /// @param sourceHandle Bindless slot for the lit source.
         /// @param copyId       The scene-color grab target this pass writes (the renderer's import).
         /// @param sampler      Shared sampler bindless slot.

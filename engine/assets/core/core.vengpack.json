@@ -342,31 +342,6 @@
       "source": "shaders/entity_id_billboard.frag.shader.json"
     },
     {
-      "id": "0xBDBD7BC71B2B1E74",
-      "type": "Shader",
-      "source": "shaders/ssr_trace.frag.shader.json"
-    },
-    {
-      "id": "0xEE0EED485023A7F6",
-      "type": "Shader",
-      "source": "shaders/ssr_blur_down.comp.shader.json"
-    },
-    {
-      "id": "0x50D9ECEAE45E31A1",
-      "type": "Shader",
-      "source": "shaders/ssr_composite.frag.shader.json"
-    },
-    {
-      "id": "0x93DA6E42B3B5479A",
-      "type": "Shader",
-      "source": "shaders/ssr_hiz_reduce.comp.shader.json"
-    },
-    {
-      "id": "0x7737782FD6CC04D1",
-      "type": "Shader",
-      "source": "shaders/ssr_hiz_reduce_tail.comp.shader.json"
-    },
-    {
       "id": "0x19AE4B252B75EAF5",
       "type": "Shader",
       "source": "shaders/dof_coc_prefilter.comp.shader.json"

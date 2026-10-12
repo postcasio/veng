@@ -4,7 +4,6 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Reflection/FieldOverrides.h>

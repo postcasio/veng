@@ -16,7 +16,7 @@ namespace Veng::Renderer
     ///        compositing over the lit scene color.
     ///
     /// Runs after deferred lighting (writing the same scene-color target, LoadOp::Load) and
-    /// before the bloom/SSR/tonemap tail, so the sky tonemaps and reflects with the scene. It
+    /// before the bloom/tonemap tail, so the sky resolves and tonemaps with the scene. It
     /// samples the g-buffer depth through bindless and discards foreground pixels, and reads the
     /// radiance cube + linear sampler from a descriptor set bound at set 1 — the renderer's IBL set
     /// for an environment sky, or the sky-bake consumer set for a baked material sky (same radiance

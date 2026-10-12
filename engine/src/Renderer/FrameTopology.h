@@ -108,8 +108,6 @@ namespace Veng::Renderer
         bool DebugCascades = false;
         /// @brief The frame visualizes the punctual shadow atlas.
         bool DebugPunctual = false;
-        /// @brief The frame visualizes the raw SSR reflection target.
-        bool DebugReflections = false;
         /// @brief The frame visualizes the per-pixel IBL ambient contribution (runs the lighting pass).
         bool DebugIblContribution = false;
 
@@ -137,8 +135,6 @@ namespace Veng::Renderer
         bool SsaoFold = false;
         /// @brief The SSAO pass is wired, whether folded into lighting or only visualized.
         bool SsaoActive = false;
-        /// @brief The SSR trace, blur, and composite are wired.
-        bool SsrActive = false;
         /// @brief The pre-translucent opaque-depth copy is wired.
         ///
         /// Wherever the translucent composite runs, independent of Settings.Refraction: a material
@@ -262,9 +258,9 @@ namespace Veng::Renderer
     /// @brief Whether a temporal resolve reconstructs the post-resolve allocation directly.
     ///
     /// Temporal upscaling promotes at the temporal anchor, so every pass between that anchor and
-    /// the HDR tail sees allocation-resolution scene colour beside render-resolution depth. The SSR
-    /// composite and a composited depth-of-field chain sit there and read both through one extent,
-    /// so a frame wiring either resolves at the render allocation instead and the spatial promotion
+    /// the HDR tail sees allocation-resolution scene colour beside render-resolution depth. A
+    /// composited depth-of-field chain sits there and reads both through one extent, so a frame
+    /// wiring one resolves at the render allocation instead and the spatial promotion
     /// carries the tail up — a spatial reconstruction rather than a temporal one, with the render
     /// scale still buying exactly what it buys in every other mode.
     ///

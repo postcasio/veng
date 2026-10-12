@@ -577,7 +577,6 @@ namespace Veng::Renderer
             return;
         }
         View.ApplyTo(view);
-        view.SsrMaxSteps = ClampSsrMaxSteps(view.SsrMaxSteps);
         view.DofMaxCoc = ClampDofMaxCoc(view.DofMaxCoc);
         view.DofRingCount = ClampDofRingCount(view.DofRingCount);
     }
@@ -731,11 +730,6 @@ namespace Veng::Renderer
             .BloomRadius = state.BloomRadius,
             .LensDirt = state.LensDirt,
             .LensDirtIntensity = state.LensDirtIntensity,
-            .SsrIntensity = state.SsrIntensity,
-            .SsrMaxDistance = state.SsrMaxDistance,
-            .SsrThickness = state.SsrThickness,
-            .SsrMaxRoughness = state.SsrMaxRoughness,
-            .SsrMaxSteps = state.SsrMaxSteps,
             .SpecularAntiAliasingVariance = state.SpecularAntiAliasingVariance,
             .SpecularAntiAliasingThreshold = state.SpecularAntiAliasingThreshold,
             .NormalMapAntiAliasingScale = state.NormalMapAntiAliasingScale,

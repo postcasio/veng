@@ -222,10 +222,10 @@ TEST_CASE("graphics schema cook: a DefaultPreset naming no preset is a located e
 TEST_CASE("graphics schema cook: a preset entry naming a missing setting is a located error")
 {
     json schema = SampleSchema();
-    schema["Presets"][0]["Entries"].push_back({{"SettingId", "ssr"}, {"OptionId", "on"}});
+    schema["Presets"][0]["Entries"].push_back({{"SettingId", "undeclared"}, {"OptionId", "on"}});
     const string error = CookExpectingError("gfxschema_missingsetting", schema);
     REQUIRE_FALSE(error.empty());
-    CHECK(error.find("ssr") != string::npos);
+    CHECK(error.find("undeclared") != string::npos);
 }
 
 TEST_CASE("graphics schema cook: a preset entry naming a missing option is a located error")

@@ -105,7 +105,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
-  `PostResolveUpscale`, `SsrChain`, `DofChain`,
+  `PostResolveUpscale`, `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
@@ -359,10 +359,10 @@ projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
 tail already samples) and a **history-copy** pass (the resolve's output → the persisted history for
-next frame). Under SSR or a composited depth of field the resolve writes the scene intermediate
-those composite from, not the HDR target, and the copy reads that intermediate by its own bindless
-slot: read back from the HDR target, which the composite writes later in the frame, the history
-would carry the previous frame's composite and the resolve would follow the jitter.
+next frame). Under a composited depth of field the resolve writes the scene intermediate the chain
+composites from, not the HDR target, and the copy reads that intermediate by its own bindless slot:
+read back from the HDR target, which the composite writes later in the frame, the history would
+carry the previous frame's composite.
 
 **The jitter is an NDC translation, published, and taken back out by the resolve.** Each period's
 offsets have their mean subtracted (`TaaJitterPeriodMean`), so the eight phases sum to zero and the
@@ -398,7 +398,7 @@ The Karis luminance weights are taken on the **exposed** luminance (the tonemap'
 so their damping does not depend on the scene's absolute HDR scale.
 
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
-both modes and under TAA with SSR compositing after it, the converged resolve changes by under a few
+both modes and under TAA with a depth-of-field composite after it, the converged resolve changes by under a few
 half-float steps per frame inside geometry and in the open sky, a star keeps its place to 0.05
 output px, and an edge to 0.1.
 Motion is **per-object** and **folded into the g-buffer pass**: velocity is a fourth g-buffer
@@ -444,7 +444,7 @@ costs are allocated separately:
 
 - The **render allocation** — `region · MaxAllocationScale · renderScale` — holds everything the
   scene rasterizes and everything that reads the g-buffer: the five colour channels plus depth, the
-  hi-Z pyramid, SSAO, the lit target, the SSR chain, the depth-of-field chain, the refraction grab
+  hi-Z pyramid, SSAO, the lit target, the depth-of-field chain, the refraction grab
   and its mip chain, the half-resolution translucent layer, the bloom mask the translucent pass
   writes, the picking targets.
   `SceneView::RenderExtent` is this frame's sub-rect of it and `GetRenderAllocationExtent()` reports
@@ -460,8 +460,8 @@ the tail with the scene. A debug view (`Mode != Final`) pins the render allocati
 post-resolve one: its passes read the g-buffer at full-screen UVs while writing the output, and it
 already forces the per-frame render scale to 1 for the same reason.
 
-Between the two sits the **HDR scene colour** — what the temporal resolve, the SSR composite, the
-HDR-placed point fields and the depth-of-field composite write. It is allocated in the render
+Between the two sits the **HDR scene colour** — what the temporal resolve, the HDR-placed point
+fields and the depth-of-field composite write. It is allocated in the render
 allocation, except under a promoting temporal-upscaling resolve (below), where it is the
 post-resolve one; `SceneView::SceneColorExtent` is its valid extent this frame.
 
@@ -513,10 +513,10 @@ interface composited pre-bloom. A dynamic-resolution controller's loop is unaffe
 still measures whole-frame GPU time and converges, with the scaled portion simply a smaller fraction
 of what it measures, so it settles at a lower scale for the same budget.
 
-**The remaining `drsSupported` exclusions are about the sub-rect, not the allocation.** SSR and the
-GPU hi-Z occlusion test are not sub-rect-aware and force the per-frame render scale to 1; they still render into a *reduced render allocation* perfectly well, so a static
-render-scale reduction reaches them. A composited depth-of-field chain joins them **only behind a
-temporal resolve**: that resolve reconstructs the whole render allocation, so the chain would be
+**The remaining `drsSupported` exclusions are about the sub-rect, not the allocation.** The GPU
+hi-Z occlusion test is not sub-rect-aware and forces the per-frame render scale to 1; it still
+renders into a *reduced render allocation* perfectly well, so a static render-scale reduction
+reaches it. A composited depth-of-field chain joins it **only behind a temporal resolve**: that resolve reconstructs the whole render allocation, so the chain would be
 reading allocation-resolution scene colour through the sub-rect map its depth reads need. Without a
 temporal resolve its five stages and the scene colour are all the sub-rect and it composes.
 
@@ -551,9 +551,9 @@ So the render scale is spent the same way in both (it sizes the render allocatio
 sub-rect under dynamic resolution) and the viewport no longer knows the mode at all — the branch that
 pinned its allocation to native under TAAU is gone, along with the `Configure` resize debounce it
 needed. `ResolveTemporalUpscalePromotes` (`FrameTopology.h`, a pure function of the settings) is what
-decides: it is TAAU **unless** the frame also wires SSR or a composited depth-of-field chain. Those
-two sit between the temporal anchor and the tail and read render-resolution depth beside the scene
-colour, so a resolve that promoted at the anchor would hand them allocation-resolution colour; such a
+decides: it is TAAU **unless** the frame also wires a composited depth-of-field chain. That chain
+sits between the temporal anchor and the tail and reads render-resolution depth beside the scene
+colour, so a resolve that promoted at the anchor would hand it allocation-resolution colour; such a
 frame resolves at the render allocation like TAA and takes the spatial promotion instead. That
 degrades the reconstruction from temporal to spatial and keeps every other property, where the same
 combination previously gave up scaling altogether.
@@ -654,7 +654,7 @@ by a `1e-5` relative epsilon over the camera-relative magnitudes to cover the fl
 lighting pass's own world-space reconstruction. A **directional light has no range and is in every
 tile's mask**; a tile showing only sky (cleared depth) gets no positioned light. Which arms cull is
 `FrameTopology::LightTileCullActive`: every arm whose lighting pass shades direct light (Final, Bloom,
-Reflections, CoC), never the cascade-tint or IBL-only variants that discard it.
+CoC), never the cascade-tint or IBL-only variants that discard it.
 
 The masks live in a device-local storage buffer with **one region per frame in flight** (a renderer
 executes once per frame, so a frame never writes a region an in-flight frame reads), laid out
@@ -1295,218 +1295,11 @@ stay the same average of the same footprint. `tests/gpu/bloom_bright_pass.cpp` p
 properties on both kernels: invariance across sub-texel offsets, the ceiling's bound on one
 extreme texel, and zero from a `NaN` or `inf`.
 
-### Screen-space reflections reach as far as the view authors
-
-`SsrChain` reduces depth to a max-Z pyramid, traces one reflection ray per reflective pixel
-(`ssr_trace.frag`), low-passes the result down a mip chain and composites it, blurred by the
-reflected cone's footprint (below). The trace is built
-so a scene spanning metres to kilometres reflects its far geometry, with every knob per-frame on
-the view and authorable on `RenderLook` (`SsrIntensity`, `SsrMaxDistance`, `SsrThickness`,
-`SsrMaxRoughness`, `SsrMaxSteps`):
-
-- **The march is one texel per step, and the budget bounds work, not reach.** The view-space ray is
-  projected to a screen line (ending at `SsrMaxDistance`, the near plane or a finite far plane) and
-  walked at one reflection-target texel per step. `SsrMaxSteps` caps the depth tests and, separately,
-  the hi-Z probes; the depth-test stride widens only when the tests left could not otherwise reach the
-  line's end, so a long ray degrades to a coarser march rather than stopping short.
-- **Empty space is skipped by a mip-climbing walk.** A probe whose cell's nearest depth is behind the
-  ray advances it to where it leaves the cell — or, heading deeper, reaches that depth — and climbs a
-  level; otherwise it descends, and level 0 takes a depth test. The test is on the sign of the ray's
-  depth slope, never an absolute epsilon, so it holds under reverse-Z at any distance, and a skip costs
-  one probe rather than the texels it crosses.
-- **The hit tolerance follows the ray at range.** A front-to-behind crossing is a hit when its gap is
-  under the larger of `SsrThickness` and 1.5 times the depth the ray moved since its last test. One
-  texel spans more depth further away, so a fixed thickness alone rejects every crossing at range and
-  the ray tunnels; a gap wider than the ray's own travel means it slid behind a nearer surface, which
-  `SsrThickness` alone governs — it is the near-range floor.
-- **Positions are reconstructed camera-relative** through `InvViewRotProj` and the view rotation, so
-  the trace's precision does not depend on the camera's distance from the world origin.
-- **The reflected colour is read through the rays' own footprint**, never by implicit derivatives
-  (undefined past the march's early exits, and across a quad whose rays hit different surfaces an
-  anisotropic smear along the gap). The neighbouring trace texels' pixel rays are met with the ray's
-  surface plane, reflected about its normal and met with the hit's tangent plane; their landing
-  offsets from the hit, in scene-colour texels, are the footprint's axes. The read is a tent over
-  that lattice: four bilinear taps along the axes add whatever variance the bilinear tap's own sixth
-  of a texel² lacks, so rays landing a texel apart or closer read one tap (a mirror stays as sharp as
-  the trace) and diverging rays are prefiltered across the gap between them, which steadies how
-  much of a small source the reflection carries as it moves. An axis is capped at 8 texels, and a
-  grazing meeting falls back to one tap. Being the hit's own tangent plane, the footprint never
-  spans a silhouette.
-
-For geometry out to ~10 km a look sets `SsrMaxDistance` to the reach wanted (10000), leaves
-`SsrThickness` at its near-range value, and raises `SsrMaxSteps` (512–1024) when long grazing rays
-stay close to a surface for much of their length, where skipping cannot help.
-
-#### A rough reflection blurs by its cone, smoothly, with anti-aliasing off
-
-A rough surface reflects a cone, not a ray. The chain blurs one traced ray per texel into that cone
-spatially — nothing here is temporal, so the result holds with no TAA, and a temporal resolve is
-only ever an improvement on top.
-
-- **Both targets are premultiplied by confidence.** The trace writes two chains at the SSR
-  resolution: the reflected radiance times the hit's screen-edge confidence, with the confidence in
-  alpha (`RGBA16F`), and the view-space ray length to the hit times the same confidence (`R16F`,
-  clamped at 60000). The composite adds the colour as it stands, so a coarse level that averaged few
-  hits is dim by exactly that share, and a level's distance over its alpha is the mean hit distance
-  of its footprint.
-- **Each level is band-limited.** `ssr_blur_down.comp` low-passes both chains a level at a time
-  through the bloom chain's 13-tap Call-of-Duty kernel at source-texel offsets (five overlapping 2×2
-  groups, the inner one at 0.5) — one dispatch per level, six source texels of support, against the
-  plain 2×2 box it replaces, which let a small bright reflection step from one coarse texel to the
-  next. A separable Gaussian would cost two dispatches a level for the same band limit. The kernel's
-  variance is 1.75 source texels² per axis.
-- **A third chain carries the surfaces each level averaged.** The trace writes, for every texel with
-  a surface whatever its ray did, the device depth of the surface its ray left from, that squared,
-  and a coverage of one (`RGBA32F` — reverse-Z depth of distant geometry sits below half-float's
-  normal range); the blur filters it with the same kernel (by hand, from loads, since 32-bit float
-  is not guaranteed filterable). Over its coverage, a coarse texel holds the mean and variance of
-  the surfaces its reflection averaged, which is what lets the coarse levels stop at silhouettes
-  (below).
-- **The cone is GGX's half-maximum.** With `α = roughness²`, the half-vector distribution falls to
-  half its peak at `tan θh = α·√((√2 − 1)/(1 − √2·α²))`; the reflected cone's half-angle is `2θh`
-  (held at its widest once `α² ≥ 1/√2`, where the lobe never halves). Its diameter at the hit is
-  `2·d·tan θr`, a world size.
-- **The footprint is projected from where the hit appears.** The reflected hit is seen along the
-  unfolded ray, `cameraDistance + d` from the camera, so the composite projects the footprint from
-  that depth (the reflection point's view depth scaled by `(cameraDistance + d)/cameraDistance`,
-  or no depth under an orthographic projection) through `Proj[1][1]` and the chain's own level-0
-  height. A contact reflection (`d → 0`) stays sharp; a far one tends to the cone's own angle.
-- **The level is converted last.** Level `L`, read through the B-spline below, has a kernel whose
-  full width at half maximum is about `2.25·2^L` level-0 texels (the downsample variances summed down
-  the chain plus the B-spline's own third of a texel², about `0.92·4^L`), so the composite reads
-  `lod = log2(footprintTexels / 2.25)`, clamped to the chain. Because only this last step knows the
-  SSR resolution, Full and Half give the same apparent blur and differ only in how finely it is
-  sampled.
-- **The hit distance is read at the pixel**, from the finest level whose confidence clears 0.02, so a
-  pixel whose own ray missed takes its neighbourhood's mean and a rough reflection blurs past the
-  edge of what it reflects; a pixel with nothing hit at any level adds nothing.
-- **Levels are reconstructed with a cubic B-spline** over the 3×3 texels nearest the pixel, so a
-  coarse level magnifies without drawing its texel grid, and the two levels either side of `lod` are
-  blended by its fraction. Each coarse texel is weighted by its surfaces' agreement with the pixel's
-  (below); level 0 is read by how far it is magnified.
-- **The chains stop where their short axis reaches two texels** (`bit_width(min(w, h)) − 1` levels):
-  the smooth reconstruction makes the coarsest levels usable, so a wide cone reads a smooth average
-  of the screen, and a cone wider still clamps there.
-- **The roughness cutoff fades.** A surface rougher than `SsrMaxRoughness` traces nothing and the
-  composite adds nothing for it; across the top fifth of `[0, SsrMaxRoughness]` the composite fades
-  the reflection out, so a surface whose roughness crosses the cutoff shows no seam.
-
-What spatial filtering cannot do is recover what the trace never sampled: one ray per SSR texel
-point-samples a small or hard-edged source, so how much of it a reflection carries steps with the
-source's sub-texel position, at any roughness. The chain carries that energy through unchanged at
-every grid phase. `tests/gpu/ssr_rough.cpp` pins the properties: a small emitter's rough reflection
-keeps the trace's energy and its own shape across sub-pixel shifts, a rough reflection of a wall has
-no texel-grid kinks, a reflected edge blurs by the same width at Full and Half, a reflection is
-narrower where its rays are short, and a mirror stays sharp with its edge fade intact — its far and
-side edges as sharp as the trace at Full SSR resolution.
-
-#### A reflection magnified past the trace stays smooth and stops at silhouettes
-
-The composite runs at the render allocation and the chain at the SSR resolution, so at Half (or a
-reduced render scale with Half, where the trace is a quarter of the output per axis) one level-0
-texel spans several composite pixels. A glossy surface reads level 0 alone, and a bilinear read
-there magnifies the trace as visible blocks and smears a reflection across every silhouette, a
-fraction of a texel onto the surface beside it. So level 0 is read by the composite-to-SSR texel
-ratio, taken from the depth target's and the chain's own sizes:
-
-- **At a ratio of one, level 0 is read bilinearly**, which lands on the pixel's own texel, so Full
-  SSR at render scale 1 reflects exactly as the trace drew it.
-- **Magnified, it is a joint-bilateral read of the 3×3 texels nearest the pixel.** Each tap's
-  weight is the cubic B-spline's (the same reconstruction as the coarse levels, so a magnified
-  reflection is C²-smooth rather than kinked once per texel) times how well the surface its ray
-  left from agrees with the pixel's. The B-spline's fourth tap per axis carries at most 1/48 of the
-  weight; it is folded out of the far tap, so the window moves to the next texel without a jump.
-  The weights blend from bilinear at a ratio of 1 to the full B-spline at 2, so the read is
-  continuous in the ratio.
-- **A tap's surface is the one the trace took for that texel** (below), so no SSR-resolution depth
-  or normal target is kept. It agrees in position when it lies within
-  about an SSR texel's width of the pixel's tangent plane (fully under half a width, not at all past
-  two), which a floor at any grazing angle satisfies and a silhouette's depth step does not; and in
-  orientation when its normal is within about 25° of the pixel's, falling to nothing by 45°, which
-  catches a crease where depth is continuous. A background tap traced nothing and never agrees.
-- **The weights renormalize over the agreeing taps**, so a reflection keeps its full strength up
-  to a silhouette and adds nothing past it, from either side, and the confidence in alpha fades with
-  the same weights. A pixel no tap agrees with — a feature thinner than a texel — reflects nothing
-  rather than its neighbour's reflection. The coarse levels a rough surface blends in are weighted
-  too, by the surfaces their blur averaged (below).
-- **Every g-buffer read in the trace and the composite is a point load or names level 0.** Those
-  reads sit past early returns, or at per-lane ray positions in the march, where implicit
-  derivatives are undefined and the g-buffer sampler, which is anisotropic, blends texels along
-  whatever footprint they imply — across a silhouette, exactly where the joint weights need the
-  pixel's own surface.
-
-It costs nine chain loads and eighteen g-buffer samples per reflective pixel, only where the chain
-is coarser than the composite. `tests/gpu/ssr_upsample.cpp` pins it at half render scale and Half
-SSR: a glossy floor's reflection of a lit sphere carries no structure at the texel period (the
-fourth difference along every row and column of floor stays a small, steady fraction of the peak
-at every quarter-texel camera offset — a bilinear read leaves about a quarter of a reflected step's
-height there, moving with the grid phase), and a polished panel on a polished floor takes none of
-the floor's reflection beside its edges while the floor keeps all of it.
-
-#### A rough reflection stops at silhouettes too
-
-A coarse level is a blur of every trace texel under its kernel, so read plainly it carries a floor's
-reflection onto the object standing on it and dilutes the floor's with the object's empty one.
-Weighting coarse texels by a surface needs to know which surfaces each one averaged, which is what
-the surface chain carries: over its coverage, a texel's mean device depth and its variance.
-
-- **A coarse texel agrees when its surfaces lie on the pixel's tangent plane.** Its mean depth,
-  reconstructed at the texel's centre, must lie on the plane — device depth is affine in screen
-  position across a plane, so a plane's mean is a point on it at any level — and its spread about
-  that mean, beyond the plane's own (the pixel plane's device-depth gradient times the level's
-  kernel variance, `1.75·(4^L − 1)/3` level-0 texels² per axis), must be within the plane
-  tolerance. A mean alone barely moves for a texel holding a little of a second surface, while the
-  spread grows with the depth step between them, so the spread is what rejects a straddling texel.
-  Both are held to level 0's tolerance at the pixel, not a level-scaled one: a plane's mean lies on
-  the plane at any level, and at coarse levels a floor seen beside an object's lower half lies within
-  a few texel widths of the object's plane. No normal is carried down, so only position is tested;
-  a curved surface's coarse texels drift off its tangent plane, and it reads finer levels.
-- **The weights renormalize over the agreeing texels, and a level is trusted by its agreeing
-  share.** From up to three levels below the one the footprint asks for, each coarser level
-  replaces the read beneath it by how much of its kernel agrees (none below a quarter, all above
-  three quarters), and the `lod` fraction's blend is scaled the same way. Near a silhouette, where
-  a coarse level's texels straddle it, the read leans on finer levels whose texels do not: the
-  reflection blurs less there rather than across it.
-
-It costs up to five coarse reads, each nine chain loads, nine surface loads and two unprojections
-per tap, only on surfaces rough enough to need them. `tests/gpu/ssr_upsample.cpp` pins it on a rough
-panel standing on a rough floor at Half SSR: the panel takes none of the floor's reflection beside
-its edges, and the floor keeps over nine tenths of it — read plainly, the panel takes half and the
-floor keeps half. What it does not change is the trace's own screen-space occlusion: a floor ray
-that passes behind the panel on screen still misses.
-
-#### Under a temporal resolve, a reflection stands at unjittered positions
-
-SSR composites after the TAA resolve, which reconstructs the scene at unjittered positions, but the
-g-buffer and depth it traces are the jittered raster. Traced from that raster as it lies, a
-reflection follows the jitter frame to frame — a mirror magnifies it, by most of a pixel — and
-nothing after the resolve integrates it. So the trace and the composite meet the two frames at
-their ends (`ssr_surface.slang`), and with no temporal resolve `JitterNdc` is zero and both ends
-reduce to the texel as rasterized:
-
-- **The surface is taken on the pixel's unjittered ray.** The texel holding the pixel's unjittered
-  position is the one the jitter moved it into (`uv + JitterNdc / 2`); its depth and normal are
-  point-loaded, and its point is carried along its tangent plane onto the unjittered ray — exact
-  for a plane at any angle. The carry is capped at 16 texel widths: past that the plane is seen
-  edge-on, where the reflected ray runs almost along the view ray and where it starts barely moves
-  what it hits. The trace, the composite's pixel, and every joint tap take the surface this way.
-- **The march stays in the rasterized frame**, through the jittered projection over the jittered
-  depth and max-Z pyramid, where every depth it compares against lies.
-- **The hit is read back where the resolve put it**, `JitterNdc / 2` from where the march found it,
-  since the scene colour the trace reads is the resolve's output.
-
-What this cannot remove is the raster's own coverage: whether a ray grazing a silhouette hits
-depends on which texels the jittered raster covered, and that moves by up to half a texel a frame.
-`tests/gpu/ssr_jitter.cpp` pins the rest: under TAA, through a whole jitter period, a mirror's
-reflected colour borders — inside a surface, where every ray hits — keep to a fraction of a pixel
-of where the render with no anti-aliasing puts them.
-
 ### Depth of field and the physical camera
 
 **Depth of field is a half-resolution ring-gather compute battery** (`DofChain`,
 `Settings.DepthOfField`, **off by default**) whose parameters come from an authored camera rather
-than bare blur knobs. It follows the `SsrChain` template exactly: an owned subsystem, compute
-stages, one fullscreen composite (`DofCompositeScenePass`, `Passes/DofCompositeScenePass.h`)
+than bare blur knobs. It is an owned subsystem with compute stages, one fullscreen composite (`DofCompositeScenePass`, `Passes/DofCompositeScenePass.h`)
 splicing itself in by re-routing the downstream source id, and a `DebugView` arm that force-wires
 the chain independently of the feature toggle. The composite sits **ahead of bloom**, so a
 defocused highlight still blooms.
@@ -1528,8 +1321,7 @@ near over the full-resolution HDR by each layer's coverage, so a zero-coverage t
 value it was.
 
 **The gate carries its own debug arm.** `dofActive` is
-`(Mode == Final && DepthOfField) || Mode == DebugView::CoC` — the SSR gate shape, where the
-disjunct is what lets `DebugView::CoC` force-wire the chain's first two stages **with the feature
+`(Mode == Final && DepthOfField) || Mode == DebugView::CoC`, where the disjunct is what lets `DebugView::CoC` force-wire the chain's first two stages **with the feature
 off** and blit the signed-radius buffer (near ramps red, far ramps blue, in-focus is black),
 normalized against the frame's own clamped `DofMaxCoc` so brightness reads as the fraction of the
 configured budget a texel uses and a shallow budget still fills the ramp.
@@ -1633,8 +1425,8 @@ stand-in depth, re-baked on the source's dirty signal — amortized through `Gen
 one scissor-clipped **tile** of a face per tick, so the per-frame GPU cost is bounded by tile area
 rather than a whole heavy face, the previous cube standing until the new one lands), and both display through the one
 **`SkyboxScenePass`** (a fullscreen pass compositing the cube over the cleared-depth background,
-`discard`ing foreground, writing the same scene-color target lighting wrote so the sky resolves,
-reflects, and tonemaps with the scene). `SkyMode::Direct` keeps the per-pixel passes as the
+`discard`ing foreground, writing the same scene-color target lighting wrote so the sky resolves
+and tonemaps with the scene). `SkyMode::Direct` keeps the per-pixel passes as the
 authored **dynamic** modes — `SkyScenePass` (procedural atmosphere) and `SkyMaterialScenePass`
 (authored material) — for a continuously-animating sky; a direct source **cannot light** (it has
 no cube), so a direct source with a lighting tier degrades to background-only with a one-time
@@ -1838,10 +1630,7 @@ renderer-owned, cross-frame-persisted resource (temporal hi-Z: the test reads la
 so a history-invalid frame — frame 0, the frame after a `Resize`/`Configure`, or a large view
 delta — is frustum-only, never a stale false-cull). Its coarse tail — the smallest levels that fit
 one workgroup's shared memory (`MipTailFirstLevel`) — is reduced by one dispatch
-(`hi_z_reduce_tail.comp`), bit-identical to the per-level reduction. (The SSR chain's own max-Z
-pyramid takes the same treatment — `ssr_hiz_reduce_tail.comp` over the borrowed tail layouts, from
-level 1 on, since level 0 ingests the full-resolution depth through a different footprint — and is
-likewise bit-identical: a max over the same footprints.) **The reduction runs only while
+(`hi_z_reduce_tail.comp`), bit-identical to the per-level reduction. **The reduction runs only while
 the test reads it** — under `CullMode::GPU` with `Occlusion` on (`GpuCullSystem::IsHiZReduced`); any other setting
 declares none of its per-mip passes, and the frame that starts reducing again counts as
 history-invalid, since the pyramid is allocated afresh. **The pyramid is allocated only while it is
@@ -2150,7 +1939,7 @@ but the g-buffer pass stores a channel only when a later pass reads it — on a 
 store at the end of the pass is the bandwidth, and a channel with no reader can end its life in
 tile memory. The decision is `FrameTopology::GBufferStores`, one `GBufferChannelState`
 (`Stored` / `Discarded`) per colour channel, resolved with the rest of the topology. Albedo, normal,
-ORM and emissive are always stored (lighting reads them; SSR and the debug arms read some), as is
+ORM and emissive are always stored (lighting reads them; the debug arms read some), as is
 depth. **Velocity is stored only when the TAA/TAAU resolve or the `MotionVectors` arm is wired**;
 under every other configuration — the default `AntiAliasingMode::None`, FXAA, CMAA2, every other
 debug arm — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
@@ -2336,7 +2125,7 @@ media, a named future increment, not this.
   draws into the lit scene color **after deferred lighting and the sky composite** (so it attenuates
   the backdrop behind it) and **before the refraction grab and the translucent pass**. Everything
   downstream then treats it as scene content: the pre-translucent **refraction grab captures it**, a
-  **translucent blends over it**, **SSR reflects it**, and — the load-bearing one — the **TAA
+  **translucent blends over it**, and — the load-bearing one — the **TAA
   resolve is the march jitter's integrator** (the per-pixel start offset is dithered and temporally
   rotated by the view block's `FrameIndex` precisely so TAA converges it to a smooth result; without TAA the march reads as
   per-pixel noise that a consumer must hide with a high step count).
@@ -2407,7 +2196,7 @@ barrier).
   unset one is `ApplyRenderLook` alone) from the current settings and `Configure`s the result, which
   no-ops an unchanged topology; then, every frame, it writes the resolved per-frame fields over the
   pushed view (`CopyLookKnobs`). So a per-frame look field (exposure, a bloom knob, the ambient
-  floor) is live on the next frame with no rebuild, a topology field (bloom, shadows, SSR) costs one
+  floor) is live on the next frame with no rebuild, a topology field (bloom, shadows, AO) costs one
   rebuild — the same frame-boundary recompile a `Sky` source change takes — and an unchanged look
   costs a comparison. A scene with no look renders the pushed values on the topology last
   configured: an editor's prefab preview, or a consumer driving `SetViewState` itself. Because a
@@ -2464,7 +2253,7 @@ set bit per reflected field, applied by copying exactly the set fields. That is 
 `SceneRendererSettings` and `ViewState` are reflected (the latter over its knobs only) — the set, and
 the engine's `UI::RenderSettingsEditor` that drives it, enumerate the fields rather than listing
 them, so a field added to either struct is overridable and editable with no other change. The GPU
-loop bounds (`SsrMaxSteps`, `DofMaxCoc`, `DofRingCount`) are clamped again after the overrides. The
+loop bounds (`DofMaxCoc`, `DofRingCount`) are clamped again after the overrides. The
 layer is runtime-only — never saved, never replicated — and lasts until cleared or until the viewport
 is destroyed. `tests/unit/viewport_debug_overrides.cpp` pins the set's semantics device-free;
 `tests/gpu/render_look_resolve.cpp` pins that an override holds against a resolver through a look
@@ -2757,8 +2546,8 @@ scene, it moves no spatial version, so the broadphase treats a **changed** exclu
 rebuild trigger. `Entity::Null` (the default) excludes nothing and gathers exactly what it gathered
 before, so no other view is affected.
 
-**A capture's batteries are lean, and shadows are the one an interior probe asks back.** Bloom, AO,
-SSR and TAA are dropped unconditionally — the capture samples pre-tonemap HDR, so the post chain
+**A capture's batteries are lean, and shadows are the one an interior probe asks back.** Bloom, AO
+and TAA are dropped unconditionally — the capture samples pre-tonemap HDR, so the post chain
 never reaches its output, and the rest is cost multiplied across the faces. Shadows are dropped by
 default for the same reason, but they are the one battery with a case where the omission is
 *visible*: an **enclosed interior** captured without them is lit by the directional source as though
@@ -2824,7 +2613,7 @@ the capture pre-pass's, extended:
   render and still owes one. Rendering ahead of the viewports is what lets a Gui driver, running in
   the viewport's drive later in the same command buffer, paint this frame's render.
 - **A lean renderer, pooled.** `PortraitRenderer` (`src/Renderer/PortraitRenderer.h`) owns a
-  `SceneRenderer` at the portrait's extent with every view battery off (no bloom, shadows, AO, SSR,
+  `SceneRenderer` at the portrait's extent with every view battery off (no bloom, shadows, AO,
   post effects or anti-aliasing) — `RenderPath::GeometryDepthNormal` for a depth-normal portrait.
   The pool holds released renderers by configuration (`PortraitRendererConfig`: extent and output),
   so a UI opening and closing a portrait builds once; a returned renderer drops the scene it last

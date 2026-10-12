@@ -8,7 +8,6 @@
 
 #include <Veng/Reflection/FieldOverrides.h>
 #include <Veng/Renderer/DofTile.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Viewport.h>
 
 using namespace Veng;
@@ -22,7 +21,7 @@ namespace
     {
         ViewState view;
         view.Exposure = 2.0f;
-        view.SsrMaxDistance = 9000.0f;
+        view.BloomThreshold = 3.0f;
         view.SpecularAntiAliasingVariance = 0.3f;
         view.SpecularAntiAliasingThreshold = 0.25f;
         view.BloomIntensity = 1.5f;
@@ -37,7 +36,7 @@ TEST_CASE("An empty override set leaves its target exactly as it was")
     CHECK(overrides.GetCount() == 0);
 
     SceneRendererSettings settings;
-    settings.SSR = true;
+    settings.DepthOfField = true;
     settings.ShadowResolution = 2048;
     const SceneRendererSettings before = settings;
     overrides.ApplyTo(settings);
@@ -47,28 +46,28 @@ TEST_CASE("An empty override set leaves its target exactly as it was")
 TEST_CASE("A set field wins, every other field keeps the target's value, and clearing returns it")
 {
     FieldOverrides<SceneRendererSettings> overrides;
-    overrides.Set(&SceneRendererSettings::SSR, false);
+    overrides.Set(&SceneRendererSettings::DepthOfField, false);
     overrides.Set(&SceneRendererSettings::Mode, Renderer::DebugView::Normal);
     CHECK(overrides.GetCount() == 2);
-    CHECK(overrides.IsSet(&SceneRendererSettings::SSR));
+    CHECK(overrides.IsSet(&SceneRendererSettings::DepthOfField));
     CHECK_FALSE(overrides.IsSet(&SceneRendererSettings::Bloom));
 
     SceneRendererSettings resolved;
-    resolved.SSR = true;
+    resolved.DepthOfField = true;
     resolved.Bloom = false;
     resolved.ShadowResolution = 512;
 
     SceneRendererSettings effective = resolved;
     overrides.ApplyTo(effective);
-    CHECK_FALSE(effective.SSR);
+    CHECK_FALSE(effective.DepthOfField);
     CHECK(effective.Mode == Renderer::DebugView::Normal);
     CHECK_FALSE(effective.Bloom);
     CHECK(effective.ShadowResolution == 512u);
 
-    overrides.Clear(&SceneRendererSettings::SSR);
+    overrides.Clear(&SceneRendererSettings::DepthOfField);
     effective = resolved;
     overrides.ApplyTo(effective);
-    CHECK(effective.SSR);
+    CHECK(effective.DepthOfField);
     CHECK(effective.Mode == Renderer::DebugView::Normal);
 
     overrides.ClearAll();
@@ -123,7 +122,7 @@ TEST_CASE("Every reflected settings field and view knob can be overridden")
     flipped.ShadowResolution += 1;
     flipped.CascadeSplitLambda += 0.1f;
     flipped.AntiAliasing = Renderer::AntiAliasingMode::TAA;
-    flipped.SsrResolutionScale = SceneRendererSettings::SsrResolution::Full;
+    flipped.Kernel = Renderer::BloomKernel::Kawase;
     flipped.Cull = SceneRendererSettings::CullMode::GPU;
 
     usize moved = 0;
@@ -143,17 +142,15 @@ TEST_CASE("The view override layer wins over a resolved view and clamps its GPU 
     Renderer::ViewportDebugOverrides overrides;
     CHECK(overrides.IsEmpty());
 
-    overrides.View.Set(&ViewState::SsrMaxDistance, 40.0f);
-    overrides.View.Set(&ViewState::SsrMaxSteps, Renderer::SsrMaxStepsCeiling * 4u);
+    overrides.View.Set(&ViewState::BloomThreshold, 0.25f);
     overrides.View.Set(&ViewState::DofRingCount, Renderer::MaxDofRings * 4u);
     overrides.View.Set(&ViewState::DofMaxCoc, Renderer::DofCocCeiling * 4.0f);
     overrides.RenderScale = 0.5f;
-    CHECK(overrides.GetCount() == 5);
+    CHECK(overrides.GetCount() == 4);
 
     ViewState view = ResolvedView();
     overrides.ApplyTo(view);
-    CHECK(view.SsrMaxDistance == 40.0f);
-    CHECK(view.SsrMaxSteps == Renderer::SsrMaxStepsCeiling);
+    CHECK(view.BloomThreshold == 0.25f);
     CHECK(view.DofRingCount == Renderer::MaxDofRings);
     CHECK(view.DofMaxCoc == Renderer::DofCocCeiling);
     CHECK(view.Exposure == ResolvedView().Exposure);
@@ -163,5 +160,5 @@ TEST_CASE("The view override layer wins over a resolved view and clamps its GPU 
     CHECK(overrides.IsEmpty());
     ViewState cleared = ResolvedView();
     overrides.ApplyTo(cleared);
-    CHECK(cleared.SsrMaxDistance == ResolvedView().SsrMaxDistance);
+    CHECK(cleared.BloomThreshold == ResolvedView().BloomThreshold);
 }

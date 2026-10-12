@@ -541,10 +541,10 @@ namespace
     // What a viewport rendered with under its debug overrides, captured inside the run.
     struct Overridden
     {
-        bool ConfiguredSsr = false;
-        bool RenderedSsr = false;
+        bool ConfiguredRefraction = false;
+        bool RenderedRefraction = false;
         bool EffectiveIsRendered = false;
-        f32 SsrMaxDistance = 0.0f;
+        f32 BloomThreshold = 0.0f;
         f32 SpecularVariance = 0.0f;
         uvec2 Allocation{};
     };
@@ -553,11 +553,11 @@ namespace
     {
         const Renderer::ViewState view = viewport.GetEffectiveViewState();
         return Overridden{
-            .ConfiguredSsr = viewport.GetSettings().SSR,
-            .RenderedSsr = viewport.GetRenderer().GetSettings().SSR,
+            .ConfiguredRefraction = viewport.GetSettings().Refraction,
+            .RenderedRefraction = viewport.GetRenderer().GetSettings().Refraction,
             .EffectiveIsRendered =
                 viewport.GetEffectiveSettings() == viewport.GetRenderer().GetSettings(),
-            .SsrMaxDistance = view.SsrMaxDistance,
+            .BloomThreshold = view.BloomThreshold,
             .SpecularVariance = view.SpecularAntiAliasingVariance,
             .Allocation = viewport.GetAllocationExtent(),
         };
@@ -572,14 +572,15 @@ TEST_CASE("A debug override wins over a resolver, a look and a managed push unti
 
     LookApp app(HeadlessInfo(), types, systems);
 
-    // The application's resolve owns SSR and its reach, whatever the look authors; the look owns
-    // the specular anti-aliasing strength, over the managed viewport's default push.
-    constexpr f32 ResolvedReach = 500.0f;
+    // The application's resolve owns refraction and the bloom threshold, whatever the look
+    // authors; the look owns the specular anti-aliasing strength, over the managed viewport's
+    // default push.
+    constexpr f32 ResolvedThreshold = 2.5f;
     constexpr f32 LookVariance = 0.3f;
     app.Resolver = [](const GraphicsResolveInput&, GraphicsResolveOutput& output)
     {
-        output.Settings.SSR = true;
-        output.View.SsrMaxDistance = ResolvedReach;
+        output.Settings.Refraction = true;
+        output.View.BloomThreshold = ResolvedThreshold;
     };
     RenderLook look = AuthoredLook();
     look.SpecularAntiAliasingVariance = LookVariance;
@@ -601,8 +602,8 @@ TEST_CASE("A debug override wins over a resolver, a look and a managed push unti
         {
             fullAllocation = viewport.GetAllocationExtent();
             Renderer::ViewportDebugOverrides overrides;
-            overrides.Settings.Set(&Renderer::SceneRendererSettings::SSR, false);
-            overrides.View.Set(&Renderer::ViewState::SsrMaxDistance, 7.0f);
+            overrides.Settings.Set(&Renderer::SceneRendererSettings::Refraction, false);
+            overrides.View.Set(&Renderer::ViewState::BloomThreshold, 7.0f);
             overrides.View.Set(&Renderer::ViewState::SpecularAntiAliasingVariance, 0.9f);
             overrides.RenderScale = 0.5f;
             viewport.SetDebugOverrides(overrides);
@@ -628,17 +629,17 @@ TEST_CASE("A debug override wins over a resolver, a look and a managed push unti
 
     for (const Overridden* overridden : {&held, &reResolved})
     {
-        CHECK(overridden->ConfiguredSsr);
-        CHECK_FALSE(overridden->RenderedSsr);
+        CHECK(overridden->ConfiguredRefraction);
+        CHECK_FALSE(overridden->RenderedRefraction);
         CHECK(overridden->EffectiveIsRendered);
-        CHECK(overridden->SsrMaxDistance == 7.0f);
+        CHECK(overridden->BloomThreshold == 7.0f);
         CHECK(overridden->SpecularVariance == 0.9f);
         CHECK(overridden->Allocation == fullAllocation / 2u);
     }
 
-    CHECK(cleared.RenderedSsr);
+    CHECK(cleared.RenderedRefraction);
     CHECK(cleared.EffectiveIsRendered);
-    CHECK(cleared.SsrMaxDistance == ResolvedReach);
+    CHECK(cleared.BloomThreshold == ResolvedThreshold);
     CHECK(cleared.SpecularVariance == LookVariance);
     CHECK(cleared.Allocation == fullAllocation);
 }

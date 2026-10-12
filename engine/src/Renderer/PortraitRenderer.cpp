@@ -37,7 +37,6 @@ namespace Veng::Renderer
             settings.Shadows = false;
             settings.PunctualShadows = false;
             settings.AO = false;
-            settings.SSR = false;
             settings.PostProcessEffects = false;
             settings.AntiAliasing = AntiAliasingMode::None;
             return settings;

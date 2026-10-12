@@ -109,15 +109,9 @@ namespace Veng::Renderer
              (sky.LightingCube && (topology.SceneComposited || topology.DebugIblContribution))) &&
             sky.Lighting == SkyLighting::IBL;
 
-        // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
-        // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
-        topology.DebugReflections = settings.Mode == DebugView::Reflections;
-        topology.SsrActive =
-            (settings.Mode == DebugView::Final && settings.SSR) || topology.DebugReflections;
-
-        // Depth of field takes the same gate shape, but the debug arm wires only the chain's first
-        // two stages: the gather, fill, and composite stay off, so inspecting the circle of
-        // confusion never alters the HDR tail.
+        // Depth of field is a Final-only effect plus its own debug arm, which wires only the
+        // chain's first two stages: the gather, fill, and composite stay off, so inspecting the
+        // circle of confusion never alters the HDR tail.
         if (settings.Mode == DebugView::CoC)
         {
             topology.Dof = DofStages::CocOnly;
@@ -137,12 +131,12 @@ namespace Veng::Renderer
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
 
         // The tile cull serves every lighting pass that shades direct light: the composited arms,
-        // and the Reflections and CoC arms, which force-wire lighting as the input they inspect.
+        // and the CoC arm, which force-wires lighting as the input it inspects.
         // The cascade and IBL-contribution variants run the lighting pass but discard its direct
         // term, so a cull there would be work for nothing.
         topology.LightTileCullActive =
-            settings.LightTileCulling && (topology.SceneComposited || topology.DebugReflections ||
-                                          settings.Mode == DebugView::CoC);
+            settings.LightTileCulling &&
+            (topology.SceneComposited || settings.Mode == DebugView::CoC);
 
         return topology;
     }
@@ -165,7 +159,7 @@ namespace Veng::Renderer
 
     bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings)
     {
-        return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() && !settings.SSR &&
+        return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() &&
                !settings.DepthOfField;
     }
 

@@ -7,7 +7,6 @@
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/PointField.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
 #include <Veng/Renderer/Tonemapper.h>
@@ -1293,7 +1292,7 @@ namespace Veng
         f32 CellSize = 8.0f;
         /// @brief Where in the frame the field accumulates (see Renderer::PointFieldPlacement).
         ///
-        /// HdrTail (the default) rides the post-TAA/SSR tail; SceneColor draws into the lit scene
+        /// HdrTail (the default) rides the post-TAA tail; SceneColor draws into the lit scene
         /// color ahead of the translucent pass, so translucents blend over the field and a
         /// refractive material's scene-color grab includes it.
         Renderer::PointFieldPlacement Placement = Renderer::PointFieldPlacement::HdrTail;
@@ -1649,7 +1648,7 @@ namespace Veng
     ///
     /// One per scene: every viewport presenting the scene reads it each frame
     /// (Renderer::Viewport) and resolves it — on change only — into the topology it configures
-    /// (Bloom / Shadows / AO / SSR / …) and the per-frame knobs it writes over each pushed view
+    /// (Bloom / Shadows / AO / …) and the per-frame knobs it writes over each pushed view
     /// (Exposure, BloomThreshold, BloomFireflyCeiling, BloomIntensity, AmbientFloor, …), so a system writing a field here
     /// changes the next frame's render, and a prefab carrying one brings its look into the scene.
     /// With several, the first in pool order wins and a presenting viewport warns once. A level's authored
@@ -1747,38 +1746,6 @@ namespace Veng
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
-        /// @brief Whether screen-space reflections run.
-        ///
-        /// Off matches the renderer's own default. SSR renders the g-buffer at full resolution, so
-        /// it disables the dynamic-resolution sub-rect while active.
-        bool SSR = false;
-        /// @brief SSR reflection mix scale fed into the per-frame SceneView.
-        ///
-        /// Scales the Fresnel-weighted reflection the composite adds back. The default matches the
-        /// renderer's own ViewState default.
-        f32 SsrIntensity = 1.0f;
-        /// @brief SSR maximum ray length in view-space units, fed into the per-frame SceneView.
-        ///
-        /// How far from the reflector a reflected surface may be. A scene whose reflections should
-        /// reach geometry hundreds of metres to kilometres away raises it to that range. The default
-        /// matches the renderer's own ViewState default. @see Renderer::SceneView::SsrMaxDistance
-        f32 SsrMaxDistance = 12.0f;
-        /// @brief SSR view-space depth gap always accepted as a hit, fed into the per-frame SceneView.
-        ///
-        /// The near-range floor of the hit tolerance — at range the tolerance follows the ray's own
-        /// depth travel per step instead. The default matches the renderer's own ViewState default.
-        /// @see Renderer::SceneView::SsrThickness
-        f32 SsrThickness = 0.5f;
-        /// @brief SSR roughness cutoff fed into the per-frame SceneView; rougher surfaces trace no ray.
-        ///
-        /// The default matches the renderer's own ViewState default.
-        f32 SsrMaxRoughness = 0.8f;
-        /// @brief SSR per-ray depth-test budget (and hi-Z probe budget), fed into the per-frame
-        ///        SceneView.
-        ///
-        /// A GPU loop bound: clamped to [1, SsrMaxStepsCeiling] on the way in, since a cooked level
-        /// or prefab is untrusted input. @see Renderer::SceneView::SsrMaxSteps
-        u32 SsrMaxSteps = Renderer::DefaultSsrMaxSteps;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale, fed into the
         ///        per-frame SceneView; zero turns it off.
         ///
@@ -2389,23 +2356,6 @@ VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.M
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(AO, .DisplayName = "SSAO")
-VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
-VE_FIELD(SsrIntensity, .DisplayName = "SSR Intensity", .Display = {.Min = 0.0})
-VE_FIELD(SsrMaxDistance, .DisplayName = "SSR Max Distance",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider,
-                     .Min = 0.1,
-                     .Max = 100000.0,
-                     .Logarithmic = true})
-VE_FIELD(SsrThickness, .DisplayName = "SSR Thickness",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider,
-                     .Min = 0.001,
-                     .Max = 1000.0,
-                     .Logarithmic = true})
-VE_FIELD(SsrMaxRoughness, .DisplayName = "SSR Max Roughness",
-         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
-VE_FIELD(SsrMaxSteps, .DisplayName = "SSR Max Steps",
-         .Display = {
-             .Min = 1, .Max = static_cast<f64>(::Veng::Renderer::SsrMaxStepsCeiling), .Step = 1.0})
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA Variance",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA Threshold",

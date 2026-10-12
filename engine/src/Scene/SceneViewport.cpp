@@ -6,7 +6,6 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -63,7 +62,6 @@ namespace Veng
         settings.MaxShadowDistance = look.MaxShadowDistance;
         settings.ShadowResolution = look.ShadowResolution;
         settings.AutoExposure = look.AutoExposure;
-        settings.SSR = look.SSR;
         settings.AO = look.AO;
         settings.Refraction = look.Refraction;
         settings.RefractionBlur = look.RefractionBlur;
@@ -82,12 +80,6 @@ namespace Veng
         view.BloomRadius = look.BloomRadius;
         view.LensDirt = look.LensDirt;
         view.LensDirtIntensity = look.LensDirtIntensity;
-        view.SsrIntensity = look.SsrIntensity;
-        view.SsrMaxDistance = look.SsrMaxDistance;
-        view.SsrThickness = look.SsrThickness;
-        view.SsrMaxRoughness = look.SsrMaxRoughness;
-        // A GPU loop bound, clamped here as well as at the push: a cooked level is untrusted input.
-        view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(look.SsrMaxSteps);
         view.SpecularAntiAliasingVariance = look.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = look.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = look.NormalMapAntiAliasingScale;
@@ -118,11 +110,6 @@ namespace Veng
         view.BloomRadius = resolved.BloomRadius;
         view.LensDirt = resolved.LensDirt;
         view.LensDirtIntensity = resolved.LensDirtIntensity;
-        view.SsrIntensity = resolved.SsrIntensity;
-        view.SsrMaxDistance = resolved.SsrMaxDistance;
-        view.SsrThickness = resolved.SsrThickness;
-        view.SsrMaxRoughness = resolved.SsrMaxRoughness;
-        view.SsrMaxSteps = Renderer::ClampSsrMaxSteps(resolved.SsrMaxSteps);
         view.SpecularAntiAliasingVariance = resolved.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = resolved.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = resolved.NormalMapAntiAliasingScale;

@@ -37,8 +37,8 @@ namespace Veng::Renderer
         u32 FaceResolution = 256;
         /// @brief Renderer batteries for the face renders.
         ///
-        /// A capture wants a lean pipeline: the heavy per-view batteries (shadows, AO, TAA,
-        /// SSR) multiply by six faces, and the capture samples the pre-tonemap HDR, so bloom
+        /// A capture wants a lean pipeline: the heavy per-view batteries (shadows, AO, TAA)
+        /// multiply by six faces, and the capture samples the pre-tonemap HDR, so bloom
         /// and tonemap tuning never reach its output.
         SceneRendererSettings Settings;
 

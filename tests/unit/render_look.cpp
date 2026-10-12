@@ -134,11 +134,6 @@ namespace
         look.BloomRadius = 2.0f;
         look.LensDirtIntensity = 0.35f;
         look.AmbientFloor = vec3(0.4f, 0.5f, 0.6f);
-        look.SsrIntensity = 0.6f;
-        look.SsrMaxDistance = 9000.0f;
-        look.SsrThickness = 2.0f;
-        look.SsrMaxRoughness = 0.4f;
-        look.SsrMaxSteps = 640;
         look.SpecularAntiAliasingVariance = 0.45f;
         look.SpecularAntiAliasingThreshold = 0.35f;
         look.NormalMapAntiAliasingScale = 0.6f;
@@ -188,11 +183,6 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.LensDirtIntensity == direct.LensDirtIntensity);
     CHECK(carried.LensDirtIntensity == doctest::Approx(0.35f));
     CHECK(carried.AmbientFloor == direct.AmbientFloor);
-    CHECK(carried.SsrIntensity == direct.SsrIntensity);
-    CHECK(carried.SsrMaxDistance == direct.SsrMaxDistance);
-    CHECK(carried.SsrThickness == direct.SsrThickness);
-    CHECK(carried.SsrMaxRoughness == direct.SsrMaxRoughness);
-    CHECK(carried.SsrMaxSteps == direct.SsrMaxSteps);
     CHECK(carried.SpecularAntiAliasingVariance == direct.SpecularAntiAliasingVariance);
     CHECK(carried.SpecularAntiAliasingThreshold == direct.SpecularAntiAliasingThreshold);
     CHECK(carried.NormalMapAntiAliasingScale == direct.NormalMapAntiAliasingScale);
@@ -216,7 +206,6 @@ TEST_CASE("CopyLookKnobs keeps a Physical camera's lens and clamps what a resolv
     resolved.DofAperture = 0.03f;
     resolved.DofMaxCoc = 4096.0f;
     resolved.DofRingCount = 4096;
-    resolved.SsrMaxSteps = 1u << 20u;
 
     Renderer::ViewState pushed;
     pushed.DofFromPhysicalCamera = true;
@@ -228,26 +217,4 @@ TEST_CASE("CopyLookKnobs keeps a Physical camera's lens and clamps what a resolv
     CHECK(pushed.DofAperture == doctest::Approx(0.008f));
     CHECK(pushed.DofMaxCoc == doctest::Approx(Renderer::DofCocCeiling));
     CHECK(pushed.DofRingCount == Renderer::MaxDofRings);
-    CHECK(pushed.SsrMaxSteps == Renderer::SsrMaxStepsCeiling);
-}
-
-TEST_CASE("ApplyRenderLook bounds the authored SSR step budget, a GPU loop bound")
-{
-    Renderer::SceneRendererSettings settings;
-    Renderer::ViewState view;
-
-    RenderLook look;
-    look.SsrMaxSteps = 0;
-    ApplyRenderLook(look, settings, view);
-    CHECK(view.SsrMaxSteps == 1u);
-
-    look.SsrMaxSteps = 1u << 30u;
-    ApplyRenderLook(look, settings, view);
-    CHECK(view.SsrMaxSteps == Renderer::SsrMaxStepsCeiling);
-
-    // An unauthored look carries the renderer's own default, so a scene authoring none is unchanged.
-    ApplyRenderLook(RenderLook{}, settings, view);
-    CHECK(view.SsrMaxSteps == Renderer::ViewState{}.SsrMaxSteps);
-    CHECK(view.SsrMaxDistance == Renderer::ViewState{}.SsrMaxDistance);
-    CHECK(view.SsrThickness == Renderer::ViewState{}.SsrThickness);
 }

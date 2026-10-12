@@ -474,10 +474,15 @@ extern "C"
 /// Version 113 withdraws it: SceneRendererSettings loses SsrMethod and SsrDensity, and
 /// SsrTraceTargets loses RayLength, Denoised and Variance. A module built at 110 to 112 lays both
 /// out long.
+/// Version 114 removes screen-space reflections: RenderLook loses SSR and its five Ssr* knobs,
+/// SceneView and Viewport::ViewState lose the five Ssr* knobs, SceneRendererSettings loses SSR and
+/// SsrResolutionScale, DebugView loses its Reflections arm, and PassIO loses SsrReflection and its
+/// handle. A module spawns looks, builds views and settings and selects debug views by value, so a
+/// stale module lays every one of them out long and names the later debug views one arm off.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 113u
+#define VENG_MODULE_ABI_VERSION 114u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

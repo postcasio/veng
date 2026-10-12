@@ -2,7 +2,8 @@
 // offset each frame, and the resolve has to take that offset back out: with nothing moving, a
 // converged resolve holds still. Each case renders a brick cube with an emissive face over a
 // gradient sky, plus a SceneColor-placed point-field star, at render scale 1 and 0.5 (and once
-// under TAA with SSR compositing after the resolve), and after three jitter periods asserts that
+// under TAA with a depth-of-field composite after the resolve), and after three jitter periods
+// asserts that
 //  - the motion vectors are zero (nothing moved, so nothing may reproject);
 //  - frame to frame, the resolved HDR changes by less than a small bound inside the cube
 //    (depth > 0) and in the open sky (depth == 0);
@@ -208,11 +209,15 @@ namespace
             Gpu.Context.ImmediateCommands(
                 [&](CommandBuffer& cmd)
                 {
+                    // A zero aperture: a wired depth-of-field chain runs every stage and composites
+                    // without defocusing, so the case measures the resolve's routing through the
+                    // chain's intermediate rather than the blur.
                     renderer.Execute(cmd, Renderer::SceneView{.World = *World,
                                                               .Camera = Camera,
                                                               .Delta = 0.0f,
                                                               .RenderScale = renderScale,
-                                                              .Exposure = 1.0f});
+                                                              .Exposure = 1.0f,
+                                                              .DofAperture = 0.0f});
                 });
         }
 
@@ -244,7 +249,7 @@ namespace
         }
 
         Stability Measure(const AntiAliasingMode mode, const f32 renderScale,
-                          const bool reflections = false)
+                          const bool depthOfField = false)
         {
             const Unique<SceneRenderer> renderer = SceneRenderer::Create({
                 .Context = Gpu.Context,
@@ -256,7 +261,7 @@ namespace
                              .AntiAliasing = mode,
                              .Shadows = false,
                              .PunctualShadows = false,
-                             .SSR = reflections,
+                             .DepthOfField = depthOfField,
                              .AO = false},
             });
 
@@ -494,11 +499,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "taa stability: a static view converges to a still image with SSR after the resolve")
+    "taa stability: a static view converges to a still image with depth of field after the resolve")
 {
-    // SSR composites the resolve's output into the HDR target later in the frame, so the history
-    // has to come from the resolve's own target: one read back from the HDR target would carry the
-    // previous frame's composite, and the resolve would follow the jitter.
+    // Under a composited depth of field the resolve writes the chain's scene intermediate and the
+    // composite writes the HDR target later in the frame, so the history copy reads the resolve's
+    // own target; the image the chain composites still converges like the plain resolve's.
     StabilityScene scene(*this);
     CheckStill(scene.Measure(AntiAliasingMode::TAA, 1.0f, true));
 }

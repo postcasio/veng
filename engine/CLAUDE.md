@@ -373,7 +373,7 @@ once after `OnInitialize`, when the authored bus graph has been adopted.
 **A scene's render look is a component, and every viewport resolves the look of the scene it
 presents.** `RenderLook` (`Veng/Scene/Components.h`; one per scene, the first walked winning with a
 warning, the `Sky` rule) carries the view-wide post and pipeline knobs — exposure and the tone curve,
-auto-exposure, bloom, shadows, AO, SSR, refraction, depth of field, the ambient floor. A level's
+auto-exposure, bloom, shadows, AO, refraction, depth of field, the ambient floor. A level's
 `render` block seeds it (`SeedLevel`), a prefab may carry one, and a system may write it. Each
 `Renderer::Viewport` reads its presented scene's `RenderLook` in `Render`, before the `SceneView` is
 built: when the look differs from the last one it resolved (or `InvalidateLook` was called) it runs
@@ -699,7 +699,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 109** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 114** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

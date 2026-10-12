@@ -55,8 +55,6 @@ namespace Veng::Renderer
             return io.BloomMip0;
         case Source::MotionVectors:
             return io.Velocity;
-        case Source::Reflections:
-            return io.SsrReflection;
         case Source::Emissive:
             return io.GBufferEmissive;
         }
@@ -79,8 +77,6 @@ namespace Veng::Renderer
             return io.BloomMip0Handle;
         case Source::MotionVectors:
             return io.VelocityHandle;
-        case Source::Reflections:
-            return io.SsrReflectionHandle;
         case Source::Emissive:
             return io.EmissiveHandle;
         }

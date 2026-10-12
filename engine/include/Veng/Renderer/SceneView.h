@@ -7,7 +7,6 @@
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/SceneRendererSettings.h>
 #include <Veng/Renderer/ShadowCascades.h>
-#include <Veng/Renderer/SsrLimits.h>
 #include <Veng/Renderer/Tonemapper.h>
 #include <Veng/Renderer/Types.h>
 
@@ -214,8 +213,8 @@ namespace Veng::Renderer
 
         /// @brief The valid extent of the HDR scene colour at the tail anchor; set each Execute.
         ///
-        /// The band between the temporal resolve and the promotion — the SSR composite, the
-        /// HDR-placed point fields, the depth-of-field composite — writes the scene colour, and
+        /// The band between the temporal resolve and the promotion — the HDR-placed point fields,
+        /// the depth-of-field composite — writes the scene colour, and
         /// which extent that is depends on where the promotion sits. With a temporal-upscaling
         /// resolve it is PostResolveExtent (that resolve already reconstructed the allocation);
         /// with a plain temporal resolve it is the full render allocation the resolve reconstructs;
@@ -423,36 +422,6 @@ namespace Veng::Renderer
         /// separately. Zero — the default — skips the term in the shader, so a view with no dirt
         /// renders exactly as one without the feature. A per-frame material parameter: no recompile.
         f32 LensDirtIntensity = 0.0f;
-
-        /// @brief SSR reflection mix scale; pushed to the SSR composite each Execute.
-        ///
-        /// Scales the Fresnel-weighted reflection added back into the scene color. Rides the push
-        /// (no recompile). Ignored when SSR is inactive.
-        f32 SsrIntensity = 1.0f;
-        /// @brief SSR maximum ray length in view-space units; pushed to the SSR trace each Execute.
-        ///
-        /// A ray's screen-space line ends where this length, the near plane or the far plane ends
-        /// it. Raise it to reach surfaces far from the reflector; the trace's empty-space skipping
-        /// keeps a long ray's cost near that of a short one across open screen space.
-        f32 SsrMaxDistance = 12.0f;
-        /// @brief SSR view-space depth gap always accepted as a ray hit; pushed to the SSR trace.
-        ///
-        /// The floor of the hit tolerance. A crossing is also accepted within 1.5 times the depth
-        /// the ray moved since its previous depth test, which grows with distance, so this governs
-        /// near geometry: how thick a thin near occluder is assumed to be before a ray passing
-        /// behind it stops registering it.
-        f32 SsrThickness = 0.5f;
-        /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
-        ///
-        /// The composite fades the reflection out across the top fifth of [0, SsrMaxRoughness], so
-        /// a surface whose roughness crosses the cutoff shows no seam.
-        f32 SsrMaxRoughness = 0.8f;
-        /// @brief SSR per-ray budget: the most depth tests, and separately the most hi-Z probes.
-        ///
-        /// Steps are one reflection-target texel; an empty-space skip costs a probe, not the texels
-        /// it crosses, and the depth-test stride widens only when the remaining tests could not
-        /// otherwise reach the end of the ray. Clamped to [1, SsrMaxStepsCeiling] at the push.
-        u32 SsrMaxSteps = DefaultSsrMaxSteps;
 
         /// @brief Geometric specular anti-aliasing's screen-space variance scale (sigma squared).
         ///

@@ -376,7 +376,6 @@ add_library(veng SHARED
         src/Renderer/TaaResolve.cpp
         src/Renderer/PostResolveUpscale.cpp
         src/Renderer/AaResolve.cpp
-        src/Renderer/SsrChain.cpp
         src/Renderer/DofChain.cpp
         src/Renderer/HalfResTranslucency.cpp
         src/Renderer/RefractionGrab.cpp
