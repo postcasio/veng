@@ -1,5 +1,5 @@
-// The screen-space reflection chain's classify-and-generate passes on a real device, driven on a
-// synthetic g-buffer in a graph of their own so every input texel is known:
+// The screen-space reflection chain on a real device, driven on a synthetic g-buffer in a graph of
+// its own so every input texel is known:
 //   - every depth-hierarchy texel is the nearest (reverse-Z: largest) of its parent level's 2×2
 //     children, a child past the parent's extent counting as 0, at odd extents too;
 //   - the classifier lists exactly the pixels its rule selects, each once with its quad-copy flags,
@@ -8,7 +8,11 @@
 //     arguments and the rotated counters are the reference formula of those counts; a rough
 //     reflective pixel holds the environment times the IBL factor and every other pixel zero;
 //   - the blue-noise tile is the sampler's formula over the cooked tables, within [0, 1];
-//   - a renderer with SSR off records none of the chain's passes, and with it on records them all.
+//   - on a mirror floor beside a small lit sphere, the intersection's radiance is finite and
+//     non-negative everywhere, a ray leaving the screen holds exactly the environment term, and
+//     the floor reflects the sphere; on a glossy floor every quad copy holds its base ray's value;
+//   - a renderer with SSR off records none of the chain's passes, and with it on records them all
+//     and leaves finite radiance, with temporal anti-aliasing off and on.
 // The expected sets are the reference's selection rule, written out per pixel.
 
 #include <algorithm>
@@ -16,6 +20,7 @@
 #include <cmath>
 #include <cstring>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include <glm/gtc/packing.hpp>
@@ -231,10 +236,41 @@ namespace
         return values;
     }
 
-    // The synthetic g-buffer, an environment cube of one colour, and a chain to run over them.
+    // One frame's synthetic g-buffer and lit colour, a value per pixel in row-major order.
+    struct SyntheticFrame
+    {
+        uvec2 Extent{0};
+        std::vector<f32> Depth;
+        std::vector<vec3> Normal;
+        std::vector<u8> Perceptual;
+        std::vector<vec3> Color;
+    };
+
+    // The hashed g-buffer: an upward normal everywhere, the roughness of each pixel's kind, and no
+    // lit colour.
+    SyntheticFrame HashedFrame(const uvec2 extent, std::vector<f32> depth)
+    {
+        SyntheticFrame frame{.Extent = extent, .Depth = std::move(depth)};
+        const usize pixels = static_cast<usize>(extent.x) * extent.y;
+        frame.Normal.assign(pixels, vec3(0.0f, 1.0f, 0.0f));
+        frame.Color.assign(pixels, vec3(0.0f));
+        frame.Perceptual.resize(pixels);
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                frame.Perceptual[static_cast<usize>(y) * extent.x + x] =
+                    PerceptualByKind[static_cast<usize>(KindAt(x, y))];
+            }
+        }
+        return frame;
+    }
+
+    // A synthetic frame, an environment cube of one colour, and a chain to run over them.
     struct ChainHarness
     {
         static constexpr vec3 EnvironmentColor{0.25f, 0.5f, 1.0f};
+        static constexpr f32 IblFactor = 2.0f;
 
         Context& Ctx;
         uvec2 Extent;
@@ -242,41 +278,51 @@ namespace
         Ref<ImageView> Depth;
         Ref<ImageView> Normal;
         Ref<ImageView> Material;
+        Ref<ImageView> Color;
         TextureHandle DepthHandle;
         TextureHandle NormalHandle;
         TextureHandle MaterialHandle;
+        TextureHandle ColorHandle;
 
         ChainHarness(Context& context, AssetManager& assets, const uvec2 extent,
                      const std::vector<f32>& depth)
-            : Ctx(context), Extent(extent)
+            : ChainHarness(context, assets, HashedFrame(extent, depth))
         {
-            const usize pixels = static_cast<usize>(extent.x) * extent.y;
+        }
+
+        ChainHarness(Context& context, AssetManager& assets, const SyntheticFrame& frame)
+            : Ctx(context), Extent(frame.Extent)
+        {
+            const usize pixels = static_cast<usize>(Extent.x) * Extent.y;
             std::vector<u16> normals(pixels * 4);
             std::vector<u8> material(pixels * 4);
-            for (u32 y = 0; y < extent.y; ++y)
+            std::vector<u16> color(pixels * 4);
+            for (usize i = 0; i < pixels; ++i)
             {
-                for (u32 x = 0; x < extent.x; ++x)
+                for (u32 c = 0; c < 3; ++c)
                 {
-                    const usize i = static_cast<usize>(y) * extent.x + x;
-                    normals[i * 4 + 0] = glm::packHalf1x16(0.0f);
-                    normals[i * 4 + 1] = glm::packHalf1x16(1.0f);
-                    normals[i * 4 + 2] = glm::packHalf1x16(0.0f);
-                    normals[i * 4 + 3] = glm::packHalf1x16(0.0f);
-                    material[i * 4 + 0] = 255;
-                    material[i * 4 + 1] = PerceptualByKind[static_cast<usize>(KindAt(x, y))];
-                    material[i * 4 + 2] = 0;
-                    material[i * 4 + 3] = 0;
+                    normals[i * 4 + c] = glm::packHalf1x16(frame.Normal[i][c]);
+                    color[i * 4 + c] = glm::packHalf1x16(frame.Color[i][c]);
                 }
+                normals[i * 4 + 3] = glm::packHalf1x16(0.0f);
+                color[i * 4 + 3] = glm::packHalf1x16(1.0f);
+                material[i * 4 + 0] = 255;
+                material[i * 4 + 1] = frame.Perceptual[i];
+                material[i * 4 + 2] = 0;
+                material[i * 4 + 3] = 0;
             }
-            Depth = Upload("SSR Test Depth", Format::R32Sfloat, std::as_bytes(std::span(depth)));
+            Depth =
+                Upload("SSR Test Depth", Format::R32Sfloat, std::as_bytes(std::span(frame.Depth)));
             Normal =
                 Upload("SSR Test Normal", Format::RGBA16Sfloat, std::as_bytes(std::span(normals)));
             Material =
                 Upload("SSR Test Material", Format::RGBA8Unorm, std::as_bytes(std::span(material)));
+            Color = Upload("SSR Test Color", Format::RGBA16Sfloat, std::as_bytes(std::span(color)));
             BindlessRegistry& bindless = context.GetBindlessRegistry();
             DepthHandle = bindless.Register(Depth);
             NormalHandle = bindless.Register(Normal);
             MaterialHandle = bindless.Register(Material);
+            ColorHandle = bindless.Register(Color);
 
             const Ref<Image> cube =
                 Image::Create(context, {
@@ -298,7 +344,7 @@ namespace
                 std::span(reinterpret_cast<const u8*>(texels.data()), texels.size() * sizeof(u16)));
 
             Chain = SsrChain::Create(context, assets);
-            Chain->Recreate(extent);
+            Chain->Recreate(Extent);
             Chain->SetEnvironment(ImageView::Create(context, {
                                                                  .Name = "SSR Test Environment",
                                                                  .Image = cube,
@@ -313,6 +359,7 @@ namespace
             bindless.Release(DepthHandle);
             bindless.Release(NormalHandle);
             bindless.Release(MaterialHandle);
+            bindless.Release(ColorHandle);
         }
 
         ChainHarness(const ChainHarness&) = delete;
@@ -332,7 +379,7 @@ namespace
             return ImageView::Create(Ctx, {.Name = name, .Image = image});
         }
 
-        // Runs one frame of the chain: the constants, the four passes, the frame count.
+        // Runs one frame of the chain: the constants, the passes, the frame count.
         void RunFrame(const SsrFrameInputs& inputs) const
         {
             Chain->PrepareFrame(inputs);
@@ -343,6 +390,7 @@ namespace
                     const ResourceId depthId = graph.Import("Depth");
                     const ResourceId normalId = graph.Import("Normal");
                     const ResourceId materialId = graph.Import("Material");
+                    const ResourceId colorId = graph.Import("Color");
                     Chain->Import(graph);
                     Chain->Declare(graph, SsrGraphInputs{
                                               .Depth = depthId,
@@ -351,11 +399,14 @@ namespace
                                               .DepthHandle = DepthHandle,
                                               .NormalHandle = NormalHandle,
                                               .MaterialHandle = MaterialHandle,
+                                              .Color = colorId,
+                                              .ColorHandle = ColorHandle,
                                           });
                     std::vector<RenderGraph::ImportBinding> bindings{
                         {.Id = depthId, .View = Depth},
                         {.Id = normalId, .View = Normal},
-                        {.Id = materialId, .View = Material}};
+                        {.Id = materialId, .View = Material},
+                        {.Id = colorId, .View = Color}};
                     Chain->AppendImportBindings(bindings);
                     graph.Compile()->Execute(cmd, bindings);
                 });
@@ -370,10 +421,147 @@ namespace
                                                static_cast<f32>(Extent.x) / Extent.y, 0.1f, 100.0f),
                 .PrevViewProjection = mat4(1.0f),
                 .RenderSize = Extent,
-                .IblFactor = 2.0f,
+                .IblFactor = IblFactor,
             };
         }
     };
+
+    // A floor at y = 0 and a small lit sphere standing above it to the camera's left, seen from
+    // above and in front, with background past the floor's far edge. Every texel is the ray-traced
+    // surface at its pixel centre, through the engine's own projection.
+    struct FloorScene
+    {
+        static constexpr uvec2 Extent{128, 96};
+        static constexpr vec3 SphereCenter{-1.0f, 0.45f, 0.0f};
+        static constexpr f32 SphereRadius = 0.35f;
+        static constexpr f32 FloorFar = 12.0f;
+        static constexpr vec3 SphereColor{6.0f, 0.25f, 0.25f};
+        static constexpr vec3 FloorColor{0.05f, 0.05f, 0.05f};
+
+        CameraView Camera;
+        SyntheticFrame Frame;
+        // Floor pixels whose mirror ray strikes the sphere.
+        std::vector<usize> Reflecting;
+        // Floor pixels right of the camera, whose mirror ray runs away from the sphere and leaves
+        // the screen over floor and background.
+        std::vector<usize> Escaping;
+
+        explicit FloorScene(const u8 floorPerceptual)
+        {
+            Camera.SetPerspective(glm::radians(60.0f),
+                                  static_cast<f32>(Extent.x) / static_cast<f32>(Extent.y), 0.1f,
+                                  100.0f);
+            const vec3 eye{0.0f, 1.5f, 4.0f};
+            Camera.SetView(eye, vec3(0.0f, 0.3f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+            const mat4 viewProjection = Camera.ViewProjection();
+            const mat4 inverse = glm::inverse(viewProjection);
+
+            const usize pixels = static_cast<usize>(Extent.x) * Extent.y;
+            Frame = SyntheticFrame{.Extent = Extent,
+                                   .Depth = std::vector<f32>(pixels, 0.0f),
+                                   .Normal = std::vector<vec3>(pixels, vec3(0.0f)),
+                                   .Perceptual = std::vector<u8>(pixels, 0),
+                                   .Color = std::vector<vec3>(pixels, vec3(0.0f))};
+            for (u32 y = 0; y < Extent.y; ++y)
+            {
+                for (u32 x = 0; x < Extent.x; ++x)
+                {
+                    const usize i = static_cast<usize>(y) * Extent.x + x;
+                    // The engine's NDC runs y-down like UV.
+                    const vec2 ndc = (vec2(x, y) + 0.5f) / vec2(Extent) * 2.0f - 1.0f;
+                    const vec4 far = inverse * vec4(ndc, 0.5f, 1.0f);
+                    const vec3 direction = glm::normalize(vec3(far) / far.w - eye);
+
+                    const f32 sphereT = SphereHit(eye, direction);
+                    const f32 floorT = direction.y < 0.0f ? -eye.y / direction.y : -1.0f;
+                    const vec3 floorPoint = eye + floorT * direction;
+                    const bool onFloor = floorT > 0.0f && -floorPoint.z < FloorFar;
+                    vec3 point{0.0f};
+                    if (sphereT > 0.0f && (!onFloor || sphereT < floorT))
+                    {
+                        point = eye + sphereT * direction;
+                        Frame.Normal[i] = glm::normalize(point - SphereCenter);
+                        Frame.Perceptual[i] = 204;
+                        Frame.Color[i] = SphereColor;
+                    }
+                    else if (onFloor)
+                    {
+                        point = floorPoint;
+                        Frame.Normal[i] = vec3(0.0f, 1.0f, 0.0f);
+                        Frame.Perceptual[i] = floorPerceptual;
+                        Frame.Color[i] = FloorColor;
+                        const vec3 mirrored{direction.x, -direction.y, direction.z};
+                        if (SphereHit(point, mirrored) > 0.0f)
+                        {
+                            Reflecting.push_back(i);
+                        }
+                        else if (point.x > 0.5f)
+                        {
+                            Escaping.push_back(i);
+                        }
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                    const vec4 clip = viewProjection * vec4(point, 1.0f);
+                    Frame.Depth[i] = clip.z / clip.w;
+                }
+            }
+        }
+
+        // The nearest positive distance along a unit ray to the sphere, or -1 for a miss.
+        static f32 SphereHit(const vec3 origin, const vec3 direction)
+        {
+            const vec3 offset = origin - SphereCenter;
+            const f32 b = glm::dot(offset, direction);
+            const f32 c = glm::dot(offset, offset) - SphereRadius * SphereRadius;
+            const f32 discriminant = b * b - c;
+            if (discriminant < 0.0f)
+            {
+                return -1.0f;
+            }
+            const f32 t = -b - std::sqrt(discriminant);
+            return t > 1e-4f ? t : -1.0f;
+        }
+
+        [[nodiscard]] SsrFrameInputs Inputs() const
+        {
+            return SsrFrameInputs{
+                .View = Camera.View(),
+                .Projection = Camera.Projection(),
+                .PrevViewProjection = Camera.ViewProjection(),
+                .RenderSize = Extent,
+                .IblFactor = ChainHarness::IblFactor,
+            };
+        }
+    };
+
+    // The radiance target a frame wrote, as RGBA halves widened to floats.
+    std::vector<vec4> DownloadRadiance(const SsrChain& chain, const u32 index)
+    {
+        const std::vector<u8> bytes = chain.GetRadianceView(index)->GetImage()->Download();
+        const auto* halves = reinterpret_cast<const u16*>(bytes.data());
+        std::vector<vec4> texels(bytes.size() / (4 * sizeof(u16)));
+        for (usize i = 0; i < texels.size(); ++i)
+        {
+            texels[i] = vec4(
+                glm::unpackHalf1x16(halves[i * 4 + 0]), glm::unpackHalf1x16(halves[i * 4 + 1]),
+                glm::unpackHalf1x16(halves[i * 4 + 2]), glm::unpackHalf1x16(halves[i * 4 + 3]));
+        }
+        return texels;
+    }
+
+    bool FiniteAndNonNegative(const std::vector<vec4>& texels)
+    {
+        return std::ranges::all_of(texels,
+                                   [](const vec4 texel)
+                                   {
+                                       return std::isfinite(texel.r) && std::isfinite(texel.g) &&
+                                              std::isfinite(texel.b) && std::isfinite(texel.a) &&
+                                              glm::all(glm::greaterThanEqual(texel, vec4(0.0f)));
+                                   });
+    }
 
     std::vector<f32> SyntheticDepth(const uvec2 extent)
     {
@@ -551,8 +739,9 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
         std::ranges::sort(tileList);
         CHECK(tileList == expected.Tiles);
 
-        // A rough reflective pixel holds the environment times the IBL factor; every other pixel
-        // holds zero. The roughness the classifier read is stored in alpha.
+        // A rough reflective pixel holds the environment times the IBL factor and a background
+        // pixel zero; a glossy one is the intersection's, which the cases below check. The
+        // roughness the classifier read is stored in alpha.
         const std::vector<u8> radiance =
             chain.GetRadianceView(radianceIndex)->GetImage()->Download();
         const std::vector<u8> roughness = chain.GetExtractedRoughnessView()->GetImage()->Download();
@@ -566,14 +755,19 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
             {
                 const usize i = static_cast<usize>(y) * Extent.x + x;
                 const Kind kind = KindAt(x, y);
+                const bool classified = kind == Kind::Rough || kind == Kind::Background;
                 const vec3 expectedRadiance =
-                    kind == Kind::Rough ? ChainHarness::EnvironmentColor * 2.0f : vec3(0.0f);
+                    kind == Kind::Rough ? ChainHarness::EnvironmentColor * ChainHarness::IblFactor
+                                        : vec3(0.0f);
                 for (u32 channel = 0; channel < 3; ++channel)
                 {
                     const f32 value = glm::unpackHalf1x16(halves[i * 4 + channel]);
                     finite = finite && std::isfinite(value) && value >= 0.0f;
-                    radianceError =
-                        std::max(radianceError, std::abs(value - expectedRadiance[channel]));
+                    if (classified)
+                    {
+                        radianceError =
+                            std::max(radianceError, std::abs(value - expectedRadiance[channel]));
+                    }
                 }
                 roughnessError =
                     std::max(roughnessError, std::abs(roughness[i] / 255.0f - AlphaOf(kind)));
@@ -639,6 +833,81 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     CHECK(worst <= 1.0f / 255.0f + 1e-4f);
 }
 
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr chain: a mirror floor reflects a small sphere and falls back to the "
+                  "environment off screen")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const FloorScene scene(0);
+    REQUIRE(scene.Reflecting.size() >= 8);
+    REQUIRE(scene.Escaping.size() >= 8);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const u32 radianceIndex = harness.Chain->GetRadianceIndex();
+    harness.RunFrame(scene.Inputs());
+    const std::vector<vec4> radiance = DownloadRadiance(*harness.Chain, radianceIndex);
+
+    CHECK(FiniteAndNonNegative(radiance));
+
+    // A ray that leaves the screen has confidence 0, so it holds the environment along it times
+    // the IBL factor, exactly; the cube is one colour, so that is the same for every direction.
+    const vec3 environment = ChainHarness::EnvironmentColor * ChainHarness::IblFactor;
+    usize notEnvironment = 0;
+    for (const usize i : scene.Escaping)
+    {
+        notEnvironment += vec3(radiance[i]) == environment ? 0u : 1u;
+    }
+    CHECK(notEnvironment == 0);
+
+    // The sphere is in range of the floor, so some of the floor under it reads its colour back.
+    const usize reflected = std::ranges::count_if(scene.Reflecting, [&](const usize i)
+                                                  { return radiance[i].r > environment.r + 0.1f; });
+    CHECK(reflected > 0);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr chain: every quad neighbour a ray copies to holds that ray's value")
+{
+    AssetManager assets(Context, Tasks, Types);
+    // Perceptual 0.3 (alpha 0.09): glossy, under the threshold, and not a mirror, so one ray per
+    // quad is traced and copied to the other three.
+    const FloorScene scene(77);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    const u32 radianceIndex = harness.Chain->GetRadianceIndex();
+    SsrFrameInputs inputs = scene.Inputs();
+    inputs.SamplesPerQuad = 1;
+    harness.RunFrame(inputs);
+    const std::vector<vec4> radiance = DownloadRadiance(*harness.Chain, radianceIndex);
+    CHECK(FiniteAndNonNegative(radiance));
+
+    const u32 rays = Words(harness.Chain->GetRayCounter()->Download())[1];
+    std::vector<u32> rayList = Words(harness.Chain->GetRayList()->Download());
+    rayList.resize(std::min<usize>(rays, rayList.size()));
+    const auto At = [&](const u32 x, const u32 y)
+    { return radiance[static_cast<usize>(y) * FloorScene::Extent.x + x]; };
+    usize copies = 0;
+    usize mismatches = 0;
+    for (const u32 ray : rayList)
+    {
+        const u32 x = ray & 0x7FFFu;
+        const u32 y = (ray >> 15) & 0x3FFFu;
+        const std::array<std::pair<bool, uvec2>, 3> targets{
+            std::pair{((ray >> 29) & 1u) != 0u, uvec2(x ^ 1u, y)},
+            std::pair{((ray >> 30) & 1u) != 0u, uvec2(x, y ^ 1u)},
+            std::pair{((ray >> 31) & 1u) != 0u, uvec2(x ^ 1u, y ^ 1u)},
+        };
+        for (const auto& [copied, target] : targets)
+        {
+            if (copied)
+            {
+                ++copies;
+                mismatches += At(target.x, target.y) == At(x, y) ? 0u : 1u;
+            }
+        }
+    }
+    REQUIRE(copies > 0);
+    CHECK(mismatches == 0);
+}
+
 TEST_CASE_FIXTURE(
     Test::GpuFixture,
     "ssr chain: a renderer records the chain's passes with SSR on and none with it off")
@@ -650,16 +919,26 @@ TEST_CASE_FIXTURE(
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    constexpr std::array<string_view, 4> Passes{"SSR Depth Downsample", "SSR Classify Tiles",
+    constexpr std::array<string_view, 5> Passes{"SSR Depth Downsample", "SSR Classify Tiles",
                                                 "SSR Prepare Blue Noise",
-                                                "SSR Prepare Indirect Args"};
-    for (const bool ssr : {false, true})
+                                                "SSR Prepare Indirect Args", "SSR Intersect"};
+    struct Case
     {
+        bool Ssr;
+        AntiAliasingMode AntiAliasing;
+    };
+    for (const Case c : {Case{.Ssr = false, .AntiAliasing = AntiAliasingMode::None},
+                         Case{.Ssr = true, .AntiAliasing = AntiAliasingMode::None},
+                         Case{.Ssr = true, .AntiAliasing = AntiAliasingMode::TAA}})
+    {
+        const bool ssr = c.Ssr;
         CAPTURE(ssr);
+        CAPTURE(static_cast<u32>(c.AntiAliasing));
         SceneRendererSettings settings;
         settings.Shadows = false;
         settings.AO = false;
         settings.SSR = ssr;
+        settings.AntiAliasing = c.AntiAliasing;
         const Unique<SceneRenderer> renderer = SceneRenderer::Create({
             .Context = Context,
             .Assets = assets,
@@ -677,6 +956,20 @@ TEST_CASE_FIXTURE(
         {
             CAPTURE(pass);
             CHECK(renderer->DidRecordPassLastFrame(pass) == ssr);
+        }
+        const Ref<ImageView> radiance = renderer->GetSsrRadianceView();
+        REQUIRE((radiance != nullptr) == ssr);
+        if (radiance != nullptr)
+        {
+            const std::vector<u8> bytes = radiance->GetImage()->Download();
+            const auto* halves = reinterpret_cast<const u16*>(bytes.data());
+            bool finite = true;
+            for (usize i = 0; i < bytes.size() / sizeof(u16); ++i)
+            {
+                const f32 value = glm::unpackHalf1x16(halves[i]);
+                finite = finite && std::isfinite(value) && value >= 0.0f;
+            }
+            CHECK(finite);
         }
     }
 }

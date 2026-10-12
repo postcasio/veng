@@ -1315,6 +1315,12 @@ is one of these:
   (`EnvironmentIbl`), sampled the reference's way (mip `sqrt(α) · log2(width)`), and its `iblFactor`
   is the view's IBL intensity — 0 for a view whose ambient arm is not IBL.
 
+The intersection's low-occupancy exit counts the active lanes of the device's own subgroup (32 on
+Apple GPUs), which is the reference's permutation for hardware it cannot force to wave64 — a choice
+among its permutations, not a deviation. The trace reads this frame's lit opaque colour as the
+deferred lighting wrote it, specular IBL included: the reference's sample zeroes its specular IBL
+while SSSR runs (D6), and no per-view flag carries that yet.
+
 The reference's coordinate helpers flip y between UV and NDC (Direct3D's NDC is y-up); the engine's
 NDC is y-down like UV, so the flip is omitted — a change of convention, not of behaviour. A load
 past a texture's extent returns 0 and a store past it is dropped, Direct3D's semantics, which the
@@ -1345,13 +1351,27 @@ order (`ffx_sssr.cpp`):
 4. **`SSR Prepare Indirect Args`** (`ssr_prepare_indirect_args.comp`) — the intersection's dispatch
    at byte 0 (`[(rays + 63) / 64, 1, 1]`) and the denoiser's at byte 12 (`[tiles, 1, 1]`), and the
    counters rotated to `[0, rays, 0, tiles]`.
+5. **`SSR Intersect`** (`ssr_intersect.comp`, D5) — dispatched indirectly from byte 0, 64 threads a
+   group, thread `group·64 + index` tracing ray list entry of that index while it is under
+   `counter[1]`. A ray samples a GGX visible normal (Heitz 2018) with the blue-noise tile's pair at
+   `pixel mod 128`, marches the depth hierarchy from level 0 (`FFX_SSSR_HierarchicalRaymarch`: the
+   initial advance, the 0.005-texel cross epsilon, up a level on a skipped cell to at most level 6,
+   down on a crossing, at most `SsrMaxTraversalIntersections` iterations, and — mirrors excepted —
+   an early exit once the subgroup's active lanes fall to `SsrMinTraversalOccupancy`), and weighs
+   the hit by `ValidateHit`: zero off screen, within two pixels of the origin, on background
+   (level 1 depth 0) or on a back face, else `vignette · (1 − smoothstep(0, thickness, d))²`, `d`
+   the view-space distance from the level-1 surface. Radiance A gets
+   `lerp(env(dir, mip 0) · iblFactor, litColour(hit), confidence)` in rgb (the lit colour a point
+   load, read only when confidence > 0) and the ray's world-space length in a, at the ray's pixel
+   and at each quad neighbour its copy flags name. The reference's `valid_hit` is always true and
+   is kept so.
 
 **Resources** (all render-allocation sized unless stated; "persistent" outlives the frame):
 
 | Resource | Format | Lifetime | Graph id |
 |---|---|---|---|
 | Depth hierarchy | `R32Sfloat`, `min(7, ⌈log2 max(w,h)⌉)` levels | per frame, overwritten | `GetDepthHierarchyId()` (per level) |
-| Radiance 0 / 1 | `RGBA16Sfloat` | persistent ping-pong, zeroed at creation | `GetRadianceId()` binds A |
+| Radiance 0 / 1 | `RGBA16Sfloat`: rgb radiance, a ray length | persistent ping-pong, zeroed at creation | `GetRadianceId()` binds A |
 | Variance 0 / 1 | `R16Sfloat` | persistent ping-pong, zeroed at creation | `GetVarianceHistoryId()` binds B |
 | Extracted roughness | `R8Unorm` (α) | per frame | `GetExtractedRoughnessId()` |
 | Blue noise | `RG8Unorm`, 128² | per frame | `GetBlueNoiseId()` |
@@ -1362,16 +1382,30 @@ order (`ffx_sssr.cpp`):
 | Sobol / scrambling tables | `R32Uint`, 256² / 512×256 | static | not imported |
 | Constants (`SsrConstants`) | std140, one region per frame in flight | per frame | dynamic UBO |
 
+The chain reads the g-buffer's depth, world normal and ORM, and the lit colour, through
+`SsrGraphInputs`; `SsrScenePass` hands it `PassIO::Hdr` / `HdrHandle`, the target the opaque
+lighting and the sky wrote at that point in the list (the TAA lit target under TAA, the DoF scene
+target under a composited DoF).
+
+**What radiance A holds per pixel after the intersection:** a traced pixel and every quad neighbour
+its ray copies to hold the ray's result (rgb radiance, a ray length); a rough reflective pixel holds
+classify's environment along its mirror direction (a 0); every other pixel holds zero — background,
+off-screen, and a glossy pixel that neither traced nor was copied to (its quad's base pixel was not
+glossy and reflective). `SceneRenderer::GetSsrRadianceView()` returns the target the last `Execute`
+wrote.
+
 The ping-pong follows the reference's parity: on an odd frame index radiance A is target 0 and the
 variance history B is target 1; on an even one, 1 and 0. A `Recreate` at a new extent zeroes the
 radiance and variance targets and restarts the frame index — the reference's first-frame clear. The
 per-frame tunables (`SsrSamplesPerQuad`, `SsrRoughnessThreshold`, `SsrVarianceThreshold`,
-`SsrVarianceGuidedTracing`) ride `SceneView` / `ViewState` / `RenderLook` like the other per-frame
-knobs; the reference's other tunables (temporal stability 0.7, thickness 0.015, 128 traversal
-iterations, occupancy 4, most detailed mip 0) are its defaults in the constants block. No pass reads
-the chain's outputs, and nothing writes the variance targets, so the variance-guided path sees zero
-history. `tests/gpu/ssr_chain.cpp` drives the passes on a
-synthetic g-buffer and checks each output against the reference's rule.
+`SsrVarianceGuidedTracing`, `SsrDepthBufferThickness`, `SsrMaxTraversalIntersections`,
+`SsrMinTraversalOccupancy` — the reference sample's UI set, with its defaults and ranges) ride
+`SceneView` / `ViewState` / `RenderLook` like the other per-frame knobs; the reference's other
+tunables (temporal stability 0.7, most detailed mip 0) are its defaults in the constants block. No
+pass reads the chain's outputs, and nothing writes the variance targets, so the variance-guided path
+sees zero history. `tests/gpu/ssr_chain.cpp` drives the passes on a synthetic g-buffer and checks
+each output against the reference's rule, and the intersection on a mirror floor beside a lit
+sphere.
 
 ### Depth of field and the physical camera
 

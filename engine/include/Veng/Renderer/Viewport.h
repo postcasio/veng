@@ -160,6 +160,18 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::SsrVarianceGuidedTracing
         bool SsrVarianceGuidedTracing = true;
+        /// @brief How far behind the depth buffer a screen-space reflection hit still counts.
+        ///
+        /// @see SceneView::SsrDepthBufferThickness
+        f32 SsrDepthBufferThickness = 0.015f;
+        /// @brief The iterations a screen-space reflection ray's march takes at most.
+        ///
+        /// @see SceneView::SsrMaxTraversalIntersections
+        u32 SsrMaxTraversalIntersections = 128;
+        /// @brief The active subgroup lanes below which a glossy reflection ray's march stops.
+        ///
+        /// @see SceneView::SsrMinTraversalOccupancy
+        u32 SsrMinTraversalOccupancy = 4;
         /// @brief Depth-of-field focus plane distance in metres.
         ///
         /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by
@@ -1452,6 +1464,16 @@ VE_FIELD(SsrVarianceThreshold, .DisplayName = "SSR variance threshold",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.01, .Precision = 4},
          .Category = "Screen-space reflections")
 VE_FIELD(SsrVarianceGuidedTracing, .DisplayName = "SSR variance-guided tracing",
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrDepthBufferThickness, .DisplayName = "SSR depth buffer thickness",
+         .Tooltip = "View-space distance behind the depth buffer a reflection hit still counts",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.03, .Precision = 4},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrMaxTraversalIntersections, .DisplayName = "SSR max traversal iterations",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 256.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrMinTraversalOccupancy, .DisplayName = "SSR min traversal occupancy",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 32.0},
          .Category = "Screen-space reflections")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF focus distance",
          .Display = {.Min = 0.01, .Max = 1000.0}, .Category = "Depth of field")

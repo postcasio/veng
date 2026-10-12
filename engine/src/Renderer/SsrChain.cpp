@@ -34,6 +34,7 @@ namespace Veng::Renderer
         constexpr AssetId ClassifyTilesCompId{0x8C382FAB5A18F8C8ULL};
         constexpr AssetId PrepareBlueNoiseCompId{0xFEB489746A920429ULL};
         constexpr AssetId PrepareIndirectArgsCompId{0x4E213E0E322BFDDEULL};
+        constexpr AssetId IntersectCompId{0xAFE1A70F03527034ULL};
         constexpr AssetId BlueNoiseTablesId{0xFC0C39061564BE4BULL};
 
         // The Sobol table's extent (256 samples of 256 dimensions) and the scrambling tile's (an
@@ -43,9 +44,6 @@ namespace Veng::Renderer
 
         // The reference's defaults for the tunables the view does not carry.
         constexpr f32 DefaultTemporalStabilityFactor = 0.7f;
-        constexpr f32 DefaultDepthBufferThickness = 0.015f;
-        constexpr u32 DefaultMaxTraversalIntersections = 128;
-        constexpr u32 DefaultMinTraversalOccupancy = 4;
         constexpr u32 DefaultMostDetailedMip = 0;
 
         // The depth-hierarchy push block, matching ssr_depth_downsample.comp PushConstants.
@@ -62,6 +60,13 @@ namespace Veng::Renderer
         {
             u32 NormalTexture;
             u32 MaterialTexture;
+        };
+
+        // The intersection's push block, matching ssr_intersect.comp PushConstants.
+        struct IntersectPush
+        {
+            u32 NormalTexture;
+            u32 ColorTexture;
         };
 
         [[nodiscard]] u32 DivideRoundingUp(const u32 value, const u32 divisor)
@@ -235,6 +240,32 @@ namespace Veng::Renderer
                                               });
         m_IndirectArgsPipeline = CreatePipeline(m_Context, assets, PrepareIndirectArgsCompId,
                                                 "Prepare Indirect Args", m_IndirectArgsLayout);
+
+        m_IntersectSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Intersect Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::SampledImage),
+                                   Binding(2, DescriptorType::Sampler),
+                                   Binding(3, DescriptorType::SampledImage),
+                                   Binding(4, DescriptorType::SampledImage),
+                                   Binding(5, DescriptorType::SampledImage),
+                                   Binding(6, DescriptorType::StorageBuffer),
+                                   Binding(7, DescriptorType::StorageBuffer),
+                                   Binding(8, DescriptorType::StorageImage),
+                               },
+                       });
+        m_IntersectLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Intersect Layout",
+                .DescriptorSetLayouts = {m_IntersectSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<IntersectPush>(ShaderStage::Compute)},
+            });
+        m_IntersectPipeline =
+            CreatePipeline(m_Context, assets, IntersectCompId, "Intersect", m_IntersectLayout);
 
         // The reference's environment sampler: trilinear, clamped in U and V, wrapped in W, with no
         // level clamp.
@@ -480,6 +511,7 @@ namespace Veng::Renderer
             const u32 radiance = parity != 0 ? 0u : 1u;
             const u32 varianceHistory = parity != 0 ? 1u : 0u;
             m_ClassifySets[parity] = nullptr;
+            m_IntersectSets[parity] = nullptr;
             if (m_Environment == nullptr)
             {
                 continue;
@@ -500,6 +532,22 @@ namespace Veng::Renderer
             set->Write(8, m_RayCounter);
             set->Write(9, m_ExtractedRoughness);
             m_ClassifySets[parity] = set;
+
+            const Ref<DescriptorSet> intersect =
+                DescriptorSet::Create(m_Context, {
+                                                     .Name = "SSR Intersect Set",
+                                                     .Layout = m_IntersectSetLayout,
+                                                 });
+            intersect->Write(0, m_Constants, 0, sizeof(SsrConstants));
+            intersect->Write(1, m_Environment);
+            intersect->Write(2, m_EnvironmentSampler);
+            intersect->Write(3, m_DepthHierarchyView);
+            intersect->Write(4, m_ExtractedRoughness);
+            intersect->Write(5, m_BlueNoise);
+            intersect->Write(6, m_RayList);
+            intersect->Write(7, m_RayCounter);
+            intersect->Write(8, m_Radiance[radiance]);
+            m_IntersectSets[parity] = intersect;
         }
 
         m_BlueNoiseSet = DescriptorSet::Create(m_Context, {
@@ -575,12 +623,12 @@ namespace Veng::Renderer
             .InverseRenderSize = vec2(1.0f) / vec2(inputs.RenderSize),
             .IblFactor = inputs.IblFactor,
             .TemporalStabilityFactor = DefaultTemporalStabilityFactor,
-            .DepthBufferThickness = DefaultDepthBufferThickness,
+            .DepthBufferThickness = inputs.DepthBufferThickness,
             .RoughnessThreshold = inputs.RoughnessThreshold,
             .VarianceThreshold = inputs.VarianceThreshold,
             .FrameIndex = m_FrameIndex,
-            .MaxTraversalIntersections = DefaultMaxTraversalIntersections,
-            .MinTraversalOccupancy = DefaultMinTraversalOccupancy,
+            .MaxTraversalIntersections = inputs.MaxTraversalIntersections,
+            .MinTraversalOccupancy = inputs.MinTraversalOccupancy,
             .MostDetailedMip = DefaultMostDetailedMip,
             .SamplesPerQuad = inputs.SamplesPerQuad,
             .TemporalVarianceGuidedTracingEnabled = inputs.VarianceGuidedTracing ? 1u : 0u,
@@ -705,6 +753,43 @@ namespace Veng::Renderer
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
                     cmd.Dispatch(1, 1, 1);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Intersect");
+            builder.IndirectRead(m_IndirectArgsId);
+            builder.StorageBufferRead(m_RayListId);
+            builder.StorageBufferRead(m_RayCounterId);
+            builder.Sample(inputs.Normal);
+            builder.Sample(inputs.Color);
+            for (u32 level = 0; level < levels; ++level)
+            {
+                builder.Sample(m_DepthHierarchyId.Level(level));
+            }
+            builder.Sample(m_ExtractedRoughnessId);
+            builder.Sample(m_BlueNoiseId);
+            // Classify wrote every pixel; this writes the traced pixels and their quad copies over it.
+            builder.StorageWrite(m_RadianceId);
+            const IntersectPush push{
+                .NormalTexture = inputs.NormalHandle.Index,
+                .ColorTexture = inputs.ColorHandle.Index,
+            };
+            builder.Execute(
+                [this, push](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_IntersectPipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_IntersectSets[m_FrameIndex & 1u]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.PushConstants(push);
+                    // The argument pass wrote [(rays + 63) / 64, 1, 1] at byte 0.
+                    cmd.DispatchIndirect(m_IndirectArgs, 0);
                 });
         }
     }

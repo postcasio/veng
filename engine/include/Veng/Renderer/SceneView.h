@@ -473,6 +473,22 @@ namespace Veng::Renderer
         ///
         /// Written to the reflection constants each Execute.
         bool SsrVarianceGuidedTracing = true;
+        /// @brief How far behind the depth buffer, in view-space units, a screen-space reflection
+        ///        hit still counts.
+        ///
+        /// A hit's confidence falls from 1 at the surface to 0 at this distance behind it. Written
+        /// to the reflection constants each Execute.
+        f32 SsrDepthBufferThickness = 0.015f;
+        /// @brief The iterations a screen-space reflection ray's depth-hierarchy march takes at
+        ///        most.
+        ///
+        /// Written to the reflection constants each Execute.
+        u32 SsrMaxTraversalIntersections = 128;
+        /// @brief The active subgroup lanes below which a glossy reflection ray's march stops
+        ///        early; mirror rays always run to the end.
+        ///
+        /// Written to the reflection constants each Execute.
+        u32 SsrMinTraversalOccupancy = 4;
 
         /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
         ///

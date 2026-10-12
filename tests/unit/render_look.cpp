@@ -57,6 +57,9 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.SsrRoughnessThreshold == defaults.SsrRoughnessThreshold);
     CHECK(view.SsrVarianceThreshold == defaults.SsrVarianceThreshold);
     CHECK(view.SsrVarianceGuidedTracing == defaults.SsrVarianceGuidedTracing);
+    CHECK(view.SsrDepthBufferThickness == defaults.SsrDepthBufferThickness);
+    CHECK(view.SsrMaxTraversalIntersections == defaults.SsrMaxTraversalIntersections);
+    CHECK(view.SsrMinTraversalOccupancy == defaults.SsrMinTraversalOccupancy);
     CHECK(settings.SSR == Renderer::SceneRendererSettings{}.SSR);
     // No dirt unless a look asks for it.
     CHECK(view.LensDirtIntensity == 0.0f);
@@ -146,6 +149,9 @@ namespace
         look.SsrRoughnessThreshold = 0.35f;
         look.SsrVarianceThreshold = 0.005f;
         look.SsrVarianceGuidedTracing = false;
+        look.SsrDepthBufferThickness = 0.025f;
+        look.SsrMaxTraversalIntersections = 64;
+        look.SsrMinTraversalOccupancy = 8;
         look.DofFocusDistance = 4.0f;
         look.DofAperture = 0.03f;
         look.DofMaxCoc = 9.0f;
@@ -199,6 +205,9 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.SsrRoughnessThreshold == direct.SsrRoughnessThreshold);
     CHECK(carried.SsrVarianceThreshold == direct.SsrVarianceThreshold);
     CHECK(carried.SsrVarianceGuidedTracing == direct.SsrVarianceGuidedTracing);
+    CHECK(carried.SsrDepthBufferThickness == direct.SsrDepthBufferThickness);
+    CHECK(carried.SsrMaxTraversalIntersections == direct.SsrMaxTraversalIntersections);
+    CHECK(carried.SsrMinTraversalOccupancy == direct.SsrMinTraversalOccupancy);
     CHECK(carried.DofFocusDistance == direct.DofFocusDistance);
     CHECK(carried.DofAperture == direct.DofAperture);
     CHECK(carried.DofMaxCoc == direct.DofMaxCoc);

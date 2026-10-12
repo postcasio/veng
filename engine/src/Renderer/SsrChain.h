@@ -96,9 +96,15 @@ namespace Veng::Renderer
         f32 VarianceThreshold = 0.0f;
         /// @brief SceneView::SsrVarianceGuidedTracing.
         bool VarianceGuidedTracing = true;
+        /// @brief SceneView::SsrDepthBufferThickness.
+        f32 DepthBufferThickness = 0.015f;
+        /// @brief SceneView::SsrMaxTraversalIntersections.
+        u32 MaxTraversalIntersections = 128;
+        /// @brief SceneView::SsrMinTraversalOccupancy.
+        u32 MinTraversalOccupancy = 4;
     };
 
-    /// @brief The g-buffer resources the reflection chain reads, as the graph and bindless see them.
+    /// @brief The frame resources the reflection chain reads, as the graph and bindless see them.
     struct SsrGraphInputs
     {
         /// @brief The depth target.
@@ -113,6 +119,11 @@ namespace Veng::Renderer
         TextureHandle NormalHandle;
         /// @brief The occlusion/roughness/metallic target's bindless slot.
         TextureHandle MaterialHandle;
+        /// @brief This frame's lit opaque colour (HDR, after the deferred lighting and the sky), which
+        ///        a ray's hit reads.
+        ResourceId Color;
+        /// @brief The lit colour's bindless slot.
+        TextureHandle ColorHandle;
     };
 
     /// @brief Owns the screen-space reflection chain: its targets, lists, counters and passes.
@@ -120,10 +131,10 @@ namespace Veng::Renderer
     /// A port of FidelityFX SSSR (SDK v1.1.4) onto the frame graph, its resources at the render
     /// allocation, created only while the renderer wires reflections. The passes it declares, in
     /// the reference's order: the depth hierarchy (one dispatch per level), the tile classifier,
-    /// the blue-noise preparation and the indirect-argument preparation. The radiance and variance
-    /// targets are ping-ponged by the frame's parity, as the reference's host does, and are cleared
-    /// to zero whenever Recreate creates them, the reference's first-frame clear. See the renderer's
-    /// CLAUDE.md for the chain and its deviations from the reference.
+    /// the blue-noise preparation, the indirect-argument preparation and the intersection. The
+    /// radiance and variance targets are ping-ponged by the frame's parity, as the reference's host
+    /// does, and are cleared to zero whenever Recreate creates them, the reference's first-frame
+    /// clear. See the renderer's CLAUDE.md for the chain and its deviations from the reference.
     class SsrChain
     {
     public:
@@ -346,6 +357,13 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_IndirectArgsLayout;
         /// @brief Its set 3: the counters and the arguments.
         Ref<DescriptorSetLayout> m_IndirectArgsSetLayout;
+        /// @brief The intersection's pipeline.
+        Ref<ComputePipeline> m_IntersectPipeline;
+        /// @brief Its layout: set 3 + the normal and lit-colour push block.
+        Ref<PipelineLayout> m_IntersectLayout;
+        /// @brief Its set 3: constants, environment, depth hierarchy, extracted roughness, blue
+        ///        noise, the ray list, the counters, radiance.
+        Ref<DescriptorSetLayout> m_IntersectSetLayout;
 
         /// @brief The environment cube's sampler: trilinear, clamped in U and V, wrapped in W.
         Ref<Sampler> m_EnvironmentSampler;
@@ -395,6 +413,8 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_BlueNoiseSet;
         /// @brief The indirect-argument set.
         Ref<DescriptorSet> m_IndirectArgsSet;
+        /// @brief The intersection's set for each frame parity (radiance A swaps).
+        std::array<Ref<DescriptorSet>, 2> m_IntersectSets;
 
         /// @brief The depth hierarchy's per-level import.
         MipChainId m_DepthHierarchyId;

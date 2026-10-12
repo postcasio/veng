@@ -1774,6 +1774,24 @@ namespace Veng
         /// The default matches the renderer's own ViewState default.
         /// @see Renderer::SceneView::SsrVarianceGuidedTracing
         bool SsrVarianceGuidedTracing = true;
+        /// @brief How far behind the depth buffer a screen-space reflection hit still counts, fed
+        ///        into the per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrDepthBufferThickness
+        f32 SsrDepthBufferThickness = 0.015f;
+        /// @brief The iterations a screen-space reflection ray's march takes at most, fed into the
+        ///        per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrMaxTraversalIntersections
+        u32 SsrMaxTraversalIntersections = 128;
+        /// @brief The active subgroup lanes below which a glossy reflection ray's march stops, fed
+        ///        into the per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrMinTraversalOccupancy
+        u32 SsrMinTraversalOccupancy = 4;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale, fed into the
         ///        per-frame SceneView; zero turns it off.
         ///
@@ -2391,6 +2409,12 @@ VE_FIELD(SsrRoughnessThreshold, .DisplayName = "SSR Roughness Threshold",
 VE_FIELD(SsrVarianceThreshold, .DisplayName = "SSR Variance Threshold",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.01, .Precision = 4})
 VE_FIELD(SsrVarianceGuidedTracing, .DisplayName = "SSR Variance-Guided Tracing")
+VE_FIELD(SsrDepthBufferThickness, .DisplayName = "SSR Depth Buffer Thickness",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.03, .Precision = 4})
+VE_FIELD(SsrMaxTraversalIntersections, .DisplayName = "SSR Max Traversal Iterations",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0, .Max = 256})
+VE_FIELD(SsrMinTraversalOccupancy, .DisplayName = "SSR Min Traversal Occupancy",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0, .Max = 32})
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA Variance",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA Threshold",

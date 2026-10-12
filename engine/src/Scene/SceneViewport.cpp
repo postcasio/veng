@@ -88,6 +88,9 @@ namespace Veng
         view.SsrRoughnessThreshold = look.SsrRoughnessThreshold;
         view.SsrVarianceThreshold = look.SsrVarianceThreshold;
         view.SsrVarianceGuidedTracing = look.SsrVarianceGuidedTracing;
+        view.SsrDepthBufferThickness = look.SsrDepthBufferThickness;
+        view.SsrMaxTraversalIntersections = look.SsrMaxTraversalIntersections;
+        view.SsrMinTraversalOccupancy = look.SsrMinTraversalOccupancy;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -122,6 +125,9 @@ namespace Veng
         view.SsrRoughnessThreshold = resolved.SsrRoughnessThreshold;
         view.SsrVarianceThreshold = resolved.SsrVarianceThreshold;
         view.SsrVarianceGuidedTracing = resolved.SsrVarianceGuidedTracing;
+        view.SsrDepthBufferThickness = resolved.SsrDepthBufferThickness;
+        view.SsrMaxTraversalIntersections = resolved.SsrMaxTraversalIntersections;
+        view.SsrMinTraversalOccupancy = resolved.SsrMinTraversalOccupancy;
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;

@@ -635,6 +635,11 @@
       "id": "0x4E213E0E322BFDDE",
       "type": "Shader",
       "source": "shaders/ssr/ssr_prepare_indirect_args.comp.shader.json"
+    },
+    {
+      "id": "0xAFE1A70F03527034",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_intersect.comp.shader.json"
     }
   ]
 }

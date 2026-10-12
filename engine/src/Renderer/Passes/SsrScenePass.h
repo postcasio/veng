@@ -10,8 +10,8 @@ namespace Veng::Renderer
 
     /// @brief Places the screen-space reflection chain's passes in the renderer's pass order.
     ///
-    /// The chain owns its resources and pipelines; this pass only hands it the g-buffer the
-    /// renderer wired, at the position in the pass list its passes are declared.
+    /// The chain owns its resources and pipelines; this pass only hands it the g-buffer and the lit
+    /// colour the renderer wired, at the position in the pass list its passes are declared.
     class SsrScenePass final : public ScenePass
     {
     public:
@@ -19,7 +19,7 @@ namespace Veng::Renderer
         /// @param chain The chain; must outlive the pass.
         explicit SsrScenePass(SsrChain& chain) : m_Chain(chain) {}
 
-        /// @brief Declares the chain's passes, reading the g-buffer slots of @p io.
+        /// @brief Declares the chain's passes, reading the g-buffer and Hdr slots of @p io.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:

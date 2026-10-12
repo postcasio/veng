@@ -458,6 +458,13 @@ namespace Veng::Renderer
         /// and Configure. Exposed for tests inspecting temporal accumulation.
         [[nodiscard]] Ref<ImageView> GetTaaHistoryView() const;
 
+        /// @brief Returns the screen-space reflection radiance the last Execute's intersection
+        ///        wrote, or null when Settings.SSR does not wire the chain.
+        ///
+        /// RGBA16F at the render allocation: the reflected radiance in rgb, the ray's world-space
+        /// length in a. Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetSsrRadianceView() const;
+
         /// @brief Returns the per-object velocity target (g-buffer channel G3).
         ///
         /// RG screen-space motion vectors written by the surface pass as a fourth g-buffer

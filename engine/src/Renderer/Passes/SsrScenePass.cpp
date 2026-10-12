@@ -13,6 +13,8 @@ namespace Veng::Renderer
                                    .DepthHandle = io.DepthHandle,
                                    .NormalHandle = io.NormalHandle,
                                    .MaterialHandle = io.OrmHandle,
+                                   .Color = io.Hdr,
+                                   .ColorHandle = io.HdrHandle,
                                });
     }
 }

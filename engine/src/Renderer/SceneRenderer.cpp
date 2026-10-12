@@ -1316,7 +1316,7 @@ namespace Veng::Renderer
             .OrmHandle = m_OrmHandle,
             .DepthHandle = m_DepthHandle,
             .Hdr = lightingTargetId,
-            .HdrHandle = m_HdrHandle,
+            .HdrHandle = lightingTargetHandle,
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
             .BloomMip0 = m_Topology->BloomActive ? m_BloomChainId.Level(0) : ResourceId{},
@@ -2662,6 +2662,9 @@ namespace Veng::Renderer
                     .RoughnessThreshold = resolvedView.SsrRoughnessThreshold,
                     .VarianceThreshold = resolvedView.SsrVarianceThreshold,
                     .VarianceGuidedTracing = resolvedView.SsrVarianceGuidedTracing,
+                    .DepthBufferThickness = resolvedView.SsrDepthBufferThickness,
+                    .MaxTraversalIntersections = resolvedView.SsrMaxTraversalIntersections,
+                    .MinTraversalOccupancy = resolvedView.SsrMinTraversalOccupancy,
                 });
             }
         }
@@ -3473,6 +3476,12 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetTaaHistoryView() const
     {
         return m_Taa->GetHistoryView();
+    }
+    Ref<ImageView> SceneRenderer::GetSsrRadianceView() const
+    {
+        // The frame count advanced after the Execute, so the target it wrote is now the history.
+        return m_Ssr != nullptr ? m_Ssr->GetRadianceView(m_Ssr->GetRadianceHistoryIndex())
+                                : nullptr;
     }
     Ref<ImageView> SceneRenderer::GetVelocityView() const
     {

@@ -1950,10 +1950,11 @@ if (VENG_BUILD_TESTS)
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
-            # ssr_chain.cpp drives the screen-space reflections' classify-and-generate passes on a
-            # synthetic g-buffer: the depth hierarchy's reduction, the classifier's ray and tile
-            # lists against the selection rule, the indirect arguments, the blue-noise tile, and a
-            # renderer recording the chain only with SSR on.
+            # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
+            # depth hierarchy's reduction, the classifier's ray and tile lists against the
+            # selection rule, the indirect arguments, the blue-noise tile, the intersection's
+            # environment fallback, reflected hit and quad copies, and a renderer recording the
+            # chain only with SSR on, with and without TAA.
             tests/gpu/ssr_chain.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
