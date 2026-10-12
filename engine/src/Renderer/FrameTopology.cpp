@@ -129,6 +129,7 @@ namespace Veng::Renderer
         topology.RefractionBlurActive = topology.RefractionActive && settings.RefractionBlur;
 
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
+        topology.SsrActive = ResolveSsrActive(settings);
 
         // The tile cull serves every lighting pass that shades direct light: the composited arms,
         // and the CoC arm, which force-wires lighting as the input it inspects.
@@ -167,5 +168,11 @@ namespace Veng::Renderer
     {
         return (settings.Mode == DebugView::Final && settings.Bloom) ||
                settings.Mode == DebugView::Bloom;
+    }
+
+    bool ResolveSsrActive(const SceneRendererSettings& settings)
+    {
+        return settings.Path == RenderPath::Shaded && settings.Mode == DebugView::Final &&
+               settings.SSR;
     }
 }

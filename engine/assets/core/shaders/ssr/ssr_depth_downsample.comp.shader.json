@@ -1,0 +1,4 @@
+{
+  "source": "ssr_depth_downsample.comp.slang",
+  "entry": "csMain"
+}

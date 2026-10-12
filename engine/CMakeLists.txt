@@ -311,6 +311,7 @@ add_library(veng SHARED
         src/Renderer/Passes/HalfResCompositeScenePass.cpp
         src/Renderer/Passes/HalfResDepthReduceScenePass.cpp
         src/Renderer/Passes/SceneColorCopyScenePass.cpp
+        src/Renderer/Passes/SsrScenePass.cpp
         src/Renderer/Passes/SceneColorDownsampleScenePass.cpp
         src/Renderer/Passes/SceneColorDownsampleTailScenePass.cpp
         src/Renderer/Passes/DeferredLightingScenePass.cpp
@@ -382,6 +383,7 @@ add_library(veng SHARED
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/GBufferShadingOverride.cpp
         src/Renderer/LightTileCuller.cpp
+        src/Renderer/SsrChain.cpp
         src/Renderer/PickingSystem.cpp
         src/Renderer/Passes/SkyboxScenePass.cpp
         src/Renderer/Passes/IblCubeDebugScenePass.cpp

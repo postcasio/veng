@@ -32,6 +32,7 @@
 #include "Passes/SkyScenePass.h"
 #include "Passes/SkyboxScenePass.h"
 #include "Passes/SsaoScenePass.h"
+#include "Passes/SsrScenePass.h"
 #include "Passes/SceneUpscaleScenePass.h"
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
@@ -46,6 +47,7 @@
 #include "PostProcessEffectResolver.h"
 #include "SceneRendererIds.h"
 #include "SkyResolver.h"
+#include "SsrChain.h"
 #include "DofChain.h"
 #include "Passes/DofCompositeScenePass.h"
 #include "Passes/RibbonScenePass.h"
@@ -671,6 +673,11 @@ namespace Veng::Renderer
             m_SsaoId = graph.Import("SceneRenderer SSAO");
         }
 
+        if (m_Topology->SsrActive)
+        {
+            m_Ssr->Import(graph);
+        }
+
         m_Passes.clear();
         m_PointFieldPass.reset();
         m_Internal->RibbonPostResolvePass.reset();
@@ -811,6 +818,13 @@ namespace Veng::Renderer
                     renderExtent);
                 m_SkyMaterialPass = skyMaterialPass.get();
                 m_Passes.push_back(std::move(skyMaterialPass));
+            }
+
+            // The reflection chain runs on the lit opaque scene, after the sky and ahead of the
+            // translucent composite, as the reference's sample orders it.
+            if (m_Topology->SsrActive)
+            {
+                m_Passes.push_back(CreateUnique<SsrScenePass>(*m_Ssr));
             }
 
             // SceneColor-placed point fields accumulate into the lit scene color here — after the
@@ -2154,6 +2168,21 @@ namespace Veng::Renderer
         m_Picking->Recreate(m_Settings, m_RenderAllocExtent);
         // The mask grid covers the render allocation the lighting pass shades.
         m_LightTiles->Recreate(m_Settings.LightTileCulling, m_RenderAllocExtent);
+        // The reflection chain exists only while it is wired, so a renderer without it holds none
+        // of its pipelines, tables or targets.
+        if (ResolveSsrActive(m_Settings))
+        {
+            if (m_Ssr == nullptr)
+            {
+                m_Ssr = SsrChain::Create(m_Context, m_Assets);
+            }
+            m_Ssr->Recreate(m_RenderAllocExtent);
+            m_Ssr->SetEnvironment(m_SkyResolver->GetIbl().GetPrefilterCubeView());
+        }
+        else
+        {
+            m_Ssr.reset();
+        }
     }
 
     u32 SceneRenderer::GetMaxShadowResolution() const
@@ -2617,6 +2646,24 @@ namespace Veng::Renderer
             {
                 halfResViewConstantsIndex = viewConstantsIndex;
             }
+
+            if (m_Topology->SsrActive)
+            {
+                // The environment the rough pixels fall back to is the view's own image-based
+                // lighting, so a view lit without it falls back to nothing.
+                m_Ssr->PrepareFrame(SsrFrameInputs{
+                    .View = view.Camera.View(),
+                    .Projection = renderProj,
+                    .PrevViewProjection = m_PreviousViewProj,
+                    .RenderSize = validExtent,
+                    .IblFactor =
+                        ambientArm == AmbientArm::Ibl ? resolvedView.EnvironmentIntensity : 0.0f,
+                    .SamplesPerQuad = resolvedView.SsrSamplesPerQuad,
+                    .RoughnessThreshold = resolvedView.SsrRoughnessThreshold,
+                    .VarianceThreshold = resolvedView.SsrVarianceThreshold,
+                    .VarianceGuidedTracing = resolvedView.SsrVarianceGuidedTracing,
+                });
+            }
         }
 
         // Decide whether last frame's pyramid is trustworthy this frame; the GPU cull subsystem
@@ -2773,6 +2820,10 @@ namespace Veng::Renderer
         {
             VE_PROFILE_SCOPE("Render/GraphExecute");
             m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+        }
+        if (m_Topology->SsrActive)
+        {
+            m_Ssr->AdvanceFrame();
         }
 
         // Service a pending pick: the picking subsystem transitions the EntityId target to
@@ -3120,6 +3171,10 @@ namespace Veng::Renderer
         {
             bindings.push_back(
                 {.Id = m_LightTiles->GetMaskId(), .Buffer = m_LightTiles->GetBuffer()});
+        }
+        if (m_Topology->SsrActive)
+        {
+            m_Ssr->AppendImportBindings(bindings);
         }
         if (m_Topology->SsaoActive && m_SsaoPass != nullptr)
         {

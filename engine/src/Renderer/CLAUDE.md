@@ -89,7 +89,8 @@ The renderer is split along three conventions, and a new battery follows all of 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
   lighting, translucent, picking, TAA, the non-temporal scene upscale, scene-color copy, the
   directional and punctual shadow
-  passes, SSAO, the skybox, the sky/point-field/volume/ribbon/sprite passes, the depth-of-field composite,
+  passes, SSAO, the screen-space reflection chain's placement, the skybox, the
+  sky/point-field/volume/ribbon/sprite passes, the depth-of-field composite,
   the debug draw (and its companion
   billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
   renderer holds them in `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing,
@@ -106,7 +107,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `SsrChain`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -1294,6 +1295,83 @@ the tone curves resolve. The bloom mask takes the same plain weights, so the mas
 stay the same average of the same footprint. `tests/gpu/bloom_bright_pass.cpp` pins all three
 properties on both kernels: invariance across sub-texel offsets, the ceiling's bound on one
 extreme texel, and zero from a `NaN` or `inf`.
+
+### Screen-space reflections: a port of FidelityFX SSSR
+
+**The reflection chain is AMD FidelityFX SSSR (SDK v1.1.4, MIT) translated onto the frame graph,
+not an engine design.** Every function, constant, branch, format and default is the reference's;
+the shaders under `assets/core/shaders/ssr/` name the reference file each ports and carry AMD's
+notice. Where the port departs from the reference, an engine contract forced it, and the departure
+is one of these:
+
+- **D1** — the classifier exchanges its quad neighbours' copy requests through workgroup memory, not
+  `WaveReadLaneAt(lane ^ k)`: Vulkan does not promise lane = local index. Its ballot compaction keeps
+  the wave operations, which are correct under any lane order.
+- **D2** — the depth hierarchy is built one level per dispatch, not by SPD's single pass, whose quad
+  operations have the same lane-order dependence. Its contents are SPD's.
+- **D3** — roughness is converted once, `α = r²`, where the classifier loads the g-buffer's
+  perceptual roughness; everything downstream reads α, as the reference's "roughness" is.
+- **D5** — the reference's environment cube is the view's prefiltered specular probe
+  (`EnvironmentIbl`), sampled the reference's way (mip `sqrt(α) · log2(width)`), and its `iblFactor`
+  is the view's IBL intensity — 0 for a view whose ambient arm is not IBL.
+
+The reference's coordinate helpers flip y between UV and NDC (Direct3D's NDC is y-up); the engine's
+NDC is y-down like UV, so the flip is omitted — a change of convention, not of behaviour. A load
+past a texture's extent returns 0 and a store past it is dropped, Direct3D's semantics, which the
+reference relies on along the last row and column of tiles.
+
+**`SsrChain` owns the whole vertical** (`SsrChain.{h,cpp}`), created only while
+`ResolveSsrActive(settings)` holds (`Settings.SSR` in the shaded path's Final view), so a renderer
+without reflections holds none of its pipelines, tables or targets and declares none of its passes.
+`SsrScenePass` places its passes in the pass list, after the opaque lighting and the sky and ahead of
+the translucent composite — the reference sample's order. The passes, in the reference's dispatch
+order (`ffx_sssr.cpp`):
+
+1. **`SSR Depth Downsample`** ×levels (`ssr_depth_downsample.comp`, D2) — level 0 copies the depth;
+   each later level holds the nearest (reverse-Z: largest) of its parent's 2×2 children, a child past
+   the parent's extent counting as 0. Each level covers its share of the frame's rendered sub-rect.
+2. **`SSR Classify Tiles`** (`ssr_classify_tiles.comp`, D1/D3/D5) — one 64-thread group per 8×8
+   tile, remapped so each quad is four consecutive local indices. A pixel traces if it is on screen,
+   reflective (depth > 0) and glossy (α < `SsrRoughnessThreshold`), and is its quad's base ray
+   (`SsrSamplesPerQuad` 1: the top-left pixel; 2: the diagonal pair; 4: all) or a mirror
+   (α < 1e-4), or — under `SsrVarianceGuidedTracing` — its variance history exceeds
+   `SsrVarianceThreshold`. A glossy pixel that does not trace sets copy flags on its quad's base ray.
+   A rough reflective pixel writes the environment along its mirror direction into radiance; every
+   other pixel writes zero. A tile with any glossy reflective pixel is appended to the tile list.
+3. **`SSR Prepare Blue Noise`** (`ssr_prepare_blue_noise.comp`) — Heitz and Belcour's sampler over
+   the SDK's 1spp Sobol and scrambling tables (the core-pack Raw asset `data/ssr_blue_noise.bin`, one
+   byte per entry, widened to `R32_UINT` at upload; `assets/core/tools/generate_ssr_blue_noise.py`
+   regenerates it from the SDK source), offset by `frame · φ`.
+4. **`SSR Prepare Indirect Args`** (`ssr_prepare_indirect_args.comp`) — the intersection's dispatch
+   at byte 0 (`[(rays + 63) / 64, 1, 1]`) and the denoiser's at byte 12 (`[tiles, 1, 1]`), and the
+   counters rotated to `[0, rays, 0, tiles]`.
+
+**Resources** (all render-allocation sized unless stated; "persistent" outlives the frame):
+
+| Resource | Format | Lifetime | Graph id |
+|---|---|---|---|
+| Depth hierarchy | `R32Sfloat`, `min(7, ⌈log2 max(w,h)⌉)` levels | per frame, overwritten | `GetDepthHierarchyId()` (per level) |
+| Radiance 0 / 1 | `RGBA16Sfloat` | persistent ping-pong, zeroed at creation | `GetRadianceId()` binds A |
+| Variance 0 / 1 | `R16Sfloat` | persistent ping-pong, zeroed at creation | `GetVarianceHistoryId()` binds B |
+| Extracted roughness | `R8Unorm` (α) | per frame | `GetExtractedRoughnessId()` |
+| Blue noise | `RG8Unorm`, 128² | per frame | `GetBlueNoiseId()` |
+| Ray list | `u32` per pixel | per frame | `GetRayListId()` |
+| Denoiser tile list | `u32` per pixel | per frame | `GetDenoiserTileListId()` |
+| Counters | 4 × `u32`, zeroed at creation | persistent (rotated) | `GetRayCounterId()` |
+| Indirect arguments | 6 × `u32` | per frame | `GetIndirectArgsId()` |
+| Sobol / scrambling tables | `R32Uint`, 256² / 512×256 | static | not imported |
+| Constants (`SsrConstants`) | std140, one region per frame in flight | per frame | dynamic UBO |
+
+The ping-pong follows the reference's parity: on an odd frame index radiance A is target 0 and the
+variance history B is target 1; on an even one, 1 and 0. A `Recreate` at a new extent zeroes the
+radiance and variance targets and restarts the frame index — the reference's first-frame clear. The
+per-frame tunables (`SsrSamplesPerQuad`, `SsrRoughnessThreshold`, `SsrVarianceThreshold`,
+`SsrVarianceGuidedTracing`) ride `SceneView` / `ViewState` / `RenderLook` like the other per-frame
+knobs; the reference's other tunables (temporal stability 0.7, thickness 0.015, 128 traversal
+iterations, occupancy 4, most detailed mip 0) are its defaults in the constants block. No pass reads
+the chain's outputs, and nothing writes the variance targets, so the variance-guided path sees zero
+history. `tests/gpu/ssr_chain.cpp` drives the passes on a
+synthetic g-buffer and checks each output against the reference's rule.
 
 ### Depth of field and the physical camera
 

@@ -59,6 +59,7 @@ namespace Veng::Renderer
     class HalfResTranslucency;
     class GpuCullSystem;
     class LightTileCuller;
+    class SsrChain;
     class GBufferShadingOverride;
     class PickingSystem;
     class Image;
@@ -1101,6 +1102,9 @@ namespace Veng::Renderer
 
         /// @brief The per-tile light cull ahead of the lighting pass — its mask ring and pipeline.
         Unique<LightTileCuller> m_LightTiles;
+
+        /// @brief The screen-space reflection chain, held only while the settings wire it.
+        Unique<SsrChain> m_Ssr;
 
         /// @brief The g-buffer pass's override pipelines under Settings.GBufferShadingOverride.
         Unique<GBufferShadingOverride> m_ShadingOverride;

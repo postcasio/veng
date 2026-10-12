@@ -610,6 +610,31 @@
       "id": "0x27644C3AE58BB0D3",
       "type": "Raw",
       "source": "data/ltc_lut.bin"
+    },
+    {
+      "id": "0xFC0C39061564BE4B",
+      "type": "Raw",
+      "source": "data/ssr_blue_noise.bin"
+    },
+    {
+      "id": "0xBA94876AE3B2A2DA",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_depth_downsample.comp.shader.json"
+    },
+    {
+      "id": "0x8C382FAB5A18F8C8",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_classify_tiles.comp.shader.json"
+    },
+    {
+      "id": "0xFEB489746A920429",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_prepare_blue_noise.comp.shader.json"
+    },
+    {
+      "id": "0x4E213E0E322BFDDE",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_prepare_indirect_args.comp.shader.json"
     }
   ]
 }

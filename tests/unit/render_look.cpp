@@ -53,6 +53,11 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.SpecularAntiAliasingVariance == defaults.SpecularAntiAliasingVariance);
     CHECK(view.SpecularAntiAliasingThreshold == defaults.SpecularAntiAliasingThreshold);
     CHECK(view.NormalMapAntiAliasingScale == defaults.NormalMapAntiAliasingScale);
+    CHECK(view.SsrSamplesPerQuad == defaults.SsrSamplesPerQuad);
+    CHECK(view.SsrRoughnessThreshold == defaults.SsrRoughnessThreshold);
+    CHECK(view.SsrVarianceThreshold == defaults.SsrVarianceThreshold);
+    CHECK(view.SsrVarianceGuidedTracing == defaults.SsrVarianceGuidedTracing);
+    CHECK(settings.SSR == Renderer::SceneRendererSettings{}.SSR);
     // No dirt unless a look asks for it.
     CHECK(view.LensDirtIntensity == 0.0f);
     CHECK_FALSE(view.LensDirt.IsValid());
@@ -137,6 +142,10 @@ namespace
         look.SpecularAntiAliasingVariance = 0.45f;
         look.SpecularAntiAliasingThreshold = 0.35f;
         look.NormalMapAntiAliasingScale = 0.6f;
+        look.SsrSamplesPerQuad = 4;
+        look.SsrRoughnessThreshold = 0.35f;
+        look.SsrVarianceThreshold = 0.005f;
+        look.SsrVarianceGuidedTracing = false;
         look.DofFocusDistance = 4.0f;
         look.DofAperture = 0.03f;
         look.DofMaxCoc = 9.0f;
@@ -186,6 +195,10 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.SpecularAntiAliasingVariance == direct.SpecularAntiAliasingVariance);
     CHECK(carried.SpecularAntiAliasingThreshold == direct.SpecularAntiAliasingThreshold);
     CHECK(carried.NormalMapAntiAliasingScale == direct.NormalMapAntiAliasingScale);
+    CHECK(carried.SsrSamplesPerQuad == direct.SsrSamplesPerQuad);
+    CHECK(carried.SsrRoughnessThreshold == direct.SsrRoughnessThreshold);
+    CHECK(carried.SsrVarianceThreshold == direct.SsrVarianceThreshold);
+    CHECK(carried.SsrVarianceGuidedTracing == direct.SsrVarianceGuidedTracing);
     CHECK(carried.DofFocusDistance == direct.DofFocusDistance);
     CHECK(carried.DofAperture == direct.DofAperture);
     CHECK(carried.DofMaxCoc == direct.DofMaxCoc);

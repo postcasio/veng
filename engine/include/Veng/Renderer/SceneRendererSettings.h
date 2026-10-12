@@ -344,6 +344,14 @@ namespace Veng::Renderer
         /// changes which casters a cascade draws, not the atlas or the topology.
         f32 ShadowCasterMinTexels = 1.0f;
 
+        /// @brief Whether screen-space reflections run.
+        ///
+        /// A topology change: it allocates the reflection chain's targets, lists and counters and
+        /// inserts its passes after the opaque lighting. SsrSamplesPerQuad, SsrRoughnessThreshold,
+        /// SsrVarianceThreshold and SsrVarianceGuidedTracing are per-frame values on SceneView and
+        /// do not recompile. Off by default, so nothing is allocated or declared.
+        bool SSR = false;
+
         /// @brief Whether the depth-of-field battery runs.
         ///
         /// A topology change: it inserts the circle-of-confusion prefilter, tile reduction,
@@ -601,6 +609,7 @@ VE_FIELD(MinShadowDistance, .DisplayName = "Min shadow distance", .Display = {.M
          .Category = "Shadows")
 VE_FIELD(ShadowCasterMinTexels, .DisplayName = "Shadow caster min texels", .Display = {.Min = 0.0},
          .Category = "Shadows")
+VE_FIELD(SSR, .DisplayName = "Screen-space reflections", .Category = "Screen-space reflections")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of field", .Category = "Depth of field")
 VE_FIELD(Refraction, .DisplayName = "Refraction (scene-color grab)", .Category = "Refraction")
 VE_FIELD(RefractionBlur, .DisplayName = "Refraction blur (grab mip chain)",

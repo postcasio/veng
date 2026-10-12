@@ -144,6 +144,22 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::NormalMapAntiAliasingScale
         f32 NormalMapAntiAliasingScale = 1.0f;
+        /// @brief Screen-space reflection rays traced per 2×2 quad of glossy pixels: 1, 2 or 4.
+        ///
+        /// @see SceneView::SsrSamplesPerQuad
+        u32 SsrSamplesPerQuad = 1;
+        /// @brief The GGX width alpha below which a pixel traces a screen-space reflection.
+        ///
+        /// @see SceneView::SsrRoughnessThreshold
+        f32 SsrRoughnessThreshold = 0.2f;
+        /// @brief The reflection variance above which a pixel without a ray of its own traces one.
+        ///
+        /// @see SceneView::SsrVarianceThreshold
+        f32 SsrVarianceThreshold = 0.0f;
+        /// @brief Whether a noisy reflection history makes a skipped glossy pixel trace.
+        ///
+        /// @see SceneView::SsrVarianceGuidedTracing
+        bool SsrVarianceGuidedTracing = true;
         /// @brief Depth-of-field focus plane distance in metres.
         ///
         /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by
@@ -1425,6 +1441,18 @@ VE_FIELD(NormalMapAntiAliasingScale, .DisplayName = "Normal-map AA scale",
                     "normal-map specular anti-aliasing off",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 2.0},
          .Category = "Anti-aliasing")
+VE_FIELD(SsrSamplesPerQuad, .DisplayName = "SSR samples per quad",
+         .Tooltip = "Reflection rays per 2x2 quad of glossy pixels: 1, 2 or 4",
+         .Display = {.Min = 1.0, .Max = 4.0}, .Category = "Screen-space reflections")
+VE_FIELD(SsrRoughnessThreshold, .DisplayName = "SSR roughness threshold",
+         .Tooltip = "GGX alpha below which a pixel traces a reflection ray",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrVarianceThreshold, .DisplayName = "SSR variance threshold",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.01, .Precision = 4},
+         .Category = "Screen-space reflections")
+VE_FIELD(SsrVarianceGuidedTracing, .DisplayName = "SSR variance-guided tracing",
+         .Category = "Screen-space reflections")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF focus distance",
          .Display = {.Min = 0.01, .Max = 1000.0}, .Category = "Depth of field")
 VE_FIELD(DofAperture, .DisplayName = "DoF aperture",

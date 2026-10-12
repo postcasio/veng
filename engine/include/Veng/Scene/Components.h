@@ -1648,7 +1648,7 @@ namespace Veng
     ///
     /// One per scene: every viewport presenting the scene reads it each frame
     /// (Renderer::Viewport) and resolves it — on change only — into the topology it configures
-    /// (Bloom / Shadows / AO / …) and the per-frame knobs it writes over each pushed view
+    /// (Bloom / Shadows / AO / SSR / …) and the per-frame knobs it writes over each pushed view
     /// (Exposure, BloomThreshold, BloomFireflyCeiling, BloomIntensity, AmbientFloor, …), so a system writing a field here
     /// changes the next frame's render, and a prefab carrying one brings its look into the scene.
     /// With several, the first in pool order wins and a presenting viewport warns once. A level's authored
@@ -1746,6 +1746,34 @@ namespace Veng
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
+        /// @brief Whether screen-space reflections run.
+        ///
+        /// Off matches the renderer's own default.
+        bool SSR = false;
+        /// @brief Screen-space reflection rays traced per 2×2 quad of glossy pixels (1, 2 or 4), fed
+        ///        into the per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrSamplesPerQuad
+        u32 SsrSamplesPerQuad = 1;
+        /// @brief The GGX width alpha below which a pixel traces a screen-space reflection, fed into
+        ///        the per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrRoughnessThreshold
+        f32 SsrRoughnessThreshold = 0.2f;
+        /// @brief The reflection variance above which a skipped glossy pixel traces, fed into the
+        ///        per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrVarianceThreshold
+        f32 SsrVarianceThreshold = 0.0f;
+        /// @brief Whether a noisy reflection history makes a skipped glossy pixel trace, fed into the
+        ///        per-frame SceneView.
+        ///
+        /// The default matches the renderer's own ViewState default.
+        /// @see Renderer::SceneView::SsrVarianceGuidedTracing
+        bool SsrVarianceGuidedTracing = true;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale, fed into the
         ///        per-frame SceneView; zero turns it off.
         ///
@@ -2356,6 +2384,13 @@ VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.M
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(AO, .DisplayName = "SSAO")
+VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
+VE_FIELD(SsrSamplesPerQuad, .DisplayName = "SSR Samples Per Quad", .Display = {.Min = 1, .Max = 4})
+VE_FIELD(SsrRoughnessThreshold, .DisplayName = "SSR Roughness Threshold",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
+VE_FIELD(SsrVarianceThreshold, .DisplayName = "SSR Variance Threshold",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 0.01, .Precision = 4})
+VE_FIELD(SsrVarianceGuidedTracing, .DisplayName = "SSR Variance-Guided Tracing")
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA Variance",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0})
 VE_FIELD(SpecularAntiAliasingThreshold, .DisplayName = "Specular AA Threshold",

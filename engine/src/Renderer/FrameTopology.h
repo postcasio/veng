@@ -153,6 +153,8 @@ namespace Veng::Renderer
         bool LightTileCullActive = false;
         /// @brief How much of the depth-of-field chain is wired.
         DofStages Dof = DofStages::None;
+        /// @brief The screen-space reflection chain is wired after the opaque lighting.
+        bool SsrActive = false;
 
         /// @brief Which g-buffer colour channels the g-buffer pass stores for a later reader.
         ///
@@ -278,4 +280,13 @@ namespace Veng::Renderer
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @return True for the Final arm with bloom on, and for the Bloom debug arm.
     [[nodiscard]] bool ResolveBloomActive(const SceneRendererSettings& settings);
+
+    /// @brief Whether the settings wire the screen-space reflection chain.
+    ///
+    /// Final-only on the shaded path: a debug arm composites no reflection, and the lean path wires
+    /// no lighting. Decides the chain's allocation as well as its passes, so it is a function of the
+    /// settings alone, like ResolveBloomActive.
+    /// @param settings The renderer settings.
+    /// @return True when Settings.SSR is on in the shaded path's Final view.
+    [[nodiscard]] bool ResolveSsrActive(const SceneRendererSettings& settings);
 }

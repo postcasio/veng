@@ -111,6 +111,22 @@ TEST_CASE("frame topology: depth of field is a tri-state")
     CHECK_FALSE(Resolve(settings).DofComposited());
 }
 
+TEST_CASE("frame topology: the reflection chain is wired exactly when SSR is on in Final")
+{
+    SceneRendererSettings settings = ModeOnly(DebugView::Final);
+    CHECK_FALSE(Resolve(settings).SsrActive);
+    CHECK_FALSE(ResolveSsrActive(settings));
+
+    settings.SSR = true;
+    CHECK(Resolve(settings).SsrActive);
+    CHECK(ResolveSsrActive(settings));
+
+    // The lean path wires nothing but its prepass, whatever the toggle says.
+    settings.Path = RenderPath::GeometryDepthNormal;
+    CHECK_FALSE(Resolve(settings).SsrActive);
+    CHECK_FALSE(ResolveSsrActive(settings));
+}
+
 TEST_CASE("frame topology: the scene composites for Final and Bloom alone")
 {
     for (usize arm = 0; arm < ArmCount; ++arm)
@@ -134,6 +150,7 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
     settings.AntiAliasing = AntiAliasingMode::TAA;
     settings.AutoExposure = true;
     settings.Refraction = true;
+    settings.SSR = true;
 
     for (usize arm = 1; arm < ArmCount; ++arm)
     {
@@ -145,6 +162,7 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         CHECK_FALSE(topology.Cmaa2Active);
         CHECK_FALSE(topology.AutoExposureActive);
         CHECK(topology.Dof != DofStages::Full);
+        CHECK_FALSE(topology.SsrActive);
         // Refraction survives only on the Bloom arm, which composites the whole scene.
         CHECK(topology.RefractionActive == (settings.Mode == DebugView::Bloom));
     }

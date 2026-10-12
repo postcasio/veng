@@ -63,6 +63,7 @@ namespace Veng
         settings.ShadowResolution = look.ShadowResolution;
         settings.AutoExposure = look.AutoExposure;
         settings.AO = look.AO;
+        settings.SSR = look.SSR;
         settings.Refraction = look.Refraction;
         settings.RefractionBlur = look.RefractionBlur;
         settings.DepthOfField = look.DepthOfField;
@@ -83,6 +84,10 @@ namespace Veng
         view.SpecularAntiAliasingVariance = look.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = look.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = look.NormalMapAntiAliasingScale;
+        view.SsrSamplesPerQuad = look.SsrSamplesPerQuad;
+        view.SsrRoughnessThreshold = look.SsrRoughnessThreshold;
+        view.SsrVarianceThreshold = look.SsrVarianceThreshold;
+        view.SsrVarianceGuidedTracing = look.SsrVarianceGuidedTracing;
 
         // An unconditional mapping: the authored focus and aperture are recorded even while a
         // Physical camera overwrites them on every push, so they come back the moment it stops
@@ -113,6 +118,10 @@ namespace Veng
         view.SpecularAntiAliasingVariance = resolved.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = resolved.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = resolved.NormalMapAntiAliasingScale;
+        view.SsrSamplesPerQuad = resolved.SsrSamplesPerQuad;
+        view.SsrRoughnessThreshold = resolved.SsrRoughnessThreshold;
+        view.SsrVarianceThreshold = resolved.SsrVarianceThreshold;
+        view.SsrVarianceGuidedTracing = resolved.SsrVarianceGuidedTracing;
         if (!view.DofFromPhysicalCamera)
         {
             view.DofFocusDistance = resolved.DofFocusDistance;

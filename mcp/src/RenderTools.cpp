@@ -743,6 +743,7 @@ namespace Veng::Mcp
                     {"render_features",
                      {{"aa", Veng::string(Renderer::AntiAliasingModeNames[static_cast<Veng::usize>(
                                  s.AntiAliasing)])},
+                      {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},
                       {"debug_view", debugView},

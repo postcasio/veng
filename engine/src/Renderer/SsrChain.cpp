@@ -1,0 +1,711 @@
+#include "SsrChain.h"
+
+#include <algorithm>
+#include <bit>
+#include <cstring>
+#include <span>
+
+#include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/RawAsset.h>
+#include <Veng/Asset/Shader.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/DeviceCapabilities.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Types.h>
+
+#include <fmt/format.h>
+
+namespace Veng::Renderer
+{
+    namespace
+    {
+        // The chain's core-pack shaders and the blue-noise sampler tables.
+        constexpr AssetId DepthDownsampleCompId{0xBA94876AE3B2A2DAULL};
+        constexpr AssetId ClassifyTilesCompId{0x8C382FAB5A18F8C8ULL};
+        constexpr AssetId PrepareBlueNoiseCompId{0xFEB489746A920429ULL};
+        constexpr AssetId PrepareIndirectArgsCompId{0x4E213E0E322BFDDEULL};
+        constexpr AssetId BlueNoiseTablesId{0xFC0C39061564BE4BULL};
+
+        // The Sobol table's extent (256 samples of 256 dimensions) and the scrambling tile's (an
+        // 8-dimensional key for each of 128×128 pixels, laid out 512 wide).
+        constexpr uvec2 SobolExtent{256, 256};
+        constexpr uvec2 ScramblingTileExtent{512, 256};
+
+        // The reference's defaults for the tunables the view does not carry.
+        constexpr f32 DefaultTemporalStabilityFactor = 0.7f;
+        constexpr f32 DefaultDepthBufferThickness = 0.015f;
+        constexpr u32 DefaultMaxTraversalIntersections = 128;
+        constexpr u32 DefaultMinTraversalOccupancy = 4;
+        constexpr u32 DefaultMostDetailedMip = 0;
+
+        // The depth-hierarchy push block, matching ssr_depth_downsample.comp PushConstants.
+        struct DownsamplePush
+        {
+            u32 SourceTexture;
+            u32 CopiesSource;
+            uvec2 DestExtent;
+            uvec2 SourceExtent;
+        };
+
+        // The classifier's push block, matching ssr_classify_tiles.comp PushConstants.
+        struct ClassifyPush
+        {
+            u32 NormalTexture;
+            u32 MaterialTexture;
+        };
+
+        [[nodiscard]] u32 DivideRoundingUp(const u32 value, const u32 divisor)
+        {
+            return (value + divisor - 1) / divisor;
+        }
+
+        // The reference's hierarchy depth: min(7, ceil(log2(max(width, height)))), at least one.
+        [[nodiscard]] u32 DepthHierarchyLevelCount(const uvec2 extent)
+        {
+            const u32 longest = std::max(extent.x, extent.y);
+            const u32 ceilLog2 = longest <= 1 ? 0u : std::bit_width(longest - 1);
+            return std::clamp(ceilLog2, 1u, SsrChain::MaxDepthHierarchyLevels);
+        }
+
+        [[nodiscard]] uvec2 LevelExtent(const uvec2 extent, const u32 level)
+        {
+            return {std::max(extent.x >> level, 1u), std::max(extent.y >> level, 1u)};
+        }
+
+        // Records a staged copy of @p bytes into @p view's image as setup work, leaving it sampled.
+        void UploadAsSetup(Context& context, const Ref<ImageView>& view, std::span<const u8> bytes)
+        {
+            const Ref<Image> image = view->GetImage();
+            const Ref<Buffer> staging =
+                Buffer::Create(context, {
+                                            .Name = image->GetName() + " (Upload)",
+                                            .Size = bytes.size(),
+                                            .Usage = BufferUsage::TransferSrc,
+                                        });
+            staging->UploadSync(bytes);
+            context.RecordSetupCommands(
+                [view, staging](CommandBuffer& cmd)
+                {
+                    cmd.PrepareForAccess(view, AccessKind::TransferDst);
+                    cmd.CopyBufferToImage(staging, view->GetImage());
+                    cmd.PrepareForAccess(view, AccessKind::SampleAny);
+                });
+        }
+
+        [[nodiscard]] Ref<ImageView> CreateTarget(Context& context, const string& name,
+                                                  const uvec2 extent, const Format format,
+                                                  const ImageUsage usage)
+        {
+            const Ref<Image> image = Image::Create(context, {
+                                                                .Name = name,
+                                                                .Extent = {extent.x, extent.y, 1},
+                                                                .Format = format,
+                                                                .Usage = usage,
+                                                            });
+            return ImageView::Create(context, {.Name = name + " View", .Image = image});
+        }
+
+        [[nodiscard]] Ref<ComputePipeline> CreatePipeline(Context& context, AssetManager& assets,
+                                                          const AssetId shader, const char* name,
+                                                          const Ref<PipelineLayout>& layout)
+        {
+            const AssetResult<AssetHandle<Veng::Shader>> module =
+                assets.LoadSync<Veng::Shader>(shader);
+            VE_ASSERT(module.has_value(), "SsrChain: {} shader load failed: {}", name,
+                      module.error().Detail);
+            return ComputePipeline::Create(
+                context, {
+                             .Name = string("SSR ") + name + " Pipeline",
+                             .PipelineLayout = layout,
+                             .ShaderStage = {.Stage = ShaderStage::Compute,
+                                             .Module = module.value().Get()->Module},
+                         });
+        }
+
+        [[nodiscard]] DescriptorBinding Binding(const u32 binding, const DescriptorType type)
+        {
+            return {.Binding = binding, .Type = type, .Count = 1, .Stages = ShaderStage::Compute};
+        }
+    }
+
+    Unique<SsrChain> SsrChain::Create(Context& context, AssetManager& assets)
+    {
+        return Unique<SsrChain>(new SsrChain(context, assets));
+    }
+
+    SsrChain::SsrChain(Context& context, AssetManager& assets) : m_Context(context)
+    {
+        // The classifier compacts its rays with a subgroup ballot and prefix count.
+        VE_ASSERT(m_Context.GetDeviceCapabilities().SupportsSubgroup(
+                      ShaderStage::Compute, SubgroupOperation::Basic | SubgroupOperation::Ballot),
+                  "SsrChain: the device does not run basic and ballot subgroup operations in "
+                  "compute shaders");
+        for (const Format format :
+             {Format::RGBA16Sfloat, Format::R16Sfloat, Format::R8Unorm, Format::RG8Unorm})
+        {
+            VE_ASSERT(m_Context.IsFormatStorageImageSupported(format),
+                      "SsrChain: format {} is not a storage-image format on this device",
+                      static_cast<u32>(format));
+        }
+
+        m_DownsampleSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Depth Downsample Set Layout",
+                           .Bindings = {Binding(0, DescriptorType::StorageImage)},
+                       });
+        m_DownsampleLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Depth Downsample Layout",
+                .DescriptorSetLayouts = {m_DownsampleSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<DownsamplePush>(ShaderStage::Compute)},
+            });
+        m_DownsamplePipeline = CreatePipeline(m_Context, assets, DepthDownsampleCompId,
+                                              "Depth Downsample", m_DownsampleLayout);
+
+        m_ClassifySetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Classify Tiles Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::SampledImage),
+                                   Binding(2, DescriptorType::Sampler),
+                                   Binding(3, DescriptorType::SampledImage),
+                                   Binding(4, DescriptorType::SampledImage),
+                                   Binding(5, DescriptorType::StorageImage),
+                                   Binding(6, DescriptorType::StorageBuffer),
+                                   Binding(7, DescriptorType::StorageBuffer),
+                                   Binding(8, DescriptorType::StorageBuffer),
+                                   Binding(9, DescriptorType::StorageImage),
+                               },
+                       });
+        m_ClassifyLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SSR Classify Tiles Layout",
+                .DescriptorSetLayouts = {m_ClassifySetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<ClassifyPush>(ShaderStage::Compute)},
+            });
+        m_ClassifyPipeline = CreatePipeline(m_Context, assets, ClassifyTilesCompId,
+                                            "Classify Tiles", m_ClassifyLayout);
+
+        m_BlueNoiseSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Prepare Blue Noise Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::UniformBufferDynamic),
+                                   Binding(1, DescriptorType::SampledImage),
+                                   Binding(2, DescriptorType::SampledImage),
+                                   Binding(3, DescriptorType::StorageImage),
+                               },
+                       });
+        m_BlueNoiseLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SSR Prepare Blue Noise Layout",
+                                                  .DescriptorSetLayouts = {m_BlueNoiseSetLayout},
+                                              });
+        m_BlueNoisePipeline = CreatePipeline(m_Context, assets, PrepareBlueNoiseCompId,
+                                             "Prepare Blue Noise", m_BlueNoiseLayout);
+
+        m_IndirectArgsSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SSR Prepare Indirect Args Set Layout",
+                           .Bindings =
+                               {
+                                   Binding(0, DescriptorType::StorageBuffer),
+                                   Binding(1, DescriptorType::StorageBuffer),
+                               },
+                       });
+        m_IndirectArgsLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SSR Prepare Indirect Args Layout",
+                                                  .DescriptorSetLayouts = {m_IndirectArgsSetLayout},
+                                              });
+        m_IndirectArgsPipeline = CreatePipeline(m_Context, assets, PrepareIndirectArgsCompId,
+                                                "Prepare Indirect Args", m_IndirectArgsLayout);
+
+        // The reference's environment sampler: trilinear, clamped in U and V, wrapped in W, with no
+        // level clamp.
+        m_EnvironmentSampler =
+            Sampler::Create(m_Context, {
+                                           .Name = "SSR Environment Sampler",
+                                           .MagFilter = Filter::Linear,
+                                           .MinFilter = Filter::Linear,
+                                           .MipmapMode = MipmapMode::Linear,
+                                           .AddressModeU = AddressMode::ClampToEdge,
+                                           .AddressModeV = AddressMode::ClampToEdge,
+                                           .AddressModeW = AddressMode::Repeat,
+                                           .AnisotropyEnabled = false,
+                                           .MaxAnisotropy = 1.0f,
+                                           .MaxLod = LodClampNone,
+                                       });
+
+        // The constants ring: one region per frame in flight, each on the uniform offset alignment.
+        const u64 minAlign =
+            GetVkPhysicalDevice(m_Context).getProperties().limits.minUniformBufferOffsetAlignment;
+        const u64 alignment = std::max<u64>(minAlign, 1);
+        m_ConstantsStride =
+            static_cast<u32>((sizeof(SsrConstants) + alignment - 1) / alignment * alignment);
+        const u32 framesInFlight = m_Context.GetMaxFramesInFlight();
+        m_Constants = Buffer::Create(
+            m_Context, {
+                           .Name = "SSR Constants",
+                           .Size = static_cast<u64>(m_ConstantsStride) * framesInFlight,
+                           .Usage = BufferUsage::Uniform,
+                           .HostMapped = true,
+                       });
+        std::memset(m_Constants->GetMappedData(), 0,
+                    static_cast<usize>(m_ConstantsStride) * framesInFlight);
+
+        // The sampler tables: one byte per entry in the asset, widened to the reference's 32-bit
+        // texels.
+        const AssetResult<AssetHandle<RawAsset>> tables =
+            assets.LoadSync<RawAsset>(BlueNoiseTablesId);
+        VE_ASSERT(tables.has_value(), "SsrChain: failed to load the blue-noise sampler tables");
+        const vector<u8>& bytes = tables.value().Get()->Bytes;
+        const usize sobolCount = static_cast<usize>(SobolExtent.x) * SobolExtent.y;
+        const usize scramblingCount =
+            static_cast<usize>(ScramblingTileExtent.x) * ScramblingTileExtent.y;
+        VE_ASSERT(bytes.size() == sobolCount + scramblingCount,
+                  "SsrChain: the blue-noise sampler tables are {} bytes, expected {}", bytes.size(),
+                  sobolCount + scramblingCount);
+        const auto Widen = [&bytes](const usize first, const usize count)
+        {
+            vector<u32> words(count);
+            for (usize i = 0; i < count; ++i)
+            {
+                words[i] = bytes[first + i];
+            }
+            return words;
+        };
+        const vector<u32> sobol = Widen(0, sobolCount);
+        const vector<u32> scrambling = Widen(sobolCount, scramblingCount);
+        m_Sobol = CreateTarget(m_Context, "SSR Sobol Buffer", SobolExtent, Format::R32Uint,
+                               ImageUsage::Sampled | ImageUsage::TransferDst);
+        UploadAsSetup(
+            m_Context, m_Sobol,
+            std::span(reinterpret_cast<const u8*>(sobol.data()), sobol.size() * sizeof(u32)));
+        m_ScramblingTile =
+            CreateTarget(m_Context, "SSR Scrambling Tile Buffer", ScramblingTileExtent,
+                         Format::R32Uint, ImageUsage::Sampled | ImageUsage::TransferDst);
+        UploadAsSetup(m_Context, m_ScramblingTile,
+                      std::span(reinterpret_cast<const u8*>(scrambling.data()),
+                                scrambling.size() * sizeof(u32)));
+
+        m_BlueNoise = CreateTarget(
+            m_Context, "SSR Blue Noise Texture", uvec2(BlueNoiseSize, BlueNoiseSize),
+            Format::RG8Unorm, ImageUsage::Storage | ImageUsage::Sampled | ImageUsage::TransferSrc);
+    }
+
+    SsrChain::~SsrChain()
+    {
+        ReleaseHierarchyHandles();
+    }
+
+    void SsrChain::ReleaseHierarchyHandles()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        for (const TextureHandle handle : m_DepthHierarchyHandles)
+        {
+            bindless.Release(handle);
+        }
+        m_DepthHierarchyHandles.clear();
+    }
+
+    void SsrChain::Recreate(const uvec2 extent)
+    {
+        if (extent == m_Extent && m_DepthHierarchy != nullptr)
+        {
+            return;
+        }
+        VE_ASSERT(extent.x > 0 && extent.y > 0, "SsrChain::Recreate: empty extent {}x{}", extent.x,
+                  extent.y);
+        // The ray list packs a pixel's x in 15 bits and its y in 14.
+        VE_ASSERT(extent.x <= (1u << 15) && extent.y <= (1u << 14),
+                  "SsrChain::Recreate: {}x{} exceeds the ray list's coordinate packing", extent.x,
+                  extent.y);
+        m_Extent = extent;
+        m_FrameIndex = 0;
+
+        ReleaseHierarchyHandles();
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+
+        // The depth hierarchy: render resolution at level 0, seven levels at most.
+        const u32 levels = DepthHierarchyLevelCount(extent);
+        m_DepthHierarchy =
+            Image::Create(m_Context, {
+                                         .Name = "SSR Depth Hierarchy",
+                                         .Extent = {extent.x, extent.y, 1},
+                                         .MipLevels = levels,
+                                         .Format = Format::R32Sfloat,
+                                         .Usage = ImageUsage::Storage | ImageUsage::Sampled |
+                                                  ImageUsage::TransferSrc,
+                                     });
+        m_DepthHierarchyLevels.clear();
+        for (u32 level = 0; level < levels; ++level)
+        {
+            const Ref<ImageView> view =
+                ImageView::Create(m_Context, {
+                                                 .Name = "SSR Depth Hierarchy Level View",
+                                                 .Image = m_DepthHierarchy,
+                                                 .BaseMipLevel = level,
+                                                 .MipLevels = 1,
+                                             });
+            m_DepthHierarchyLevels.push_back(view);
+            m_DepthHierarchyHandles.push_back(bindless.Register(view));
+        }
+        m_DepthHierarchyView = ImageView::Create(m_Context, {
+                                                                .Name = "SSR Depth Hierarchy View",
+                                                                .Image = m_DepthHierarchy,
+                                                                .MipLevels = levels,
+                                                            });
+
+        const ImageUsage targetUsage = ImageUsage::Storage | ImageUsage::Sampled |
+                                       ImageUsage::TransferSrc | ImageUsage::TransferDst;
+        for (u32 i = 0; i < 2; ++i)
+        {
+            m_Radiance[i] = CreateTarget(m_Context, fmt::format("SSR Radiance {}", i), extent,
+                                         Format::RGBA16Sfloat, targetUsage);
+            m_Variance[i] = CreateTarget(m_Context, fmt::format("SSR Variance {}", i), extent,
+                                         Format::R16Sfloat, targetUsage);
+        }
+        m_ExtractedRoughness =
+            CreateTarget(m_Context, "SSR Extracted Roughness", extent, Format::R8Unorm,
+                         ImageUsage::Storage | ImageUsage::Sampled | ImageUsage::TransferSrc);
+
+        // The reference clears radiance and variance on its first frame; the first frame of these
+        // targets is the one after they are created. One zeroed staging buffer the size of the
+        // widest target serves all four copies.
+        {
+            const usize bytes = static_cast<usize>(extent.x) * extent.y * 8;
+            const Ref<Buffer> zeros =
+                Buffer::Create(m_Context, {
+                                              .Name = "SSR History Clear",
+                                              .Size = bytes,
+                                              .Usage = BufferUsage::TransferSrc,
+                                          });
+            const vector<u8> zeroBytes(bytes, 0);
+            zeros->UploadSync(zeroBytes);
+            const std::array<Ref<ImageView>, 4> cleared{m_Radiance[0], m_Radiance[1], m_Variance[0],
+                                                        m_Variance[1]};
+            m_Context.RecordSetupCommands(
+                [cleared, zeros](CommandBuffer& cmd)
+                {
+                    for (const Ref<ImageView>& view : cleared)
+                    {
+                        cmd.PrepareForAccess(view, AccessKind::TransferDst);
+                        cmd.CopyBufferToImage(zeros, view->GetImage());
+                        cmd.PrepareForAccess(view, AccessKind::SampleAny);
+                    }
+                });
+        }
+
+        const u64 pixelWords = static_cast<u64>(extent.x) * extent.y;
+        m_RayList = Buffer::Create(m_Context, {
+                                                  .Name = "SSR Ray List",
+                                                  .Size = pixelWords * sizeof(u32),
+                                                  .Usage = BufferUsage::Storage,
+                                                  .DeviceLocal = true,
+                                              });
+        m_DenoiserTileList = Buffer::Create(m_Context, {
+                                                           .Name = "SSR Denoiser Tile List",
+                                                           .Size = pixelWords * sizeof(u32),
+                                                           .Usage = BufferUsage::Storage,
+                                                           .DeviceLocal = true,
+                                                       });
+        // The counters start at zero; the classifier accumulates and the argument pass rotates.
+        m_RayCounter = Buffer::Create(m_Context, {
+                                                     .Name = "SSR Ray Counter",
+                                                     .Size = CounterWords * sizeof(u32),
+                                                     .Usage = BufferUsage::Storage,
+                                                 });
+        const std::array<u32, CounterWords> zeroCounters{};
+        m_RayCounter->UploadSync(
+            std::span(reinterpret_cast<const u8*>(zeroCounters.data()), sizeof(zeroCounters)));
+        m_IndirectArgs =
+            Buffer::Create(m_Context, {
+                                          .Name = "SSR Intersection Pass Indirect Args",
+                                          .Size = IndirectArgsWords * sizeof(u32),
+                                          .Usage = BufferUsage::Storage | BufferUsage::Indirect,
+                                          .DeviceLocal = true,
+                                      });
+
+        BuildSets();
+    }
+
+    void SsrChain::SetEnvironment(const Ref<ImageView>& cube)
+    {
+        if (cube == m_Environment)
+        {
+            return;
+        }
+        m_Environment = cube;
+        if (m_DepthHierarchy != nullptr)
+        {
+            BuildSets();
+        }
+    }
+
+    void SsrChain::BuildSets()
+    {
+        // Fresh sets rather than rewritten ones, so no set a frame still in flight bound changes.
+        m_DownsampleSets.clear();
+        for (const Ref<ImageView>& level : m_DepthHierarchyLevels)
+        {
+            const Ref<DescriptorSet> set =
+                DescriptorSet::Create(m_Context, {
+                                                     .Name = "SSR Depth Downsample Set",
+                                                     .Layout = m_DownsampleSetLayout,
+                                                 });
+            set->Write(0, level);
+            m_DownsampleSets.push_back(set);
+        }
+
+        for (u32 parity = 0; parity < 2; ++parity)
+        {
+            // The parity of the frame index: odd frames write radiance 0 and read variance 1, as
+            // the reference's host selects them.
+            const u32 radiance = parity != 0 ? 0u : 1u;
+            const u32 varianceHistory = parity != 0 ? 1u : 0u;
+            m_ClassifySets[parity] = nullptr;
+            if (m_Environment == nullptr)
+            {
+                continue;
+            }
+            const Ref<DescriptorSet> set =
+                DescriptorSet::Create(m_Context, {
+                                                     .Name = "SSR Classify Tiles Set",
+                                                     .Layout = m_ClassifySetLayout,
+                                                 });
+            set->Write(0, m_Constants, 0, sizeof(SsrConstants));
+            set->Write(1, m_Environment);
+            set->Write(2, m_EnvironmentSampler);
+            set->Write(3, m_DepthHierarchyView);
+            set->Write(4, m_Variance[varianceHistory]);
+            set->Write(5, m_Radiance[radiance]);
+            set->Write(6, m_RayList);
+            set->Write(7, m_DenoiserTileList);
+            set->Write(8, m_RayCounter);
+            set->Write(9, m_ExtractedRoughness);
+            m_ClassifySets[parity] = set;
+        }
+
+        m_BlueNoiseSet = DescriptorSet::Create(m_Context, {
+                                                              .Name = "SSR Prepare Blue Noise Set",
+                                                              .Layout = m_BlueNoiseSetLayout,
+                                                          });
+        m_BlueNoiseSet->Write(0, m_Constants, 0, sizeof(SsrConstants));
+        m_BlueNoiseSet->Write(1, m_Sobol);
+        m_BlueNoiseSet->Write(2, m_ScramblingTile);
+        m_BlueNoiseSet->Write(3, m_BlueNoise);
+
+        m_IndirectArgsSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SSR Prepare Indirect Args Set",
+                                                 .Layout = m_IndirectArgsSetLayout,
+                                             });
+        m_IndirectArgsSet->Write(0, m_RayCounter);
+        m_IndirectArgsSet->Write(1, m_IndirectArgs);
+    }
+
+    u32 SsrChain::ConstantsOffset() const
+    {
+        return m_Context.GetCurrentFrameInFlight() * m_ConstantsStride;
+    }
+
+    void SsrChain::Import(RenderGraph& graph)
+    {
+        VE_ASSERT(m_DepthHierarchy != nullptr, "SsrChain::Import: Recreate has not run");
+        m_DepthHierarchyId =
+            graph.ImportImageMips("SSR Depth Hierarchy", GetDepthHierarchyLevels());
+        m_RadianceId = graph.Import("SSR Radiance");
+        m_VarianceHistoryId = graph.Import("SSR Variance History");
+        m_ExtractedRoughnessId = graph.Import("SSR Extracted Roughness");
+        m_BlueNoiseId = graph.Import("SSR Blue Noise");
+        m_RayListId = graph.ImportBuffer("SSR Ray List");
+        m_DenoiserTileListId = graph.ImportBuffer("SSR Denoiser Tile List");
+        m_RayCounterId = graph.ImportBuffer("SSR Ray Counter");
+        m_IndirectArgsId = graph.ImportBuffer("SSR Intersection Pass Indirect Args");
+    }
+
+    void SsrChain::AppendImportBindings(vector<RenderGraph::ImportBinding>& bindings) const
+    {
+        for (u32 level = 0; level < GetDepthHierarchyLevels(); ++level)
+        {
+            bindings.push_back(
+                {.Id = m_DepthHierarchyId.Level(level), .View = m_DepthHierarchyLevels[level]});
+        }
+        bindings.push_back({.Id = m_RadianceId, .View = m_Radiance[GetRadianceIndex()]});
+        bindings.push_back(
+            {.Id = m_VarianceHistoryId, .View = m_Variance[GetVarianceHistoryIndex()]});
+        bindings.push_back({.Id = m_ExtractedRoughnessId, .View = m_ExtractedRoughness});
+        bindings.push_back({.Id = m_BlueNoiseId, .View = m_BlueNoise});
+        bindings.push_back({.Id = m_RayListId, .Buffer = m_RayList});
+        bindings.push_back({.Id = m_DenoiserTileListId, .Buffer = m_DenoiserTileList});
+        bindings.push_back({.Id = m_RayCounterId, .Buffer = m_RayCounter});
+        bindings.push_back({.Id = m_IndirectArgsId, .Buffer = m_IndirectArgs});
+    }
+
+    void SsrChain::PrepareFrame(const SsrFrameInputs& inputs)
+    {
+        VE_ASSERT(inputs.RenderSize.x > 0 && inputs.RenderSize.y > 0 &&
+                      inputs.RenderSize.x <= m_Extent.x && inputs.RenderSize.y <= m_Extent.y,
+                  "SsrChain::PrepareFrame: a {}x{} render size does not fit the {}x{} allocation",
+                  inputs.RenderSize.x, inputs.RenderSize.y, m_Extent.x, m_Extent.y);
+        const SsrConstants constants{
+            .InvViewProjection = glm::inverse(inputs.Projection * inputs.View),
+            .Projection = inputs.Projection,
+            .InvProjection = glm::inverse(inputs.Projection),
+            .ViewMatrix = inputs.View,
+            .InvView = glm::inverse(inputs.View),
+            .PrevViewProjection = inputs.PrevViewProjection,
+            .RenderSize = inputs.RenderSize,
+            .InverseRenderSize = vec2(1.0f) / vec2(inputs.RenderSize),
+            .IblFactor = inputs.IblFactor,
+            .TemporalStabilityFactor = DefaultTemporalStabilityFactor,
+            .DepthBufferThickness = DefaultDepthBufferThickness,
+            .RoughnessThreshold = inputs.RoughnessThreshold,
+            .VarianceThreshold = inputs.VarianceThreshold,
+            .FrameIndex = m_FrameIndex,
+            .MaxTraversalIntersections = DefaultMaxTraversalIntersections,
+            .MinTraversalOccupancy = DefaultMinTraversalOccupancy,
+            .MostDetailedMip = DefaultMostDetailedMip,
+            .SamplesPerQuad = inputs.SamplesPerQuad,
+            .TemporalVarianceGuidedTracingEnabled = inputs.VarianceGuidedTracing ? 1u : 0u,
+        };
+        std::memcpy(static_cast<u8*>(m_Constants->GetMappedData()) + ConstantsOffset(), &constants,
+                    sizeof(constants));
+        m_RenderSize = inputs.RenderSize;
+    }
+
+    void SsrChain::Declare(RenderGraph& graph, const SsrGraphInputs& inputs)
+    {
+        VE_ASSERT(m_Environment != nullptr, "SsrChain::Declare: no environment cube is bound");
+
+        // The depth hierarchy, one level per dispatch: level 0 copies the depth, each later level
+        // reduces the one before it.
+        const u32 levels = GetDepthHierarchyLevels();
+        for (u32 level = 0; level < levels; ++level)
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Depth Downsample");
+            builder.Sample(level == 0 ? inputs.Depth : m_DepthHierarchyId.Level(level - 1));
+            builder.StorageWrite(m_DepthHierarchyId.Level(level));
+            const TextureHandle source =
+                level == 0 ? inputs.DepthHandle : m_DepthHierarchyHandles[level - 1];
+            builder.Execute(
+                [this, level, source](PassContext& pass)
+                {
+                    // The reference reduces the render-size footprint of each level.
+                    const uvec2 levelExtent = LevelExtent(m_Extent, level);
+                    const uvec2 footprint{DivideRoundingUp(m_RenderSize.x, 1u << level),
+                                          DivideRoundingUp(m_RenderSize.y, 1u << level)};
+                    const uvec2 dest = glm::min(levelExtent, footprint);
+                    const DownsamplePush push{
+                        .SourceTexture = source.Index,
+                        .CopiesSource = level == 0 ? 1u : 0u,
+                        .DestExtent = dest,
+                        .SourceExtent = level == 0 ? m_Extent : LevelExtent(m_Extent, level - 1),
+                    };
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_DownsamplePipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_DownsampleSets[level]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(push);
+                    cmd.Dispatch(DivideRoundingUp(dest.x, 8), DivideRoundingUp(dest.y, 8), 1);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Classify Tiles");
+            builder.Sample(inputs.Normal);
+            builder.Sample(inputs.Material);
+            for (u32 level = 0; level < levels; ++level)
+            {
+                builder.Sample(m_DepthHierarchyId.Level(level));
+            }
+            builder.Sample(m_VarianceHistoryId);
+            builder.StorageWrite(m_RadianceId);
+            builder.StorageWrite(m_ExtractedRoughnessId);
+            builder.StorageBufferWrite(m_RayListId);
+            builder.StorageBufferWrite(m_DenoiserTileListId);
+            // The counters are read-modify-written by the atomics.
+            builder.StorageBufferRead(m_RayCounterId);
+            builder.StorageBufferWrite(m_RayCounterId);
+            const ClassifyPush push{
+                .NormalTexture = inputs.NormalHandle.Index,
+                .MaterialTexture = inputs.MaterialHandle.Index,
+            };
+            builder.Execute(
+                [this, push](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_ClassifyPipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_ClassifySets[m_FrameIndex & 1u]},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.PushConstants(push);
+                    cmd.Dispatch(DivideRoundingUp(m_RenderSize.x, 8),
+                                 DivideRoundingUp(m_RenderSize.y, 8), 1);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Prepare Blue Noise");
+            builder.StorageWrite(m_BlueNoiseId);
+            builder.Execute(
+                [this](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_BlueNoisePipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_BlueNoiseSet},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                        .DynamicOffsets = {ConstantsOffset()},
+                    });
+                    cmd.Dispatch(BlueNoiseSize / 8, BlueNoiseSize / 8, 1);
+                });
+        }
+
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("SSR Prepare Indirect Args");
+            builder.StorageBufferRead(m_RayCounterId);
+            builder.StorageBufferWrite(m_RayCounterId);
+            builder.StorageBufferWrite(m_IndirectArgsId);
+            builder.Execute(
+                [this](PassContext& pass)
+                {
+                    CommandBuffer& cmd = pass.Cmd();
+                    cmd.BindPipeline(m_IndirectArgsPipeline);
+                    m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_IndirectArgsSet},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.Dispatch(1, 1, 1);
+                });
+        }
+    }
+}

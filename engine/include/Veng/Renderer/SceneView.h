@@ -450,6 +450,30 @@ namespace Veng::Renderer
         /// block each Execute.
         f32 NormalMapAntiAliasingScale = 1.0f;
 
+        /// @brief Screen-space reflection rays traced per 2×2 quad of glossy pixels: 1, 2 or 4.
+        ///
+        /// A glossy pixel that traces no ray of its own takes a quad neighbour's. 1 traces the
+        /// quad's top-left pixel, 2 its diagonal pair, 4 every pixel; any other value traces as 4.
+        /// Mirror pixels always trace. Written to the reflection constants each Execute; ignored
+        /// when Settings.SSR is off.
+        u32 SsrSamplesPerQuad = 1;
+        /// @brief The GGX width alpha below which a pixel traces a screen-space reflection.
+        ///
+        /// A rougher reflective pixel takes the view's prefiltered environment instead, with no
+        /// fade between the two. In alpha (perceptual roughness squared), not perceptual
+        /// roughness. Written to the reflection constants each Execute.
+        f32 SsrRoughnessThreshold = 0.2f;
+        /// @brief The reflection variance above which a pixel without a ray of its own traces one.
+        ///
+        /// Read only while SsrVarianceGuidedTracing is on. Written to the reflection constants each
+        /// Execute.
+        f32 SsrVarianceThreshold = 0.0f;
+        /// @brief Whether a glossy pixel whose reflection history is noisier than
+        ///        SsrVarianceThreshold traces a ray even when its quad's choice skipped it.
+        ///
+        /// Written to the reflection constants each Execute.
+        bool SsrVarianceGuidedTracing = true;
+
         /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
         ///
         /// One of the three thin-lens constants the battery evaluates ComputeCircleOfConfusion
