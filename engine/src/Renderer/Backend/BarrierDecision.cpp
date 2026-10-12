@@ -172,7 +172,8 @@ namespace Veng::Renderer::Backend
         case Kind::StorageBufferReadGraphics:
             return {
                 .Layout = vk::ImageLayout::eUndefined,
-                .Stage = vk::PipelineStageFlagBits::eFragmentShader,
+                .Stage = vk::PipelineStageFlagBits::eVertexShader |
+                         vk::PipelineStageFlagBits::eFragmentShader,
                 .Access = vk::AccessFlagBits::eShaderRead,
             };
         }

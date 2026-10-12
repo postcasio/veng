@@ -1,0 +1,4 @@
+{
+  "source": "instanced_mesh_cull.comp.slang",
+  "entry": "csMain"
+}

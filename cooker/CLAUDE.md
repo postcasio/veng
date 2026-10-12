@@ -116,7 +116,8 @@ at cook time:
   domain, `"readsSceneColor": true` when its fragment samples the pre-translucent scene-colour
   grab (the renderer runs the grab only on a frame some drawn material declares it), and
   `"readsSceneDepth": true` when it samples only the opaque-depth copy, both likewise
-  Translucent-only. Because the
+  Translucent-only. A Surface material may declare `"instancedSets": true` when an instanced mesh
+  set may draw it, a located cook error on any other domain. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects

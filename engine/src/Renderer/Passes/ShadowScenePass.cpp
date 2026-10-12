@@ -1,6 +1,7 @@
 #include "ShadowScenePass.h"
 
 #include "../DrawGather.h"
+#include "../InstancedMeshSystem.h"
 
 #include <span>
 
@@ -66,9 +67,9 @@ namespace Veng::Renderer
     ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets,
                                      const CasterRecordRing& records,
                                      const ShadowCasterViews& casters, u32 resolution,
-                                     u32 cascadeCount)
+                                     u32 cascadeCount, const InstancedMeshSystem* instanced)
         : m_Context(context), m_Records(records), m_Resolution(resolution),
-          m_CascadeCount(cascadeCount), m_Casters(casters),
+          m_CascadeCount(cascadeCount), m_Casters(casters), m_Instanced(instanced),
           m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets))
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
@@ -235,7 +236,7 @@ namespace Veng::Renderer
             // rasterization can pancake it onto the render matrix's tight near plane.
             casters.AddView(view.CascadeCullViewProj[set][k],
                             m_MinCasterTexels > 0.0f ? m_MinCasterTexels / texelsPerUnit : 0.0f,
-                            viewProj);
+                            viewProj, m_Resolution);
         }
     }
 
@@ -244,118 +245,135 @@ namespace Veng::Renderer
         const u32 resolution = m_Resolution;
         const ShadowAtlasGrid grid = m_Grid;
 
-        graph.AddPass("Shadow Depth")
-            .Depth({
-                .Resource = io.ShadowMap,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                // The whole atlas clears to depth = 0 (reverse-Z far); an unused tile (the
-                // fourth cell at three cascades, or a whole band whose set no light took)
-                // keeps this clear and is never selected.
-                .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
-            })
-            .Execute(
-                [this, resolution, grid](PassContext& inner)
+        RenderGraph::PassBuilder builder = graph.AddPass("Shadow Depth");
+        builder.Depth({
+            .Resource = io.ShadowMap,
+            .Load = LoadOp::Clear,
+            .Store = StoreOp::Store,
+            // The whole atlas clears to depth = 0 (reverse-Z far); an unused tile (the
+            // fourth cell at three cascades, or a whole band whose set no light took)
+            // keeps this clear and is never selected.
+            .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
+        });
+        if (m_Instanced != nullptr)
+        {
+            m_Instanced->DeclareReads(builder);
+        }
+        builder.Execute(
+            [this, resolution, grid](PassContext& inner)
+            {
+                const ScenePassContext ctx = Wrap(inner);
+                CommandBuffer& cmd = ctx.Cmd();
+                const SceneView& view = ctx.View();
+                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+                // Every granted set's cascades, each into its tile. Sets stack as row bands,
+                // so a set costs a further cull and draw of every caster through its cascades.
+                const u32 tileCount = m_TileCount;
+                const u32 count = m_FrameCascadeCount;
+                if (tileCount == 0)
                 {
-                    const ScenePassContext ctx = Wrap(inner);
-                    CommandBuffer& cmd = ctx.Cmd();
-                    const SceneView& view = ctx.View();
-                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                    return;
+                }
+                VE_PROFILE_SCOPE("Shadow/Record");
+                const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
+                const DepthInstanceBatch& batch = m_Casters.GetBatch();
 
-                    // Every granted set's cascades, each into its tile. Sets stack as row bands,
-                    // so a set costs a further cull and draw of every caster through its cascades.
-                    const u32 tileCount = m_TileCount;
-                    const u32 count = m_FrameCascadeCount;
-                    if (tileCount == 0)
-                    {
-                        return;
-                    }
-                    VE_PROFILE_SCOPE("Shadow/Record");
-                    const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-                    const DepthInstanceBatch& batch = m_Casters.GetBatch();
-
-                    const auto SetTile = [&](const u32 tile)
-                    {
-                        const u32 set = tile / count;
-                        const u32 k = tile % count;
-                        const ivec2 tileOffset{
-                            static_cast<i32>((k % grid.Columns) * resolution),
-                            static_cast<i32>((set * grid.Rows + k / grid.Columns) * resolution),
-                        };
-                        cmd.SetViewport(tileOffset, {resolution, resolution});
-                        cmd.SetScissor(tileOffset, {resolution, resolution});
-                        return view.CascadeViewProj[set][k];
+                const auto SetTile = [&](const u32 tile)
+                {
+                    const u32 set = tile / count;
+                    const u32 k = tile % count;
+                    const ivec2 tileOffset{
+                        static_cast<i32>((k % grid.Columns) * resolution),
+                        static_cast<i32>((set * grid.Rows + k / grid.Columns) * resolution),
                     };
+                    cmd.SetViewport(tileOffset, {resolution, resolution});
+                    cmd.SetScissor(tileOffset, {resolution, resolution});
+                    return view.CascadeViewProj[set][k];
+                };
 
-                    // Static casters: one instanced draw per submesh per tile, the tile's raw
-                    // light-space matrix pushed once.
-                    bool staticBound = false;
+                // Static casters: one instanced draw per submesh per tile, the tile's raw
+                // light-space matrix pushed once.
+                bool staticBound = false;
+                for (u32 tile = 0; tile < tileCount; ++tile)
+                {
+                    const u32 shadowView = m_FirstView + tile;
+                    if (batch.GetViewDrawCount(shadowView) == 0)
+                    {
+                        continue;
+                    }
+                    if (!staticBound)
+                    {
+                        cmd.BindPipeline(m_Pipeline);
+                        registry.Bind(cmd);
+                        cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
+                                               BindlessRegistry::FirstUserSet);
+                        batch.BindInstanceIds(cmd);
+                        staticBound = true;
+                    }
+                    cmd.PushConstants(ShadowPushConstants{.ViewProj = SetTile(tile)});
+                    batch.RecordView(cmd, shadowView);
+                }
+
+                // Skinned casters: the skinned depth pipeline + the palette set, each posed
+                // through its entity's palette base.
+                const std::span<const SubMeshCandidate> candidates =
+                    view.Broadphase->GetSubMeshCandidates();
+                bool skinnedBound = false;
+                for (u32 tile = 0; tile < tileCount; ++tile)
+                {
+                    const std::span<const u32> skinned = m_Casters.GetSkinned(m_FirstView + tile);
+                    if (skinned.empty())
+                    {
+                        continue;
+                    }
+                    if (!skinnedBound)
+                    {
+                        cmd.BindPipeline(m_SkinnedPipeline);
+                        cmd.BindDescriptorSets({view.SkinningPalette.get()},
+                                               BindlessRegistry::FirstUserSet);
+                        skinnedBound = true;
+                    }
+                    const mat4 lightViewProj = SetTile(tile);
+                    const Mesh* lastSkinned = nullptr;
+                    for (const u32 id : skinned)
+                    {
+                        const SubMeshCandidate& c = candidates[id];
+                        const VisibleMesh& item = view.Visible[c.MeshCandidate];
+                        const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
+                        if (paletteBase == nullptr)
+                        {
+                            continue;
+                        }
+                        const Mesh& mesh = *item.Mesh;
+                        if (lastSkinned != &mesh)
+                        {
+                            cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                            cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                            lastSkinned = &mesh;
+                        }
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
+                        cmd.PushConstants(ShadowSkinnedPushConstants{
+                            .MVP = lightViewProj * item.World,
+                            .PaletteBase = *paletteBase,
+                        });
+                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                    }
+                }
+
+                // Instanced sets: each tile's survivors, pancaked like the other casters.
+                if (m_Instanced != nullptr)
+                {
                     for (u32 tile = 0; tile < tileCount; ++tile)
                     {
                         const u32 shadowView = m_FirstView + tile;
-                        if (batch.GetViewDrawCount(shadowView) == 0)
+                        if (m_Instanced->HasShadowDraws(shadowView))
                         {
-                            continue;
-                        }
-                        if (!staticBound)
-                        {
-                            cmd.BindPipeline(m_Pipeline);
-                            registry.Bind(cmd);
-                            cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
-                                                   BindlessRegistry::FirstUserSet);
-                            batch.BindInstanceIds(cmd);
-                            staticBound = true;
-                        }
-                        cmd.PushConstants(ShadowPushConstants{.ViewProj = SetTile(tile)});
-                        batch.RecordView(cmd, shadowView);
-                    }
-
-                    // Skinned casters: the skinned depth pipeline + the palette set, each posed
-                    // through its entity's palette base.
-                    const std::span<const SubMeshCandidate> candidates =
-                        view.Broadphase->GetSubMeshCandidates();
-                    bool skinnedBound = false;
-                    for (u32 tile = 0; tile < tileCount; ++tile)
-                    {
-                        const std::span<const u32> skinned =
-                            m_Casters.GetSkinned(m_FirstView + tile);
-                        if (skinned.empty())
-                        {
-                            continue;
-                        }
-                        if (!skinnedBound)
-                        {
-                            cmd.BindPipeline(m_SkinnedPipeline);
-                            cmd.BindDescriptorSets({view.SkinningPalette.get()},
-                                                   BindlessRegistry::FirstUserSet);
-                            skinnedBound = true;
-                        }
-                        const mat4 lightViewProj = SetTile(tile);
-                        const Mesh* lastSkinned = nullptr;
-                        for (const u32 id : skinned)
-                        {
-                            const SubMeshCandidate& c = candidates[id];
-                            const VisibleMesh& item = view.Visible[c.MeshCandidate];
-                            const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
-                            if (paletteBase == nullptr)
-                            {
-                                continue;
-                            }
-                            const Mesh& mesh = *item.Mesh;
-                            if (lastSkinned != &mesh)
-                            {
-                                cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                                cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-                                lastSkinned = &mesh;
-                            }
-                            const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
-                            cmd.PushConstants(ShadowSkinnedPushConstants{
-                                .MVP = lightViewProj * item.World,
-                                .PaletteBase = *paletteBase,
-                            });
-                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                            m_Instanced->RecordShadowView(cmd, shadowView, SetTile(tile),
+                                                          m_Context.IsDepthClampSupported());
                         }
                     }
-                });
+                }
+            });
     }
 }

@@ -22,19 +22,34 @@ uint CeilLog2(uint x)
     return firstbithigh(x - 1u) + 1u;
 }
 
-// Tests whether the world AABB [boundsMin, boundsMax] is provably hidden behind hiZ
-// over its screen footprint.
-//
-// prevViewProj is the previous frame's camera world->clip (the pyramid is last
-// frame's depth, so the projection that screen-bounds the candidate must be last
-// frame's too). hiZBaseExtent is mip 0's pixel extent. depthBias absorbs reduction
-// quantization; a tie draws.
-//
-// Returns true only when the candidate is occluded; false (draw it) on every
-// uncertainty.
-bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
-                Texture2D<float> hiZ, uint2 hiZBaseExtent, float depthBias)
+// The part of the occlusion test that needs no pyramid: a candidate's screen footprint at the mip
+// whose texels cover it, and its nearest projected depth. Testable is false on every uncertainty the
+// footprint alone decides (a corner at or behind the near plane, a footprint leaving the screen), in
+// which case the candidate draws.
+struct HiZFootprint
 {
+    bool Testable;
+    uint Level;   // the pyramid level the footprint spans at most 2x2 texels of
+    int2 TexMin;  // the footprint's first texel at Level
+    int2 TexMax;  // its last texel at Level
+    float ZMax;   // the candidate's nearest (reverse-Z: largest) projected depth
+};
+
+// Projects the world AABB [boundsMin, boundsMax] to its footprint in the pyramid.
+//
+// prevViewProj is the previous frame's camera world->clip (the pyramid is last frame's depth, so
+// the projection that screen-bounds the candidate must be last frame's too). hiZBaseExtent is mip
+// 0's pixel extent.
+HiZFootprint ComputeHiZFootprint(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
+                                 uint2 hiZBaseExtent)
+{
+    HiZFootprint footprint;
+    footprint.Testable = false;
+    footprint.Level = 0u;
+    footprint.TexMin = int2(0, 0);
+    footprint.TexMax = int2(0, 0);
+    footprint.ZMax = 0.0;
+
     // Project the 8 corners. Track the screen-space [0,1] xy bound and the nearest
     // (reverse-Z: maximum) projected depth — the candidate's closest point to the camera.
     float2 uvMin = float2(1e30, 1e30);
@@ -54,7 +69,7 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
         // safely: the perspective divide flips or explodes. Draw the candidate.
         if (clip.w <= 0.0)
         {
-            return false;
+            return footprint;
         }
 
         float3 ndc = clip.xyz / clip.w;
@@ -70,7 +85,7 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
     // occlusion's: off-screen-but-shadowing geometry and frustum-edge cases draw.
     if (uvMin.x < 0.0 || uvMin.y < 0.0 || uvMax.x > 1.0 || uvMax.y > 1.0)
     {
-        return false;
+        return footprint;
     }
 
     // Footprint pixel extent at mip 0.
@@ -99,8 +114,49 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
     int2 texMin = int2(floor(uvMin * levelExtentF));
     int2 texMax = int2(floor(uvMax * levelExtentF));
     int2 maxCoord = int2(levelExtent) - 1;
-    texMin = clamp(texMin, int2(0, 0), maxCoord);
-    texMax = clamp(texMax, int2(0, 0), maxCoord);
+    footprint.TexMin = clamp(texMin, int2(0, 0), maxCoord);
+    footprint.TexMax = clamp(texMax, int2(0, 0), maxCoord);
+    footprint.Level = level;
+    footprint.ZMax = zMax;
+    footprint.Testable = true;
+    return footprint;
+}
+
+// The texel of a footprint's (up to) 2x2 neighbourhood to load: (tx, ty) in {0, 1}^2, clamped to
+// the footprint so a one-texel-wide footprint loads its one texel twice.
+int2 HiZFootprintTexel(HiZFootprint footprint, int tx, int ty)
+{
+    return int2(min(footprint.TexMin.x + tx, footprint.TexMax.x),
+                min(footprint.TexMin.y + ty, footprint.TexMax.y));
+}
+
+// Occluded iff the candidate's nearest point is strictly behind the farthest stored depth over its
+// whole footprint. Reverse-Z: behind is the smaller depth, so the candidate's nearest (largest)
+// depth must fall below dFar, the min of the footprint's texels. The bias keeps a tie drawing.
+bool IsFootprintOccluded(HiZFootprint footprint, float dFar, float depthBias)
+{
+    return footprint.Testable && footprint.ZMax < dFar - depthBias;
+}
+
+// Tests whether the world AABB [boundsMin, boundsMax] is provably hidden behind hiZ
+// over its screen footprint.
+//
+// prevViewProj is the previous frame's camera world->clip (the pyramid is last
+// frame's depth, so the projection that screen-bounds the candidate must be last
+// frame's too). hiZBaseExtent is mip 0's pixel extent. depthBias absorbs reduction
+// quantization; a tie draws.
+//
+// Returns true only when the candidate is occluded; false (draw it) on every
+// uncertainty.
+bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
+                Texture2D<float> hiZ, uint2 hiZBaseExtent, float depthBias)
+{
+    const HiZFootprint footprint =
+        ComputeHiZFootprint(boundsMin, boundsMax, prevViewProj, hiZBaseExtent);
+    if (!footprint.Testable)
+    {
+        return false;
+    }
 
     // Min of the covered texels (up to a 2x2 neighborhood) is the farthest occluder
     // depth over the footprint under reverse-Z. The footprint spans at most two texels
@@ -112,14 +168,9 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
         [unroll]
         for (int tx = 0; tx <= 1; ++tx)
         {
-            int2 coord = int2(min(texMin.x + tx, texMax.x), min(texMin.y + ty, texMax.y));
-            dFar = min(dFar, hiZ.Load(int3(coord, int(level))));
+            dFar = min(dFar, hiZ.Load(int3(HiZFootprintTexel(footprint, tx, ty),
+                                           int(footprint.Level))));
         }
     }
-
-    // Occluded iff the candidate's nearest point is strictly behind the farthest
-    // stored depth over the whole footprint. Reverse-Z: behind is the smaller depth,
-    // so the candidate's nearest (largest) depth must fall below dFar. The bias keeps
-    // a tie drawing.
-    return zMax < dFar - depthBias;
+    return IsFootprintOccluded(footprint, dFar, depthBias);
 }

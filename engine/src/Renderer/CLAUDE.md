@@ -107,7 +107,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `SsrChain`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `LightTileCuller`, `SsrChain`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -667,7 +667,7 @@ The buffer is registered in the set-0 storage-buffer array, and the view block's
 `LightTiles` names it — slot, row stride, this frame's first word, or `LightTilesNone` when no cull
 ran — so any pass can find a pixel's mask through `Veng/light_tiles.slang`. It is imported into the
 graph: the cull's `StorageBufferWrite` and the lighting pass's `StorageBufferRead` (which, on a
-graphics pass, is `AccessKind::StorageBufferReadGraphics`, a fragment-stage scope) derive the barrier.
+graphics pass, is `AccessKind::StorageBufferReadGraphics`, a vertex- and fragment-stage scope) derive the barrier.
 **The masks describe the opaque depth range**, so they serve the deferred pass; a forward-lit
 translucent fragment in front of that depth is not covered by them and still loops every light — a
 forward consumer would want a second word per tile bounding the near plane to the opaque depth.
@@ -1976,6 +1976,100 @@ runtime-built mesh carries levels through `MeshData::Lods`.
   a length — and one 4×4 inverse per view; a single-level mesh skips selection entirely.
   `tests/unit/lod_selection.cpp` pins monotonicity in size, the hysteresis band, the metric's
   invariance to the view's direction, and the forced-level order.
+
+### Instanced mesh sets
+
+**An `InstancedMesh` entity draws one mesh with one material at every instance of a store** — the
+tool for scattered debris, vegetation and props, where an entity per copy would cost
+per-entity work every frame and a draw candidate per copy, and the frame's `MaxCullCandidates` is
+far below the copy count. The component (`Veng/Scene/Components.h`) names the mesh, the material,
+`CastsShadows`, `Visible`, the projected-size band and the minimum shadow caster size, and holds a
+runtime-only `Ref<InstanceSet>` (`Veng/Renderer/InstancedMesh.h`): the CPU store of
+`MeshInstance`s — a 3×4 affine transform into the entity's frame and one `vec4` datum, 64 bytes —
+with `Resize` (capacity), `SetCount` (the drawn prefix) and `Write` (a range). `InstancedMeshSystem`
+(`src/Renderer/InstancedMeshSystem.{h,cpp}`) owns the vertical slice.
+
+- **A set is one bound, one slot, a handful of draws.** The store keeps a conservative bound
+  (instance origins grown by the largest instance scale), so the renderer bounds the whole set
+  without visiting it: each view rejects a set whole by that one box (the scene BVH never sees
+  instances), and it folds into the scene and caster bounds the cascades fit to. Each set takes one
+  `DrawBudget` slot after the entity phases (`DrawPhase::InstancedSet`), whose `DrawData` record is
+  the set's frame, previous frame and material; its instances are culled and drawn outside the
+  budget, as one draw per level and submesh per view.
+- **Uploads are the ranges written.** Every per-frame buffer has one copy per frame in flight, so the
+  host never writes what a frame still reads. One host-mapped **data buffer** holds every set's
+  records (each set's whole capacity, pooled in gather order) followed by the frame's survivor
+  lists, and is registered in the set-0 storage array. A frame slot uploads, per set, the union of
+  the ranges `InstanceSet::Write` recorded since that slot last saw the store
+  (`GetWrittenSince`; it keeps `MaxTrackedWrites` ranges, and a slot further behind, or behind a
+  `Resize` or a change of the pooled layout, uploads the store whole). The indirect commands and
+  the cull's tables are copied per frame the same way.
+- **The cull is per instance and per view, and runs on the GPU whatever the entity cull mode.**
+  The views are the main camera then every shadow view `ShadowCasterViews` holds (cascades, then
+  punctual faces, in render order; `AddView` records each view's cull and level matrices and tile
+  size). A job is a (view, set) pair the view does not reject whole. Where
+  `Context::IsGpuDrivenCullingSupported()` holds, **one dispatch per frame** covers every job
+  (`instanced_mesh_cull.comp`, one invocation per instance, a binary search over the job table's
+  invocation bases) — under `CullMode::CPU` too, which is the entity default a consumer may never
+  change. Elsewhere, or under `SceneRenderer::SetInstancedMeshForceCpuCull`, the same decisions run
+  on the host (`CullInstance`, `src/Renderer/InstancedCull.h`, the device-free twin the unit band
+  pins) into the same lists — O(N) per view, the fallback and not the path — and the draws are
+  direct with the counts the host knows. An invocation tests the instance's world box against the
+  view's frustum, its size against the band, a shadow view's minimum caster size, and in the main
+  view, while the entity GPU cull holds a reduced pyramid with valid history, last frame's hi-Z
+  (through its bindless slot; `hi_z_occlusion.slang`'s footprint is shared with the entity cull).
+  A survivor selects its level and appends its index to that level's list, counting itself into
+  every submesh's command of that level (the first one's count hands out the slot). The host wrote
+  each command's index range and a zero count beforehand.
+- **Levels follow the entity rule and keep its hysteresis.** Size is `ProjectedScreenSize` of the
+  mesh's level-0 sphere under the instance's transform, with the view's bias and screen scale; a
+  shadow view measures through its own projection with no memory. The main view keeps one level per
+  pooled instance in a device buffer (`InstanceNoPreviousLod` when culled), which the cull reads and
+  writes, so an instance resting at a switch distance does not flip. The memory is trusted only for
+  a set the main view culled last frame under an unchanged pooled layout. Forced levels apply as for
+  entities (the set entity's `LodOverride`, then the view's).
+- **The projected-size band is measured in the main camera in every view.**
+  `MinProjectedPixels`/`MaxProjectedPixels` cull by `ReferenceProjectedPixels` — the level rule's
+  size with no bias, times the main view's rendered height — so a shadow view casts exactly the
+  instances the main view's band keeps, not what its own wider projection would. The function is
+  exposed on both sides (`Veng/Renderer/InstancedMesh.h`, `Veng/instanced_mesh_math.slang`) so a
+  consumer drawing the instances below the band another way partitions them with the identical
+  expression, from the view block's `CurViewProj`, `CameraPosition` and `ExtentParams.y`.
+  `MinShadowCasterTexels` skips, in a shadow view, an instance spanning fewer of its texels.
+- **Drawing.** The g-buffer pass draws the main view's jobs after (and independent of) the entity
+  draws through the material's instanced-set pipeline (`Material::EnsureInstancedPipeline`); each
+  shadow pass draws its views' jobs through a depth-only pipeline of the pass's own state
+  (`shadow_depth_instanced.vert`; the cascades with depth clamp). Neither pipeline has an
+  instance-rate binding: the draw's `firstInstance` is the level's list start in the data buffer, so
+  `SV_VulkanInstanceID` (which counts from it) names the list entry, and the entry the record. The
+  surface push grows by three fields (`SurfacePush`: the data buffer's slot, the set's `DrawData`
+  slot, its first record), zero for every other draw. The drawing passes declare
+  `StorageBufferRead` on the data buffer and `IndirectRead` on the commands, so the barriers from
+  the cull are graph-derived.
+- **Shader access.** A Surface fragment reads its instance through `Veng/instanced_mesh.slang`:
+  `InstanceDatum(input)`, `LoadInstance`, `IsInstanceDraw`, and `InstanceObjectPosition(input)` —
+  the mesh-space position, carried for every surface draw as `SurfaceFragmentInput::v_ObjectPosition`
+  beside `v_Instance` (the data buffer's slot and the record index, `InstanceNone` for any other
+  draw). The material must declare `"instancedSets": true`; a set drawn with one that does not is
+  reported once and skipped.
+- **Presence-driven.** The cull pass and the passes' reads are wired while the scene carries a
+  drawable set (`m_InstancedActive`, the volume-field model), so a scene with none is unchanged.
+- **Diagnostics.** `GetDrawBudgetStats()` counts the sets, their instances and any set dropped for a
+  slot; `GetInstancedMeshStats()` adds the views, jobs and draws, and per (set, view) the survivors
+  per level, read back from the commands as many frames later as there are frames in flight; the `Render/Instanced*`
+  counters sample the same. `ReadbackInstancedMeshSurvivors()` idles the device and returns every
+  survivor of the last frame — the test surface.
+- **What a set does not do.** It is not pickable, not drawn under `GBufferShadingOverride`, and not
+  drawn by the depth+normal path; an instance's own motion is not in the velocity (its previous
+  transform is the set's previous frame times its current one); one set draws one opaque material
+  on every submesh; a skinned mesh is refused.
+
+`tests/gpu/instanced_mesh_set.cpp` pins the properties on fields of cubes: what is in view survives
+and nothing else, levels are monotone in distance and hold inside the band, the band partitions in
+the main view and bounds what the cascades cast, the cull ignores the entity mode, fifty thousand
+instances take one slot, a partial write moves exactly what it wrote, a set casts into the
+cascades, and the host fallback keeps what the GPU cull keeps; `tests/unit/instanced_mesh.cpp` pins
+the store's write ranges and bound and the host cull's rules.
 
 ### ScenePass and PassIO
 

@@ -277,6 +277,10 @@ namespace Veng
         // registers Renderer::VolumeField nor serializes.
         registry.Register<VolumeField>();
 
+        // An instanced mesh set, resolved by the renderer per Execute. Its handles register
+        // transitively; the runtime-only instance store carries no reflected field.
+        registry.Register<InstancedMesh>();
+
         // A scene-authored fullscreen post-process effect, resolved by the renderer per Execute. Its
         // Material handle registers transitively; the effect runs over scene color + depth before
         // bloom.

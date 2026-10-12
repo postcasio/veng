@@ -32,6 +32,7 @@ namespace Veng::Renderer
         m_Batch.Begin(m_Candidates);
         m_Skinned.clear();
         m_SkinnedEnds.clear();
+        m_Views.clear();
     }
 
     ShadowCasterViews::CasterClass ShadowCasterViews::Classify(const u32 candidateId) const
@@ -50,10 +51,15 @@ namespace Veng::Renderer
     }
 
     u32 ShadowCasterViews::AddView(const mat4& cullViewProj, const f32 minExtent,
-                                   const mat4& lodViewProj)
+                                   const mat4& lodViewProj, const u32 resolution)
     {
         VE_PROFILE_SCOPE("Shadow/Cull");
         const u32 viewIndex = m_Batch.AddView();
+        m_Views.push_back(ShadowViewInfo{
+            .CullViewProj = cullViewProj,
+            .LodViewProj = lodViewProj,
+            .Resolution = resolution,
+        });
         LodView lodView = LodView::FromViewProjection(lodViewProj, m_Lod.Bias);
         lodView.ScreenScale *= m_Lod.ScreenScale;
         const LodPolicy lodPolicy{.Forced = m_Lod.Forced, .Hysteresis = 0.0f};

@@ -657,6 +657,16 @@ errors on any other domain. Neither is policed against the shader: a depth-only 
 the colour helpers reads black. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The refraction
 grab, and reading it blurred".
 
+**A Surface material declares whether an instanced mesh set may draw it**, `"instancedSets": true`
+(`Material::SupportsInstancedSets`; default false, a located cook error on any other domain). Sets
+are built at runtime, so the declaration is the gate: the renderer builds the material's
+instanced-set g-buffer pipeline lazily the first time a set draws it
+(`Material::EnsureInstancedPipeline`, the engine's `surface_instanced.vert` paired with the
+material's fragment, no instance-rate binding), and refuses — reporting once — a set whose material
+does not declare it. A declared material still draws on an ordinary mesh: its fragment reads the
+instance through `Veng/instanced_mesh.slang`, which returns the neutral record there. See
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Instanced mesh sets".
+
 The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
 index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);
 PostProcess and Sky push it at 0; GuiFill pushes it at **`GuiFillSelectorPushOffset` (20)**,

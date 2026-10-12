@@ -6,16 +6,16 @@ namespace Veng::Renderer
 {
     /// @brief Per-frame draw-budget accounting from the last Execute.
     ///
-    /// The three gather phases lay out their draws through one shared slot budget and one shared
+    /// The gather phases lay out their draws through one shared slot budget and one shared
     /// skinning-palette budget; a frame whose candidates exceed either is clamped, and the
     /// submeshes past the limit are not drawn. This block is how many were lost and where, the
     /// per-frame number beside the once-per-renderer warning. Reached through
     /// SceneRenderer::GetDrawBudgetStats(); all zero before the first Execute.
     struct DrawBudgetStats
     {
-        /// @brief The per-frame draw-slot budget in force, shared by all three gather phases.
+        /// @brief The per-frame draw-slot budget in force, shared by every gather phase.
         u32 SlotLimit = 0;
-        /// @brief Slots actually claimed across the three phases this frame.
+        /// @brief Slots actually claimed across the phases this frame.
         u32 SlotsGranted = 0;
         /// @brief Static opaque submeshes the static phase could not seat.
         ///
@@ -26,6 +26,15 @@ namespace Veng::Renderer
         u32 SkinnedDropped = 0;
         /// @brief Submeshes the translucent phase could not draw.
         u32 TranslucentDropped = 0;
+        /// @brief Instanced mesh sets not drawn for want of a slot for their frame and material.
+        ///
+        /// A set takes one slot however many instances it carries; its instances are culled and
+        /// drawn outside the slot budget.
+        u32 InstancedSetDropped = 0;
+        /// @brief Instanced mesh sets drawn this frame, each holding one slot.
+        u32 InstancedSets = 0;
+        /// @brief The instances those sets carry, none of which holds a slot.
+        u32 InstancedInstances = 0;
         /// @brief Skinned instances dropped for want of palette matrices.
         ///
         /// Counted per instance: the phase skips an instance whose palette does not fit and keeps

@@ -1,0 +1,12 @@
+{
+  "defaultInstance": "0xB28AC9C2A4D595F9",
+  "instancedSets": true,
+  "shaders": {
+    "vertex": "0x6DCB958E3EE5872B",
+    "fragment": "0x35E70F70692D206D"
+  },
+  "fields": [
+    { "name": "BaseColor", "type": "vec4", "value": [0.8, 0.8, 0.8, 1.0] },
+    { "name": "Roughness", "type": "float", "value": 0.8 }
+  ]
+}

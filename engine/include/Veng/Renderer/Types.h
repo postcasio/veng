@@ -324,7 +324,7 @@ namespace Veng::Renderer
         ///
         /// Distinct from StorageRead, which is a storage-image layout; a buffer has no
         /// layout, so this resolves to a stage/access memory scope with no transition.
-        /// StorageBufferReadGraphics is the fragment-stage read, for the reason the Sample*
+        /// StorageBufferReadGraphics is the graphics-stage read, for the reason the Sample*
         /// kinds name their stage.
         StorageBufferRead,
         /// @brief Written as a storage buffer.
@@ -332,7 +332,7 @@ namespace Veng::Renderer
         /// Distinct from StorageWrite, which is a storage-image layout; a buffer has no
         /// layout, so this resolves to a stage/access memory scope with no transition.
         StorageBufferWrite,
-        /// @brief Read as a storage buffer by a fragment shader.
+        /// @brief Read as a storage buffer by a graphics pipeline's vertex and fragment stages.
         ///
         /// @see StorageBufferRead, the compute-stage read.
         StorageBufferReadGraphics,

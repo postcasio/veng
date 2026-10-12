@@ -715,6 +715,30 @@ TEST_CASE("Cooker: a scene-colour-reading translucent material cooks with the fl
           string::npos);
 }
 
+TEST_CASE("Cooker: a Surface material declaring instanced sets cooks with the flag set; other "
+          "domains refuse it")
+{
+    const Result<ArchiveReader> reader =
+        CookMaterialPack(FixtureDir / "material_instanced_sets_pack.json",
+                         Veng::TestSupport::TempDir() / "veng_cooker_material_instanced.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xE353A2BA6D875704ULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 0u); // Surface
+    CHECK(header.InstancedSets == 1u);
+
+    // A set draws through the g-buffer contract alone, so a Translucent material asking is refused.
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const VoidResult translucent = cooker.CookPack(
+        FixtureDir / "material_translucent_instanced_sets_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_instanced.vengpack");
+    REQUIRE_FALSE(translucent.has_value());
+    CHECK(translucent.error().find("'instancedSets' requires the Surface domain") != string::npos);
+}
+
 TEST_CASE("Cooker: a scene-depth-reading translucent material cooks with the flag set; other "
           "domains refuse it")
 {

@@ -16,6 +16,7 @@ namespace Veng::Renderer
     class CommandBuffer;
     class Context;
     class GBufferShadingOverride;
+    class InstancedMeshSystem;
 
     /// @brief Records a draw group's instanced runs: one DrawIndexed per run.
     ///
@@ -49,12 +50,16 @@ namespace Veng::Renderer
         /// @param stores      Which colour channels the pass stores; the rest are discarded.
         /// @param shadingOverride The prepared override pipelines to draw through, or null to bind
         ///                    each group's own material pipeline.
+        /// @param instanced   The instanced mesh sets to draw after the entity draws, or null while
+        ///                    the scene carries none.
         GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
                          SceneRendererSettings::CullMode cull, ResourceId indirectId,
                          const GBufferChannelStates& stores,
-                         const GBufferShadingOverride* shadingOverride)
+                         const GBufferShadingOverride* shadingOverride,
+                         const InstancedMeshSystem* instanced)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
-              m_IndirectId(indirectId), m_Stores(stores), m_ShadingOverride(shadingOverride)
+              m_IndirectId(indirectId), m_Stores(stores), m_ShadingOverride(shadingOverride),
+              m_Instanced(instanced)
         {
         }
 
@@ -81,5 +86,7 @@ namespace Veng::Renderer
         GBufferChannelStates m_Stores;
         /// @brief The override pipelines drawn through in place of the materials', or null.
         const GBufferShadingOverride* m_ShadingOverride = nullptr;
+        /// @brief The instanced mesh sets drawn after the entity draws, or null.
+        const InstancedMeshSystem* m_Instanced = nullptr;
     };
 }

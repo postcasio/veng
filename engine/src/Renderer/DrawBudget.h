@@ -12,8 +12,10 @@ namespace Veng::Renderer
         StaticOpaque,
         /// @brief The skinned phase, which claims a slot and its palette matrices together.
         Skinned,
-        /// @brief The translucent phase, which lays out the last slots of the frame.
+        /// @brief The translucent phase, which lays out the static, skinned and translucent tail.
         Translucent,
+        /// @brief The instanced-set phase: one slot per set, for its frame and material.
+        InstancedSet,
     };
 
     /// @brief The outcome of a skinned draw's combined slot + palette claim.
@@ -33,7 +35,7 @@ namespace Veng::Renderer
 
     /// @brief Owns the per-frame draw-slot and palette-matrix budgets and the drop accounting.
     ///
-    /// One budget serves all three gather phases, so the static opaque range stays contiguous
+    /// One budget serves every gather phase, so the static opaque range stays contiguous
     /// from 0 and the phases cannot disagree about the limit. Device-free and I/O-free: it holds
     /// two cursors, two limits, and the per-phase drop counts, and never logs — the once-per-
     /// renderer warning is the renderer's, driven off GetStats().
@@ -116,6 +118,9 @@ namespace Veng::Renderer
                 break;
             case DrawPhase::Translucent:
                 m_Stats.TranslucentDropped += count;
+                break;
+            case DrawPhase::InstancedSet:
+                m_Stats.InstancedSetDropped += count;
                 break;
             }
         }

@@ -14,6 +14,7 @@
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "GBufferShadingOverride.h"
+#include "InstancedMeshSystem.h"
 #include "LensDirt.h"
 #include "LightTileCuller.h"
 #include "PickingSystem.h"
@@ -292,6 +293,7 @@ namespace Veng::Renderer
         // not frame-observable, so building it here rather than in CreatePipelines is the settled
         // pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
+        m_Instanced = InstancedMeshSystem::Create(m_Context, m_Assets);
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
@@ -698,6 +700,11 @@ namespace Veng::Renderer
         // before: the tonemap in the Final arm (set below), else the terminal pass.
         optional<usize> hdrTailAnchor;
 
+        // The passes drawing the instanced sets, while the scene carries any; their cull is
+        // declared ahead of them below.
+        const InstancedMeshSystem* const instanced =
+            m_InstancedActive ? m_Instanced.get() : nullptr;
+
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
         Ref<ImageView> shadowAtlasView;
@@ -705,7 +712,7 @@ namespace Veng::Renderer
         {
             auto shadowPass = CreateUnique<ShadowScenePass>(
                 m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
-                m_Settings.ShadowResolution, m_Settings.CascadeCount);
+                m_Settings.ShadowResolution, m_Settings.CascadeCount, instanced);
             m_ShadowPass = shadowPass.get();
             shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
@@ -717,7 +724,7 @@ namespace Veng::Renderer
         {
             auto punctualPass = CreateUnique<PunctualShadowScenePass>(
                 m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
-                m_Settings.PunctualShadowResolution);
+                m_Settings.PunctualShadowResolution, instanced);
             m_PunctualShadowPass = punctualPass.get();
             m_Passes.push_back(std::move(punctualPass));
         }
@@ -746,7 +753,7 @@ namespace Veng::Renderer
         auto gbufferPass = CreateUnique<GBufferScenePass>(
             m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
             m_Topology->GBufferStores,
-            m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr);
+            m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr, instanced);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
@@ -1373,6 +1380,14 @@ namespace Veng::Renderer
             m_GpuCull->DeclareCull(graph, &m_Internal->Plan);
         }
 
+        // The instanced sets' cull precedes every pass drawing them: the shadow passes and the
+        // g-buffer pass, all declared in the loop below.
+        if (m_InstancedActive)
+        {
+            m_Instanced->Import(graph);
+            m_Instanced->DeclareCull(graph, m_GpuCull->GetHiZChainId(), m_GpuCull->IsHiZReduced());
+        }
+
         // The HDR tail — point fields, DoF composite, bloom sweep — is declared just before the
         // pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
         // debug arm. Anchoring on that pass (not the list's last) keeps the tail ahead of the
@@ -1837,14 +1852,16 @@ namespace Veng::Renderer
     void SceneRenderer::ReportDrawBudgetDrops()
     {
         const DrawBudgetStats& stats = m_DrawBudgetStats;
-        const u32 slotDrops = stats.StaticDropped + stats.SkinnedDropped + stats.TranslucentDropped;
+        const u32 slotDrops = stats.StaticDropped + stats.SkinnedDropped +
+                              stats.TranslucentDropped + stats.InstancedSetDropped;
         if (slotDrops > 0 && !m_DrawSlotBudgetWarned)
         {
             Log::Warn("SceneRenderer: the per-frame draw-slot budget of {} is exhausted; {} static "
-                      "/ {} skinned / {} translucent candidates were not drawn. The frame is "
-                      "clamped rather than failed, and later frames clamp without warning again.",
+                      "/ {} skinned / {} translucent candidates and {} instanced sets were not "
+                      "drawn. The frame is clamped rather than failed, and later frames clamp "
+                      "without warning again.",
                       stats.SlotLimit, stats.StaticDropped, stats.SkinnedDropped,
-                      stats.TranslucentDropped);
+                      stats.TranslucentDropped, stats.InstancedSetDropped);
             m_DrawSlotBudgetWarned = true;
         }
         if (stats.PaletteDropped > 0 && !m_PaletteBudgetWarned)
@@ -2040,6 +2057,17 @@ namespace Veng::Renderer
         GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, budget);
         GatherTranslucent(gatherInput, translucentScratch, translucentPlan, halfResPlan, budget);
 
+        // Each instanced set takes one slot, for its frame and material, after the entity phases;
+        // its instances are culled and drawn outside the budget.
+        const u32 setSlotsBefore = budget.GetSlotCursor();
+        u32 setInstances = 0;
+        if (m_InstancedActive)
+        {
+            setInstances = m_Instanced->ClaimDrawSlots(
+                static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()) + frameBase, budget);
+        }
+        const u32 setSlots = budget.GetSlotCursor() - setSlotsBefore;
+
         // The layer draws only once its passes are wired AND its view region was written this
         // frame; otherwise this frame's routed draws fold back into the full-resolution plan
         // (rendered full-res, correctly sorted — the cost of one transition frame, never a
@@ -2090,6 +2118,8 @@ namespace Veng::Renderer
                          });
 
         m_DrawBudgetStats = budget.GetStats();
+        m_DrawBudgetStats.InstancedSets = setSlots;
+        m_DrawBudgetStats.InstancedInstances = setInstances;
         ReportDrawBudgetDrops();
         const u32 slotCursor = budget.GetSlotCursor();
 
@@ -2097,7 +2127,8 @@ namespace Veng::Renderer
         // implicit in the three phases' call order.
         const u32 gatheredSlots =
             static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
-                             translucentPlan.Draws.size() + halfResPlan.Draws.size());
+                             translucentPlan.Draws.size() + halfResPlan.Draws.size()) +
+            setSlots;
         VE_ASSERT(gatheredSlots == slotCursor,
                   "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
                   gatheredSlots, slotCursor);
@@ -2421,8 +2452,16 @@ namespace Veng::Renderer
         // widens its shadow frustum) and drives both the cascade near-extension and the punctual
         // spot/area fit.
         m_Broadphase.Sync(view.World, view.Exclude, view.VisibleLayers);
-        const AABB sceneBounds = m_Broadphase.GetSceneBounds();
-        const AABB casterBounds = m_Broadphase.GetCasterBounds();
+        AABB sceneBounds = m_Broadphase.GetSceneBounds();
+        AABB casterBounds = m_Broadphase.GetCasterBounds();
+
+        // The instanced sets bound the scene and its casters by one box each, never per instance.
+        m_Instanced->Gather(view.World, view.Exclude, view.Alpha);
+        if (m_Instanced->HasSets())
+        {
+            sceneBounds = Union(sceneBounds, m_Instanced->GetBounds());
+            casterBounds = Union(casterBounds, m_Instanced->GetCasterBounds());
+        }
 
         // Pack the lights that can light this view into the GPU light layout: cascade-set and
         // punctual shadow-slot assignment by estimated contribution, and the std430 per-light
@@ -2731,6 +2770,8 @@ namespace Veng::Renderer
         {
             m_GpuCull->ReadSurvivorCount(frameIndex);
         }
+        // The instanced sets' survivors, counted into this frame slot's commands by its last cull.
+        m_Instanced->ReadStats(frameIndex);
 
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
         // The surface push's ViewConstantsIndex is the shared per-view slot, distinct from the
@@ -2834,6 +2875,32 @@ namespace Veng::Renderer
                 m_PunctualShadowPass->AddViews(casters, resolvedView);
             }
             casters.Build(frameIndex);
+        }
+
+        // The instanced sets' per-instance cull for the main view and every shadow view above.
+        if (m_InstancedActive)
+        {
+            LodView cameraLod = LodView::FromViewProjection(viewProj, m_Settings.LodBias);
+            cameraLod.ScreenScale *= resolvedView.LodScreenScale;
+            m_Instanced->PrepareFrame(InstancedFrameViews{
+                .FrameIndex = frameIndex,
+                .CameraViewProj = viewProj,
+                .CameraPosition = view.Camera.GetPosition(),
+                .HeightPixels = static_cast<f32>(validExtent.y),
+                .FrustumCull = m_Settings.FrustumCull,
+                .CameraLod = cameraLod,
+                .Hysteresis = m_Settings.LodHysteresis,
+                .ForcedLod =
+                    resolvedView.ForcedLod >= 0 ? resolvedView.ForcedLod : m_Settings.ForcedLod,
+                .Shadows = m_ShadowPass != nullptr || m_PunctualShadowPass != nullptr
+                               ? m_Internal->ShadowCasters.get()
+                               : nullptr,
+                .OcclusionValid = m_Settings.Occlusion && m_GpuCull->IsHiZReduced() &&
+                                  m_GpuCull->IsHiZHistoryValid(),
+                .PrevViewProj = m_PreviousViewProj,
+                .HiZExtent = m_GpuCull->GetHiZExtent(),
+                .HiZTexture = m_GpuCull->GetHiZSampleHandle().Index,
+            });
         }
 
         // Assemble this frame's graph import bindings — the always-bound targets plus the
@@ -3040,6 +3107,13 @@ namespace Veng::Renderer
         // Resolve the scene's volume-field components the same way — the volume march pass inserts on
         // the first live field and drops when the last one goes.
         ResolveVolumeFields(resolvedView);
+
+        // The instanced sets' cull and draws are wired the same way, on the sets Execute gathered.
+        if (m_Instanced->HasSets() != m_InstancedActive)
+        {
+            m_InstancedActive = m_Instanced->HasSets();
+            Rebuild();
+        }
 
         // Gather the scene's flipbook sprites. The pass inserts on the first sprite and drops only
         // after the gather has stayed empty for SpriteIdleFrameLimit Executes.
@@ -3279,6 +3353,10 @@ namespace Veng::Renderer
             bindings.push_back(
                 {.Id = m_GpuCull->GetIndirectId(), .Buffer = m_GpuCull->GetIndirectBuffer()});
         }
+        if (m_InstancedActive)
+        {
+            m_Instanced->AppendImportBindings(bindings);
+        }
         return bindings;
     }
 
@@ -3403,6 +3481,26 @@ namespace Veng::Renderer
             fold(static_cast<const PointFieldScenePass*>(m_ScenePointFieldPass)->GetStats());
         }
         return stats;
+    }
+
+    InstancedMeshStats SceneRenderer::GetInstancedMeshStats() const
+    {
+        return m_Instanced->GetStats();
+    }
+
+    vector<InstancedMeshSurvivors> SceneRenderer::ReadbackInstancedMeshSurvivors() const
+    {
+        return m_Instanced->ReadbackSurvivors();
+    }
+
+    void SceneRenderer::SetInstancedMeshForceCpuCull(const bool force)
+    {
+        m_Instanced->SetForceCpuCull(force);
+    }
+
+    bool SceneRenderer::IsInstancedMeshGpuCulled() const
+    {
+        return m_Instanced->IsGpuCulled();
     }
 
     void SceneRenderer::SetPointFieldForceDirect(const bool force)

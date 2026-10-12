@@ -257,6 +257,21 @@ namespace Veng
         m_Parent.Get()->EnsureSkinnedPipeline(assets);
     }
 
+    void MaterialInstance::BindInstanced(CommandBuffer& cmd) const
+    {
+        const Ref<GraphicsPipeline>& instanced = m_Parent.Get()->GetInstancedPipeline();
+        VE_ASSERT(instanced != nullptr,
+                  "MaterialInstance::BindInstanced: '{}' has no instanced-set pipeline — a set "
+                  "draw needs a Surface material declaring instancedSets",
+                  m_Name);
+        cmd.BindPipeline(instanced);
+    }
+
+    void MaterialInstance::EnsureInstancedPipeline(AssetManager& assets) const
+    {
+        m_Parent.Get()->EnsureInstancedPipeline(assets);
+    }
+
     u32 MaterialInstance::GetMaterialSelector() const
     {
         // Fold the current frame's region base into the selector so the shader's load lands in

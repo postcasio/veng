@@ -381,6 +381,9 @@ add_library(veng SHARED
         src/Renderer/HalfResTranslucency.cpp
         src/Renderer/RefractionGrab.cpp
         src/Renderer/GpuCullSystem.cpp
+        src/Renderer/InstanceSet.cpp
+        src/Renderer/InstancedCull.cpp
+        src/Renderer/InstancedMeshSystem.cpp
         src/Renderer/GBufferShadingOverride.cpp
         src/Renderer/LightTileCuller.cpp
         src/Renderer/SsrChain.cpp
@@ -649,6 +652,8 @@ set(VENG_HOT_PATH_SOURCES
         # The draw path: gather, light packing, command recording, and the per-draw scene passes.
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
+        src/Renderer/InstancedCull.cpp
+        src/Renderer/InstancedMeshSystem.cpp
         src/Renderer/LightPacking.cpp
         src/Renderer/LodSelection.cpp
         src/Renderer/ShadowCasters.cpp

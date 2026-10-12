@@ -324,6 +324,29 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1j. Parse the optional instanced-set declaration (default false) ---
+
+        // Set by a Surface material an instanced mesh set may draw. Sets are built at runtime, so
+        // the declaration is what has the runtime build the material's instanced-set pipeline; the
+        // set's vertex stage is the engine's, so only the Surface g-buffer contract can take it.
+        bool instancedSets = false;
+        if (vmat.contains("instancedSets"))
+        {
+            if (!vmat["instancedSets"].is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'instancedSets' must be a boolean",
+                                vmatPath.string()));
+            }
+            instancedSets = vmat["instancedSets"].get<bool>();
+            if (instancedSets && domainValue != MaterialDomain::Surface)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'instancedSets' requires the Surface domain",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -1026,6 +1049,7 @@ namespace Veng::Cook
         header.Blend = blend;
         header.ReadsSceneColor = readsSceneColor ? 1u : 0u;
         header.ReadsSceneDepth = readsSceneDepth ? 1u : 0u;
+        header.InstancedSets = instancedSets ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

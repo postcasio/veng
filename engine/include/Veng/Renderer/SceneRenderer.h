@@ -8,6 +8,7 @@
 #include <Veng/Renderer/EntityFrameTable.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/InstancedMesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SceneRendererSettings.h>
@@ -58,6 +59,7 @@ namespace Veng::Renderer
     class RefractionGrab;
     class HalfResTranslucency;
     class GpuCullSystem;
+    class InstancedMeshSystem;
     class LightTileCuller;
     class SsrChain;
     class GBufferShadingOverride;
@@ -300,6 +302,33 @@ namespace Veng::Renderer
         /// quantization), so this is the reference the automatic selection is checked against.
         /// @param force True to draw every field direct; false to restore automatic selection.
         void SetPointFieldForceDirect(bool force);
+
+        /// @brief Returns the instanced mesh sets the last Execute drew and what each view kept.
+        ///
+        /// The set, instance and draw counts are the last Execute's; the per-(set, view) survivors
+        /// per level are counted by the cull and read back as many frames later as there are frames in flight.
+        /// All zero before the first Execute that drew a set.
+        /// @return The instanced mesh statistics.
+        [[nodiscard]] InstancedMeshStats GetInstancedMeshStats() const;
+
+        /// @brief Waits for the device and reads back every instanced-set survivor of the last
+        ///        Execute, per set and view.
+        ///
+        /// A diagnostic and test surface: it idles the device. Empty before the first Execute that
+        /// drew a set.
+        /// @return One entry per (set, view) the last Execute culled per instance.
+        [[nodiscard]] vector<InstancedMeshSurvivors> ReadbackInstancedMeshSurvivors() const;
+
+        /// @brief Culls instanced mesh sets on the host even where the device can cull them on the
+        ///        GPU (the fallback's A/B verification hook).
+        /// @param force True to cull on the host; false to restore the device's choice.
+        void SetInstancedMeshForceCpuCull(bool force);
+
+        /// @brief Whether the last Execute culled its instanced mesh sets on the GPU.
+        ///
+        /// True wherever the device supports GPU-driven culling, whatever the entity cull mode, unless
+        /// SetInstancedMeshForceCpuCull holds the host path.
+        [[nodiscard]] bool IsInstancedMeshGpuCulled() const;
 
         /// @brief Returns the topology/sizing settings in effect, as of the last Create/Configure.
         ///
@@ -972,6 +1001,9 @@ namespace Veng::Renderer
         /// from the g-buffer create/recreate tail (ResizeHiZ binds the fresh depth view).
         Unique<GpuCullSystem> m_GpuCull;
 
+        /// @brief The instanced mesh sets: their gather, upload, per-instance cull and draws.
+        Unique<InstancedMeshSystem> m_Instanced;
+
         /// @brief The depth-of-field battery — half-resolution layers, tile records, gather/fill
         ///        targets, and the composite that folds them over the lit HDR.
         ///
@@ -1524,6 +1556,12 @@ namespace Veng::Renderer
         /// each Execute's presence so the pass inserts on the first live field and drops when the last
         /// one goes, recompiling at the frame boundary (reusing the imported output).
         bool m_VolumeFieldActive = false;
+
+        /// @brief Whether the current pass set carries the instanced-set cull and draws.
+        ///
+        /// Presence-driven like the volume pass: set on the first Execute gathering a drawable
+        /// InstancedMesh and cleared when the last goes, each edge recompiling at the frame boundary.
+        bool m_InstancedActive = false;
 
         /// @brief True while the translucent gather routes draws into the half-res layer.
         ///

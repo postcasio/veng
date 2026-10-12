@@ -25,10 +25,10 @@ namespace Veng
           m_CullMode(info.CullMode), m_SortPriority(info.SortPriority),
           m_WritesBloomMask(info.WritesBloomMask), m_HalfResolution(info.HalfResolution),
           m_Blend(info.Blend), m_ReadsSceneColor(info.ReadsSceneColor),
-          m_ReadsSceneDepth(info.ReadsSceneDepth), m_Pipeline(info.Pipeline),
-          m_VertexShader(info.VertexShader), m_FragmentShader(info.FragmentShader),
-          m_Textures(info.Textures), m_Block(info.Block), m_Fields(info.Fields),
-          m_SelectorOffset(info.SelectorOffset)
+          m_ReadsSceneDepth(info.ReadsSceneDepth), m_InstancedSets(info.InstancedSets),
+          m_Pipeline(info.Pipeline), m_VertexShader(info.VertexShader),
+          m_FragmentShader(info.FragmentShader), m_Textures(info.Textures), m_Block(info.Block),
+          m_Fields(info.Fields), m_SelectorOffset(info.SelectorOffset)
     {
         // Unfinalized at construction: the default block's handle slots are patched and the
         // pipeline is stored in Finalize().
@@ -157,6 +157,21 @@ namespace Veng
                   "Material::EnsureSkinnedPipeline: '{}' skinned pipeline build failed: {}", m_Name,
                   built.has_value() ? "" : built.error());
         m_SkinnedPipeline = std::move(*built);
+    }
+
+    void Material::EnsureInstancedPipeline(AssetManager& assets)
+    {
+        if (!m_InstancedSets || m_InstancedPipeline != nullptr)
+        {
+            return;
+        }
+
+        Result<Ref<Renderer::GraphicsPipeline>> built = Detail::BuildInstancedSurfacePipeline(
+            assets, m_Context, m_Id, *m_FragmentShader.Get(), m_CullMode);
+        VE_ASSERT(built.has_value(),
+                  "Material::EnsureInstancedPipeline: '{}' instanced pipeline build failed: {}",
+                  m_Name, built.has_value() ? "" : built.error());
+        m_InstancedPipeline = std::move(*built);
     }
 
     Result<Ref<Renderer::GraphicsPipeline>>

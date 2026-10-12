@@ -24,6 +24,17 @@ namespace Veng::Renderer
         f32 ScreenScale = 1.0f;
     };
 
+    /// @brief One shadow view as added: what it culls against, measures size in, and its tile size.
+    struct ShadowViewInfo
+    {
+        /// @brief The world -> clip matrix its casters are culled against.
+        mat4 CullViewProj{1.0f};
+        /// @brief The world -> clip matrix it rasterizes through.
+        mat4 LodViewProj{1.0f};
+        /// @brief Its tile's edge in texels.
+        u32 Resolution = 0;
+    };
+
     /// @brief Every shadow view's casters for one frame: culled per view, grouped once, uploaded once.
     ///
     /// The renderer opens it once per Execute, and each shadow pass then adds its views (the
@@ -63,8 +74,10 @@ namespace Veng::Renderer
         ///                     skipped; 0 skips none.
         /// @param lodViewProj  The world → clip matrix the view rasterizes through, which its
         ///                     level-of-detail selection measures screen size in.
+        /// @param resolution   The view's tile edge in texels.
         /// @return The view's index among this frame's views.
-        u32 AddView(const mat4& cullViewProj, f32 minExtent, const mat4& lodViewProj);
+        u32 AddView(const mat4& cullViewProj, f32 minExtent, const mat4& lodViewProj,
+                    u32 resolution);
 
         /// @brief Groups every view's static casters and uploads their instance ids.
         /// @param frameIndex The frame in flight being recorded.
@@ -78,6 +91,12 @@ namespace Veng::Renderer
 
         /// @brief Number of views added since Begin.
         [[nodiscard]] u32 GetViewCount() const { return static_cast<u32>(m_SkinnedEnds.size()); }
+
+        /// @brief Every view added since Begin, in index order.
+        [[nodiscard]] std::span<const ShadowViewInfo> GetViews() const { return m_Views; }
+
+        /// @brief How this frame's views select levels of detail.
+        [[nodiscard]] const ShadowLodSettings& GetLodSettings() const { return m_Lod; }
 
     private:
         /// @brief How a candidate takes part in the shadow views, decided once per frame.
@@ -121,5 +140,7 @@ namespace Veng::Renderer
         vector<u32> m_Skinned;
         /// @brief Per view, the end of its range in m_Skinned.
         vector<u32> m_SkinnedEnds;
+        /// @brief Every view added since Begin.
+        vector<ShadowViewInfo> m_Views;
     };
 }

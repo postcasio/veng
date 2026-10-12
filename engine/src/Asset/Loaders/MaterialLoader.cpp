@@ -196,7 +196,7 @@ namespace Veng
     Detail::BuildSurfacePipeline(AssetManager& manager, Renderer::Context& context, string name,
                                  const Ref<Renderer::PipelineLayout>& layout,
                                  const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
-                                 Renderer::CullMode cullMode)
+                                 Renderer::CullMode cullMode, const bool instanceCandidateId)
     {
         const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
 
@@ -238,8 +238,9 @@ namespace Veng
                 .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                 .VertexBufferLayout = vertexBufferLayout,
                 // The surface vertex stage reads the per-draw candidate id as an
-                // instance-rate attribute on binding 1 (fetched at firstInstance).
-                .InstanceCandidateId = true,
+                // instance-rate attribute on binding 1 (fetched at firstInstance); the
+                // instanced-set stage reads its instance through the instance index instead.
+                .InstanceCandidateId = instanceCandidateId,
                 .PipelineLayout = layout,
                 .ShaderStages =
                     {
@@ -281,6 +282,36 @@ namespace Veng
         return BuildSurfacePipeline(manager, context,
                                     fmt::format("Material {} Skinned Pipeline", id.Value), *layout,
                                     *skinnedVs->Get(), fragmentShader, cullMode);
+    }
+
+    Result<Ref<Renderer::GraphicsPipeline>>
+    Detail::BuildInstancedSurfacePipeline(AssetManager& manager, Renderer::Context& context,
+                                          AssetId id, const Veng::Shader& fragmentShader,
+                                          Renderer::CullMode cullMode)
+    {
+        // The instanced-set g-buffer pipeline pairs the core instanced-set vertex stage with this
+        // material's fragment over the g-buffer formats. It has no instance-rate binding: the
+        // stage finds its instance through the instance index, which a set's draw points at its
+        // survivor list. The layout it reflects is the static stage's — set 0 bindless, set 3 the
+        // per-draw DrawData — with the larger push block the stage reads.
+        const AssetResult<AssetHandle<Veng::Shader>> instancedVs =
+            manager.LoadSync<Veng::Shader>(SurfaceInstancedVertId);
+        if (!instancedVs)
+        {
+            return std::unexpected(instancedVs.error().Detail);
+        }
+
+        Result<Ref<Renderer::PipelineLayout>> layout = BuildPipelineLayout(
+            context, id, MaterialDomain::Surface, *instancedVs->Get(), fragmentShader);
+        if (!layout)
+        {
+            return std::unexpected(layout.error());
+        }
+
+        return BuildSurfacePipeline(manager, context,
+                                    fmt::format("Material {} Instanced Pipeline", id.Value),
+                                    *layout, *instancedVs->Get(), fragmentShader, cullMode,
+                                    /*instanceCandidateId=*/false);
     }
 
     AssetResult<Detail::ParsedAsset> MaterialLoader::Parse(const AssetParseContext& /*context*/,
@@ -489,10 +520,11 @@ namespace Veng
         const bool halfResolution = header.HalfResolution != 0;
         const bool readsSceneColor = header.ReadsSceneColor != 0;
         const bool readsSceneDepth = header.ReadsSceneDepth != 0;
+        const bool instancedSets = header.InstancedSets != 0;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask,
-                           halfResolution, readsSceneColor,
-                           readsSceneDepth](AssetManager& manager,
-                                            std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+                           halfResolution, readsSceneColor, readsSceneDepth,
+                           instancedSets](AssetManager& manager,
+                                          std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
             Renderer::Context& context = manager.GetContext();
@@ -519,6 +551,7 @@ namespace Veng
                 .Blend = blend,
                 .ReadsSceneColor = readsSceneColor,
                 .ReadsSceneDepth = readsSceneDepth,
+                .InstancedSets = instancedSets,
                 .Pipeline = nullptr,
                 .VertexShader = vsHandle,
                 .FragmentShader = fsHandle,
@@ -563,7 +596,8 @@ namespace Veng
                     // the material is drawn on a skinned mesh (Material::EnsureSkinnedPipeline) — a
                     // material never skinned never pays for it, and one whose fragment does not
                     // consume the full surface interpolant set (a static-only material) still
-                    // loads.
+                    // loads. An instanced-set sibling is built the same way, the first time a set
+                    // draws the material (Material::EnsureInstancedPipeline).
                     material->Finalize(std::move(*layout), std::move(pipeline));
                     return {};
                 },

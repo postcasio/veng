@@ -200,11 +200,20 @@ float WidenRoughnessForNormalMap(ViewConstants vc, float roughness, float varian
 // material selector from the v_MaterialOffset interpolant, not from this block. Matrices
 // are column-major (the cooker compiles Slang column-major), matching the glm matrices
 // veng uploads verbatim.
+//
+// The last three fields are read only by the instanced-set vertex stage
+// (surface_instanced.vert, Veng/instanced_mesh.slang); every other surface draw pushes them zero.
 struct PushConstants
 {
     uint FrameBase;          // current frame's g_DrawData region base
     uint ViewConstantsIndex; // current frame's view-constants region
+    uint InstanceBuffer;     // set draws: bindless storage slot of the frame's instance buffer
+    uint InstanceDraw;       // set draws: the set's DrawData record (its frame and material)
+    uint InstanceBase;       // set draws: record index of the set's first instance
 };
+
+// v_Instance.x for a draw that is not an instanced-set draw: InstanceDatum reads zero.
+static const uint InstanceNone = 0xFFFFFFFFu;
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
@@ -221,6 +230,14 @@ struct SurfaceFragmentInput
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
     // This draw's candidate id, so a fragment can identify its own draw and load its DrawData —
     // LoadDrawData(v_CandidateId) — to read the same per-instance record the vertex stage used
-    // (e.g. its model matrix). Ignored by a fragment that does not need it.
+    // (e.g. its model matrix). Ignored by a fragment that does not need it. An instanced-set
+    // draw's candidate id names the set's record, whose model matrix is the set's frame.
     nointerpolation uint v_CandidateId : TEXCOORD4;
+    // An instanced-set draw's instance: x the bindless storage slot of the buffer holding it, or
+    // InstanceNone for any other draw; y its record index there. Read through
+    // Veng/instanced_mesh.slang (InstanceDatum).
+    nointerpolation uint2 v_Instance : TEXCOORD5;
+    // The object-space position the vertex stage placed, before any world transform: the mesh's
+    // own coordinates, so an effect anchored to the surface stays put as the object moves.
+    float3 v_ObjectPosition : TEXCOORD6;
 };

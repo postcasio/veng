@@ -402,7 +402,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 14u;
+    inline constexpr u32 CookedMaterialVersion = 15u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -493,11 +493,13 @@ namespace Veng
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.
         u32 BlockBytes = 0;
-        /// @brief The tail gap to the header's 8-byte alignment, named so it is written zero.
+        /// @brief Whether an instanced mesh set may draw the material (the "instancedSets" key;
+        ///        default 0).
         ///
-        /// The cook memcpys the header into the blob, and an unnamed gap would put uninitialized
-        /// bytes on disk (see CookedMaterialField::Padding).
-        u32 Padding = 0;
+        /// The runtime builds the material's instanced-set g-buffer pipeline only for a material
+        /// declaring this, and refuses a set drawn with one that does not. Surface domain only,
+        /// enforced at cook.
+        u32 InstancedSets = 0;
     };
     static_assert(sizeof(CookedMaterialHeader) == 64,
                   "CookedMaterialHeader carries no unnamed padding");

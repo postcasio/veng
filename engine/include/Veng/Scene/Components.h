@@ -6,6 +6,7 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/DofTile.h>
+#include <Veng/Renderer/InstancedMesh.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
@@ -17,6 +18,8 @@
 #include <Veng/Reflection/Variant.h>
 
 #include <Veng/Asset/AssetHandle.h>
+
+#include <limits>
 
 namespace Veng
 {
@@ -1332,6 +1335,51 @@ namespace Veng
         Ref<Renderer::VolumeField> Field;
     };
 
+    /// @brief The InstancedMesh projected-size band's "no upper bound".
+    inline constexpr f32 InstancedMeshUnboundedPixels = std::numeric_limits<f32>::max();
+
+    /// @brief Draws one mesh with one material at every instance of a store, from one entity.
+    ///
+    /// The standard tool for scattered geometry — debris, vegetation, props — where an entity
+    /// per copy would cost per-entity work every frame and a draw candidate per copy. The entity's
+    /// Transform is the set's frame; each instance's transform (Renderer::MeshInstance) places a copy
+    /// within it, and its datum is the material's to read. The renderer culls and selects the level of
+    /// detail per instance (on the GPU where the device supports GPU-driven culling, whatever the
+    /// renderer's entity cull mode), and the copies feed the g-buffer and every shadow view like any
+    /// opaque mesh, as a handful of draws per level rather than a candidate per copy.
+    ///
+    /// The material must declare "instancedSets": true; a set drawn with one that does not is
+    /// reported once and draws nothing. Every submesh of the mesh draws with this one material.
+    struct InstancedMesh
+    {
+        /// @brief The mesh every instance draws.
+        AssetHandle<Mesh> Mesh;
+        /// @brief The material every instance draws with; it must declare "instancedSets".
+        AssetHandle<MaterialInstance> Material;
+        /// @brief Whether the instances cast shadows.
+        bool CastsShadows = true;
+        /// @brief Whether the set is drawn at all.
+        bool Visible = true;
+        /// @brief Instances projecting smaller than this many pixels in the main camera are culled.
+        ///
+        /// Measured by Renderer::ReferenceProjectedPixels in every view, so a shadow view casts
+        /// exactly the instances the main view's band keeps, and a consumer drawing the instances
+        /// below the band another way can partition them with the identical expression.
+        f32 MinProjectedPixels = 0.0f;
+        /// @brief Instances projecting larger than this many pixels in the main camera are culled.
+        f32 MaxProjectedPixels = InstancedMeshUnboundedPixels;
+        /// @brief A shadow view skips an instance spanning fewer of its texels than this.
+        ///
+        /// A caster smaller than a shadow texel flickers in and out of the map as it moves, and its
+        /// shadow with it. 0 skips none.
+        f32 MinShadowCasterTexels = 0.0f;
+        /// @brief The instances drawn, or null for none.
+        ///
+        /// Runtime-only: carries no VE_FIELD, so it is never reflected, cooked or serialized. A
+        /// consumer builds the store (Renderer::InstanceSet::Create) and writes it.
+        Ref<Renderer::InstanceSet> Instances;
+    };
+
     /// @brief How a FlipbookSprite composites into the scene.
     enum class SpriteBlend : u8
     {
@@ -2273,6 +2321,22 @@ VE_FIELD(Opacity, .DisplayName = "Opacity", .Tooltip = "Fades emission and extin
 VE_FIELD(EmissionScale, .DisplayName = "Emission Scale", .Display = {.Min = 0.0})
 VE_FIELD(ExtinctionScale, .DisplayName = "Extinction Scale", .Display = {.Min = 0.0})
 VE_FIELD(Steps, .DisplayName = "Steps", .Tooltip = "Ray-march step count", .Display = {.Min = 1.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::InstancedMesh, 0x5E86528760746AF8ULL)
+VE_FIELD(Mesh, .DisplayName = "Mesh")
+VE_FIELD(Material, .DisplayName = "Material", .Tooltip = "Must declare instancedSets")
+VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
+VE_FIELD(Visible, .DisplayName = "Visible")
+VE_FIELD(MinProjectedPixels, .DisplayName = "Min Projected Pixels",
+         .Tooltip = "Instances smaller than this in the main camera are culled",
+         .Display = {.Min = 0.0})
+VE_FIELD(MaxProjectedPixels, .DisplayName = "Max Projected Pixels",
+         .Tooltip = "Instances larger than this in the main camera are culled",
+         .Display = {.Min = 0.0})
+VE_FIELD(MinShadowCasterTexels, .DisplayName = "Min Shadow Caster Texels",
+         .Tooltip = "A shadow view skips instances spanning fewer of its texels",
+         .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::SpriteBlend, 0xE291125B259E4EC5ULL)

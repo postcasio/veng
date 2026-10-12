@@ -184,10 +184,19 @@ namespace Veng::Renderer
     // The surface push block (vertex stage), matching surface.slang PushConstants:
     // FrameBase folds the ring-buffered DrawData region into the candidate id; the
     // view-constants index selects the per-frame set-0 view block the vertex stage
-    // multiplies by. Both cull modes push the same block.
+    // multiplies by. Both cull modes push the same block. The instance fields are read only by an
+    // instanced-set draw (surface_instanced.vert); every other draw pushes them zero.
     struct SurfacePush
     {
         u32 FrameBase;
         u32 ViewConstantsIndex;
+        // The bindless storage slot of the frame's instance buffer.
+        u32 InstanceBuffer = 0;
+        // The set's DrawData slot, region-relative: its frame, previous frame and material.
+        u32 InstanceDraw = 0;
+        // The record index of the set's first instance in the instance buffer.
+        u32 InstanceBase = 0;
     };
+
+    static_assert(sizeof(SurfacePush) == 20, "SurfacePush must match surface.slang PushConstants");
 }

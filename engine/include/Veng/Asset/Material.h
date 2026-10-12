@@ -204,6 +204,13 @@ namespace Veng
         /// Translucent domain only (cook-enforced).
         bool ReadsSceneDepth = false;
 
+        /// @brief Whether an instanced mesh set may draw the material.
+        ///
+        /// Instanced sets are built at runtime, so this declaration is what lets one draw the
+        /// material: the renderer builds the instanced-set pipeline for it and refuses a set whose
+        /// material does not declare it. Surface domain only (cook-enforced).
+        bool InstancedSets = false;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -294,6 +301,12 @@ namespace Veng
         /// material declaring both pays only for the colour read.
         [[nodiscard]] bool IsSceneDepthReader() const { return m_ReadsSceneDepth; }
 
+        /// @brief Returns whether an instanced mesh set may draw the material.
+        ///
+        /// A material declares it at cook time ("instancedSets": true); a set drawn with a material
+        /// that does not is reported and draws nothing.
+        [[nodiscard]] bool SupportsInstancedSets() const { return m_InstancedSets; }
+
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
         {
@@ -320,6 +333,24 @@ namespace Veng
         /// stage.
         /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
         void EnsureSkinnedPipeline(AssetManager& assets);
+
+        /// @brief Returns the instanced-set g-buffer sibling pipeline, or null until it is built.
+        ///
+        /// Built lazily by EnsureInstancedPipeline the first time an instanced mesh set draws the
+        /// material; null before that and for a material not declaring SupportsInstancedSets().
+        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetInstancedPipeline() const
+        {
+            return m_InstancedPipeline;
+        }
+
+        /// @brief Builds the instanced-set g-buffer pipeline if it is not built yet.
+        ///
+        /// Called on the render thread by the renderer the first time an instanced mesh set draws
+        /// this material. A no-op after the first successful build and for a material not declaring
+        /// SupportsInstancedSets(). Fatal if the build fails — a declared material's fragment must
+        /// be compatible with the instanced-set vertex stage.
+        /// @param assets  Asset manager used to load the instanced vertex shader and its layout.
+        void EnsureInstancedPipeline(AssetManager& assets);
 
         /// @brief Builds a g-buffer pipeline that keeps this material's geometry and replaces its
         ///        shading with another fragment stage.
@@ -456,8 +487,10 @@ namespace Veng
         TranslucentBlend m_Blend = TranslucentBlend::Alpha;
         bool m_ReadsSceneColor = false;
         bool m_ReadsSceneDepth = false;
+        bool m_InstancedSets = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
+        Ref<Renderer::GraphicsPipeline> m_InstancedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;
 
         AssetHandle<Shader> m_VertexShader;

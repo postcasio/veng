@@ -1137,6 +1137,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/draw_grouping.cpp
             tests/unit/depth_caster_grouping.cpp
             tests/unit/lod_selection.cpp
+            tests/unit/instanced_mesh.cpp
             tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
@@ -2217,6 +2218,11 @@ if (VENG_BUILD_TESTS)
             # completed sweep under a baked, direct, environment or absent Sky, disabling it
             # restores the Sky's lighting, and the capture's own faces never light from it.
             tests/gpu/scene_lighting_capture.cpp
+            # Instanced mesh sets: the per-instance cull keeps what each view sees and the size
+            # band partitions, levels hold their hysteresis, the cull ignores the entity mode, a
+            # set stays outside the draw-candidate cap, partial writes land, sets cast shadows,
+            # and the host fallback agrees with the GPU cull.
+            tests/gpu/instanced_mesh_set.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE

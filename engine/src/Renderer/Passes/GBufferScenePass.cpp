@@ -8,6 +8,7 @@
 #include <Veng/Renderer/DescriptorSet.h>
 
 #include "../GBufferShadingOverride.h"
+#include "../InstancedMeshSystem.h"
 
 namespace Veng::Renderer
 {
@@ -90,6 +91,10 @@ namespace Veng::Renderer
         {
             builder.IndirectRead(m_IndirectId);
         }
+        if (m_Instanced != nullptr)
+        {
+            m_Instanced->DeclareReads(builder);
+        }
 
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
@@ -105,6 +110,14 @@ namespace Veng::Renderer
         const uvec2 renderExtent = ctx.View().RenderExtent;
         cmd.SetViewport({0, 0}, renderExtent);
         cmd.SetScissor({0, 0}, renderExtent);
+
+        // The instanced sets draw after the entity draws through their own pipelines. The shading
+        // override measures the materials' shading cost and has no instanced-set variant, so the
+        // sets are left out of a frame drawn through it.
+        if (m_Instanced != nullptr && m_ShadingOverride == nullptr)
+        {
+            m_Instanced->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet);
+        }
 
         if (plan.Slots.empty() && plan.SkinnedSlots.empty())
         {

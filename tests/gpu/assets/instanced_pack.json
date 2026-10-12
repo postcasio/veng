@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x6DCB958E3EE5872B",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x35E70F70692D206D",
+      "type": "Shader",
+      "source": "shaders/instance_tint.frag.shader.json"
+    },
+    {
+      "id": "0x0DA7A2513141E68C",
+      "type": "Material",
+      "source": "materials/instance_tint.vmat.json"
+    }
+  ]
+}

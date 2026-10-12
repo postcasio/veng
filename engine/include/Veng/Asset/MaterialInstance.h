@@ -100,6 +100,21 @@ namespace Veng
         /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
         void EnsureSkinnedPipeline(AssetManager& assets) const;
 
+        /// @brief Binds the parent's instanced-set g-buffer pipeline for an instanced mesh set draw.
+        ///
+        /// The instanced-set sibling of Bind. A Surface material reads its selector from the
+        /// set's DrawData record, so nothing is pushed.
+        /// @pre The parent has an instanced-set pipeline (EnsureInstancedPipeline has run).
+        void BindInstanced(Renderer::CommandBuffer& cmd) const;
+
+        /// @brief Ensures the parent's instanced-set g-buffer pipeline is built (render-thread,
+        ///        lazy, idempotent).
+        ///
+        /// Delegates to the parent Material; a no-op for a parent not declaring
+        /// Material::SupportsInstancedSets() and after the first build.
+        /// @param assets  Asset manager used to load the instanced vertex shader and its layout.
+        void EnsureInstancedPipeline(AssetManager& assets) const;
+
         /// @brief Creates a runtime copy sharing this instance's parent, with its own SSBO slot.
         ///
         /// The copy keeps the same parent (and this instance's override textures) resident and

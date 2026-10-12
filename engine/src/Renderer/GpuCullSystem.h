@@ -193,6 +193,12 @@ namespace Veng::Renderer
         /// @brief Whether the previous-frame pyramid is valid to occlusion-test against this frame.
         [[nodiscard]] bool IsHiZHistoryValid() const { return m_HiZHistoryValid; }
 
+        /// @brief The whole-chain hi-Z view's bindless slot (invalid while no pyramid is held).
+        [[nodiscard]] TextureHandle GetHiZSampleHandle() const { return m_HiZSampleHandle; }
+
+        /// @brief The pyramid's level-0 extent, as the last ResizeHiZ sized it.
+        [[nodiscard]] uvec2 GetHiZExtent() const { return m_Extent; }
+
         /// @brief The GPU cull's survivor count read back from the previous Execute (diagnostic).
         [[nodiscard]] u32 GetLastGpuSurvivorCount() const { return m_LastGpuSurvivorCount; }
 
