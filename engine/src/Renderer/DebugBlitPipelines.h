@@ -60,6 +60,10 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> Coc;
         /// @brief Layout the circle-of-confusion blit pipeline was built against.
         Ref<PipelineLayout> CocLayout;
+        /// @brief Blits the reflection classifier's coverage codes as flat colours.
+        Ref<GraphicsPipeline> SsrCoverage;
+        /// @brief Layout the reflection-coverage blit pipeline was built against.
+        Ref<PipelineLayout> SsrCoverageLayout;
 
         /// @brief Builds every debug-blit pipeline over the shared fullscreen vertex stage.
         ///

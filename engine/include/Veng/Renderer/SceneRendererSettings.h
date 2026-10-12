@@ -48,7 +48,14 @@ namespace Veng::Renderer
     /// environment lighting the scene is inspectable whatever geometry is in front of it.
     /// IblContribution runs the full lighting pass and shows the IBL ambient term alone per pixel
     /// (diffuse + specular IBL × ambient occlusion), force-wiring the IBL path so the contribution is
-    /// present whatever the sky tier resolves to.
+    /// present whatever the sky tier resolves to. Reflections and ReflectionCoverage composite the
+    /// lit opaque scene as Final does and force-wire the screen-space reflection chain regardless of
+    /// the Settings.SSR toggle: Reflections blits the chain's denoised reflection alone (the
+    /// reflected radiance, before the composite's BRDF weighting), and ReflectionCoverage colours
+    /// each pixel by what the chain's tile classifier gave it — dark grey nothing, blue the
+    /// environment alone (too rough to trace), green its own ray, yellow a ray traced for its temporal
+    /// variance alone, cyan a quad neighbour's ray, white a mirror ray (which skips the denoiser), and
+    /// red a glossy pixel that wanted a neighbour's ray no neighbour traced.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -87,6 +94,12 @@ namespace Veng::Renderer
         EnvironmentSource,
         /// @brief The scene's per-pixel IBL ambient contribution alone (diffuse + specular IBL * AO).
         IblContribution,
+        /// @brief The screen-space reflection chain's denoised reflection alone (force-wires the
+        ///        chain).
+        Reflections,
+        /// @brief What the reflection chain's classifier gave each pixel, colour-coded (force-wires
+        ///        the chain).
+        ReflectionCoverage,
     };
 
     /// @brief Display names for the DebugView arms, indexed by enum value.
@@ -94,7 +107,7 @@ namespace Veng::Renderer
     /// The single source of truth for the "View" combo in both the engine debug panel and the
     /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
     /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
-    inline constexpr std::array<string_view, 18> DebugViewNames{"Final",
+    inline constexpr std::array<string_view, 20> DebugViewNames{"Final",
                                                                 "Albedo",
                                                                 "Normal",
                                                                 "Depth",
@@ -111,8 +124,10 @@ namespace Veng::Renderer
                                                                 "Circle of confusion",
                                                                 "IBL irradiance",
                                                                 "IBL source cube",
-                                                                "IBL contribution"};
-    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::IblContribution) + 1,
+                                                                "IBL contribution",
+                                                                "Reflections",
+                                                                "Reflection coverage"};
+    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::ReflectionCoverage) + 1,
                   "DebugViewNames must list every DebugView arm in declaration order.");
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.

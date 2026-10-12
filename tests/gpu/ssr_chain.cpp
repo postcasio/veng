@@ -10,7 +10,8 @@
 //   - the blue-noise tile is the sampler's formula over the cooked tables, within [0, 1];
 //   - on a mirror floor beside a small lit sphere, the intersection's radiance is finite and
 //     non-negative everywhere, a ray leaving the screen holds exactly the environment term, and
-//     the floor reflects the sphere; on a glossy floor every quad copy holds its base ray's value;
+//     the floor reflects the sphere; on a glossy floor every quad copy holds its base ray's value,
+//     and the classifier's coverage codes mark exactly the listed rays and their copy targets;
 //   - over several frames of the whole chain the denoised reflection and its variance stay finite
 //     and non-negative; a pixel whose radiance is zero all along resolves to exactly zero (the
 //     temporal resolve's early-out) even inside a denoised tile; the first frame after creation
@@ -24,7 +25,8 @@
 //   - a renderer with SSR off records none of the chain's passes, and with it on records them all
 //     and leaves a finite reflection over several frames, with temporal anti-aliasing off and on;
 //   - with nothing glossy in view and no image-based lighting, a renderer with SSR on draws the
-//     same frame as one with it off.
+//     same frame as one with it off;
+//   - each reflection debug view runs the chain with SSR off and blits its output.
 // The expected sets are the reference's selection rule, written out per pixel.
 
 #include <algorithm>
@@ -1076,6 +1078,94 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr chain: the coverage codes name exactly the rays and copies the classifier "
+                  "listed")
+{
+    AssetManager assets(Context, Tasks, Types);
+    // A glossy floor (alpha 0.09) traced one ray per quad, under a rough sphere and background.
+    const FloorScene scene(77);
+    const ChainHarness harness(Context, assets, scene.Frame);
+    CHECK_FALSE(harness.Chain->GetCoverageHandle().IsValid());
+    harness.Chain->SetCoverageOutput(true);
+    REQUIRE(harness.Chain->GetCoverageHandle().IsValid());
+    SsrFrameInputs inputs = scene.Inputs();
+    inputs.SamplesPerQuad = 1;
+    harness.RunFrame(inputs);
+
+    // The coverage view is the chain's own R8 target; each code is stored as code / 255.
+    const std::vector<u8> coverage = harness.Chain->GetCoverageView()->GetImage()->Download();
+    const uvec2 extent = FloorScene::Extent;
+    REQUIRE(coverage.size() == static_cast<usize>(extent.x) * extent.y);
+
+    const u32 rays = Words(harness.Chain->GetRayCounter()->Download())[1];
+    std::vector<u32> rayList = Words(harness.Chain->GetRayList()->Download());
+    rayList.resize(std::min<usize>(rays, rayList.size()));
+    std::vector<u8> traced(coverage.size(), 0);
+    std::vector<u8> copied(coverage.size(), 0);
+    for (const u32 ray : rayList)
+    {
+        const u32 x = ray & 0x7FFFu;
+        const u32 y = (ray >> 15) & 0x3FFFu;
+        traced[static_cast<usize>(y) * extent.x + x] = 1;
+        const std::array<std::pair<bool, uvec2>, 3> targets{
+            std::pair{((ray >> 29) & 1u) != 0u, uvec2(x ^ 1u, y)},
+            std::pair{((ray >> 30) & 1u) != 0u, uvec2(x, y ^ 1u)},
+            std::pair{((ray >> 31) & 1u) != 0u, uvec2(x ^ 1u, y ^ 1u)},
+        };
+        for (const auto& [copy, target] : targets)
+        {
+            if (copy)
+            {
+                copied[static_cast<usize>(target.y) * extent.x + target.x] = 1;
+            }
+        }
+    }
+
+    // The codes of ssr_coverage.slang.
+    constexpr u8 None = 0;
+    constexpr u8 Environment = 1;
+    constexpr u8 Ray = 2;
+    constexpr u8 VarianceRay = 3;
+    constexpr u8 Copied = 4;
+    constexpr u8 Mirror = 5;
+    constexpr u8 Unreached = 6;
+    usize outOfRange = 0;
+    usize tracedMismatches = 0;
+    usize copiedMismatches = 0;
+    usize backgroundMismatches = 0;
+    usize roughMismatches = 0;
+    usize copiedCount = 0;
+    for (usize i = 0; i < coverage.size(); ++i)
+    {
+        const u8 code = coverage[i];
+        outOfRange += code > Unreached ? 1u : 0u;
+        const bool isTraced = code == Ray || code == VarianceRay || code == Mirror;
+        tracedMismatches += isTraced == (traced[i] != 0) ? 0u : 1u;
+        copiedMismatches += (code == Copied) == (copied[i] != 0) ? 0u : 1u;
+        copiedCount += code == Copied ? 1u : 0u;
+        if (scene.Frame.Depth[i] == 0.0f)
+        {
+            backgroundMismatches += code == None ? 0u : 1u;
+        }
+        else if (scene.Frame.Perceptual[i] == 204)
+        {
+            // The sphere: too rough to trace, and the harness's view has an environment.
+            roughMismatches += code == Environment ? 0u : 1u;
+        }
+    }
+    CHECK(rays > 0);
+    CHECK(copiedCount > 0);
+    CHECK(outOfRange == 0);
+    CHECK(tracedMismatches == 0);
+    CHECK(copiedMismatches == 0);
+    CHECK(backgroundMismatches == 0);
+    CHECK(roughMismatches == 0);
+
+    harness.Chain->SetCoverageOutput(false);
+    CHECK_FALSE(harness.Chain->GetCoverageHandle().IsValid());
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
                   "ssr denoiser: the denoised reflection and its variance stay finite and "
                   "non-negative over several frames")
 {
@@ -1529,6 +1619,64 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     const std::vector<u8> on = Render(true);
     REQUIRE(on.size() == off.size());
     CHECK(on == off);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "ssr debug views: each reflection arm runs the chain with SSR off and blits it")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_ssr_debug_plane.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(
+                cooker, path(GPU_GBUFFER_FIXTURE_DIR) / "white_plane_pack.json", archive, {},
+                nullptr, nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+    REQUIRE(assets.Mount(archive).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(WhitePlaneInstanceId);
+    REQUIRE(material.has_value());
+    auto& instance = const_cast<MaterialInstance&>(*material->Get());
+    instance.SetParam("RoughnessFactor", 0.2f);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "SSR Debug Plane");
+    const Entity ground = scene->CreateEntity();
+    scene->Add<Transform>(ground);
+    scene->Add<MeshRenderer>(ground).Mesh = assets.Adopt(plane);
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 2.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    for (const DebugView mode : {DebugView::Reflections, DebugView::ReflectionCoverage})
+    {
+        CAPTURE(DebugViewNames[static_cast<usize>(mode)]);
+        SceneRendererSettings settings;
+        settings.Mode = mode;
+        settings.SSR = false;
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = {48, 48},
+            .Settings = settings,
+        });
+        for (u32 frame = 0; frame < 2; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(cmd,
+                                      Veng::Renderer::SceneView{.World = *scene, .Camera = camera});
+                });
+        }
+        CHECK(renderer->DidRecordPassLastFrame("SSR Classify Tiles"));
+        CHECK(renderer->DidRecordPassLastFrame("SSR Debug Blit"));
+    }
 
     std::filesystem::remove(archive);
 }

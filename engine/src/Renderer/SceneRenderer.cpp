@@ -1176,18 +1176,22 @@ namespace Veng::Renderer
                 /*lightTiles=*/nullptr, /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
+        case DebugView::Reflections:
+        case DebugView::ReflectionCoverage:
             // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
             // run first — lighting (which adds the g-buffer emissive channel), then the
             // sky/atmosphere composites (each gated on its own toggle, writing the lit target before
             // the tail) — so the pyramid blooms the scene the Final view blooms. The force-wired
             // bloom sweep (BloomPyramid::Declare, after the last pass)
             // writes the pyramid, and the terminal blit shows mip 0 after the up-sweep — the
-            // accumulated bloom before composite.
+            // accumulated bloom before composite. The reflection arms composite the same scene so
+            // the force-wired chain traces what the Final view's would, then blit its output.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), lightTiles));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles, /*writeToOutput=*/false,
+                m_Topology->DeferredSpecularIbl ? 1.0f : 0.0f));
             if (m_Topology->SkyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
@@ -1207,6 +1211,10 @@ namespace Veng::Renderer
                     renderExtent);
                 m_SkyMaterialPass = skyMaterialPass.get();
                 m_Passes.push_back(std::move(skyMaterialPass));
+            }
+            if (m_Topology->SsrActive)
+            {
+                m_Passes.push_back(CreateUnique<SsrScenePass>(*m_Ssr));
             }
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
@@ -1247,9 +1255,24 @@ namespace Veng::Renderer
                     m_Context, m_Assets, &m_Internal->SpritePlan, lightingTargetId, depthId,
                     m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
             }
-            m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
-                                                      FullscreenBlitScenePass::Source::Bloom));
+            if (m_Settings.Mode == DebugView::Bloom)
+            {
+                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                    m_Context, m_DebugBlits->Albedo, tailExtent,
+                    FullscreenBlitScenePass::Source::Bloom));
+            }
+            else if (m_Settings.Mode == DebugView::Reflections)
+            {
+                m_Passes.push_back(CreateUnique<SsrDebugBlitScenePass>(
+                    m_Context, *m_Ssr, m_DebugBlits->Albedo, tailExtent,
+                    SsrDebugBlitScenePass::Source::Reflection));
+            }
+            else
+            {
+                m_Passes.push_back(CreateUnique<SsrDebugBlitScenePass>(
+                    m_Context, *m_Ssr, m_DebugBlits->SsrCoverage, tailExtent,
+                    SsrDebugBlitScenePass::Source::Coverage));
+            }
             break;
         case DebugView::MotionVectors:
             // The g-buffer pass writes the velocity target (G3); this blit colorizes it as an
@@ -2180,6 +2203,7 @@ namespace Veng::Renderer
                 m_Ssr = SsrChain::Create(m_Context, m_Assets);
             }
             m_Ssr->Recreate(m_RenderAllocExtent);
+            m_Ssr->SetCoverageOutput(m_Settings.Mode == DebugView::ReflectionCoverage);
             m_Ssr->SetEnvironment(m_SkyResolver->GetIbl().GetPrefilterCubeView());
             m_Ssr->SetBrdfLut(m_SkyResolver->GetIbl().GetBrdfLutView());
         }

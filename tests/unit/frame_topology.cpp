@@ -131,12 +131,35 @@ TEST_CASE("frame topology: the reflection chain is wired exactly when SSR is on 
     CHECK(Resolve(settings).DeferredSpecularIbl);
 }
 
-TEST_CASE("frame topology: the scene composites for Final and Bloom alone")
+TEST_CASE("frame topology: the reflection debug arms force-wire the chain over the composited "
+          "scene")
+{
+    for (const DebugView mode : {DebugView::Reflections, DebugView::ReflectionCoverage})
+    {
+        CAPTURE(DebugViewNames[static_cast<usize>(mode)]);
+        const SceneRendererSettings settings = ModeOnly(mode);
+        CHECK_FALSE(settings.SSR);
+        const FrameTopology topology = Resolve(settings);
+        CHECK(IsReflectionDebugView(mode));
+        CHECK(ResolveSsrActive(settings));
+        CHECK(topology.SsrActive);
+        CHECK_FALSE(topology.DeferredSpecularIbl);
+        CHECK(topology.SceneComposited);
+        CHECK(topology.GBufferStores.Velocity == GBufferChannelState::Stored);
+
+        SceneRendererSettings lean = settings;
+        lean.Path = RenderPath::GeometryDepthNormal;
+        CHECK_FALSE(ResolveSsrActive(lean));
+    }
+}
+
+TEST_CASE("frame topology: the scene composites for Final, Bloom and the reflection arms alone")
 {
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         const auto mode = static_cast<DebugView>(arm);
-        const bool expected = mode == DebugView::Final || mode == DebugView::Bloom;
+        const bool expected =
+            mode == DebugView::Final || mode == DebugView::Bloom || IsReflectionDebugView(mode);
         CAPTURE(DebugViewNames[arm]);
         CHECK(Resolve(ModeOnly(mode)).SceneComposited == expected);
     }
@@ -166,10 +189,13 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         CHECK_FALSE(topology.Cmaa2Active);
         CHECK_FALSE(topology.AutoExposureActive);
         CHECK(topology.Dof != DofStages::Full);
-        CHECK_FALSE(topology.SsrActive);
-        CHECK(topology.DeferredSpecularIbl);
-        // Refraction survives only on the Bloom arm, which composites the whole scene.
-        CHECK(topology.RefractionActive == (settings.Mode == DebugView::Bloom));
+        // Only the reflection arms wire the chain, which they force-wire.
+        CHECK(topology.SsrActive == IsReflectionDebugView(settings.Mode));
+        CHECK(topology.DeferredSpecularIbl == !topology.SsrActive);
+        // Refraction survives only on the arms that composite the whole scene.
+        CHECK(topology.RefractionActive == topology.SceneComposited);
+        CHECK(topology.SceneComposited ==
+              (settings.Mode == DebugView::Bloom || IsReflectionDebugView(settings.Mode)));
     }
 }
 
@@ -327,7 +353,8 @@ TEST_CASE("frame topology: a debug arm wires no sky pass at all")
 {
     for (usize arm = 1; arm < ArmCount; ++arm)
     {
-        if (static_cast<DebugView>(arm) == DebugView::Bloom)
+        if (static_cast<DebugView>(arm) == DebugView::Bloom ||
+            IsReflectionDebugView(static_cast<DebugView>(arm)))
         {
             continue;
         }
@@ -413,14 +440,14 @@ TEST_CASE("frame topology: velocity is stored only where something reads it")
 
 TEST_CASE("frame topology: the light-tile cull runs exactly where lighting shades direct light")
 {
-    // The arms whose lighting pass shades direct light into an image someone reads: the two that
+    // The arms whose lighting pass shades direct light into an image someone reads: those that
     // composite the scene, and the CoC arm, which force-wires lighting as the input it inspects.
     // The cascade and IBL-contribution variants run lighting but discard its direct term.
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         const auto mode = static_cast<DebugView>(arm);
-        const bool shadesDirect =
-            mode == DebugView::Final || mode == DebugView::Bloom || mode == DebugView::CoC;
+        const bool shadesDirect = mode == DebugView::Final || mode == DebugView::Bloom ||
+                                  IsReflectionDebugView(mode) || mode == DebugView::CoC;
         SceneRendererSettings settings = ModeOnly(mode);
         CAPTURE(DebugViewNames[arm]);
         CHECK(Resolve(settings).LightTileCullActive == shadesDirect);

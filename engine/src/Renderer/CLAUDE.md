@@ -1430,6 +1430,21 @@ output declares the earlier halves alone. The passes, in the reference's dispatc
     sample's intensity slider (1 for correctness) and reflection-target view are its UI and are not
     ported.
 
+**Two debug arms inspect the chain.** `DebugView::Reflections` and `DebugView::ReflectionCoverage`
+(`IsReflectionDebugView`) composite the scene as the Bloom arm does — so they are `SceneComposited`
+and wire the same shadows, SSAO, sky and translucents — and force-wire the chain whatever
+`Settings.SSR` says, with the deferred lighting's specular IBL off as under Final. Their terminal
+pass is `SsrDebugBlitScenePass` (`Passes/SsrScenePass`). `Reflections` blits radiance A, the
+denoised reflection before the composite's BRDF weighting, through the albedo blit (its bindless slot
+is read per frame, since radiance A alternates). `ReflectionCoverage` turns on
+`SsrChain::SetCoverageOutput`: the classifier then runs its `csCoverage` entry point (the engine's,
+in `ssr_classify_tiles.comp.slang`), the same `ClassifyTiles` reporting its decisions through an out
+struct, and writes one `ssr_coverage.slang` code per pixel to an R8 target — none, environment only,
+own ray, a ray traced for temporal variance alone, a quad neighbour's copy (set from the traced
+ray's copy flags, so it is exactly the intersection's copy targets), a mirror ray, or a glossy pixel
+wanting a copy no neighbour traced. `ssr_coverage_blit.frag` colours the codes. The coverage
+pipeline, its set and its target exist only while that arm is selected.
+
 **The denoiser's bindings follow the reference's two hosts exactly**, including what they read from
 last frame. With A this frame's write target and B the other: the reprojection reads radiance A and
 B, variance B and the sample-count history, and writes variance A, the sample count and the

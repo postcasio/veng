@@ -247,7 +247,8 @@ namespace Veng::Renderer
     /// A function of the settings alone, so the renderer can size the grab's depth copy before the
     /// frame topology is resolved.
     /// @param settings The topology and sizing knobs the frame renders under.
-    /// @return True for the Final view and the Bloom debug arm on the deferred path.
+    /// @return True for the Final view, the Bloom debug arm and the two reflection debug arms on
+    ///         the deferred path.
     [[nodiscard]] bool ResolveSceneComposited(const SceneRendererSettings& settings);
 
     /// @brief Decides which passes a frame wires from the topology settings and the resolved sky.
@@ -291,10 +292,17 @@ namespace Veng::Renderer
 
     /// @brief Whether the settings wire the screen-space reflection chain.
     ///
-    /// Final-only on the shaded path: a debug arm composites no reflection, and the lean path wires
-    /// no lighting. Decides the chain's allocation as well as its passes, so it is a function of the
-    /// settings alone, like ResolveBloomActive.
+    /// On the shaded path only, where the Final view wires it under Settings.SSR and the two
+    /// reflection debug arms force-wire it; every other debug arm composites no reflection, and the
+    /// lean path wires no lighting. Decides the chain's allocation as well as its passes, so it is a
+    /// function of the settings alone, like ResolveBloomActive.
     /// @param settings The renderer settings.
-    /// @return True when Settings.SSR is on in the shaded path's Final view.
+    /// @return True when Settings.SSR is on in the shaded path's Final view, or the view is a
+    ///         reflection debug arm.
     [[nodiscard]] bool ResolveSsrActive(const SceneRendererSettings& settings);
+
+    /// @brief Whether a view is one of the reflection chain's debug arms.
+    /// @param mode The debug view.
+    /// @return True for DebugView::Reflections and DebugView::ReflectionCoverage.
+    [[nodiscard]] bool IsReflectionDebugView(DebugView mode);
 }

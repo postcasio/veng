@@ -199,6 +199,14 @@ namespace Veng::Renderer
         /// @param extent The render allocation in pixels.
         void Recreate(uvec2 extent);
 
+        /// @brief Has the classifier also write what it decided for each pixel, or stops it.
+        ///
+        /// On, the classifier runs its coverage entry point, writing one ssr_coverage.slang code per
+        /// pixel to an R8 target at the render allocation (GetCoverageId); off, that pipeline and
+        /// target are not held. A no-op when the state is unchanged.
+        /// @param enabled Whether the coverage target is written.
+        void SetCoverageOutput(bool enabled);
+
         /// @brief Points the rough pixels' environment read at a prefiltered specular cube.
         ///
         /// A no-op for the cube already bound.
@@ -334,6 +342,23 @@ namespace Veng::Renderer
         /// @brief The import of the denoised reflection the temporal resolve writes: radiance A.
         [[nodiscard]] ResourceId GetReflectionId() const { return m_RadianceId; }
 
+        /// @brief The bindless slot of this frame's radiance A, the view GetReflectionId binds.
+        [[nodiscard]] TextureHandle GetReflectionHandle() const
+        {
+            return m_RadianceHandles[GetRadianceIndex()];
+        }
+
+        /// @brief The coverage target's import, declared by the last Import while SetCoverageOutput
+        ///        is on; invalid otherwise.
+        [[nodiscard]] ResourceId GetCoverageId() const { return m_CoverageId; }
+
+        /// @brief The coverage target's bindless slot; invalid while SetCoverageOutput is off.
+        [[nodiscard]] TextureHandle GetCoverageHandle() const { return m_CoverageHandle; }
+
+        /// @brief The coverage target (R8, one ssr_coverage.slang code per pixel as code / 255);
+        ///        null while SetCoverageOutput is off.
+        [[nodiscard]] const Ref<ImageView>& GetCoverageView() const { return m_Coverage; }
+
         /// @brief The import this frame's radiance history (B) binds to: last frame's denoised
         ///        reflection, which the prefilter overwrites with its own output.
         [[nodiscard]] ResourceId GetRadianceHistoryId() const { return m_RadianceHistoryId; }
@@ -460,10 +485,16 @@ namespace Veng::Renderer
         /// @brief The dynamic offset of this frame's constants region.
         [[nodiscard]] u32 ConstantsOffset() const;
 
-        /// @brief Releases the per-level bindless slots of the depth hierarchy.
-        void ReleaseHierarchyHandles();
+        /// @brief Releases the bindless slots of the depth hierarchy's levels and the radiance pair.
+        void ReleaseExtentHandles();
+
+        /// @brief Creates the coverage target at the current extent, or drops it.
+        /// @param enabled Whether the target is held.
+        void RecreateCoverage(bool enabled);
 
         Context& m_Context;
+        /// @brief The asset manager the coverage pipeline's shader loads through, on first use.
+        AssetManager& m_Assets;
 
         /// @brief The render allocation the resources are sized to (zero before Recreate).
         uvec2 m_Extent{0};
@@ -479,6 +510,12 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_DownsampleLayout;
         /// @brief Its set 3: one storage destination level.
         Ref<DescriptorSetLayout> m_DownsampleSetLayout;
+        /// @brief The classifier's coverage entry point (csCoverage), built on first use.
+        Ref<ComputePipeline> m_CoveragePipeline;
+        /// @brief Its layout: set 3 + the classifier's push block.
+        Ref<PipelineLayout> m_CoverageLayout;
+        /// @brief Its set 3: the classifier's bindings, then the coverage target.
+        Ref<DescriptorSetLayout> m_CoverageSetLayout;
         /// @brief The classifier's pipeline.
         Ref<ComputePipeline> m_ClassifyPipeline;
         /// @brief Its layout: set 3 + the g-buffer push block.
@@ -574,6 +611,15 @@ namespace Veng::Renderer
         Ref<ImageView> m_DepthHierarchyView;
         /// @brief The radiance ping-pong pair (RGBA16F).
         std::array<Ref<ImageView>, 2> m_Radiance;
+        /// @brief The radiance pair's bindless slots, which the reflection debug blit samples.
+        std::array<TextureHandle, 2> m_RadianceHandles;
+        /// @brief Whether the coverage target is wanted (SetCoverageOutput).
+        bool m_CoverageWanted = false;
+        /// @brief The coverage target (R8, one ssr_coverage.slang code per pixel), held only while
+        ///        wanted.
+        Ref<ImageView> m_Coverage;
+        /// @brief The coverage target's bindless slot.
+        TextureHandle m_CoverageHandle;
         /// @brief The variance ping-pong pair (R16F).
         std::array<Ref<ImageView>, 2> m_Variance;
         /// @brief The extracted roughness (R8, alpha).
@@ -603,6 +649,9 @@ namespace Veng::Renderer
         vector<Ref<DescriptorSet>> m_DownsampleSets;
         /// @brief The classifier's set for each frame parity (radiance A and variance B swap).
         std::array<Ref<DescriptorSet>, 2> m_ClassifySets;
+        /// @brief The coverage classifier's set for each frame parity: the classifier's, plus the
+        ///        coverage target at binding 10. Built only while the coverage target is held.
+        std::array<Ref<DescriptorSet>, 2> m_CoverageSets;
         /// @brief The blue-noise set.
         Ref<DescriptorSet> m_BlueNoiseSet;
         /// @brief The indirect-argument set.
@@ -622,6 +671,8 @@ namespace Veng::Renderer
         MipChainId m_DepthHierarchyId;
         /// @brief This frame's radiance (A) import.
         ResourceId m_RadianceId;
+        /// @brief The coverage target's import (invalid while it is not held).
+        ResourceId m_CoverageId;
         /// @brief This frame's radiance history (B) import.
         ResourceId m_RadianceHistoryId;
         /// @brief This frame's variance (A) import.

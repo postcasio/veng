@@ -24,13 +24,14 @@ namespace Veng::Renderer
         constexpr AssetId MotionBlitFragId{0xCCD40C76935382FDULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
         constexpr AssetId CocBlitFragId{0x878C4C3C6E247858ULL};
+        constexpr AssetId SsrCoverageBlitFragId{0x23BEBB78A29D4939ULL};
     }
 
     Unique<DebugBlitPipelines>
     DebugBlitPipelines::Create(Context& context, AssetManager& assets, const Format outputFormat,
                                const Ref<DescriptorSetLayout>& shadowBlitSetLayout)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
@@ -41,8 +42,8 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, writing the output format.
-        auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
-                                const AssetHandle<Veng::Shader>& fs) -> Ref<GraphicsPipeline>
+        const auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
+                                      const AssetHandle<Veng::Shader>& fs) -> Ref<GraphicsPipeline>
         {
             return GraphicsPipeline::Create(
                 context, {
@@ -60,7 +61,7 @@ namespace Veng::Renderer
         // The g-buffer debug blits share the BlitPushConstants layout; only the fragment differs.
         const PushConstantRange blitRange =
             PushConstantRange::Of<BlitPushConstants>(ShaderStage::Fragment);
-        auto MakeBlitLayout = [&](const char* name) -> Ref<PipelineLayout>
+        const auto MakeBlitLayout = [&](const char* name) -> Ref<PipelineLayout>
         {
             return PipelineLayout::Create(context,
                                           {.Name = name, .PushConstantRanges = {blitRange}});
@@ -88,6 +89,11 @@ namespace Veng::Renderer
         blits->MotionLayout = MakeBlitLayout("SceneRenderer Motion Blit Layout");
         blits->Motion = MakePipeline("SceneRenderer Motion Blit Pipeline", blits->MotionLayout,
                                      LoadShader(MotionBlitFragId, "motion-vector-blit fragment"));
+
+        blits->SsrCoverageLayout = MakeBlitLayout("SceneRenderer SSR Coverage Blit Layout");
+        blits->SsrCoverage =
+            MakePipeline("SceneRenderer SSR Coverage Blit Pipeline", blits->SsrCoverageLayout,
+                         LoadShader(SsrCoverageBlitFragId, "reflection-coverage-blit fragment"));
 
         // The CoC blit normalizes against the frame's budget, so it carries its own push block.
         blits->CocLayout = PipelineLayout::Create(

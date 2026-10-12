@@ -660,6 +660,16 @@
       "id": "0x9E38E45BB3C2850D",
       "type": "Shader",
       "source": "shaders/ssr/ssr_apply_reflections.frag.shader.json"
+    },
+    {
+      "id": "0x861A0E1D8E762BB9",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_classify_tiles_coverage.comp.shader.json"
+    },
+    {
+      "id": "0x23BEBB78A29D4939",
+      "type": "Shader",
+      "source": "shaders/ssr/ssr_coverage_blit.frag.shader.json"
     }
   ]
 }

@@ -157,7 +157,8 @@ namespace Veng::Renderer
     bool ResolveSceneComposited(const SceneRendererSettings& settings)
     {
         return settings.Path != RenderPath::GeometryDepthNormal &&
-               (settings.Mode == DebugView::Final || settings.Mode == DebugView::Bloom);
+               (settings.Mode == DebugView::Final || settings.Mode == DebugView::Bloom ||
+                IsReflectionDebugView(settings.Mode));
     }
 
     bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings)
@@ -174,7 +175,13 @@ namespace Veng::Renderer
 
     bool ResolveSsrActive(const SceneRendererSettings& settings)
     {
-        return settings.Path == RenderPath::Shaded && settings.Mode == DebugView::Final &&
-               settings.SSR;
+        return settings.Path == RenderPath::Shaded &&
+               ((settings.Mode == DebugView::Final && settings.SSR) ||
+                IsReflectionDebugView(settings.Mode));
+    }
+
+    bool IsReflectionDebugView(const DebugView mode)
+    {
+        return mode == DebugView::Reflections || mode == DebugView::ReflectionCoverage;
     }
 }

@@ -36,6 +36,7 @@ namespace Veng::Renderer
         // The chain's core-pack shaders and the blue-noise sampler tables.
         constexpr AssetId DepthDownsampleCompId{0xBA94876AE3B2A2DAULL};
         constexpr AssetId ClassifyTilesCompId{0x8C382FAB5A18F8C8ULL};
+        constexpr AssetId ClassifyTilesCoverageCompId{0x861A0E1D8E762BB9ULL};
         constexpr AssetId PrepareBlueNoiseCompId{0xFEB489746A920429ULL};
         constexpr AssetId PrepareIndirectArgsCompId{0x4E213E0E322BFDDEULL};
         constexpr AssetId IntersectCompId{0xAFE1A70F03527034ULL};
@@ -173,7 +174,8 @@ namespace Veng::Renderer
         return Unique<SsrChain>(new SsrChain(context, assets));
     }
 
-    SsrChain::SsrChain(Context& context, AssetManager& assets) : m_Context(context)
+    SsrChain::SsrChain(Context& context, AssetManager& assets)
+        : m_Context(context), m_Assets(assets)
     {
         // The classifier compacts its rays with a subgroup ballot and prefix count.
         VE_ASSERT(m_Context.GetDeviceCapabilities().SupportsSubgroup(
@@ -541,10 +543,11 @@ namespace Veng::Renderer
 
     SsrChain::~SsrChain()
     {
-        ReleaseHierarchyHandles();
+        ReleaseExtentHandles();
+        RecreateCoverage(false);
     }
 
-    void SsrChain::ReleaseHierarchyHandles()
+    void SsrChain::ReleaseExtentHandles()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         for (const TextureHandle handle : m_DepthHierarchyHandles)
@@ -552,6 +555,65 @@ namespace Veng::Renderer
             bindless.Release(handle);
         }
         m_DepthHierarchyHandles.clear();
+        for (TextureHandle& handle : m_RadianceHandles)
+        {
+            if (handle.IsValid())
+            {
+                bindless.Release(handle);
+            }
+            handle = TextureHandle{};
+        }
+    }
+
+    void SsrChain::RecreateCoverage(const bool enabled)
+    {
+        if (m_CoverageHandle.IsValid())
+        {
+            m_Context.GetBindlessRegistry().Release(m_CoverageHandle);
+            m_CoverageHandle = TextureHandle{};
+        }
+        m_Coverage = nullptr;
+        if (!enabled || m_Extent.x == 0)
+        {
+            return;
+        }
+        if (m_CoveragePipeline == nullptr)
+        {
+            vector<DescriptorBinding> bindings = m_ClassifySetLayout->GetBindings();
+            bindings.push_back(Binding(10, DescriptorType::StorageImage));
+            m_CoverageSetLayout = DescriptorSetLayout::Create(
+                m_Context, {
+                               .Name = "SSR Classify Tiles Coverage Set Layout",
+                               .Bindings = std::move(bindings),
+                           });
+            m_CoverageLayout = PipelineLayout::Create(
+                m_Context, {
+                               .Name = "SSR Classify Tiles Coverage Layout",
+                               .DescriptorSetLayouts = {m_CoverageSetLayout},
+                               .PushConstantRanges = {PushConstantRange::Of<ClassifyPush>(
+                                   ShaderStage::Compute)},
+                           });
+            m_CoveragePipeline = CreatePipeline(m_Context, m_Assets, ClassifyTilesCoverageCompId,
+                                                "Classify Tiles Coverage", m_CoverageLayout);
+        }
+        m_Coverage =
+            CreateTarget(m_Context, "SSR Coverage", m_Extent, Format::R8Unorm,
+                         ImageUsage::Storage | ImageUsage::Sampled | ImageUsage::TransferSrc);
+        m_CoverageHandle = m_Context.GetBindlessRegistry().Register(m_Coverage);
+    }
+
+    void SsrChain::SetCoverageOutput(const bool enabled)
+    {
+        if (enabled == m_CoverageWanted)
+        {
+            return;
+        }
+        m_CoverageWanted = enabled;
+        if (m_DepthHierarchy != nullptr)
+        {
+            RecreateCoverage(enabled);
+            BuildSets();
+        }
     }
 
     void SsrChain::Recreate(const uvec2 extent)
@@ -569,7 +631,7 @@ namespace Veng::Renderer
         m_Extent = extent;
         m_FrameIndex = 0;
 
-        ReleaseHierarchyHandles();
+        ReleaseExtentHandles();
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
 
         // The depth hierarchy: render resolution at level 0, seven levels at most.
@@ -610,7 +672,9 @@ namespace Veng::Renderer
                                          Format::RGBA16Sfloat, targetUsage);
             m_Variance[i] = CreateTarget(m_Context, fmt::format("SSR Variance {}", i), extent,
                                          Format::R16Sfloat, targetUsage);
+            m_RadianceHandles[i] = bindless.Register(m_Radiance[i]);
         }
+        RecreateCoverage(m_CoverageWanted);
         m_ExtractedRoughness =
             CreateTarget(m_Context, "SSR Extracted Roughness", extent, Format::R8Unorm,
                          ImageUsage::Storage | ImageUsage::Sampled | ImageUsage::TransferSrc);
@@ -785,6 +849,28 @@ namespace Veng::Renderer
             set->Write(9, m_ExtractedRoughness);
             m_ClassifySets[parity] = set;
 
+            m_CoverageSets[parity] = nullptr;
+            if (m_Coverage != nullptr)
+            {
+                const Ref<DescriptorSet> coverage =
+                    DescriptorSet::Create(m_Context, {
+                                                         .Name = "SSR Classify Tiles Coverage Set",
+                                                         .Layout = m_CoverageSetLayout,
+                                                     });
+                coverage->Write(0, m_Constants, 0, sizeof(SsrConstants));
+                coverage->Write(1, m_Environment);
+                coverage->Write(2, m_EnvironmentSampler);
+                coverage->Write(3, m_DepthHierarchyView);
+                coverage->Write(4, m_Variance[varianceHistory]);
+                coverage->Write(5, m_Radiance[radiance]);
+                coverage->Write(6, m_RayList);
+                coverage->Write(7, m_DenoiserTileList);
+                coverage->Write(8, m_RayCounter);
+                coverage->Write(9, m_ExtractedRoughness);
+                coverage->Write(10, m_Coverage);
+                m_CoverageSets[parity] = coverage;
+            }
+
             const Ref<DescriptorSet> intersect =
                 DescriptorSet::Create(m_Context, {
                                                      .Name = "SSR Intersect Set",
@@ -918,6 +1004,7 @@ namespace Veng::Renderer
         m_DenoiserTileListId = graph.ImportBuffer("SSR Denoiser Tile List");
         m_RayCounterId = graph.ImportBuffer("SSR Ray Counter");
         m_IndirectArgsId = graph.ImportBuffer("SSR Intersection Pass Indirect Args");
+        m_CoverageId = m_Coverage != nullptr ? graph.Import("SSR Coverage") : ResourceId{};
     }
 
     void SsrChain::AppendImportBindings(vector<RenderGraph::ImportBinding>& bindings) const
@@ -950,6 +1037,10 @@ namespace Veng::Renderer
         bindings.push_back({.Id = m_DenoiserTileListId, .Buffer = m_DenoiserTileList});
         bindings.push_back({.Id = m_RayCounterId, .Buffer = m_RayCounter});
         bindings.push_back({.Id = m_IndirectArgsId, .Buffer = m_IndirectArgs});
+        if (m_Coverage != nullptr)
+        {
+            bindings.push_back({.Id = m_CoverageId, .View = m_Coverage});
+        }
     }
 
     void SsrChain::PrepareFrame(const SsrFrameInputs& inputs)
@@ -1053,18 +1144,25 @@ namespace Veng::Renderer
             // The counters are read-modify-written by the atomics.
             builder.StorageBufferRead(m_RayCounterId);
             builder.StorageBufferWrite(m_RayCounterId);
+            // The coverage entry point is the same classification writing one more target.
+            const bool coverage = m_Coverage != nullptr;
+            if (coverage)
+            {
+                builder.StorageWrite(m_CoverageId);
+            }
             const ClassifyPush push{
                 .NormalTexture = inputs.NormalHandle.Index,
                 .MaterialTexture = inputs.MaterialHandle.Index,
             };
             builder.Execute(
-                [this, push](PassContext& pass)
+                [this, push, coverage](PassContext& pass)
                 {
                     CommandBuffer& cmd = pass.Cmd();
-                    cmd.BindPipeline(m_ClassifyPipeline);
+                    cmd.BindPipeline(coverage ? m_CoveragePipeline : m_ClassifyPipeline);
                     m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {m_ClassifySets[m_FrameIndex & 1u]},
+                        .Sets = {coverage ? m_CoverageSets[m_FrameIndex & 1u]
+                                          : m_ClassifySets[m_FrameIndex & 1u]},
                         .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                         .DynamicOffsets = {ConstantsOffset()},

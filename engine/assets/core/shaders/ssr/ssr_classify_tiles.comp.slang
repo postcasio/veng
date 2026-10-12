@@ -23,6 +23,10 @@
 // A load past a texture's extent returns 0 and a store past it is dropped, the semantics the
 // reference's loads and stores have on the threads of the last row and column of tiles.
 //
+// csCoverage is the engine's debug entry point, not the reference's: it runs the same
+// classification and also writes what it decided for each pixel (ssr_coverage.slang) to a debug
+// target.
+//
 // This file is part of the FidelityFX SDK.
 //
 // Copyright (C) 2024 Advanced Micro Devices, Inc.
@@ -46,6 +50,7 @@
 // THE SOFTWARE.
 
 #include "ssr_common.slang"
+#include "ssr_coverage.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 
@@ -58,6 +63,7 @@
 [[vk::binding(7, 3)]] RWStructuredBuffer<uint> g_DenoiserTileList;
 [[vk::binding(8, 3)]] globallycoherent RWStructuredBuffer<uint> g_RayCounter;
 [[vk::binding(9, 3)]] [format("r8")] RWTexture2D<float> g_ExtractedRoughness;
+[[vk::binding(10, 3)]] [format("r8")] RWTexture2D<float> g_Coverage; // csCoverage only
 
 struct PushConstants
 {
@@ -224,7 +230,21 @@ groupshared uint g_TileCount;
 // local index ^ 1 (horizontal), ^ 2 (vertical) and ^ 3 (diagonal).
 groupshared uint g_RequireCopy[64];
 
-void ClassifyTiles(uint2 dispatch_thread_id, uint2 group_thread_id, uint local_thread_index, float roughness)
+// What ClassifyTiles decided for its pixel, which csCoverage reports.
+struct ClassifyDecisions
+{
+    bool needs_ray;
+    bool needs_denoiser;
+    bool is_base_ray;
+    bool require_copy;
+    bool copy_horizontal;
+    bool copy_vertical;
+    bool copy_diagonal;
+    bool is_reflective_surface;
+    bool is_glossy_reflection;
+};
+
+void ClassifyTiles(uint2 dispatch_thread_id, uint2 group_thread_id, uint local_thread_index, float roughness, out ClassifyDecisions decisions)
 {
     g_TileCount = 0;
 
@@ -304,6 +324,16 @@ void ClassifyTiles(uint2 dispatch_thread_id, uint2 group_thread_id, uint local_t
 
     FFX_SSSR_StoreRadiance(dispatch_thread_id, intersection_output);
 
+    decisions.needs_ray = needs_ray;
+    decisions.needs_denoiser = needs_denoiser;
+    decisions.is_base_ray = is_base_ray;
+    decisions.require_copy = require_copy;
+    decisions.copy_horizontal = copy_horizontal;
+    decisions.copy_vertical = copy_vertical;
+    decisions.copy_diagonal = copy_diagonal;
+    decisions.is_reflective_surface = is_reflective_surface;
+    decisions.is_glossy_reflection = is_glossy_reflection;
+
     GroupMemoryBarrierWithGroupSync(); // Wait until g_TileCount
 
     if ((group_thread_id.x == 0) && (group_thread_id.y == 0) && g_TileCount > 0)
@@ -322,8 +352,67 @@ void csMain(uint LocalThreadIndex : SV_GroupIndex, uint3 WorkGroupId : SV_GroupI
     uint2 dispatch_thread_id = WorkGroupId.xy * 8 + group_thread_id;
     float roughness = LoadRoughnessFromMaterialParametersInput(uint3(dispatch_thread_id, 0));
 
-    ClassifyTiles(dispatch_thread_id, group_thread_id, LocalThreadIndex, roughness);
+    ClassifyDecisions decisions;
+    ClassifyTiles(dispatch_thread_id, group_thread_id, LocalThreadIndex, roughness, decisions);
 
     // Extract only the channel containing the roughness to avoid loading all 4 channels in the follow up passes.
     StoreExtractedRoughness(dispatch_thread_id, roughness);
+}
+
+groupshared uint g_CoverageCode[64];
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void csCoverage(uint LocalThreadIndex : SV_GroupIndex, uint3 WorkGroupId : SV_GroupID)
+{
+    uint2 group_thread_id = RemapForWaveReduction(LocalThreadIndex);
+    uint2 dispatch_thread_id = WorkGroupId.xy * 8 + group_thread_id;
+    float roughness = LoadRoughnessFromMaterialParametersInput(uint3(dispatch_thread_id, 0));
+
+    ClassifyDecisions decisions;
+    ClassifyTiles(dispatch_thread_id, group_thread_id, LocalThreadIndex, roughness, decisions);
+    StoreExtractedRoughness(dispatch_thread_id, roughness);
+
+    // A pixel's own decision first; a rough pixel's environment is scaled by the IBL factor, so with
+    // none it receives nothing.
+    uint code = SsrCoverageNone;
+    if (decisions.needs_ray)
+    {
+        code = !decisions.needs_denoiser ? SsrCoverageMirror
+                                         : (decisions.is_base_ray ? SsrCoverageRay : SsrCoverageVarianceRay);
+    }
+    else if (decisions.require_copy)
+    {
+        code = SsrCoverageUnreached;
+    }
+    else if (decisions.is_reflective_surface && !decisions.is_glossy_reflection && IBLFactor() > 0.0)
+    {
+        code = SsrCoverageEnvironment;
+    }
+    g_CoverageCode[LocalThreadIndex] = code;
+    GroupMemoryBarrierWithGroupSync();
+
+    // A traced ray's copy flags then mark the quad neighbours the intersection copies it to, at the
+    // same local indices the classifier's copy exchange reads.
+    if (decisions.needs_ray)
+    {
+        if (decisions.copy_horizontal)
+        {
+            g_CoverageCode[LocalThreadIndex ^ 1] = SsrCoverageCopied;
+        }
+        if (decisions.copy_vertical)
+        {
+            g_CoverageCode[LocalThreadIndex ^ 2] = SsrCoverageCopied;
+        }
+        if (decisions.copy_diagonal)
+        {
+            g_CoverageCode[LocalThreadIndex ^ 3] = SsrCoverageCopied;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (all(dispatch_thread_id < RenderSize()))
+    {
+        g_Coverage[dispatch_thread_id] = float(g_CoverageCode[LocalThreadIndex]) / 255.0;
+    }
 }
