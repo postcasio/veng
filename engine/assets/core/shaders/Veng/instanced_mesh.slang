@@ -1,8 +1,9 @@
 // What a Surface material reads of the instance an instanced mesh set drew it for (the
 // InstancedMesh component). A material declaring "instancedSets": true in its .vmat.json can be drawn
-// by a set; its fragment includes this beside Veng/surface.slang and reads the instance through the
-// fragment input. A fragment drawn for anything other than a set reads the neutral values below, so
-// one material serves a set and an ordinary mesh alike.
+// by a set; its fragment includes this in place of Veng/surface.slang, which this includes (that file
+// has no include guard, so including both defines its declarations twice), and reads the instance
+// through the fragment input. A fragment drawn for anything other than a set reads the neutral values
+// below, so one material serves a set and an ordinary mesh alike.
 //
 // The binding-free half — the record layout, the projected-size and level rules — is in
 // Veng/instanced_mesh_math.slang, which this includes.
