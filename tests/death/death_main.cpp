@@ -217,6 +217,30 @@ namespace
         StepPhysics(*scene, 1.0f / 60.0f);
     }
 
+    void RunPhysicsDegenerateHull()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+        scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        const Ref<CollisionShape> geometry = CreateRef<CollisionShape>();
+        geometry->Geometry = CollisionGeometry::Convex;
+        geometry->Points = vector<vec3>(6, vec3(1.0f, 2.0f, 3.0f));
+
+        Collider collider{.Shape = ColliderShape::Mesh};
+        collider.Geometry = AssetManager::Adopt<CollisionShape>(geometry);
+
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity);
+        scene->Add<RigidBody>(entity, RigidBody{.Motion = MotionType::Static});
+        scene->Add<Collider>(entity, collider);
+
+        // Cooked geometry the solver cannot hull is a build error; CollisionShape::ValidateConvex
+        // is how a run-time producer finds out first.
+        StepPhysics(*scene, 1.0f / 60.0f);
+    }
+
     void RunRewindScopeAcrossStep()
     {
         TypeRegistry registry;
@@ -647,6 +671,10 @@ int main(int argc, char** argv)
     else if (name == "physics_dynamic_triangle_mesh")
     {
         RunPhysicsDynamicTriangleMesh();
+    }
+    else if (name == "physics_degenerate_hull")
+    {
+        RunPhysicsDegenerateHull();
     }
     else if (name == "rewind_scope_across_step")
     {

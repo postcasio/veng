@@ -61,13 +61,16 @@ from its origin without a rebasing scheme.
 
 The budget is not free. `PhysicsWorldInfo::MaxBodies` sizes the per-step scratch as well as the body
 table — the solver reserves it up front and treats exhausting it as fatal — so raising the ceiling
-costs resident memory whether or not the bodies exist.
+costs resident memory whether or not the bodies exist. **It stays fatal**: the table is preallocated
+and has nowhere to put one more body, and refusing one quietly would leave an entity that should
+collide passing through the world. Size it as the most bodies the scene holds at one moment, resting
+and awake, plus headroom; a consumer creating bodies on demand caps its own population below it.
 
 ## The components are the authority; the bodies are their shadow
 
 ```
-RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; }
-Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Friction; Restitution; Geometry; }
+RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; StartAsleep; }
+Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Scale; Friction; Restitution; Geometry; }
 PhysicsPose     { dvec3 Position; quat Rotation; }
 Sensor          { Layers; }
 SensorOverlaps  { vector<Entity> Current, Entered, Exited; }
@@ -78,11 +81,25 @@ HingeConstraint { Entity Target; vec3 Point; vec3 Axis; }
 
 `RigidBody`, `Collider`, `Sensor` and the three constraints are plain reflected components,
 registered in `RegisterBuiltinTypes`, authorable in the editor inspector and cooked into prefabs
-through the existing pipeline — **no ABI surface**. An entity needs a `RigidBody` and a `Collider`
-to be simulated; a `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at
-runtime creates the backing body on the next step, removing either destroys it, and editing a field
-re-creates the body with the new settings. The three primitives are the shapes that need no cooked
-data, so a `Collider` describing one is complete on its own.
+through the existing pipeline. An entity needs a `RigidBody` and a `Collider` to be simulated; a
+`RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at runtime creates the
+backing body on the next step, removing either destroys it, and editing a field re-creates the body
+with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body
+and are taken in place. `RigidBody`, `Collider` and `Sensor` carry a removal hook (`VE_ON_REMOVE`)
+that queues the entity for the next step's reconcile, which is how the step finds what left without
+sweeping every body. The three primitives are the shapes that need no cooked data, so a `Collider`
+describing one is complete on its own.
+
+**`Collider::Scale` is a uniform scale of the whole collider about the body's origin** — its geometry
+and its `Offset` alike, as a uniform scale on the body's frame would be — so one cooked or adopted
+shape serves bodies of many sizes. The shape cache keys on the unscaled collider, and a body at a
+scale other than one wraps the shared shape in a per-body `ScaledShape`, so a thousand bodies at a
+hundred scales build one base shape. A query naming a scaled `Collider` is scaled the same way, and
+the debug draw and the editor's collider gizmo draw it at its scaled size. A non-positive scale is a
+fatal assert, as an unbuildable primitive is.
+
+**Mass follows the scaled volume when `RigidBody::Mass` is zero** (at the solver's default density,
+1000 kg/m³), and is the authored mass whatever the shape's size otherwise.
 
 **A primitive is oriented by `Collider::Rotation`, not by a compound.** A box is axis-aligned to the
 body and a capsule stands about local Y, so a hull that lies along the body's forward axis, or a
@@ -133,6 +150,14 @@ Two properties are load-bearing:
   not know the solver exists. This way a solver bump is a **rebuild**, not a re-cook. The cost is
   one shape construction per asset at load, which is the right trade. **The cooker links no solver
   at all**: the hulling is the cook's own, so the offline toolchain's dependency set is unchanged.
+- **A run-time producer checks a hull before adopting it.** The world's own build asserts on hull
+  points the solver cannot hull — a cooked hull that fails is a build error. A producer making points
+  at run time calls **`CollisionShape::ValidateConvex(points)`** first, which builds the same hull
+  settings the world does and returns the reason as an error instead: non-finite points, fewer than
+  four, coincident, collinear, or **coplanar**. The solver builds coplanar points into a flat,
+  two-faced hull rather than refusing them, and a flat hull has no inertia for a dynamic body, so the
+  check is stricter than the build: passing means the points build without asserting. It holds the
+  solver's process registration for the call, so it is cheapest while a world is alive.
 - **A triangle mesh may not back a `Dynamic` body.** A triangle mesh is a surface: it has no
   interior and no inertia, and a dynamic one is a well-known way to get a solver that misbehaves
   for reasons the consumer cannot see. `PhysicsWorld::CreateBody` **asserts** on the pair rather
@@ -231,7 +256,8 @@ usize              OverlapBounds(const PhysicsWorld*, dvec3 center, f32 radius,
   its radius by the centre's own f32 rounding, so the superset holds at any distance from origin.
 - **Built shapes are shared.** A `PhysicsWorld` keeps one built solver shape per distinct collider
   (keyed by kind, extents, offset, rotation and cooked-geometry identity; friction and restitution
-  are body settings and do not split it). Body creation and cooked-geometry queries both resolve
+  are body settings and do not split it, and a collider's `Scale` wraps the shared shape per body
+  rather than splitting it). Body creation and cooked-geometry queries both resolve
   through it, so a compound hull is built once however many bodies and sweeps name it. A primitive
   named only by a query is built in place, embedded, and never enters the cache. A step drops any
   entry no body holds and nothing has asked for since the previous step, so the cache is bounded by
@@ -243,22 +269,63 @@ usize              OverlapBounds(const PhysicsWorld*, dvec3 center, f32 radius,
 ## The step, and the two-writer hazard
 
 `StepPhysics(Scene&, delta)` is the whole step as a free function, so a headless tool or a test
-drives a scene's physics without building a `SceneSimulation`. It runs five passes:
+drives a scene's physics without building a `SceneSimulation`. **It costs what moved, not what exists**: a
+scene can hold thousands of resting dynamic bodies and pay, per tick, for the ones that are awake and
+the ones whose components changed. It runs five passes:
 
-1. **Reconcile.** Gather every `(RigidBody, Collider)` entity through the *const* view (a structural
-   change during iteration is illegal, and adding a `PhysicsPose` is one, so the pass that finds
-   them cannot be the pass that makes them), add the missing `PhysicsPose`s and `SensorOverlaps`,
-   bring every body into line through the idempotent `PhysicsWorld::CreateBody`, then sweep
-   `GetBodyEntities` for bodies whose entity has lost its components or died. Constraints reconcile
-   the same way, after the bodies, through `CreateConstraint`/`GetConstraintOwners`.
-2. **Push.** A `Static` body is placed outright; a `Kinematic` one is *swept* toward its target via
-   `MoveKinematicBody`, which is what lets it push dynamic bodies instead of passing through them. A
+1. **Reconcile, change-driven.** A component stamped at or after the scene tick the last reconcile ran
+   at is a change, found by `Scene::ForEachChangedSince` over the `RigidBody`, `Collider` and `Sensor`
+   pools — one pass over each pool's packed tick array, skipped when the pool's highest stamp is
+   older — and only those entities are reconciled. The entities are collected before any is
+   reconciled, since adding a `PhysicsPose` is a structural change. Removals arrive through the
+   components' removal hook as a queue; an entity whose cooked geometry is not resident waits in a
+   list re-checked every step. Reconciling an entity runs the idempotent `CreateBody` (or destroys
+   the body), adds a missing `PhysicsPose` / `SensorOverlaps`, and **seeds `PhysicsPose` from the
+   pose a new body is built at**, since a body created asleep, or static, is never read back until it
+   moves. Constraints reconcile after the bodies, through `CreateConstraint`/`GetConstraintOwners`.
+2. **Push, change-driven.** A `Static` or `Kinematic` body is pushed only when the pose its source
+   component holds (`Transform`, or `PhysicsPose` with `SyncTransform` cleared) differs from the one
+   it was last placed at; a `Static` body is placed outright, a `Kinematic` one *swept* toward its
+   target via `MoveKinematic`, which is what lets it push dynamic bodies instead of passing through
+   them. `MoveKinematic` sets the velocity that reaches the target and the solver keeps integrating
+   it, so **on the first tick a kinematic body's pose holds still it is pushed once more to the same
+   pose**, zeroing that velocity; after that it is not pushed again until it moves, and it sleeps. A
    `Dynamic` body's pose belongs to the solver and is not pushed.
 3. **Step.** One `PhysicsWorld::Step(delta)`.
-4. **Pull.** Write each body's result into `PhysicsPose`, and into `Transform` for a body whose
-   `RigidBody` sets `SyncTransform`.
+4. **Pull, active-only.** Each body the solver reports active after the step is written into
+   `PhysicsPose`, and into `Transform` for a non-static body whose `RigidBody` sets `SyncTransform` —
+   plus **every body that went to sleep during that step**, recorded by a body-activation listener: a
+   body that settles drops out of the active list, so without it its final pose would never be read.
+   A sleeping body's `PhysicsPose` is left as it is. A body placed or restored between steps
+   (`SetBodyPose`, `RestoreBodyState`) is read back by name, and a whole-world `RestoreState` reads
+   every body back once.
 5. **Publish.** Write each `Sensor` entity's overlap set into its `SensorOverlaps`, diffing against
    last tick's for the enter/exit deltas.
+
+**Why change ticks and a value compare, not one or the other.** A change tick is per tick, so it
+cannot tell the step's own pull (stamped this tick) from a system writing after the step in the same
+tick; the reconcile therefore counts a stamp *at* the last reconcile's tick as a change (an entity
+edited before the step is reconciled twice, idempotently) and the push compares values against the
+last pushed pose, which is exact. Change ticks also cannot see a write a reconciliation replay stamps
+with a past tick, so **the first step, and a step after a replay, after `DestroyAllBodies`, or whose
+scene tick went backwards, walks every physics entity through the const view and sweeps orphans**.
+A component written through a pointer retained across ticks stamps nothing and is not seen, exactly
+as such a write bypasses the net layer's delta; write physics components through the scene's
+accessors. A scene stepped
+without the world drive advancing its change tick (a test calling `StepPhysics` directly) stamps
+every edit with one tick and so reconciles every entity every step, as correct as before and no
+cheaper. `PhysicsWorld::CreateBody` / `DestroyBody` called directly queue their entity, so the next
+step re-checks it against its components — a body made for an entity carrying none is swept there.
+
+`PhysicsWorld::GetStepStats()` reports what the last `StepPhysics` did — entities reconciled, bodies
+pushed, bodies read back, and whether the reconcile was full — the counters the property tests
+assert, so a field of sleeping bodies reads zero in every one.
+
+**Sleep, activation and impulse.** `RigidBody::StartAsleep` adds a `Dynamic` body asleep, so a body
+placed at rest costs nothing until a contact, an impulse or **`ActivateBody`** wakes it;
+**`IsBodyActive`** reports it. **`AddImpulse(entity, impulse)`** and **`AddImpulseAt(entity, impulse,
+worldPoint)`** change a dynamic body's velocity by impulse over mass at once and wake it (a no-op on
+any other body), beside `Get/SetLinearVelocity` and `Get/SetAngularVelocity`.
 
 **Contacts are found against the pose a step starts from.** A kinematic body teleported across a
 sensor in one tick is therefore reported on the *next* tick, once the step begins with it inside.
@@ -408,9 +475,9 @@ are still round-trip tested; the character rollback does not need them.
 
 ## Layers are a closed table
 
-`PhysicsLayer` is a **closed** five-member enum — `Static`, `Moving`, `Character`, `Trigger`,
-`Query` — and a `CollisionMatrix` is one bitmask row per layer saying which pairs may produce
-contacts. `PhysicsWorldInfo` *selects* a matrix; it does not author new layers. Closed rather than an
+`PhysicsLayer` is a **closed** six-member enum — `Static`, `Moving`, `Character`, `Trigger`,
+`Query`, `Debris` — and a `CollisionMatrix` is one bitmask row per layer saying which pairs may
+produce contacts. `PhysicsWorldInfo` *selects* a matrix; it does not author new layers. Closed rather than an
 open registry because filtering is the thing that silently breaks a world when it drifts, and a
 table you can read in one screen is worth more than an extensible one.
 
@@ -422,8 +489,24 @@ characters and triggers all see each other; a `Query` body collides with nothing
 makes it query-only. A body on the `Trigger` layer is created as a sensor — it reports overlaps and
 pushes nothing.
 
-Object layers map onto **two** broad-phase layers: `Static` and `Query` are non-moving, the rest
-move.
+**`Debris` is for loose bodies an actor resolves by its own swept queries rather than by the
+solver** — scattered rubble, crates or props a character or vehicle controller handles itself. A
+kinematic body moved by `MoveKinematic` pushes any dynamic body it meets with infinite mass, which is
+wrong for an actor that moves by `ShapeCast` and decides its own contact response: the solver would
+launch the loose body before that response ran. So `Debris` collides with `Static`, `Debris` and
+`Trigger`, never with `Moving` or `Character`, and the actor reaches it only through queries whose
+`QueryFilter::Layers` names it.
+
+Object layers map onto **three** broad-phase layers: `Static` and `Query` are non-moving, `Debris`
+has its own, and the rest move. The solver rebuilds the changed part of a broad-phase tree each step
+a body in it moves, so a resting debris field kept in the movers' tree would be re-sorted every step
+anything moved; in its own tree it is touched only when debris itself moves, and a mover, which never
+collides with debris, never visits it.
+
+**The broad phase is rebuilt whole only after a batch at least as large as the world it joins** — the
+first step, or a level's worth arriving at once (`PhysicsStepStats::OptimizedBroadPhase`). A trickle
+— a window of loose bodies added and removed as an actor moves — is absorbed by the incremental tree
+update every step runs, since a whole rebuild after each would cost the world's size per tick.
 
 ## The solver is contained by the Native idiom
 

@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 
@@ -148,21 +149,32 @@ namespace Veng
                     }
                     m_Cached = world.GetNative().Shapes.Acquire(shape, world.GetStepCount());
                     m_Shape = m_Cached.GetPtr();
-                    return;
+                }
+                else
+                {
+                    const JPH::Shape* primitive = BuildPrimitive(shape);
+                    m_Shape = primitive;
+                    // A primitive is re-placed when the collider carries a local offset or
+                    // orientation, exactly as a body's shape is.
+                    if (shape.Offset != vec3(0.0f) ||
+                        shape.Rotation != quat(1.0f, 0.0f, 0.0f, 0.0f))
+                    {
+                        m_Placed.emplace(Detail::ToJolt(shape.Offset),
+                                         Detail::ToJolt(shape.Rotation), primitive);
+                        m_Placed->SetEmbedded();
+                        m_Shape = &*m_Placed;
+                    }
                 }
 
-                const JPH::Shape* primitive = BuildPrimitive(shape);
-                // A primitive is re-placed when the collider carries a local offset or
-                // orientation, exactly as a body's shape is.
-                if (shape.Offset != vec3(0.0f) || shape.Rotation != quat(1.0f, 0.0f, 0.0f, 0.0f))
+                // Scaled about the body's origin over the placed shape, exactly as a body's is.
+                VE_ASSERT(shape.Scale > 0.0f && std::isfinite(shape.Scale),
+                          "Collider Scale {} is not a positive finite number", shape.Scale);
+                if (m_Shape != nullptr && shape.Scale != 1.0f)
                 {
-                    m_Placed.emplace(Detail::ToJolt(shape.Offset), Detail::ToJolt(shape.Rotation),
-                                     primitive);
-                    m_Placed->SetEmbedded();
-                    m_Shape = &*m_Placed;
-                    return;
+                    m_Scaled.emplace(m_Shape, JPH::Vec3::sReplicate(shape.Scale));
+                    m_Scaled->SetEmbedded();
+                    m_Shape = &*m_Scaled;
                 }
-                m_Shape = primitive;
             }
 
             /// @brief The shape is embedded in this object, so it never moves.
@@ -228,6 +240,9 @@ namespace Veng
             optional<JPH::RotatedTranslatedShape> m_Placed;
             /// @brief Cooked geometry, shared through the world's shape cache.
             JPH::RefConst<JPH::Shape> m_Cached;
+            /// @brief The shape under the collider's scale; declared last so it releases its
+            ///        reference to the shape it wraps before that one is destroyed.
+            optional<JPH::ScaledShape> m_Scaled;
             /// @brief The shape the query runs with.
             const JPH::Shape* m_Shape = nullptr;
         };

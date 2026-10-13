@@ -9,6 +9,8 @@
 
 namespace Veng
 {
+    class Scene;
+
     /// @brief How the solver treats a RigidBody: fixed, driven, or integrated.
     ///
     /// Integer values are stable — persisted in prefabs.
@@ -61,6 +63,9 @@ namespace Veng
         /// @brief The collision layer this body sits on; the world's CollisionMatrix filters pairs by it.
         PhysicsLayer Layer = PhysicsLayer::Moving;
         /// @brief Mass in kilograms; ignored for a Static or Kinematic body.
+        ///
+        /// Zero derives the mass from the collider's volume, after its Scale, at the solver's
+        /// default density of 1000 kg/m³; any positive value is the mass whatever the shape's size.
         f32 Mass = 1.0f;
         /// @brief Fraction of linear velocity shed per second; ignored for a non-Dynamic body.
         f32 LinearDamping = 0.05f;
@@ -78,6 +83,13 @@ namespace Veng
         /// re-placed impostor — needs in order to bind the solver to a pose that is not the
         /// Transform.
         bool SyncTransform = true;
+        /// @brief Whether a Dynamic body is created asleep rather than awake.
+        ///
+        /// A body placed at rest — one of a field of resting bodies — costs the step nothing until
+        /// something wakes it: a contact with a moving body, an impulse, or
+        /// PhysicsWorld::ActivateBody. Read when the body is created only, so changing it on a
+        /// live body re-creates nothing. Ignored for a Static or Kinematic body.
+        bool StartAsleep = false;
     };
 
     /// @brief The shape a RigidBody collides with, in the body's local frame.
@@ -100,6 +112,13 @@ namespace Veng
         /// local Y — so this is how one is turned (a capsule laid along the body's forward axis, a
         /// box tilted) with no cooked-geometry detour. It orients cooked geometry too.
         quat Rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
+        /// @brief Uniform scale of the whole collider about the body's origin; must be positive.
+        ///
+        /// Scales the geometry and its Offset alike, as a uniform scale on the body's local frame
+        /// would, so one cooked or adopted shape serves bodies of many sizes. The world builds the
+        /// unscaled shape once and wraps it per body, so a thousand bodies at a hundred scales share
+        /// one built base shape.
+        f32 Scale = 1.0f;
         /// @brief Coulomb friction coefficient; the contact combines the two bodies' values.
         f32 Friction = 0.2f;
         /// @brief Bounciness in [0, 1]; 0 is a fully damped contact.
@@ -253,6 +272,9 @@ namespace Veng
         ///        same pair wins.
         vector<PhysicsCollisionRule> Collisions;
         /// @brief Hard ceiling on simultaneously live bodies; zero falls back to the default.
+        ///
+        /// Exceeding it is fatal, as PhysicsWorldInfo::MaxBodies explains, so size it for the most
+        /// bodies the scene can hold at once with headroom.
         u32 MaxBodies = 4096;
         /// @brief Hard ceiling on broad-phase body pairs tracked in one step; zero falls back to
         ///        the default.
@@ -285,6 +307,18 @@ namespace Veng
     };
 }
 
+namespace Veng::Detail
+{
+    /// @brief Tells @p scene's physics world that a physics component on @p entity is going.
+    ///
+    /// The removal hook RigidBody, Collider and Sensor share: it queues the entity for the next
+    /// step's reconcile, which destroys or re-creates its body, so the step finds what left
+    /// without sweeping every body. A no-op on a scene with no physics world.
+    /// @param scene   The scene the component is leaving.
+    /// @param entity  The entity losing it.
+    VE_API void NotePhysicsComponentRemoved(const Scene& scene, Entity entity);
+}
+
 VE_ENUM(::Veng::MotionType, 0x1C3072A489F0AFDFULL)
 VE_ENUMERATOR(Static)
 VE_ENUMERATOR(Kinematic)
@@ -298,6 +332,11 @@ VE_ENUMERATOR(Capsule)
 VE_ENUMERATOR(Mesh)
 VE_ENUM_END();
 
+// A component leaving takes its entity's body with it at the next step's reconcile.
+VE_ON_REMOVE(::Veng::RigidBody,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::RigidBody&)
+             { ::Veng::Detail::NotePhysicsComponentRemoved(scene, owner); });
+
 VE_REFLECT(::Veng::RigidBody, 0xA943AA8DE96FC0ADULL)
 VE_FIELD(Motion, .DisplayName = "Motion", .Tooltip = "Static, Kinematic (owner-driven) or Dynamic")
 VE_FIELD(Layer, .DisplayName = "Layer", .Tooltip = "Collision layer the world's matrix filters by")
@@ -309,7 +348,13 @@ VE_FIELD(AngularDamping, .DisplayName = "Angular Damping",
 VE_FIELD(SyncTransform, .DisplayName = "Sync Transform",
          .Tooltip = "Bind the solver to the entity's Transform; clear to drive it through "
                     "PhysicsPose alone")
+VE_FIELD(StartAsleep, .DisplayName = "Start Asleep",
+         .Tooltip = "Create a Dynamic body asleep, so it costs nothing until something wakes it")
 VE_REFLECT_END();
+
+VE_ON_REMOVE(::Veng::Collider,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::Collider&)
+             { ::Veng::Detail::NotePhysicsComponentRemoved(scene, owner); });
 
 VE_REFLECT(::Veng::Collider, 0xA0F0111F12C0F380ULL)
 VE_FIELD(Shape, .DisplayName = "Shape")
@@ -318,6 +363,8 @@ VE_FIELD(Extents, .DisplayName = "Extents",
 VE_FIELD(Offset, .DisplayName = "Offset", .Tooltip = "Shape centre in the body's local frame")
 VE_FIELD(Rotation, .DisplayName = "Rotation",
          .Tooltip = "Shape orientation in the body's local frame (turns a primitive)")
+VE_FIELD(Scale, .DisplayName = "Scale",
+         .Tooltip = "Uniform scale of the shape and its offset about the body's origin")
 VE_FIELD(Friction, .DisplayName = "Friction")
 VE_FIELD(Restitution, .DisplayName = "Restitution", .Tooltip = "Bounciness in [0, 1]")
 VE_FIELD(Geometry, .DisplayName = "Geometry",
@@ -327,6 +374,10 @@ VE_REFLECT_END();
 VE_TYPE(::Veng::PhysicsPose, 0x48C7721C19164B98ULL);
 
 VE_TYPE(::Veng::Predicted, 0x8DE09914FAA9C0BEULL);
+
+VE_ON_REMOVE(::Veng::Sensor,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::Sensor&)
+             { ::Veng::Detail::NotePhysicsComponentRemoved(scene, owner); });
 
 VE_REFLECT(::Veng::Sensor, 0x4279DEE7A65B8C9BULL)
 VE_FIELD(Layers, .DisplayName = "Layers",

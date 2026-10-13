@@ -211,9 +211,11 @@ namespace Veng::Renderer
             }
         }
 
-        // One compound child drawn at its composed pose within the collider frame.
-        void DrawCollisionChild(DebugDraw& debug, const mat4& frame, const CollisionChild& child,
-                                const vec4 color)
+        // One compound child drawn at its composed pose within the collider frame. The sphere and
+        // capsule helpers take a radius rather than reading the frame's scale, so the collider's
+        // own scale reaches them as `scale`.
+        void DrawCollisionChild(DebugDraw& debug, const mat4& frame, const f32 scale,
+                                const CollisionChild& child, const vec4 color)
         {
             const mat4 childFrame =
                 frame * glm::translate(mat4(1.0f), child.Offset) * glm::mat4_cast(child.Rotation);
@@ -223,10 +225,11 @@ namespace Veng::Renderer
                 DrawOrientedBox(debug, childFrame, vec3(0.0f), child.Extents, color);
                 break;
             case CollisionChildKind::Sphere:
-                debug.DrawSphere(vec3(childFrame[3]), child.Extents.x, color);
+                debug.DrawSphere(vec3(childFrame[3]), child.Extents.x * scale, color);
                 break;
             case CollisionChildKind::Capsule:
-                DrawCapsule(debug, childFrame, vec3(0.0f), child.Extents.x, child.Extents.y, color);
+                DrawCapsule(debug, childFrame, vec3(0.0f), child.Extents.x * scale,
+                            child.Extents.y * scale, color);
                 break;
             case CollisionChildKind::Convex:
                 DrawWireGeometry(debug, childFrame, child.Points, {}, false, color);
@@ -376,8 +379,11 @@ namespace Veng::Renderer
                 // The shape's own local pose composes under the entity transform: rotate by
                 // Rotation, then offset by Offset, the frame the solver's RotatedTranslatedShape
                 // builds. A primitive draws at this frame's origin so a rotated collider is drawn
-                // where the solver puts it, not in its unrotated frame.
-                const mat4 frame = world * glm::translate(mat4(1.0f), collider.Offset) *
+                // where the solver puts it, not in its unrotated frame. The collider's Scale applies
+                // about the body's origin, outermost, as the solver's ScaledShape applies it.
+                const f32 scale = collider.Scale;
+                const mat4 frame = world * glm::scale(mat4(1.0f), vec3(scale)) *
+                                   glm::translate(mat4(1.0f), collider.Offset) *
                                    glm::mat4_cast(collider.Rotation);
                 switch (collider.Shape)
                 {
@@ -385,11 +391,11 @@ namespace Veng::Renderer
                     DrawOrientedBox(debug, frame, vec3(0.0f), collider.Extents, color);
                     break;
                 case ColliderShape::Sphere:
-                    debug.DrawSphere(vec3(frame[3]), collider.Extents.x, color);
+                    debug.DrawSphere(vec3(frame[3]), collider.Extents.x * scale, color);
                     break;
                 case ColliderShape::Capsule:
-                    DrawCapsule(debug, frame, vec3(0.0f), collider.Extents.x, collider.Extents.y,
-                                color);
+                    DrawCapsule(debug, frame, vec3(0.0f), collider.Extents.x * scale,
+                                collider.Extents.y * scale, color);
                     break;
                 case ColliderShape::Mesh:
                 {
@@ -404,7 +410,7 @@ namespace Veng::Renderer
                         {
                             for (const CollisionChild& child : geometry->Children)
                             {
-                                DrawCollisionChild(debug, frame, child, color);
+                                DrawCollisionChild(debug, frame, scale, child, color);
                             }
                         }
                         else

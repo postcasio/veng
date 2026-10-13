@@ -13,6 +13,7 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Body/BodyLockInterface.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -34,8 +35,15 @@ namespace Veng::Detail
     constexpr JPH::BroadPhaseLayer BroadPhaseNonMoving(0);
     /// @brief Broad-phase layer holding bodies that can move.
     constexpr JPH::BroadPhaseLayer BroadPhaseMoving(1);
+    /// @brief Broad-phase layer holding Debris bodies, apart from the movers.
+    ///
+    /// The solver rebuilds the changed part of a layer's tree each step a body in it moves, so a
+    /// resting field of debris kept in the movers' tree would be re-sorted every step anything moves.
+    /// Kept apart, it is touched only when debris itself moves, and a mover — which never collides
+    /// with debris — never visits it.
+    constexpr JPH::BroadPhaseLayer BroadPhaseDebris(2);
     /// @brief Number of broad-phase layers the world declares.
-    constexpr u32 BroadPhaseLayerCount = 2;
+    constexpr u32 BroadPhaseLayerCount = 3;
 
     /// @brief Converts an engine world-space position into the solver's real-precision vector.
     [[nodiscard]] inline JPH::RVec3 ToJolt(const dvec3 value)
@@ -73,6 +81,19 @@ namespace Veng::Detail
     [[nodiscard]] inline quat FromJolt(const JPH::Quat value)
     {
         return {value.GetW(), value.GetX(), value.GetY(), value.GetZ()};
+    }
+
+    /// @brief Packs an entity into a body's user data, so a solver body names its owner directly.
+    [[nodiscard]] inline u64 PackEntity(const Entity entity)
+    {
+        return (u64{entity.Generation} << 32) | entity.Index;
+    }
+
+    /// @brief Unpacks the entity PackEntity stored in a body's user data.
+    [[nodiscard]] inline Entity UnpackEntity(const u64 packed)
+    {
+        return Entity{.Index = static_cast<u32>(packed),
+                      .Generation = static_cast<u32>(packed >> 32)};
     }
 
     /// @brief Builds the solver shape a Collider describes, offset into the body's frame.
@@ -201,6 +222,10 @@ namespace Veng::Detail
         GetBroadPhaseLayer(const JPH::ObjectLayer layer) const override
         {
             const auto engineLayer = static_cast<PhysicsLayer>(layer);
+            if (engineLayer == PhysicsLayer::Debris)
+            {
+                return BroadPhaseDebris;
+            }
             const bool moves =
                 engineLayer != PhysicsLayer::Static && engineLayer != PhysicsLayer::Query;
             return moves ? BroadPhaseMoving : BroadPhaseNonMoving;
@@ -245,6 +270,10 @@ namespace Veng::Detail
         [[nodiscard]] const char*
         GetBroadPhaseLayerName(const JPH::BroadPhaseLayer broadPhase) const override
         {
+            if (broadPhase == BroadPhaseDebris)
+            {
+                return "Debris";
+            }
             return broadPhase == BroadPhaseMoving ? "Moving" : "NonMoving";
         }
 #endif
@@ -390,6 +419,40 @@ namespace Veng::Detail
         }
     };
 
+    /// @brief Records the bodies the solver puts to sleep during a step.
+    ///
+    /// A body that settles in a step drops out of the active list, so a readback that walked only
+    /// the active bodies would never read its final pose. The step reads these beside the active
+    /// list. Recording is on only inside PhysicsWorld::Step, so a body deactivated by a removal
+    /// between steps is not reported.
+    ///
+    /// The solver's job system is single-threaded, so the callbacks run on the thread that called
+    /// Step and the list needs no synchronization.
+    class ActivationRecorder final : public JPH::BodyActivationListener
+    {
+    public:
+        /// @brief Whether deactivations are being recorded.
+        bool Recording = false;
+        /// @brief The bodies put to sleep during the current step.
+        vector<JPH::BodyID> Deactivated;
+
+        /// @brief Ignored: an activated body is in the active list the readback walks.
+        void OnBodyActivated(const JPH::BodyID&, JPH::uint64) override {}
+
+        /// @brief Records a body put to sleep while recording.
+        /// @param id  The body going to sleep.
+        void OnBodyDeactivated(const JPH::BodyID& id, JPH::uint64) override
+        {
+            if (Recording)
+            {
+                Deactivated.push_back(id);
+            }
+        }
+    };
+
+    /// @brief Index a BodyRecord holds when its body is Dynamic and so has no DrivenBody.
+    constexpr u32 NotDriven = ~0u;
+
     /// @brief One live body: its solver handle and the component values it was built from.
     struct BodyRecord
     {
@@ -399,8 +462,30 @@ namespace Veng::Detail
         RigidBody Body;
         /// @brief The Collider settings the shape was built from.
         Collider Shape;
-        /// @brief Whether the body was created as a sensor.
+        /// @brief Whether the body was created as a sensor (a Sensor component or the Trigger layer).
         bool Sensor = false;
+        /// @brief Whether the entity carried a Sensor component when the body was created.
+        bool SensorComponent = false;
+        /// @brief This body's slot in Native::Driven, or NotDriven for a Dynamic body.
+        u32 Driven = NotDriven;
+    };
+
+    /// @brief A static or kinematic body the step pushes, packed so the push pass touches no map.
+    struct DrivenBody
+    {
+        /// @brief The entity owning the body.
+        Entity Owner;
+        /// @brief The solver's handle for the body.
+        JPH::BodyID Id;
+        /// @brief Static or Kinematic.
+        MotionType Motion = MotionType::Static;
+        /// @brief Whether the body's target is read from Transform rather than PhysicsPose.
+        bool SyncTransform = true;
+        /// @brief The pose the body was last placed at, as its source component read then.
+        PhysicsPose LastPushed;
+        /// @brief Whether a kinematic body was moved toward a new target in the last push, so it
+        ///        still carries the velocity that reached it.
+        bool Moving = false;
     };
 
     /// @brief One live constraint: its solver handle and the settings it was built from.
@@ -459,7 +544,37 @@ namespace Veng
         Detail::GravityFieldListener GravityListener;
         /// @brief Whether the field listener is currently registered with the solver.
         bool GravityFieldActive = false;
-        /// @brief Whether a body was created since the last step, so the broad phase is re-optimized.
-        bool BroadPhaseDirty = false;
+        /// @brief Bodies created since the last step, which decides whether it re-optimizes the
+        ///        broad phase.
+        u32 CreatedSinceStep = 0;
+        /// @brief Whether the last step re-optimized the broad phase.
+        bool OptimizedLastStep = false;
+        /// @brief The bodies the solver put to sleep during the last step.
+        Detail::ActivationRecorder Activations;
+        /// @brief Static and kinematic bodies, the only ones the step pushes.
+        vector<Detail::DrivenBody> Driven;
+        /// @brief Entities whose body was created for a Sensor component, the ones a step publishes.
+        vector<Entity> SensorEntities;
+        /// @brief Entities the next reconcile re-checks whatever their change ticks say: a physics
+        ///        component left them, or the body API was called on them directly.
+        vector<Entity> Pending;
+        /// @brief Entities whose ColliderShape::Mesh geometry is not resident yet, re-checked each
+        ///        step until it arrives.
+        vector<Entity> AwaitingShape;
+        /// @brief The scene change tick the last reconcile ran at; a component stamped at or after
+        ///        it is a change the next reconcile picks up.
+        u64 ReconciledTick = 0;
+        /// @brief Whether the next reconcile walks every physics entity, as after a replay or a
+        ///        DestroyAllBodies, when change ticks cannot say what moved.
+        bool FullReconcile = true;
+        /// @brief Whether StepPhysics is reconciling, so its own body calls queue nothing.
+        bool Reconciling = false;
+        /// @brief Entities whose body was placed or restored outside a step, read back by the next
+        ///        step whether or not they are awake.
+        vector<Entity> ReadBackNext;
+        /// @brief Whether the next step reads every body back, as after a whole-world restore.
+        bool FullReadBack = false;
+        /// @brief What the last StepPhysics did.
+        PhysicsStepStats Stats;
     };
 }

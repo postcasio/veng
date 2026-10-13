@@ -1,8 +1,11 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
+
+#include <span>
 
 namespace Veng
 {
@@ -118,6 +121,21 @@ namespace Veng
             }
             return false;
         }
+
+        /// @brief Checks that @p points make a convex hull a body can be built on, without building one.
+        ///
+        /// A world building a body on Convex geometry treats an unbuildable hull as a fatal assert:
+        /// a cooked hull that fails is a build error. A producer making hull points at run time
+        /// checks them here first and gets the reason back instead. The points must be finite and
+        /// must enclose a volume: fewer than four, coincident, collinear and coplanar sets are all
+        /// refused, since a flat hull has no inertia to give a dynamic body. Passing means the same
+        /// points build without asserting.
+        ///
+        /// Thread-safe. It needs the solver's process registration, which it holds for the call,
+        /// so it is cheapest while a PhysicsWorld is alive.
+        /// @param points  The candidate hull vertices, in the shape's local frame.
+        /// @return Success, or an error naming why the points make no hull.
+        [[nodiscard]] static VE_API VoidResult ValidateConvex(std::span<const vec3> points);
     };
 
     /// @brief AssetTypeTrait specialization mapping CollisionShape to AssetTypes::CollisionShape.

@@ -130,7 +130,11 @@ namespace Veng::Detail
         /// last-acked tick) sends exactly what changed since a connection last acked.
         /// @param slot  A dense slot below Count().
         /// @param tick  The tick to record.
-        void StampSlot(const u32 slot, const u64 tick) { m_ChangeTicks[slot] = tick; }
+        void StampSlot(const u32 slot, const u64 tick)
+        {
+            m_ChangeTicks[slot] = tick;
+            m_LatestTick = tick > m_LatestTick ? tick : m_LatestTick;
+        }
 
         /// @brief Returns the entity's component change tick, or 0 if the entity has no component here.
         /// @param entity  The entity to look up.
@@ -138,6 +142,32 @@ namespace Veng::Detail
         {
             const u32 slot = FindSlot(entity);
             return slot != Absent ? m_ChangeTicks[slot] : 0;
+        }
+
+        /// @brief Returns the highest tick any component here was stamped at; zero when none was.
+        [[nodiscard]] u64 LatestChangeTick() const { return m_LatestTick; }
+
+        /// @brief Calls @p fn with the entity of every component stamped at or after @p tick.
+        ///
+        /// One pass over the packed tick array, skipped outright when no stamp reaches @p tick.
+        /// @p fn must not add or remove a component of this type.
+        /// @tparam Fn  A callable taking an Entity.
+        /// @param tick  The earliest stamp visited.
+        /// @param fn    The visitor.
+        template <class Fn>
+        void ForEachStampedSince(const u64 tick, Fn&& fn) const
+        {
+            if (m_LatestTick < tick)
+            {
+                return;
+            }
+            for (usize slot = 0; slot < m_ChangeTicks.size(); ++slot)
+            {
+                if (m_ChangeTicks[slot] >= tick)
+                {
+                    fn(m_Dense[slot]);
+                }
+            }
         }
 
         /// @brief Returns the description of the component type this pool stores.
@@ -173,6 +203,8 @@ namespace Veng::Detail
         ///
         /// Swap-and-popped with m_Dense on Remove so it stays aligned.
         vector<u64> m_ChangeTicks;
+        /// @brief The highest tick any component here was stamped at.
+        u64 m_LatestTick = 0;
     };
 
     /// @brief Picks the smallest of a query's pools to drive iteration.

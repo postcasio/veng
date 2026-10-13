@@ -9,6 +9,8 @@
 
 #include "PhysicsInternal.h"
 
+#include <fmt/format.h>
+
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/IssueReporting.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -19,6 +21,7 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -30,6 +33,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -154,7 +158,7 @@ namespace Veng
         [[nodiscard]] bool SameSettings(const Collider& a, const Collider& b)
         {
             return a.Shape == b.Shape && a.Extents == b.Extents && a.Offset == b.Offset &&
-                   a.Rotation == b.Rotation && a.Friction == b.Friction &&
+                   a.Rotation == b.Rotation && a.Scale == b.Scale && a.Friction == b.Friction &&
                    a.Restitution == b.Restitution && a.Geometry.Get() == b.Geometry.Get();
         }
 
@@ -216,6 +220,20 @@ namespace Veng
     {
         namespace
         {
+            /// @brief The hull settings a convex point cloud builds through, for a body and for
+            ///        CollisionShape::ValidateConvex alike, so a check that passes predicts the build.
+            [[nodiscard]] JPH::Ref<JPH::ConvexHullShapeSettings>
+            HullSettings(const std::span<const vec3> points)
+            {
+                JPH::Array<JPH::Vec3> hull;
+                hull.reserve(points.size());
+                for (const vec3 point : points)
+                {
+                    hull.push_back(ToJolt(point));
+                }
+                return new JPH::ConvexHullShapeSettings(hull);
+            }
+
             /// @brief Builds one leaf solver shape from a convex point cloud or an indexed mesh.
             /// @param points        The hull vertices, or the mesh vertices.
             /// @param indices       The mesh triangle indices; empty for a convex hull.
@@ -228,13 +246,7 @@ namespace Veng
                 JPH::Ref<JPH::ShapeSettings> settings;
                 if (!triangleMesh)
                 {
-                    JPH::Array<JPH::Vec3> hull;
-                    hull.reserve(points.size());
-                    for (const vec3 point : points)
-                    {
-                        hull.push_back(ToJolt(point));
-                    }
-                    settings = new JPH::ConvexHullShapeSettings(hull);
+                    settings = HullSettings(points);
                 }
                 else
                 {
@@ -505,6 +517,7 @@ namespace Veng
         System.SetGravity(Detail::ToJolt(info.Gravity));
         Contacts.BodyOwners = &BodyOwners;
         System.SetContactListener(&Contacts);
+        System.SetBodyActivationListener(&Activations);
         GravityListener.Sources = &GravitySources;
     }
 
@@ -621,10 +634,55 @@ namespace Veng
         }
     }
 
+    namespace
+    {
+        /// @brief Removes one body and everything recorded beside it, queuing nothing.
+        /// @param world  The world owning the body.
+        /// @param found  The body's record.
+        void RemoveBodyRecord(PhysicsWorld& world,
+                              const std::unordered_map<Entity, Detail::BodyRecord>::iterator found)
+        {
+            PhysicsWorld::Native& native = world.GetNative();
+            const Entity entity = found->first;
+            const Detail::BodyRecord& record = found->second;
+
+            // A constraint outliving one of its bodies would reference a destroyed body, so the pair
+            // goes first.
+            world.DestroyConstraint(entity);
+            JPH::BodyInterface& bodies = native.System.GetBodyInterface();
+            bodies.RemoveBody(record.Id);
+            bodies.DestroyBody(record.Id);
+            native.BodyOwners.erase(record.Id.GetIndexAndSequenceNumber());
+            native.Contacts.Overlaps.erase(entity);
+
+            if (const u32 slot = record.Driven; slot != Detail::NotDriven)
+            {
+                // Swap-and-pop, re-pointing the record of the body moved into the hole.
+                const auto last = static_cast<u32>(native.Driven.size() - 1);
+                if (slot != last)
+                {
+                    native.Driven[slot] = native.Driven[last];
+                    native.Bodies.find(native.Driven[slot].Owner)->second.Driven = slot;
+                }
+                native.Driven.pop_back();
+            }
+            if (record.SensorComponent)
+            {
+                std::erase(native.SensorEntities, entity);
+            }
+            native.Bodies.erase(found);
+        }
+    }
+
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
                                   const Collider& collider, const PhysicsPose& pose,
                                   const bool sensor)
     {
+        if (!m_Native->Reconciling)
+        {
+            m_Native->Pending.push_back(entity);
+        }
+
         const bool triangleMesh = collider.Shape == ColliderShape::Mesh &&
                                   collider.Geometry.Get() != nullptr &&
                                   collider.Geometry.Get()->ContainsTriangleMesh();
@@ -633,29 +691,52 @@ namespace Veng
                   "triangle mesh has no interior and no inertia, so Static and Kinematic are the "
                   "motion types it may back",
                   entity.Index);
+        VE_ASSERT(collider.Scale > 0.0f && std::isfinite(collider.Scale),
+                  "Entity {} carries a Collider whose Scale {} is not a positive finite number",
+                  entity.Index, collider.Scale);
 
         const auto existing = m_Native->Bodies.find(entity);
         if (existing != m_Native->Bodies.end())
         {
-            if (SameSettings(existing->second.Body, body) &&
-                SameSettings(existing->second.Shape, collider) && existing->second.Sensor == sensor)
+            Detail::BodyRecord& record = existing->second;
+            if (SameSettings(record.Body, body) && SameSettings(record.Shape, collider) &&
+                record.SensorComponent == sensor)
             {
+                // SyncTransform and StartAsleep build nothing into the body, so an edit to either
+                // is taken in place rather than by a re-creation.
+                record.Body.SyncTransform = body.SyncTransform;
+                record.Body.StartAsleep = body.StartAsleep;
+                if (record.Driven != Detail::NotDriven)
+                {
+                    m_Native->Driven[record.Driven].SyncTransform = body.SyncTransform;
+                }
                 return;
             }
-            DestroyBody(entity);
+            RemoveBodyRecord(*this, existing);
         }
 
-        const JPH::RefConst<JPH::Shape> shape = m_Native->Shapes.Acquire(collider, m_StepCount);
+        JPH::RefConst<JPH::Shape> shape = m_Native->Shapes.Acquire(collider, m_StepCount);
         if (shape == nullptr)
         {
             // A ColliderShape::Mesh collider whose geometry has not arrived yet has no shape; the
             // body is created on the tick it does.
             return;
         }
+        if (collider.Scale != 1.0f)
+        {
+            // The cache holds the unscaled shape, so every scale of one collider shares it.
+            const JPH::Ref<JPH::ScaledShapeSettings> scaled =
+                new JPH::ScaledShapeSettings(shape.GetPtr(), JPH::Vec3::sReplicate(collider.Scale));
+            const JPH::ShapeSettings::ShapeResult result = scaled->Create();
+            VE_ASSERT(result.IsValid(), "Collider scaled shape is not buildable: {}",
+                      result.GetError().c_str());
+            shape = result.Get();
+        }
 
         JPH::BodyCreationSettings settings(shape, Detail::ToJolt(pose.Position),
                                            Detail::ToJolt(pose.Rotation), ToJoltMotion(body.Motion),
                                            static_cast<JPH::ObjectLayer>(body.Layer));
+        settings.mUserData = Detail::PackEntity(entity);
         settings.mFriction = collider.Friction;
         settings.mRestitution = collider.Restitution;
         settings.mLinearDamping = body.LinearDamping;
@@ -682,18 +763,34 @@ namespace Veng
         }
 
         JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
-        const JPH::EActivation activation = body.Motion == MotionType::Static
-                                                ? JPH::EActivation::DontActivate
-                                                : JPH::EActivation::Activate;
-        const JPH::BodyID id = bodies.CreateAndAddBody(settings, activation);
+        const bool asleep = body.Motion == MotionType::Static ||
+                            (body.Motion == MotionType::Dynamic && body.StartAsleep);
+        const JPH::BodyID id = bodies.CreateAndAddBody(
+            settings, asleep ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
         VE_ASSERT(!id.IsInvalid(), "PhysicsWorld body budget exhausted (MaxBodies = {})",
                   m_Info.MaxBodies);
 
-        m_Native->Bodies.emplace(
-            entity, Detail::BodyRecord{
-                        .Id = id, .Body = body, .Shape = collider, .Sensor = settings.mIsSensor});
+        Detail::BodyRecord record{.Id = id,
+                                  .Body = body,
+                                  .Shape = collider,
+                                  .Sensor = settings.mIsSensor,
+                                  .SensorComponent = sensor};
+        if (body.Motion != MotionType::Dynamic)
+        {
+            record.Driven = static_cast<u32>(m_Native->Driven.size());
+            m_Native->Driven.emplace_back(Detail::DrivenBody{.Owner = entity,
+                                                             .Id = id,
+                                                             .Motion = body.Motion,
+                                                             .SyncTransform = body.SyncTransform,
+                                                             .LastPushed = pose});
+        }
+        if (sensor)
+        {
+            m_Native->SensorEntities.emplace_back(entity);
+        }
+        m_Native->Bodies.emplace(entity, record);
         m_Native->BodyOwners.emplace(id.GetIndexAndSequenceNumber(), entity);
-        m_Native->BroadPhaseDirty = true;
+        ++m_Native->CreatedSinceStep;
     }
 
     void PhysicsWorld::DestroyBody(const Entity entity)
@@ -703,15 +800,11 @@ namespace Veng
         {
             return;
         }
-        // A constraint outliving one of its bodies would reference a destroyed body, so the pair
-        // goes first.
-        DestroyConstraint(entity);
-        JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
-        bodies.RemoveBody(found->second.Id);
-        bodies.DestroyBody(found->second.Id);
-        m_Native->BodyOwners.erase(found->second.Id.GetIndexAndSequenceNumber());
-        m_Native->Contacts.Overlaps.erase(entity);
-        m_Native->Bodies.erase(found);
+        RemoveBodyRecord(*this, found);
+        if (!m_Native->Reconciling)
+        {
+            m_Native->Pending.push_back(entity);
+        }
     }
 
     void PhysicsWorld::DestroyAllBodies()
@@ -748,6 +841,12 @@ namespace Veng
         m_Native->Bodies.clear();
         m_Native->BodyOwners.clear();
         m_Native->Contacts.Overlaps.clear();
+        m_Native->Driven.clear();
+        m_Native->SensorEntities.clear();
+        m_Native->Pending.clear();
+        m_Native->AwaitingShape.clear();
+        // Nothing records which entities lost their bodies here, so the next step walks them all.
+        m_Native->FullReconcile = true;
     }
 
     bool PhysicsWorld::HasBody(const Entity entity) const
@@ -784,6 +883,8 @@ namespace Veng
         m_Native->System.GetBodyInterface().SetPositionAndRotationWhenChanged(
             found->second.Id, Detail::ToJolt(pose.Position), Detail::ToJolt(pose.Rotation),
             wake ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        // A body left asleep is not in the next step's active list, so it is read back by name.
+        m_Native->ReadBackNext.push_back(entity);
     }
 
     vector<u8> PhysicsWorld::SaveBodyState(const Entity entity) const
@@ -826,6 +927,7 @@ namespace Veng
             return std::unexpected(
                 "PhysicsWorld::RestoreBodyState: the bytes are not a readable state");
         }
+        m_Native->ReadBackNext.push_back(entity);
         return {};
     }
 
@@ -878,7 +980,17 @@ namespace Veng
             return nullptr;
         }
         const JPH::BodyLockRead lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
-        return lock.Succeeded() ? lock.GetBody().GetShape() : nullptr;
+        if (!lock.Succeeded())
+        {
+            return nullptr;
+        }
+        // A scaled body wraps the cached shape; the identity is the cached shape it wraps.
+        const JPH::Shape* shape = lock.GetBody().GetShape();
+        if (shape->GetSubType() == JPH::EShapeSubType::Scaled)
+        {
+            shape = static_cast<const JPH::ScaledShape*>(shape)->GetInnerShape();
+        }
+        return shape;
     }
 
     void PhysicsWorld::SetLinearVelocity(const Entity entity, const vec3 velocity)
@@ -923,6 +1035,49 @@ namespace Veng
         }
         return Detail::FromJolt(
             m_Native->System.GetBodyInterface().GetAngularVelocity(found->second.Id));
+    }
+
+    void PhysicsWorld::AddImpulse(const Entity entity, const vec3 impulse)
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end())
+        {
+            return;
+        }
+        m_Native->System.GetBodyInterface().AddImpulse(found->second.Id, Detail::ToJolt(impulse));
+    }
+
+    void PhysicsWorld::AddImpulseAt(const Entity entity, const vec3 impulse, const dvec3 worldPoint)
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end())
+        {
+            return;
+        }
+        m_Native->System.GetBodyInterface().AddImpulse(found->second.Id, Detail::ToJolt(impulse),
+                                                       Detail::ToJolt(worldPoint));
+    }
+
+    bool PhysicsWorld::IsBodyActive(const Entity entity) const
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        return found != m_Native->Bodies.end() &&
+               m_Native->System.GetBodyInterface().IsActive(found->second.Id);
+    }
+
+    void PhysicsWorld::ActivateBody(const Entity entity)
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end() || found->second.Body.Motion == MotionType::Static)
+        {
+            return;
+        }
+        m_Native->System.GetBodyInterface().ActivateBody(found->second.Id);
+    }
+
+    const PhysicsStepStats& PhysicsWorld::GetStepStats() const
+    {
+        return m_Native->Stats;
     }
 
     bool PhysicsWorld::IsBodySensor(const Entity entity) const
@@ -1304,20 +1459,28 @@ namespace Veng
     {
         m_Native->Shapes.Sweep(m_StepCount);
 
-        if (m_Native->BroadPhaseDirty)
+        // A full rebuild of the trees pays only after a batch at least as large as the world it
+        // joins — a level's worth at once, the first step included. A trickle of bodies, a window
+        // of loose objects added and removed as an actor moves, is absorbed by the incremental tree
+        // update every step already runs; rebuilding the whole tree after each would cost the
+        // world's size per tick.
+        const u32 created = m_Native->CreatedSinceStep;
+        m_Native->CreatedSinceStep = 0;
+        m_Native->OptimizedLastStep = created > 0 && usize{created} * 2 >= m_Native->Bodies.size();
+        if (m_Native->OptimizedLastStep)
         {
-            // Rebuilding the static tree is only worth it after a batch of bodies arrives, which
-            // is exactly when this flag is set.
             m_Native->System.OptimizeBroadPhase();
-            m_Native->BroadPhaseDirty = false;
         }
 
         m_Native->Contacts.DebugEnabled = m_DebugDrawEnabled;
         m_Native->Contacts.Contacts.clear();
         m_Native->Contacts.Overlaps.clear();
+        m_Native->Activations.Deactivated.clear();
 
+        m_Native->Activations.Recording = true;
         const JPH::EPhysicsUpdateError error = m_Native->System.Update(
             delta, CollisionStepsPerUpdate, &m_Native->Temp, &m_Native->Jobs);
+        m_Native->Activations.Recording = false;
         VE_ASSERT(error == JPH::EPhysicsUpdateError::None,
                   "Physics step exceeded a world budget (error bits {})", static_cast<u32>(error));
         ++m_StepCount;
@@ -1344,7 +1507,50 @@ namespace Veng
             return std::unexpected(
                 "PhysicsWorld::RestoreState: the bytes are not a readable state");
         }
+        // A restore can put any body anywhere, asleep or not, and the components hold none of it.
+        m_Native->FullReadBack = true;
         return {};
+    }
+
+    VoidResult CollisionShape::ValidateConvex(const std::span<const vec3> points)
+    {
+        for (const vec3 point : points)
+        {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+            {
+                return std::unexpected("a hull point is not a finite position");
+            }
+        }
+        // Fewer than four points span no volume, and the solver builds a flat hull from three.
+        if (points.size() < 4)
+        {
+            return std::unexpected(fmt::format(
+                "a hull needs at least four points to enclose a volume, and {} were given",
+                points.size()));
+        }
+
+        AcquireSolverRegistration();
+        // Scoped so every solver object is released before the registration it was allocated under.
+        VoidResult outcome = [points]() -> VoidResult
+        {
+            const JPH::Ref<JPH::ConvexHullShapeSettings> settings = Detail::HullSettings(points);
+            const JPH::ShapeSettings::ShapeResult result = settings->Create();
+            if (result.HasError())
+            {
+                return std::unexpected(
+                    fmt::format("the points make no convex hull: {}", result.GetError().c_str()));
+            }
+            // The solver builds coplanar points into a flat, two-faced hull rather than refusing
+            // them, and a flat hull has no inertia for a dynamic body.
+            const auto& hull = static_cast<const JPH::ConvexHullShape&>(*result.Get());
+            if (hull.GetNumFaces() < 4 || !(hull.GetVolume() > 0.0f))
+            {
+                return std::unexpected("the points are coplanar, so their hull encloses no volume");
+            }
+            return {};
+        }();
+        ReleaseSolverRegistration();
+        return outcome;
     }
 
     u64 PhysicsWorld::HashPoses() const
@@ -1425,9 +1631,10 @@ namespace Veng
             }
         }
 
-        /// @brief Draws cooked geometry: a mesh's triangle edges, or a hull's points as crosses.
+        /// @brief Draws cooked geometry, scaled about @p origin: a mesh's triangle edges, or a
+        ///        hull's points as crosses.
         void DrawWireGeometry(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
-                              const std::span<const vec3> points,
+                              const f32 scale, const std::span<const vec3> points,
                               const std::span<const u32> indices, const bool triangleMesh,
                               const vec4 color)
         {
@@ -1435,9 +1642,9 @@ namespace Veng
             {
                 for (usize i = 0; i + 2 < indices.size(); i += 3)
                 {
-                    const vec3 a = origin + rotation * points[indices[i]];
-                    const vec3 b = origin + rotation * points[indices[i + 1]];
-                    const vec3 c = origin + rotation * points[indices[i + 2]];
+                    const vec3 a = origin + rotation * (points[indices[i]] * scale);
+                    const vec3 b = origin + rotation * (points[indices[i + 1]] * scale);
+                    const vec3 c = origin + rotation * (points[indices[i + 2]] * scale);
                     sink.DrawLine(a, b, color);
                     sink.DrawLine(b, c, color);
                     sink.DrawLine(c, a, color);
@@ -1446,7 +1653,7 @@ namespace Veng
             }
             for (const vec3 point : points)
             {
-                const vec3 world = origin + rotation * point;
+                const vec3 world = origin + rotation * (point * scale);
                 sink.DrawLine(world - vec3(0.05f, 0.0f, 0.0f), world + vec3(0.05f, 0.0f, 0.0f),
                               color);
                 sink.DrawLine(world - vec3(0.0f, 0.05f, 0.0f), world + vec3(0.0f, 0.05f, 0.0f),
@@ -1456,30 +1663,31 @@ namespace Veng
             }
         }
 
-        /// @brief Draws one compound child at its composed pose.
+        /// @brief Draws one compound child at its composed pose, scaled about @p origin.
         void DrawCollisionChild(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
-                                const CollisionChild& child, const vec4 color)
+                                const f32 scale, const CollisionChild& child, const vec4 color)
         {
-            const vec3 childOrigin = origin + rotation * child.Offset;
+            const vec3 childOrigin = origin + rotation * (child.Offset * scale);
             const quat childRotation = rotation * child.Rotation;
             switch (child.Kind)
             {
             case CollisionChildKind::Box:
-                DrawWireBox(sink, childOrigin, childRotation, child.Extents, color);
+                DrawWireBox(sink, childOrigin, childRotation, child.Extents * scale, color);
                 break;
             case CollisionChildKind::Sphere:
-                sink.DrawSphere(childOrigin, child.Extents.x, color);
+                sink.DrawSphere(childOrigin, child.Extents.x * scale, color);
                 break;
             case CollisionChildKind::Capsule:
-                DrawWireCapsule(sink, childOrigin, childRotation, child.Extents.x, child.Extents.y,
-                                color);
+                DrawWireCapsule(sink, childOrigin, childRotation, child.Extents.x * scale,
+                                child.Extents.y * scale, color);
                 break;
             case CollisionChildKind::Convex:
-                DrawWireGeometry(sink, childOrigin, childRotation, child.Points, {}, false, color);
+                DrawWireGeometry(sink, childOrigin, childRotation, scale, child.Points, {}, false,
+                                 color);
                 break;
             case CollisionChildKind::Mesh:
-                DrawWireGeometry(sink, childOrigin, childRotation, child.Points, child.Indices,
-                                 true, color);
+                DrawWireGeometry(sink, childOrigin, childRotation, scale, child.Points,
+                                 child.Indices, true, color);
                 break;
             }
         }
@@ -1510,20 +1718,22 @@ namespace Veng
                 color = bodies.IsActive(record.Id) ? AwakeColor : AsleepColor;
             }
 
-            const vec3 origin = center + rotation * record.Shape.Offset;
+            // The collider's scale applies about the body's origin, to its offset as to its shape.
+            const f32 scale = record.Shape.Scale;
+            const vec3 origin = center + rotation * (record.Shape.Offset * scale);
             // The shape carries its own local orientation, composed under the body's.
             const quat shapeRotation = rotation * record.Shape.Rotation;
             switch (record.Shape.Shape)
             {
             case ColliderShape::Box:
-                DrawWireBox(sink, origin, shapeRotation, record.Shape.Extents, color);
+                DrawWireBox(sink, origin, shapeRotation, record.Shape.Extents * scale, color);
                 break;
             case ColliderShape::Sphere:
-                sink.DrawSphere(origin, record.Shape.Extents.x, color);
+                sink.DrawSphere(origin, record.Shape.Extents.x * scale, color);
                 break;
             case ColliderShape::Capsule:
-                DrawWireCapsule(sink, origin, shapeRotation, record.Shape.Extents.x,
-                                record.Shape.Extents.y, color);
+                DrawWireCapsule(sink, origin, shapeRotation, record.Shape.Extents.x * scale,
+                                record.Shape.Extents.y * scale, color);
                 break;
             case ColliderShape::Mesh:
             {
@@ -1538,12 +1748,12 @@ namespace Veng
                 {
                     for (const CollisionChild& child : geometry->Children)
                     {
-                        DrawCollisionChild(sink, origin, shapeRotation, child, color);
+                        DrawCollisionChild(sink, origin, shapeRotation, scale, child, color);
                     }
                 }
                 else
                 {
-                    DrawWireGeometry(sink, origin, shapeRotation, geometry->Points,
+                    DrawWireGeometry(sink, origin, shapeRotation, scale, geometry->Points,
                                      geometry->Indices,
                                      geometry->Geometry == CollisionGeometry::Mesh, color);
                 }

@@ -250,6 +250,40 @@ namespace Veng
         /// @return The component's change tick, or 0 when the entity lacks the component.
         [[nodiscard]] u64 GetComponentChangeTick(Entity entity, TypeId id) const;
 
+        /// @brief Returns the highest tick at which any component T was stamped; zero when none was.
+        ///
+        /// The per-type counterpart of the spatial version. Adding a component stamps it, and so does
+        /// any mutable access, so a read through the mutable path counts, as it does for the
+        /// per-component tick. A removal stamps nothing: a pass that must see one learns of it through
+        /// the type's removal hook (VE_ON_REMOVE).
+        /// @tparam T  The component type to query.
+        template <class T>
+        [[nodiscard]] u64 GetPoolChangeTick() const
+        {
+            const ComponentPool* pool = TryPoolOf<T>();
+            return pool != nullptr ? pool->LatestChangeTick() : 0;
+        }
+
+        /// @brief Calls @p fn with every entity whose component T was stamped at or after @p tick.
+        ///
+        /// What changed since a pass last ran, found in one pass over T's packed change ticks rather
+        /// than by looking each entity up, and skipped outright when GetPoolChangeTick is below
+        /// @p tick. Tick-granular: a write stamped while the scene's change tick has been set lower —
+        /// a reconciliation replay re-running past ticks — is not found by a later, higher @p tick, so
+        /// a pass that may run beside a replay re-walks everything after one. Removals are not visited.
+        /// @tparam T   The component type to scan.
+        /// @tparam Fn  A callable taking an Entity.
+        /// @param tick  The earliest stamp visited.
+        /// @param fn    The visitor; it must not add or remove a T.
+        template <class T, class Fn>
+        void ForEachChangedSince(const u64 tick, Fn&& fn) const
+        {
+            if (const ComponentPool* pool = TryPoolOf<T>())
+            {
+                pool->ForEachStampedSince(tick, std::forward<Fn>(fn));
+            }
+        }
+
         /// @brief Returns the TypeRegistry this scene was created with.
         ///
         /// The registry its components' descriptors are resolved against; prefab

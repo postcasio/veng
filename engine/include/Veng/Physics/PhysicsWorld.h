@@ -31,9 +31,16 @@ namespace Veng
         CollisionMatrix Matrix = DefaultCollisionMatrix();
         /// @brief Hard ceiling on simultaneously live bodies; exceeding it is a fatal assert.
         ///
-        /// It also sizes the world's per-step scratch, which the solver allocates up front and
-        /// scales by the body budget — so raising it costs resident memory whether or not the
-        /// bodies exist.
+        /// Fatal rather than degrading because the solver preallocates its body table at this
+        /// size and has nowhere to put one more: refusing a body silently would leave an entity
+        /// that should collide passing through the world with nothing to say why. It also sizes the
+        /// world's per-step scratch, which the solver allocates up front and scales by the body
+        /// budget — so raising it costs resident memory whether or not the bodies exist.
+        ///
+        /// Size it as the most bodies the scene can hold at one moment — every static, kinematic
+        /// and dynamic body, resting or awake — plus headroom for what a consumer adds before it
+        /// removes. A consumer creating bodies on demand (a window of loose objects around a moving
+        /// actor) caps its own population below this rather than relying on the assert.
         u32 MaxBodies = 4096;
         /// @brief Hard ceiling on broad-phase body pairs tracked in one step.
         u32 MaxBodyPairs = 16384;
@@ -79,6 +86,25 @@ namespace Veng
 
         /// @brief Member-wise equality, so the reconcile pass can leave an unchanged constraint alone.
         bool operator==(const ConstraintSettings&) const = default;
+    };
+
+    /// @brief What the last StepPhysics did, counted for tests and diagnostics.
+    ///
+    /// The step's own per-tick work beyond the solver's: these are the properties that keep a
+    /// resting body free, so a field of sleeping bodies reads as zero in every count.
+    struct PhysicsStepStats
+    {
+        /// @brief Entities whose body was created, re-checked against its components, or destroyed.
+        u32 Reconciled = 0;
+        /// @brief Static or kinematic bodies whose pose was pushed into the solver.
+        u32 Pushed = 0;
+        /// @brief Bodies whose pose was read back into PhysicsPose after the solver stepped.
+        u32 ReadBack = 0;
+        /// @brief Whether the reconcile walked every physics entity rather than only the changed ones.
+        bool FullReconcile = false;
+        /// @brief Whether the step rebuilt the broad phase whole, as it does only after a batch of
+        ///        bodies at least as large as the world they joined.
+        bool OptimizedBroadPhase = false;
     };
 
     /// @brief Whether placing a body wakes it.
@@ -206,13 +232,17 @@ namespace Veng
 
         /// @brief Brings @p entity's body into line with its components, creating it if absent.
         ///
-        /// Idempotent, which is what lets the reconcile pass call it for every physics entity every
-        /// tick: a body that already exists with settings equal to @p body and @p collider is left
-        /// exactly as it is, pose and velocity included. Any difference re-creates the body from
-        /// @p pose, discarding its velocity and contact state — the components are the authority
-        /// and the body is their shadow.
+        /// Idempotent: a body that already exists with settings equal to @p body and @p collider is
+        /// left exactly as it is, pose and velocity included. Any difference re-creates the body
+        /// from @p pose, discarding its velocity and contact state — the components are the
+        /// authority and the body is their shadow. RigidBody::StartAsleep is read only here, at
+        /// creation, and a difference in it alone re-creates nothing.
         /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
         /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
+        ///
+        /// The next StepPhysics re-checks @p entity against its components, so a body made here
+        /// for an entity that carries none is swept by that step, as the reconcile sweeps any
+        /// orphan.
         ///
         /// @param entity    The entity the body belongs to.
         /// @param body      The motion, layer, mass and damping settings.
@@ -227,10 +257,16 @@ namespace Veng
                         const PhysicsPose& pose, bool sensor = false);
 
         /// @brief Destroys @p entity's body; a no-op when it has none.
+        ///
+        /// The next StepPhysics re-checks @p entity against its components, so an entity that
+        /// still carries a RigidBody and a Collider has its body re-created there.
         /// @param entity  The entity whose body to destroy.
         void DestroyBody(Entity entity);
 
         /// @brief Destroys every live body, leaving the world itself usable.
+        ///
+        /// The next StepPhysics reconciles every physics entity, re-creating the bodies whose
+        /// entities still carry their components.
         void DestroyAllBodies();
 
         /// @brief Whether @p entity currently has a body in this world.
@@ -300,9 +336,11 @@ namespace Veng
         /// @return The shape's identity, or null when the world holds none for @p collider.
         [[nodiscard]] const void* FindBuiltShape(const Collider& collider) const;
 
-        /// @brief Returns the identity of the shape @p entity's body was built with.
+        /// @brief Returns the identity of the shared built shape @p entity's body was built from.
         ///
-        /// An opaque address comparable with FindBuiltShape's, never to be dereferenced.
+        /// An opaque address comparable with FindBuiltShape's, never to be dereferenced. A body
+        /// whose Collider::Scale is not one carries a per-body wrapper around the shared shape; this
+        /// names the shared shape, so bodies at different scales of one collider compare equal.
         /// @param entity  The entity whose body to inspect.
         /// @return The shape's identity, or null when @p entity has no body.
         [[nodiscard]] const void* GetBodyShape(Entity entity) const;
@@ -322,6 +360,37 @@ namespace Veng
 
         /// @brief Returns a body's angular velocity in radians per second, or zero when it has none.
         [[nodiscard]] vec3 GetAngularVelocity(Entity entity) const;
+
+        /// @brief Applies an impulse through a body's centre of mass, waking it.
+        ///
+        /// Changes the body's linear velocity by @p impulse divided by its mass at once, rather
+        /// than over a step as a force would. Only a Dynamic body takes an impulse; on any other,
+        /// or an entity with no body, the call is a no-op.
+        /// @param entity   The entity whose body to push.
+        /// @param impulse  World-space impulse in kilogram metres per second.
+        void AddImpulse(Entity entity, vec3 impulse);
+
+        /// @brief Applies an impulse at a world-space point on a body, waking it.
+        ///
+        /// As AddImpulse, plus the angular change of an impulse applied off the centre of mass.
+        /// @param entity      The entity whose body to push.
+        /// @param impulse     World-space impulse in kilogram metres per second.
+        /// @param worldPoint  Where the impulse is applied, in the physics world's frame.
+        void AddImpulseAt(Entity entity, vec3 impulse, dvec3 worldPoint);
+
+        /// @brief Whether @p entity's body is awake — simulated by the next step.
+        ///
+        /// A static body is never awake. A dynamic or kinematic body sleeps once it has stayed
+        /// still for the solver's sleep time, and a sleeping body costs a step nothing: it is not
+        /// integrated, and StepPhysics neither pushes nor reads it back.
+        /// @param entity  The entity to query.
+        /// @return True when the body is awake; false when it sleeps or there is no body.
+        [[nodiscard]] bool IsBodyActive(Entity entity) const;
+
+        /// @brief Wakes @p entity's body, so the next step simulates it; a no-op for a static body
+        ///        or an entity with none.
+        /// @param entity  The entity whose body to wake.
+        void ActivateBody(Entity entity);
 
         /// @brief Whether @p entity's body was created as a sensor.
         /// @param entity  The entity to query.
@@ -460,6 +529,9 @@ namespace Veng
         /// forfeits repeatability, which is the property the whole module is arranged around.
         /// @param delta  The step length in seconds.
         void Step(f32 delta);
+
+        /// @brief Returns what the last StepPhysics did, beyond the solver's own step.
+        [[nodiscard]] const PhysicsStepStats& GetStepStats() const;
 
         /// @brief Returns how many times Step has run, counting from world creation.
         ///

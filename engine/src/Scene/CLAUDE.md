@@ -151,6 +151,17 @@ tick is stamped with that tick. It is the per-component granularity the net laye
 off — a component enters a snapshot for a connection when its tick is **strictly greater** than what
 that connection has acked.
 
+**A pool also keeps the highest tick any of its components was stamped at** (`GetPoolChangeTick<T>()`
+— adding stamps, as does any mutable access), and **`ForEachChangedSince<T>(tick, fn)`** visits the
+entities whose `T` was stamped at or after a tick in one pass over the pool's packed tick array,
+skipped outright when the pool's highest stamp is below it. So a pass reacting to edits of one type
+finds what changed since it last ran without looking every entity up — the physics step's reconcile
+is the consumer (see [../Physics/CLAUDE.md](../Physics/CLAUDE.md)). A removal stamps nothing; a pass
+that must see one learns of it through the type's removal hook (`VE_ON_REMOVE`). Both are
+tick-granular, and a write stamped while the scene's tick is set lower — a reconciliation replay
+re-running past ticks — is not found by a later, higher tick, so a pass that may run beside a replay
+re-walks everything after one.
+
 **Zero is a reserved sentinel meaning *before any tick*, and no write ever produces it.** The scene's
 change tick floors at `Scene::MinChangeTick` (one): `m_ChangeTick` initializes to it, `SetChangeTick`
 raises anything lower to it, and the world drive's assignment routes through the setter, so it cannot

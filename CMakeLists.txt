@@ -1389,6 +1389,10 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.physics_dynamic_triangle_mesh PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "triangle-mesh CollisionShape on a Dynamic RigidBody")
 
+    add_test(NAME death.physics_degenerate_hull COMMAND veng_test_death physics_degenerate_hull)
+    set_tests_properties(death.physics_degenerate_hull PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "CollisionShape is not buildable")
+
     add_test(NAME death.rewind_scope_across_step COMMAND veng_test_death rewind_scope_across_step)
     set_tests_properties(death.rewind_scope_across_step PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "RewindScope held across a physics step")

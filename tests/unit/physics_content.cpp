@@ -6,6 +6,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <limits>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CollisionShape.h>
@@ -311,6 +312,114 @@ TEST_CASE("equal colliders share one built shape across queries and bodies until
     world->Step(1.0f / 60.0f);
     CHECK(world->GetBuiltShapeCount() == 0);
     CHECK(world->FindBuiltShape(collider) == nullptr);
+}
+
+TEST_CASE("a scaled collider collides at its scaled size and shares its unscaled built shape")
+{
+    const ContentFixture fixture;
+    const Collider unit{.Shape = ColliderShape::Sphere, .Extents = vec3(1.0f)};
+    const auto spawnSphere = [&](const vec3 position, const f32 scale)
+    {
+        const Entity sphere = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(sphere, Transform{.Position = position});
+        fixture.World->Add<RigidBody>(
+            sphere, RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Static});
+        Collider collider = unit;
+        collider.Scale = scale;
+        fixture.World->Add<Collider>(sphere, collider);
+        return sphere;
+    };
+    const Entity big = spawnSphere(vec3(0.0f), 3.0f);
+    const Entity mid = spawnSphere(vec3(0.0f, 0.0f, 50.0f), 2.0f);
+    fixture.Step(1);
+
+    // A unit sphere at scale 3 is met three metres from its centre.
+    const optional<RayHit> hit =
+        Raycast(&fixture.Physics(), dvec3(10.0, 0.0, 0.0), vec3(-1.0f, 0.0f, 0.0f), 20.0f);
+    REQUIRE(hit.has_value());
+    CHECK(hit->Body == big);
+    CHECK(hit->Position.x == doctest::Approx(3.0).epsilon(0.001));
+
+    // Both bodies wrap the one cached unit sphere.
+    CHECK(fixture.Physics().GetBuiltShapeCount() == 1);
+    CHECK(fixture.Physics().GetBodyShape(big) == fixture.Physics().FindBuiltShape(unit));
+    CHECK(fixture.Physics().GetBodyShape(mid) == fixture.Physics().GetBodyShape(big));
+
+    // A query naming a scaled collider is scaled as a body's is: the probe reaches the sphere's
+    // surface only at its scaled size.
+    Collider probe{.Shape = ColliderShape::Sphere, .Extents = vec3(1.0f)};
+    vector<Entity> found;
+    (void)Overlap(&fixture.Physics(), probe, PhysicsPose{.Position = dvec3(0.0, 0.0, 54.5)},
+                  QueryFilter{}, found);
+    CHECK(found.empty());
+    probe.Scale = 3.0f;
+    (void)Overlap(&fixture.Physics(), probe, PhysicsPose{.Position = dvec3(0.0, 0.0, 54.5)},
+                  QueryFilter{}, found);
+    REQUIRE(found.size() == 1);
+    CHECK(found.front() == mid);
+}
+
+TEST_CASE("a scaled body's mass follows its scaled volume unless a mass is authored")
+{
+    const ContentFixture fixture;
+    fixture.Physics().SetGravity(vec3(0.0f));
+    const auto spawn = [&](const vec3 position, const f32 mass)
+    {
+        const Entity body = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(body, Transform{.Position = position});
+        fixture.World->Add<RigidBody>(body, RigidBody{.Mass = mass});
+        Collider collider = CookedCollider(fixture.Hull);
+        collider.Scale = 2.0f;
+        fixture.World->Add<Collider>(body, collider);
+        return body;
+    };
+    // The cube hull is 2 m across, so at scale 2 it holds 64 m³: 64,000 kg at the default density.
+    const Entity derived = spawn(vec3(0.0f), 0.0f);
+    const Entity authored = spawn(vec3(20.0f, 0.0f, 0.0f), 8.0f);
+    fixture.Step(1);
+
+    fixture.Physics().AddImpulse(derived, vec3(64000.0f, 0.0f, 0.0f));
+    fixture.Physics().AddImpulse(authored, vec3(16.0f, 0.0f, 0.0f));
+    CHECK(fixture.Physics().GetLinearVelocity(derived).x == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(fixture.Physics().GetLinearVelocity(authored).x == doctest::Approx(2.0f));
+}
+
+TEST_CASE("degenerate hull points are reported by ValidateConvex rather than asserted on")
+{
+    vector<vec3> cube;
+    for (const f32 x : {-1.0f, 1.0f})
+    {
+        for (const f32 y : {-1.0f, 1.0f})
+        {
+            for (const f32 z : {-1.0f, 1.0f})
+            {
+                cube.emplace_back(x, y, z);
+            }
+        }
+    }
+    CHECK(CollisionShape::ValidateConvex(cube).has_value());
+
+    vector<vec3> coplanar;
+    for (u32 i = 0; i < 9; ++i)
+    {
+        coplanar.emplace_back(static_cast<f32>(i % 3), 0.0f, static_cast<f32>(i / 3));
+    }
+    const vector<vec3> coincident(6, vec3(1.0f, 2.0f, 3.0f));
+    const vector<vec3> collinear{vec3(0.0f), vec3(1.0f), vec3(2.0f), vec3(3.0f), vec3(4.0f)};
+    const vector<vec3> triangle{vec3(0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f)};
+    vector<vec3> nonFinite = cube;
+    nonFinite[3].y = std::numeric_limits<f32>::quiet_NaN();
+
+    for (const std::span<const vec3> points :
+         {std::span<const vec3>(coplanar), std::span<const vec3>(coincident),
+          std::span<const vec3>(collinear), std::span<const vec3>(triangle),
+          std::span<const vec3>(nonFinite)})
+    {
+        const VoidResult result = CollisionShape::ValidateConvex(points);
+        REQUIRE_FALSE(result.has_value());
+        CHECK_FALSE(result.error().empty());
+    }
+    CHECK_FALSE(CollisionShape::ValidateConvex({}).has_value());
 }
 
 TEST_CASE("a shape cast by entity sweeps the body's own shape and never reports the body itself")

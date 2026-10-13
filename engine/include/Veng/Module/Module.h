@@ -491,10 +491,16 @@ extern "C"
 /// Version 118 adds instanced mesh sets: the InstancedMesh component registers, and
 /// DrawBudgetStats, SceneRenderer and Material grow their instanced-set fields. A module spawns the
 /// component, reads the stats and owns renderers, so a stale one lays them out short.
+/// Version 119 makes the physics step cost what is awake: RigidBody grows StartAsleep, Collider grows
+/// Scale, PhysicsLayer grows Debris (PhysicsLayerCount 5 → 6), RigidBody, Collider and Sensor gain
+/// removal hooks, PhysicsWorld grows its sleep, activation, impulse and step-statistics entry points,
+/// and ComponentPool grows the latest change tick Scene::GetPoolChangeTick reads. A module spawns the
+/// physics components and builds collision matrices over the layer count, and inlines the pool's
+/// accessors, so a stale one lays all three out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 118u
+#define VENG_MODULE_ABI_VERSION 119u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
