@@ -19,10 +19,12 @@ A `Scene` optionally owns a `PhysicsWorld` exactly the way it optionally owns a 
 when its system set runs `PhysicsSystem`**, so a scene with no physics instantiates nothing,
 allocates nothing, and steps nothing: the minimal template and the editor's preview scenes are
 untouched. The world is created from a **`PhysicsWorldInfo`** carrying gravity, the collision
-matrix, and the body budget — and **no step rate**, because a world steps in the Sim phase at that
-phase's fixed `SimTickRate`. A second independent rate would need an accumulator and a substep
-policy while giving up the determinism, replay and transform interpolation the Sim phase already
-supplies.
+matrix, the body budget and the collision steps — and **no step rate**, because a world steps in the
+Sim phase at that phase's fixed `SimTickRate`. A second independent rate would need an accumulator
+and a substep policy while giving up the determinism, replay and transform interpolation the Sim
+phase already supplies. **`CollisionSteps`** (default 1) divides each Sim step instead: `Step(delta)`
+runs that many solver collision steps of `delta / N` inside the one step, so there is still one rate
+and no accumulator (see [A fast body](#a-fast-body) for what it buys).
 
 **The system that steps the world creates it, from authored settings.** `PhysicsSystem::OnStart`
 calls **`EnsurePhysicsWorld(scene)`** (`Veng/Physics/PhysicsSystem.h`), which returns the installed
@@ -31,11 +33,11 @@ world or creates one from the scene's **`PhysicsSettings`** — world-scoped con
 **`ToPhysicsWorldInfo`**. So a level that names `PhysicsSystem` simulates wherever it runs — its own
 application's managed world, a second world the application opens, the editor's Play — with no
 application code. The component carries the uniform `Gravity`, the three budgets, a `DebugDraw`
-switch, and `Collisions`: `PhysicsCollisionRule { A; B; Collide; }` overrides applied in order over
+switch, `CollisionSteps`, and `Collisions`: `PhysicsCollisionRule { A; B; Collide; }` overrides applied in order over
 `DefaultCollisionMatrix()`, **each setting its pair in both directions**, so an authored table is
 symmetric by construction and the asymmetric-matrix assert cannot be reached from data. A zero
-budget is logged and replaced by the default rather than asserted on, since authored data must not
-abort an editor session. The settings are read once, at creation; editing them on a running world
+budget, or zero collision steps, is logged and replaced by the default rather than asserted on, since
+authored data must not abort an editor session. The settings are read once, at creation; editing them on a running world
 does nothing.
 
 - **An installed world wins.** A world set before start — from `OnWorldLoaded`, from a system started
@@ -69,7 +71,8 @@ and awake, plus headroom; a consumer creating bodies on demand caps its own popu
 ## The components are the authority; the bodies are their shadow
 
 ```
-RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; StartAsleep; }
+RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; StartAsleep;
+                  Quality (Discrete|LinearCast); MaxLinearSpeed; MaxAngularSpeed; InertiaScale; }
 Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Scale; Friction; Restitution; Geometry; }
 PhysicsPose     { dvec3 Position; quat Rotation; }
 Sensor          { Layers; }
@@ -84,8 +87,9 @@ registered in `RegisterBuiltinTypes`, authorable in the editor inspector and coo
 through the existing pipeline. An entity needs a `RigidBody` and a `Collider` to be simulated; a
 `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at runtime creates the
 backing body on the next step, removing either destroys it, and editing a field re-creates the body
-with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body
-and are taken in place. `RigidBody`, `Collider` and `Sensor` carry a removal hook (`VE_ON_REMOVE`)
+with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body,
+and `Quality`, `MaxLinearSpeed` and `MaxAngularSpeed`, which the solver changes on a live body; all
+five are taken in place, keeping the body's pose, velocity and sleep state. `RigidBody`, `Collider` and `Sensor` carry a removal hook (`VE_ON_REMOVE`)
 that queues the entity for the next step's reconcile, which is how the step finds what left without
 sweeping every body. The three primitives are the shapes that need no cooked data, so a `Collider`
 describing one is complete on its own.
@@ -384,6 +388,50 @@ that wakes nothing — runs pure queries against them, and restores each exactly
 `SaveBodyState`/`RestoreBodyState`, the per-body counterpart of the whole-world `SaveState`. The move
 is invisible to the simulation only because it never spans a step, which the scope asserts.
 
+## A fast body
+
+A body that moves further than its own thickness in a step can pass through a thin one: the solver
+finds contacts at the pose the step starts from, within a **2 cm speculative reach**, so a 0.5 m
+sphere at 300 m/s (5 m a step at 60 Hz) crosses a 10 cm wall between two looks. **`RigidBody::Quality
+= MotionQuality::LinearCast`** sweeps such a body along its path and stops it at the first thing it
+meets. Choose it for a body whose speed per step outruns the thickness of what it must not cross — a
+projectile, a vehicle at speed. Only a `Dynamic` body is swept: a kinematic one is never stopped by
+what it meets. The sweep runs only on a step where the body moves past three quarters of its inner
+radius, so a slow linear-cast body costs what a discrete one does.
+
+**A linear cast steals time.** A swept body that meets anything "is placed back to where the
+collision occurred and will remain there until the next time step" (the solver's own architecture
+notes, "Continuous Collision Detection"): it loses the rest of that collision step's travel, whatever
+the other body weighs. Against a wall or a body much heavier than it, that is the stop, and right. At
+a glancing touch, or against a body too light to matter, it is time stolen. **`CollisionSteps`** is
+the remedy: with N collision steps the loss is bounded by one collision step's travel, `v·Δt/N`, at
+roughly a collision step's work each.
+
+**A fast body and light bodies.** A consumer that does not want a fast body to stop at bodies too
+light to matter keeps the pair apart in the matrix — a `Scatter` row without the fast body's layer —
+and resolves them by its own query, as `Debris` already does for a swept actor (`ShapeCast`,
+`ShapeCastSpheres`, then a velocity or impulse on the light body). The engine has **no one-way
+contact and no cast that skips a layer**: the solver filters a linear cast with the same layer
+filters as its discrete contacts, so a pair the cast skipped would still meet as a discrete contact,
+and a discrete contact at speed is found only within the 2 cm speculative reach — after the fast
+body has already overrun the light one.
+
+**Speed limits are per body and written down.** `MaxLinearSpeed` and `MaxAngularSpeed` default to
+the solver's own ceilings, **500 m/s** and **a quarter turn per 60 Hz step** (`DefaultMaxLinearSpeed`,
+`DefaultMaxAngularSpeed`), so the clamp that applies when nothing is authored is stated rather than
+discovered. A body moving past its limit is clamped by the solver, whatever moved it — a contact, an
+impulse, `SetLinearVelocity`. Both are taken in place.
+
+**`InertiaScale` multiplies the inertia derived from the shape**, whether the mass is authored or
+derived. The derived inertia is a uniformly dense solid at the body's mass; a body whose mass sits
+near its centre, or low, says so here, and below one a contact or an off-centre impulse turns it more
+readily. Changing it re-creates the body, as a mass change does.
+
+**There is no force or torque API, by decision.** A controller that sets a body's velocity before each
+fixed step applies an impulse of `m Δv` that step, so `SetLinearVelocity`, `SetAngularVelocity` and
+`AddImpulse(At)` already cover a controller. A per-step force would differ only across collision
+steps — applied at each one rather than once at the start — and nothing needs that difference.
+
 ## The character controller — a kinematic capsule with per-body up
 
 A **`CharacterController`** (`Veng/Physics/CharacterController.h`) is a walking character: a kinematic
@@ -493,8 +541,8 @@ are still round-trip tested; the character rollback does not need them.
 
 ## Layers are a closed table
 
-`PhysicsLayer` is a **closed** six-member enum — `Static`, `Moving`, `Character`, `Trigger`,
-`Query`, `Debris` — and a `CollisionMatrix` is one bitmask row per layer saying which pairs may
+`PhysicsLayer` is a **closed** seven-member enum — `Static`, `Moving`, `Character`, `Trigger`,
+`Query`, `Debris`, `Scatter` — and a `CollisionMatrix` is one bitmask row per layer saying which pairs may
 produce contacts. `PhysicsWorldInfo` *selects* a matrix; it does not author new layers. Closed rather than an
 open registry because filtering is the thing that silently breaks a world when it drifts, and a
 table you can read in one screen is worth more than an extensible one.
@@ -514,6 +562,16 @@ wrong for an actor that moves by `ShapeCast` and decides its own contact respons
 launch the loose body before that response ran. So `Debris` collides with `Static`, `Debris` and
 `Trigger`, never with `Moving` or `Character`, and the actor reaches it only through queries whose
 `QueryFilter::Layers` names it.
+
+**`Scatter` is for small loose bodies — gravel, shrapnel, spent casings — that are many, small and
+awake while they matter.** It carries **no special rule**: its default row is `Moving`'s plus itself
+(`Static`, `Moving`, `Character`, `Trigger`, `Scatter`), so a body on it behaves exactly as one on
+`Moving` until a consumer's matrix says otherwise. What it buys is the separation. A matrix rule is per
+layer, so small bodies sharing `Moving`, `Character` or `Trigger` would share those layers' pairings,
+`Debris` cannot hold them where a consumer's movers meet the resting field in the solver, and `Query`
+collides with nothing by contract and sits in the non-moving tree. On its own row a consumer may pair
+them with `Debris`, or keep them off `Moving` or `Character`, without touching its movers' row. It
+lives in the movers' broad-phase tree.
 
 Object layers map onto **three** broad-phase layers: `Static` and `Query` are non-moving, `Debris`
 has its own, and the rest move. The solver rebuilds the changed part of a broad-phase tree each step

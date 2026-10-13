@@ -22,7 +22,7 @@ namespace Veng
     /// It carries no step rate: a world steps inside the Sim phase at that phase's fixed
     /// SimTickRate, and a second independent rate would need an accumulator and a substep policy
     /// while giving up the determinism, replay and transform interpolation the Sim phase already
-    /// supplies.
+    /// supplies. CollisionSteps divides each of those steps rather than adding a rate.
     struct PhysicsWorldInfo
     {
         /// @brief Gravitational acceleration in metres per second squared.
@@ -46,14 +46,22 @@ namespace Veng
         u32 MaxBodyPairs = 16384;
         /// @brief Hard ceiling on contact constraints solved in one step.
         u32 MaxContactConstraints = 8192;
+        /// @brief Collision steps the solver runs inside each Step; must be positive.
+        ///
+        /// Step(delta) runs this many collision steps of `delta / CollisionSteps` each, inside the
+        /// one Sim step: the Sim phase's rate stays the world's only rate, with no accumulator, so
+        /// replay and determinism are unchanged. More steps bound the time a
+        /// MotionQuality::LinearCast body loses at a glancing contact to one collision step's
+        /// travel, and each costs roughly a step's collision and solve work.
+        u32 CollisionSteps = 1;
     };
 
     /// @brief Builds the PhysicsWorldInfo an authored PhysicsSettings describes.
     ///
     /// Each collision rule is applied in order over DefaultCollisionMatrix(), in both directions,
-    /// so the result is always symmetric. A zero budget is logged and replaced by
-    /// PhysicsWorldInfo's default rather than reaching the assert in PhysicsWorld::Create, since
-    /// authored data must not abort the process that loads it.
+    /// so the result is always symmetric. A zero budget, or zero collision steps, is logged and
+    /// replaced by PhysicsWorldInfo's default rather than reaching the assert in
+    /// PhysicsWorld::Create, since authored data must not abort the process that loads it.
     /// @param settings  The authored settings.
     /// @return The descriptor to create the world from.
     [[nodiscard]] VE_API PhysicsWorldInfo ToPhysicsWorldInfo(const PhysicsSettings& settings);
@@ -187,8 +195,9 @@ namespace Veng
         struct Native;
 
         /// @brief Creates a world from its descriptor.
-        /// @param info  Gravity, the collision matrix, and the body budget.
-        /// @pre info.Matrix is symmetric (see IsSymmetric).
+        /// @param info  Gravity, the collision matrix, the body budget and the collision steps.
+        /// @pre info.Matrix is symmetric (see IsSymmetric), and info.MaxBodies and
+        ///      info.CollisionSteps are positive.
         /// @return The owned world.
         [[nodiscard]] static Unique<PhysicsWorld> Create(const PhysicsWorldInfo& info);
 
@@ -236,7 +245,8 @@ namespace Veng
         /// left exactly as it is, pose and velocity included. Any difference re-creates the body
         /// from @p pose, discarding its velocity and contact state — the components are the
         /// authority and the body is their shadow. RigidBody::StartAsleep is read only here, at
-        /// creation, and a difference in it alone re-creates nothing.
+        /// creation, and a difference in it alone re-creates nothing. RigidBody::Quality,
+        /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing.
         /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
         /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
         ///
@@ -253,6 +263,7 @@ namespace Veng
         /// @pre A ColliderShape::Mesh collider whose geometry is a triangle mesh is not on a
         ///      Dynamic body — a triangle mesh has no interior and no inertia, so a dynamic one is
         ///      a fatal assert here rather than a solver that misbehaves invisibly.
+        /// @pre RigidBody::MaxLinearSpeed, MaxAngularSpeed and InertiaScale are positive and finite.
         void CreateBody(Entity entity, const RigidBody& body, const Collider& collider,
                         const PhysicsPose& pose, bool sensor = false);
 
@@ -526,7 +537,8 @@ namespace Veng
         /// @brief Advances the simulation by one fixed step.
         ///
         /// Called once per Sim tick with that phase's fixed delta. A variable delta is legal but
-        /// forfeits repeatability, which is the property the whole module is arranged around.
+        /// forfeits repeatability, which is the property the whole module is arranged around. The
+        /// step runs PhysicsWorldInfo::CollisionSteps collision steps.
         /// @param delta  The step length in seconds.
         void Step(f32 delta);
 

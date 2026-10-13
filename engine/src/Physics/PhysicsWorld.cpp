@@ -64,9 +64,6 @@ namespace Veng
         /// @brief Body mutex count Jolt sizes from the hardware when handed zero.
         constexpr u32 AutoBodyMutexCount = 0;
 
-        /// @brief Collision substeps per Step call; one, because the Sim tick is already fixed.
-        constexpr int CollisionStepsPerUpdate = 1;
-
         /// @brief Routes a solver trace line into the engine log.
         /// @param format  printf-style format string.
         void TraceToLog(const char* format, ...)
@@ -151,7 +148,21 @@ namespace Veng
         [[nodiscard]] bool SameSettings(const RigidBody& a, const RigidBody& b)
         {
             return a.Motion == b.Motion && a.Layer == b.Layer && a.Mass == b.Mass &&
-                   a.LinearDamping == b.LinearDamping && a.AngularDamping == b.AngularDamping;
+                   a.LinearDamping == b.LinearDamping && a.AngularDamping == b.AngularDamping &&
+                   a.InertiaScale == b.InertiaScale;
+        }
+
+        /// @brief Maps the engine's motion quality onto the solver's.
+        [[nodiscard]] JPH::EMotionQuality ToJoltQuality(const MotionQuality quality)
+        {
+            return quality == MotionQuality::LinearCast ? JPH::EMotionQuality::LinearCast
+                                                        : JPH::EMotionQuality::Discrete;
+        }
+
+        /// @brief Whether @p value is a positive finite number, as a speed limit or scale must be.
+        [[nodiscard]] bool IsPositiveFinite(const f32 value)
+        {
+            return value > 0.0f && std::isfinite(value);
         }
 
         /// @brief Whether two Collider settings would produce the same shape and surface.
@@ -546,6 +557,7 @@ namespace Veng
             .MaxBodies = settings.MaxBodies,
             .MaxBodyPairs = settings.MaxBodyPairs,
             .MaxContactConstraints = settings.MaxContactConstraints,
+            .CollisionSteps = settings.CollisionSteps,
         };
 
         for (const PhysicsCollisionRule& rule : settings.Collisions)
@@ -583,6 +595,7 @@ namespace Veng
         fallBack(info.MaxBodyPairs, defaults.MaxBodyPairs, "MaxBodyPairs");
         fallBack(info.MaxContactConstraints, defaults.MaxContactConstraints,
                  "MaxContactConstraints");
+        fallBack(info.CollisionSteps, defaults.CollisionSteps, "CollisionSteps");
         return info;
     }
 
@@ -592,6 +605,7 @@ namespace Veng
                   "PhysicsWorldInfo::Matrix is asymmetric; a layer pair must agree in both "
                   "directions");
         VE_ASSERT(info.MaxBodies > 0, "PhysicsWorldInfo::MaxBodies must be positive");
+        VE_ASSERT(info.CollisionSteps > 0, "PhysicsWorldInfo::CollisionSteps must be positive");
         return Unique<PhysicsWorld>(new PhysicsWorld(info));
     }
 
@@ -672,6 +686,38 @@ namespace Veng
             }
             native.Bodies.erase(found);
         }
+
+        /// @brief Takes a live body's motion quality and speed limits from @p body in place.
+        ///
+        /// The solver changes each on a body it holds without re-creating it, so the edit keeps the
+        /// body's pose, velocity, contacts and sleep state, and wakes nothing.
+        /// @param native  The world's backend state.
+        /// @param record  The non-static body's record, updated to match.
+        /// @param body    The settings to take.
+        void ApplyMotionSettings(PhysicsWorld::Native& native, Detail::BodyRecord& record,
+                                 const RigidBody& body)
+        {
+            if (record.Body.Quality != body.Quality)
+            {
+                native.System.GetBodyInterface().SetMotionQuality(record.Id,
+                                                                  ToJoltQuality(body.Quality));
+                record.Body.Quality = body.Quality;
+            }
+            if (record.Body.MaxLinearSpeed == body.MaxLinearSpeed &&
+                record.Body.MaxAngularSpeed == body.MaxAngularSpeed)
+            {
+                return;
+            }
+            const JPH::BodyLockWrite lock(native.System.GetBodyLockInterface(), record.Id);
+            if (lock.Succeeded())
+            {
+                JPH::MotionProperties* motion = lock.GetBody().GetMotionProperties();
+                motion->SetMaxLinearVelocity(body.MaxLinearSpeed);
+                motion->SetMaxAngularVelocity(body.MaxAngularSpeed);
+            }
+            record.Body.MaxLinearSpeed = body.MaxLinearSpeed;
+            record.Body.MaxAngularSpeed = body.MaxAngularSpeed;
+        }
     }
 
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
@@ -694,6 +740,11 @@ namespace Veng
         VE_ASSERT(collider.Scale > 0.0f && std::isfinite(collider.Scale),
                   "Entity {} carries a Collider whose Scale {} is not a positive finite number",
                   entity.Index, collider.Scale);
+        VE_ASSERT(IsPositiveFinite(body.MaxLinearSpeed) && IsPositiveFinite(body.MaxAngularSpeed) &&
+                      IsPositiveFinite(body.InertiaScale),
+                  "Entity {} carries a RigidBody whose MaxLinearSpeed {}, MaxAngularSpeed {} or "
+                  "InertiaScale {} is not a positive finite number",
+                  entity.Index, body.MaxLinearSpeed, body.MaxAngularSpeed, body.InertiaScale);
 
         const auto existing = m_Native->Bodies.find(entity);
         if (existing != m_Native->Bodies.end())
@@ -709,6 +760,10 @@ namespace Veng
                 if (record.Driven != Detail::NotDriven)
                 {
                     m_Native->Driven[record.Driven].SyncTransform = body.SyncTransform;
+                }
+                if (body.Motion != MotionType::Static)
+                {
+                    ApplyMotionSettings(*m_Native, record, body);
                 }
                 return;
             }
@@ -741,6 +796,11 @@ namespace Veng
         settings.mRestitution = collider.Restitution;
         settings.mLinearDamping = body.LinearDamping;
         settings.mAngularDamping = body.AngularDamping;
+        settings.mMotionQuality = ToJoltQuality(body.Quality);
+        settings.mMaxLinearVelocity = body.MaxLinearSpeed;
+        settings.mMaxAngularVelocity = body.MaxAngularSpeed;
+        // Applies whether the mass is authored or derived from the shape's volume.
+        settings.mInertiaMultiplier = body.InertiaScale;
         // A Trigger-layer body reports overlaps and pushes nothing; that is what the layer means.
         settings.mIsSensor = sensor || body.Layer == PhysicsLayer::Trigger;
         // A sensor is told about non-dynamic bodies too, so a kinematic mover entering a trigger
@@ -1479,7 +1539,7 @@ namespace Veng
 
         m_Native->Activations.Recording = true;
         const JPH::EPhysicsUpdateError error = m_Native->System.Update(
-            delta, CollisionStepsPerUpdate, &m_Native->Temp, &m_Native->Jobs);
+            delta, static_cast<int>(m_Info.CollisionSteps), &m_Native->Temp, &m_Native->Jobs);
         m_Native->Activations.Recording = false;
         VE_ASSERT(error == JPH::EPhysicsUpdateError::None,
                   "Physics step exceeded a world budget (error bits {})", static_cast<u32>(error));

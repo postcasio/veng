@@ -39,10 +39,18 @@ namespace Veng
         /// layer. They are kept in a broad-phase tree of their own, so a resting field of them is
         /// not re-sorted when movers move.
         Debris = 5,
+        /// @brief Small loose bodies — gravel, shrapnel, spent casings — kept on a row of their own.
+        ///
+        /// Bodies on it are many, small and awake while they matter. The layer carries no special
+        /// rule: its default row is Moving's plus itself, so a body on it behaves exactly as one on
+        /// Moving until a consumer's matrix says otherwise. What it buys is the separation — a
+        /// matrix may pair it with Debris, or keep it off Moving or Character, without touching the
+        /// movers' own row. It shares the movers' broad-phase tree.
+        Scatter = 6,
     };
 
     /// @brief Number of members in the closed PhysicsLayer table.
-    inline constexpr u32 PhysicsLayerCount = 6;
+    inline constexpr u32 PhysicsLayerCount = 7;
 
     /// @brief Which layer pairs may produce contacts, as one bitmask row per layer.
     ///
@@ -97,10 +105,11 @@ namespace Veng
 
     /// @brief The matrix a PhysicsWorldInfo selects unless the consumer names another.
     ///
-    /// Static geometry stops movers, characters and debris but not other static geometry; movers,
-    /// characters and triggers all see each other; debris collides with static geometry, with
-    /// other debris and with triggers, never with movers or characters; Query bodies collide with
-    /// nothing, which is what makes them query-only.
+    /// Static geometry stops movers, characters, debris and scatter but not other static geometry;
+    /// movers, characters and triggers all see each other; debris collides with static geometry,
+    /// with other debris and with triggers, never with movers or characters; scatter has Moving's
+    /// row plus itself — static geometry, movers, characters, triggers and other scatter — and
+    /// meets no debris; Query bodies collide with nothing, which is what makes them query-only.
     /// @return The default symmetric table.
     [[nodiscard]] constexpr CollisionMatrix DefaultCollisionMatrix()
     {
@@ -109,18 +118,21 @@ namespace Veng
         constexpr u32 CharacterBit = PhysicsLayerBit(PhysicsLayer::Character);
         constexpr u32 TriggerBit = PhysicsLayerBit(PhysicsLayer::Trigger);
         constexpr u32 DebrisBit = PhysicsLayerBit(PhysicsLayer::Debris);
+        constexpr u32 ScatterBit = PhysicsLayerBit(PhysicsLayer::Scatter);
 
         CollisionMatrix matrix;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Static)] =
-            MovingBit | CharacterBit | DebrisBit;
+            MovingBit | CharacterBit | DebrisBit | ScatterBit;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Moving)] =
-            StaticBit | MovingBit | CharacterBit | TriggerBit;
+            StaticBit | MovingBit | CharacterBit | TriggerBit | ScatterBit;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Character)] =
-            StaticBit | MovingBit | CharacterBit | TriggerBit;
+            StaticBit | MovingBit | CharacterBit | TriggerBit | ScatterBit;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Trigger)] =
-            MovingBit | CharacterBit | DebrisBit;
+            MovingBit | CharacterBit | DebrisBit | ScatterBit;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Query)] = 0;
         matrix.Rows[static_cast<usize>(PhysicsLayer::Debris)] = StaticBit | TriggerBit | DebrisBit;
+        matrix.Rows[static_cast<usize>(PhysicsLayer::Scatter)] =
+            StaticBit | MovingBit | CharacterBit | TriggerBit | ScatterBit;
         return matrix;
     }
 }
@@ -132,4 +144,5 @@ VE_ENUMERATOR(Character)
 VE_ENUMERATOR(Trigger)
 VE_ENUMERATOR(Query)
 VE_ENUMERATOR(Debris)
+VE_ENUMERATOR(Scatter)
 VE_ENUM_END();

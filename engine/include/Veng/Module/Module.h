@@ -497,10 +497,15 @@ extern "C"
 /// and ComponentPool grows the latest change tick Scene::GetPoolChangeTick reads. A module spawns the
 /// physics components and builds collision matrices over the layer count, and inlines the pool's
 /// accessors, so a stale one lays all three out short.
+/// Version 120 gives a body its motion settings: RigidBody grows Quality, MaxLinearSpeed,
+/// MaxAngularSpeed and InertiaScale, PhysicsWorldInfo and PhysicsSettings grow CollisionSteps, the
+/// MotionQuality enum registers, and PhysicsLayer grows Scatter (PhysicsLayerCount 6 → 7). A module
+/// spawns the physics components, creates worlds and builds collision matrices over the layer
+/// count, so a stale one lays all three out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 119u
+#define VENG_MODULE_ABI_VERSION 120u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

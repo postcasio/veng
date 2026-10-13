@@ -7,6 +7,8 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
 
+#include <numbers>
+
 namespace Veng
 {
     class Scene;
@@ -23,6 +25,33 @@ namespace Veng
         /// @brief Integrated by the solver under gravity, contacts and damping.
         Dynamic = 2,
     };
+
+    /// @brief How the solver finds a moving body's contacts within one step.
+    ///
+    /// Integer values are stable — persisted in prefabs.
+    enum class MotionQuality : u32
+    {
+        /// @brief Contacts are found at the pose the step starts from, within a short speculative
+        ///        reach, so a body moving further than its own thickness in a step can pass through
+        ///        a thin one.
+        Discrete = 0,
+        /// @brief A body moving far in a step is swept along its path and stopped at the first
+        ///        thing it meets, so it does not tunnel.
+        ///
+        /// A swept body that meets anything is placed at the contact and stays there for the rest
+        /// of the collision step, whatever the other body weighs: it loses that collision step's
+        /// remaining travel. Against a wall or a heavy body that is the stop; at a glancing touch it
+        /// is time stolen, bounded by one collision step's travel (PhysicsWorldInfo::CollisionSteps).
+        /// Only a Dynamic body is swept — a Kinematic one is never stopped by what it meets.
+        LinearCast = 1,
+    };
+
+    /// @brief Default ceiling on a body's linear speed, in metres per second: the solver's own.
+    inline constexpr f32 DefaultMaxLinearSpeed = 500.0f;
+
+    /// @brief Default ceiling on a body's angular speed, in radians per second: the solver's own,
+    ///        a quarter turn per step at 60 Hz.
+    inline constexpr f32 DefaultMaxAngularSpeed = 0.25f * std::numbers::pi_v<f32> * 60.0f;
 
     /// @brief The shape a Collider describes.
     ///
@@ -90,6 +119,30 @@ namespace Veng
         /// PhysicsWorld::ActivateBody. Read when the body is created only, so changing it on a
         /// live body re-creates nothing. Ignored for a Static or Kinematic body.
         bool StartAsleep = false;
+        /// @brief How the solver finds this body's contacts within a step; ignored for a Static body.
+        ///
+        /// MotionQuality::LinearCast keeps a fast body from passing through what lies in its path,
+        /// at the cost of the time it steals on contact. Changing it on a live body is taken in
+        /// place, without re-creating the body.
+        MotionQuality Quality = MotionQuality::Discrete;
+        /// @brief Ceiling on the body's linear speed in metres per second; must be positive.
+        ///
+        /// The solver clamps a body moving faster, whatever moved it. Changing it on a live body is
+        /// taken in place. Ignored for a Static body.
+        f32 MaxLinearSpeed = DefaultMaxLinearSpeed;
+        /// @brief Ceiling on the body's angular speed in radians per second; must be positive.
+        ///
+        /// The solver clamps a body spinning faster, whatever spun it. Changing it on a live body is
+        /// taken in place. Ignored for a Static body.
+        f32 MaxAngularSpeed = DefaultMaxAngularSpeed;
+        /// @brief Multiplier on the inertia derived from the collider's shape; must be positive.
+        ///
+        /// The derived inertia is that of a uniformly dense solid at the body's mass, authored or
+        /// derived. A body whose mass is not spread that way — concentrated near its centre, or
+        /// low — says so here: below one a contact or an off-centre impulse turns the body more
+        /// readily, above one less. Changing it re-creates the body, as a mass change does.
+        /// Ignored for a Static or Kinematic body.
+        f32 InertiaScale = 1.0f;
     };
 
     /// @brief The shape a RigidBody collides with, in the body's local frame.
@@ -284,6 +337,10 @@ namespace Veng
         u32 MaxContactConstraints = 8192;
         /// @brief Whether the created world starts with its debug draw enabled.
         bool DebugDraw = false;
+        /// @brief Collision steps the solver runs inside each world step; zero falls back to one.
+        ///
+        /// See PhysicsWorldInfo::CollisionSteps.
+        u32 CollisionSteps = 1;
     };
 
     /// @brief The authoritative world-space pose of an entity's physics body.
@@ -325,6 +382,11 @@ VE_ENUMERATOR(Kinematic)
 VE_ENUMERATOR(Dynamic)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::MotionQuality, 0xF95BA9A20A617CF7ULL)
+VE_ENUMERATOR(Discrete)
+VE_ENUMERATOR(LinearCast)
+VE_ENUM_END();
+
 VE_ENUM(::Veng::ColliderShape, 0xC35249BF6FEE805EULL)
 VE_ENUMERATOR(Box)
 VE_ENUMERATOR(Sphere)
@@ -350,6 +412,14 @@ VE_FIELD(SyncTransform, .DisplayName = "Sync Transform",
                     "PhysicsPose alone")
 VE_FIELD(StartAsleep, .DisplayName = "Start Asleep",
          .Tooltip = "Create a Dynamic body asleep, so it costs nothing until something wakes it")
+VE_FIELD(Quality, .DisplayName = "Motion Quality",
+         .Tooltip = "Discrete, or LinearCast to sweep a fast body so it does not tunnel")
+VE_FIELD(MaxLinearSpeed, .DisplayName = "Max Linear Speed",
+         .Tooltip = "Metres per second the solver clamps the body to")
+VE_FIELD(MaxAngularSpeed, .DisplayName = "Max Angular Speed",
+         .Tooltip = "Radians per second the solver clamps the body to")
+VE_FIELD(InertiaScale, .DisplayName = "Inertia Scale",
+         .Tooltip = "Multiplier on the shape's inertia; below one a contact turns the body more")
 VE_REFLECT_END();
 
 VE_ON_REMOVE(::Veng::Collider,
@@ -413,6 +483,8 @@ VE_FIELD(MaxContactConstraints, .DisplayName = "Max Contact Constraints",
          .Tooltip = "Contact constraint ceiling per step; 0 uses the default")
 VE_FIELD(DebugDraw, .DisplayName = "Debug Draw",
          .Tooltip = "Start the world with its debug visualization on")
+VE_FIELD(CollisionSteps, .DisplayName = "Collision Steps",
+         .Tooltip = "Collision steps per world step; 0 uses one")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::HingeConstraint, 0x9AB6756E19FC0BCAULL)

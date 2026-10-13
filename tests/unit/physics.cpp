@@ -35,11 +35,11 @@ namespace
         TypeRegistry Types;
         Unique<Scene> World;
 
-        PhysicsFixture()
+        explicit PhysicsFixture(const PhysicsWorldInfo& info = {})
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
-            World->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+            World->SetPhysicsWorld(PhysicsWorld::Create(info));
         }
 
         PhysicsWorld& Physics() const { return *World->GetPhysicsWorld(); }
@@ -123,6 +123,22 @@ TEST_CASE("the default collision matrix is symmetric and leaves Query colliding 
     CHECK(LayersCollide(matrix, PhysicsLayer::Debris, PhysicsLayer::Trigger));
     CHECK_FALSE(LayersCollide(matrix, PhysicsLayer::Debris, PhysicsLayer::Moving));
     CHECK_FALSE(LayersCollide(matrix, PhysicsLayer::Debris, PhysicsLayer::Character));
+
+    // Scatter carries no rule of its own: it pairs as Moving does with every other layer, and with
+    // itself.
+    u32 scatterDiffers = 0;
+    for (u32 other = 0; other < PhysicsLayerCount; ++other)
+    {
+        const auto layer = static_cast<PhysicsLayer>(other);
+        if (layer != PhysicsLayer::Scatter &&
+            LayersCollide(matrix, PhysicsLayer::Scatter, layer) !=
+                LayersCollide(matrix, PhysicsLayer::Moving, layer))
+        {
+            scatterDiffers |= PhysicsLayerBit(layer);
+        }
+    }
+    CHECK(scatterDiffers == 0);
+    CHECK(LayersCollide(matrix, PhysicsLayer::Scatter, PhysicsLayer::Scatter));
 }
 
 TEST_CASE("a dynamic box dropped onto a static plane comes to rest on it")
@@ -713,6 +729,7 @@ TEST_CASE("authored PhysicsSettings reach the world PhysicsSystem creates")
                           .A = PhysicsLayer::Moving, .B = PhysicsLayer::Moving, .Collide = false}},
                       .MaxBodies = 7,
                       .DebugDraw = true,
+                      .CollisionSteps = 3,
                   });
     fixture.Start();
 
@@ -720,6 +737,7 @@ TEST_CASE("authored PhysicsSettings reach the world PhysicsSystem creates")
     REQUIRE(world != nullptr);
     const PhysicsWorldInfo& info = world->GetInfo();
     CHECK(info.MaxBodies == 7);
+    CHECK(info.CollisionSteps == 3);
     CHECK(info.Gravity.y == doctest::Approx(-1.5f));
     CHECK(world->IsDebugDrawEnabled());
     CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Moving, PhysicsLayer::Moving));
@@ -778,11 +796,275 @@ TEST_CASE("a zero budget in authored settings falls back to the default")
     AuthoredFixture fixture;
     fixture.World->Add<PhysicsSettings>(
         fixture.World->CreateEntity(),
-        PhysicsSettings{.MaxBodies = 0, .MaxBodyPairs = 0, .MaxContactConstraints = 0});
+        PhysicsSettings{
+            .MaxBodies = 0, .MaxBodyPairs = 0, .MaxContactConstraints = 0, .CollisionSteps = 0});
 
     const PhysicsWorldInfo defaults;
     const PhysicsWorldInfo& info = EnsurePhysicsWorld(*fixture.World).GetInfo();
     CHECK(info.MaxBodies == defaults.MaxBodies);
     CHECK(info.MaxBodyPairs == defaults.MaxBodyPairs);
     CHECK(info.MaxContactConstraints == defaults.MaxContactConstraints);
+    CHECK(info.CollisionSteps == 1);
+}
+
+namespace
+{
+    // A world with no gravity, so a body's travel in a step is its velocity's alone.
+    PhysicsWorldInfo WeightlessWorld(const u32 collisionSteps = 1)
+    {
+        return PhysicsWorldInfo{.Gravity = vec3(0.0f), .CollisionSteps = collisionSteps};
+    }
+
+    // A dynamic sphere at rest, from the RigidBody given.
+    Entity SpawnSphere(const PhysicsFixture& fixture, const vec3 position, const f32 radius,
+                       const RigidBody& body)
+    {
+        const Entity sphere = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(sphere, Transform{.Position = position});
+        fixture.World->Add<RigidBody>(sphere, body);
+        fixture.World->Add<Collider>(
+            sphere, Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(radius)});
+        return sphere;
+    }
+
+    // A static slab across the X axis at x = 0, 0.1 m thick.
+    void SpawnThinSlab(const PhysicsFixture& fixture)
+    {
+        const Entity slab = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(slab, Transform{});
+        fixture.World->Add<RigidBody>(
+            slab, RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Static});
+        fixture.World->Add<Collider>(
+            slab, Collider{.Shape = ColliderShape::Box, .Extents = vec3(0.05f, 5.0f, 5.0f)});
+    }
+
+    // How far a 0.5 m sphere fired at 300 m/s from x = -3 toward the slab gets in four steps.
+    f32 FurthestPastSlab(const MotionQuality quality)
+    {
+        const PhysicsFixture fixture(WeightlessWorld());
+        SpawnThinSlab(fixture);
+        const Entity bullet =
+            SpawnSphere(fixture, vec3(-3.0f, 0.0f, 0.0f), 0.5f,
+                        RigidBody{.Mass = 10.0f, .LinearDamping = 0.0f, .Quality = quality});
+        fixture.Tick(1);
+        fixture.Physics().SetLinearVelocity(bullet, vec3(300.0f, 0.0f, 0.0f));
+        f32 furthest = -3.0f;
+        for (u32 i = 0; i < 4; ++i)
+        {
+            fixture.Tick(1);
+            furthest = std::max(
+                furthest, static_cast<f32>(fixture.Physics().GetBodyPose(bullet)->Position.x));
+        }
+        return furthest;
+    }
+}
+
+TEST_CASE("a linear-cast body does not tunnel through a thin slab that a discrete one passes")
+{
+    // 300 m/s is 5 m a step, fifty times the slab's thickness. The sphere's face rests at -0.55.
+    CHECK(FurthestPastSlab(MotionQuality::Discrete) > 0.55f);
+    CHECK(FurthestPastSlab(MotionQuality::LinearCast) < -0.5f);
+}
+
+TEST_CASE("the time a linear-cast body loses at a contact is bounded by one collision step")
+{
+    constexpr f32 Speed = 300.0f;
+    for (const u32 steps : {1U, 2U, 4U})
+    {
+        CAPTURE(steps);
+        const PhysicsFixture fixture(WeightlessWorld(steps));
+        const Entity heavy = SpawnSphere(fixture, vec3(0.0f), 0.5f,
+                                         RigidBody{.Mass = 1000.0f,
+                                                   .LinearDamping = 0.0f,
+                                                   .Quality = MotionQuality::LinearCast});
+        // A body a thousandth of its mass, met 3.1 m into a 5 m step: partway through a collision
+        // step at one, two and four.
+        const Entity light = SpawnSphere(fixture, vec3(3.85f, 0.0f, 0.0f), 0.25f,
+                                         RigidBody{.Mass = 1.0f, .LinearDamping = 0.0f});
+        fixture.Tick(1);
+        fixture.Physics().SetLinearVelocity(heavy, vec3(Speed, 0.0f, 0.0f));
+        fixture.Tick(1);
+
+        REQUIRE(fixture.Physics().GetLinearVelocity(light).x > 1.0f);
+        const auto travel = static_cast<f32>(fixture.Physics().GetBodyPose(heavy)->Position.x);
+        const f32 bound = Speed * FixedStep * (1.0f - 1.0f / static_cast<f32>(steps));
+        CHECK(travel >= bound - 1e-3f);
+        CHECK(fixture.Physics().GetLinearVelocity(heavy).x ==
+              doctest::Approx(Speed).epsilon(0.003));
+    }
+}
+
+TEST_CASE("a body's speed is clamped at its authored limit, and at the solver's by default")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    const auto spawn = [&](const f32 maxLinearSpeed, const f32 z)
+    {
+        return SpawnSphere(
+            fixture, vec3(0.0f, 0.0f, z), 0.5f,
+            RigidBody{.Mass = 10.0f, .LinearDamping = 0.0f, .MaxLinearSpeed = maxLinearSpeed});
+    };
+    const Entity loose = spawn(1000.0f, 0.0f);
+    const Entity tight = spawn(600.0f, 5.0f);
+    const Entity standard = spawn(RigidBody{}.MaxLinearSpeed, 10.0f);
+    fixture.Tick(1);
+    for (const Entity entity : {loose, tight, standard})
+    {
+        // 900 m/s on a 10 kg body.
+        fixture.Physics().AddImpulse(entity, vec3(9000.0f, 0.0f, 0.0f));
+    }
+    fixture.Tick(1);
+
+    CHECK(DefaultMaxLinearSpeed == 500.0f);
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(loose)) == doctest::Approx(900.0f));
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(tight)) == doctest::Approx(600.0f));
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(standard)) == doctest::Approx(500.0f));
+}
+
+TEST_CASE("halving a body's inertia scale doubles the spin an off-centre impulse gives it")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    const auto spawn = [&](const f32 inertiaScale, const f32 z)
+    {
+        const Entity box = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(box, Transform{.Position = vec3(0.0f, 0.0f, z)});
+        fixture.World->Add<RigidBody>(box, RigidBody{.Mass = 10.0f, .InertiaScale = inertiaScale});
+        fixture.World->Add<Collider>(box, Collider{.Extents = vec3(1.0f, 0.5f, 0.25f)});
+        return box;
+    };
+    const Entity whole = spawn(1.0f, 0.0f);
+    const Entity half = spawn(0.5f, 10.0f);
+    fixture.Tick(1);
+
+    for (const auto& [box, z] : {std::pair{whole, 0.0}, std::pair{half, 10.0}})
+    {
+        fixture.Physics().AddImpulseAt(box, vec3(0.0f, 2.0f, 0.0f), dvec3(0.8, 0.0, z));
+    }
+    const f32 wholeSpin = glm::length(fixture.Physics().GetAngularVelocity(whole));
+    const f32 halfSpin = glm::length(fixture.Physics().GetAngularVelocity(half));
+    REQUIRE(wholeSpin > 0.0f);
+    CHECK(halfSpin / wholeSpin == doctest::Approx(2.0f).epsilon(1e-4));
+}
+
+TEST_CASE("motion quality and speed limits are taken in place, and an inertia scale re-creates")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    SpawnThinSlab(fixture);
+    const Entity bullet = SpawnSphere(fixture, vec3(-3.0f, 0.0f, 0.0f), 0.5f,
+                                      RigidBody{.Mass = 10.0f, .LinearDamping = 0.0f});
+    const Entity sleeper = SpawnSphere(fixture, vec3(0.0f, 0.0f, 20.0f), 0.5f,
+                                       RigidBody{.Mass = 10.0f, .StartAsleep = true});
+    fixture.Tick(1);
+
+    // The bullet keeps the velocity set before the switch, so it is the same body, and stops at
+    // the slab, so the switch reached the solver.
+    fixture.Physics().SetLinearVelocity(bullet, vec3(300.0f, 0.0f, 0.0f));
+    fixture.World->Get<RigidBody>(bullet).Quality = MotionQuality::LinearCast;
+    auto& sleeping = fixture.World->Get<RigidBody>(sleeper);
+    sleeping.Quality = MotionQuality::LinearCast;
+    sleeping.MaxLinearSpeed = 800.0f;
+    sleeping.MaxAngularSpeed = 10.0f;
+    fixture.Tick(1);
+    const f64 reached = fixture.Physics().GetBodyPose(bullet)->Position.x;
+    CHECK(reached > -1.0);
+    CHECK(reached < -0.5);
+    CHECK_FALSE(fixture.Physics().IsBodyActive(sleeper));
+
+    // A re-created body starts from rest.
+    fixture.Physics().SetLinearVelocity(bullet, vec3(0.0f, 0.0f, 3.0f));
+    fixture.World->Get<RigidBody>(bullet).InertiaScale = 0.5f;
+    fixture.Tick(1);
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(bullet)) < 1e-4f);
+}
+
+TEST_CASE("Scatter pairs as its matrix row says, kept apart from movers when a consumer asks")
+{
+    // Under the default matrix a Scatter body meets a mover and other scatter, as a mover would.
+    {
+        const PhysicsFixture fixture;
+        fixture.SpawnGround();
+        const auto box = [&](const vec3 position, const PhysicsLayer layer)
+        {
+            const Entity entity = fixture.World->CreateEntity();
+            fixture.World->Add<Transform>(entity, Transform{.Position = position});
+            fixture.World->Add<RigidBody>(entity, RigidBody{.Layer = layer, .Mass = 10.0f});
+            fixture.World->Add<Collider>(entity, Collider{.Extents = vec3(0.5f)});
+            return entity;
+        };
+        box(vec3(0.0f, 0.5f, 0.0f), PhysicsLayer::Moving);
+        const Entity onMover = box(vec3(0.0f, 2.0f, 0.0f), PhysicsLayer::Scatter);
+        box(vec3(5.0f, 0.5f, 0.0f), PhysicsLayer::Scatter);
+        const Entity onScatter = box(vec3(5.0f, 2.0f, 0.0f), PhysicsLayer::Scatter);
+        fixture.Tick(90);
+        CHECK(fixture.World->Get<Transform>(onMover).Position.y ==
+              doctest::Approx(1.5f).epsilon(0.05));
+        CHECK(fixture.World->Get<Transform>(onScatter).Position.y ==
+              doctest::Approx(1.5f).epsilon(0.05));
+    }
+
+    // A matrix pairing Scatter with Static, Debris and itself only.
+    const PhysicsWorldInfo apart = ToPhysicsWorldInfo(PhysicsSettings{
+        .Collisions = {
+            PhysicsCollisionRule{
+                .A = PhysicsLayer::Scatter, .B = PhysicsLayer::Moving, .Collide = false},
+            PhysicsCollisionRule{
+                .A = PhysicsLayer::Scatter, .B = PhysicsLayer::Character, .Collide = false},
+            PhysicsCollisionRule{
+                .A = PhysicsLayer::Scatter, .B = PhysicsLayer::Trigger, .Collide = false},
+            PhysicsCollisionRule{
+                .A = PhysicsLayer::Scatter, .B = PhysicsLayer::Debris, .Collide = true},
+        }});
+    const PhysicsFixture fixture(apart);
+    fixture.SpawnGround();
+    const auto resting = [&](const vec3 position)
+    {
+        const Entity entity = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(entity, Transform{.Position = position});
+        fixture.World->Add<RigidBody>(entity,
+                                      RigidBody{.Layer = PhysicsLayer::Scatter, .Mass = 1.0f});
+        fixture.World->Add<Collider>(entity, Collider{.Extents = vec3(0.5f)});
+        return entity;
+    };
+    const Entity inPath = resting(vec3(4.0f, 0.5f, 0.0f));
+    const Entity struck = resting(vec3(0.0f, 0.5f, 10.0f));
+    const Entity mover = SpawnSphere(
+        fixture, vec3(-2.0f, 0.6f, 0.0f), 0.5f,
+        RigidBody{.Mass = 100.0f, .LinearDamping = 0.0f, .Quality = MotionQuality::LinearCast});
+    const Entity debris =
+        SpawnSphere(fixture, vec3(-3.0f, 0.5f, 10.0f), 0.5f,
+                    RigidBody{.Layer = PhysicsLayer::Debris, .Mass = 10.0f, .LinearDamping = 0.0f});
+    fixture.Tick(1);
+    fixture.Physics().SetLinearVelocity(mover, vec3(300.0f, 0.0f, 0.0f));
+    fixture.Physics().SetLinearVelocity(debris, vec3(6.0f, 0.0f, 0.0f));
+    fixture.Tick(2);
+
+    // Two steps of 5 m carried the mover through the box in its path without a touch.
+    CHECK(fixture.Physics().GetBodyPose(mover)->Position.x == doctest::Approx(8.0).epsilon(1e-3));
+    CHECK(fixture.Physics().GetLinearVelocity(mover).x == doctest::Approx(300.0f));
+    CHECK(fixture.Physics().GetBodyPose(inPath)->Position.x == doctest::Approx(4.0).epsilon(1e-3));
+
+    // The scatter body still rests on the ground, and the debris body knocks the other one along.
+    fixture.Tick(60);
+    CHECK(fixture.World->Get<Transform>(inPath).Position.y == doctest::Approx(0.5f).epsilon(0.02));
+    CHECK(fixture.World->Get<Transform>(struck).Position.x > 0.5f);
+}
+
+TEST_CASE("collision sub-steps keep the step deterministic, pinned by a golden of their own")
+{
+    // As the one-step golden above: a mismatch is a solver version change (regenerate the constant
+    // in the same commit that moves the pin) or a real loss of determinism.
+    constexpr u64 GoldenHash = 0x5B56062DCE49FB73ULL;
+
+    const auto run = []
+    {
+        const PhysicsFixture fixture(PhysicsWorldInfo{.CollisionSteps = 2});
+        fixture.SpawnGround();
+        fixture.SpawnBox(vec3(0.25f, 3.0f, -0.125f));
+        fixture.SpawnBox(vec3(-0.125f, 5.0f, 0.25f));
+        fixture.Step(120);
+        return fixture.Physics().HashPoses();
+    };
+    const u64 hash = run();
+    INFO("pose hash = " << hash);
+    CHECK(run() == hash);
+    CHECK(hash == GoldenHash);
 }
