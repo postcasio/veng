@@ -53,6 +53,14 @@ namespace Veng
     ///        a quarter turn per step at 60 Hz.
     inline constexpr f32 DefaultMaxAngularSpeed = 0.25f * std::numbers::pi_v<f32> * 60.0f;
 
+    /// @brief Default distance a body pair may shift relative to each other before its cached
+    ///        contacts are recomputed, in metres: the solver's own, 1 mm.
+    inline constexpr f32 DefaultContactCacheMaxDistance = 0.001f;
+
+    /// @brief Default angle a body pair may turn relative to each other before its cached contacts
+    ///        are recomputed, in degrees: the solver's own.
+    inline constexpr f32 DefaultContactCacheMaxAngle = 2.0f;
+
     /// @brief The shape a Collider describes.
     ///
     /// The first three are primitives that need no cooked data — their whole definition is the
@@ -419,6 +427,19 @@ namespace Veng
         ///
         /// See PhysicsWorldInfo::CollisionSteps.
         u32 CollisionSteps = 1;
+        /// @brief Whether a body pair that has barely moved relative to itself reuses its last
+        ///        contacts. See PhysicsWorldInfo::ContactCacheEnabled.
+        bool ContactCacheEnabled = true;
+        /// @brief Relative shift, in metres, past which a pair's cached contacts are recomputed;
+        ///        a negative or non-finite value falls back to the default.
+        ///
+        /// See PhysicsWorldInfo::ContactCacheMaxDistance.
+        f32 ContactCacheMaxDistance = DefaultContactCacheMaxDistance;
+        /// @brief Relative turn, in degrees, past which a pair's cached contacts are recomputed; a
+        ///        value outside [0, 180] falls back to the default.
+        ///
+        /// See PhysicsWorldInfo::ContactCacheMaxAngle.
+        f32 ContactCacheMaxAngle = DefaultContactCacheMaxAngle;
     };
 
     /// @brief The authoritative world-space pose of an entity's physics body.
@@ -573,6 +594,13 @@ VE_FIELD(DebugDraw, .DisplayName = "Debug Draw",
          .Tooltip = "Start the world with its debug visualization on")
 VE_FIELD(CollisionSteps, .DisplayName = "Collision Steps",
          .Tooltip = "Collision steps per world step; 0 uses one")
+VE_FIELD(ContactCacheEnabled, .DisplayName = "Contact Cache",
+         .Tooltip = "Reuse a body pair's contacts while it barely moves relative to itself")
+VE_FIELD(ContactCacheMaxDistance, .DisplayName = "Contact Cache Distance",
+         .Tooltip = "Relative shift in metres past which a pair's contacts are recomputed")
+VE_FIELD(ContactCacheMaxAngle, .DisplayName = "Contact Cache Angle",
+         .Tooltip = "Relative turn in degrees past which a pair's contacts are recomputed; lower "
+                    "it for long bodies turning beside resting ones")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::HingeConstraint, 0x9AB6756E19FC0BCAULL)

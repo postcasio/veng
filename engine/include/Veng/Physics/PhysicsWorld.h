@@ -54,14 +54,38 @@ namespace Veng
         /// MotionQuality::LinearCast body loses at a glancing contact to one collision step's
         /// travel, and each costs roughly a step's collision and solve work.
         u32 CollisionSteps = 1;
+        /// @brief Whether a body pair that has barely moved relative to itself reuses the contacts
+        ///        it found last step instead of running collision detection again.
+        ///
+        /// The reuse is what makes a resting stack cheap. It is judged on the pair's relative pose
+        /// only, so it also holds when the pair found no contact: see ContactCacheMaxAngle.
+        bool ContactCacheEnabled = true;
+        /// @brief Relative shift, in metres, past which a body pair's cached contacts are
+        ///        recomputed; must be finite and not negative.
+        ///
+        /// Measured between the pair's centres of mass, in the frame of one body the solver picks.
+        f32 ContactCacheMaxDistance = DefaultContactCacheMaxDistance;
+        /// @brief Relative turn, in degrees, past which a body pair's cached contacts are
+        ///        recomputed; must lie in [0, 180].
+        ///
+        /// A body turning about its own centre need not shift relative to its neighbour at all —
+        /// not when the shift is measured from the neighbour's frame — so this angle is what bounds
+        /// the reuse. Until it ends, the pair keeps the result found when the turn began (no
+        /// contact, if the two were apart), and a point at radius r on the turning body moves up
+        /// to r times this angle into the neighbour unopposed: 17 cm at 5 m at the default
+        /// 2 degrees. Lower it for long bodies that turn beside resting ones, to about the
+        /// solver's 2 cm penetration slop over the longest radius; each pair that turns then runs
+        /// collision detection more often.
+        f32 ContactCacheMaxAngle = DefaultContactCacheMaxAngle;
     };
 
     /// @brief Builds the PhysicsWorldInfo an authored PhysicsSettings describes.
     ///
     /// Each collision rule is applied in order over DefaultCollisionMatrix(), in both directions,
-    /// so the result is always symmetric. A zero budget, or zero collision steps, is logged and
-    /// replaced by PhysicsWorldInfo's default rather than reaching the assert in
-    /// PhysicsWorld::Create, since authored data must not abort the process that loads it.
+    /// so the result is always symmetric. A zero budget, zero collision steps, or a contact cache
+    /// tolerance out of range is logged and replaced by PhysicsWorldInfo's default rather than
+    /// reaching the assert in PhysicsWorld::Create, since authored data must not abort the process
+    /// that loads it.
     /// @param settings  The authored settings.
     /// @return The descriptor to create the world from.
     [[nodiscard]] VE_API PhysicsWorldInfo ToPhysicsWorldInfo(const PhysicsSettings& settings);
@@ -200,9 +224,10 @@ namespace Veng
         struct Native;
 
         /// @brief Creates a world from its descriptor.
-        /// @param info  Gravity, the collision matrix, the body budget and the collision steps.
-        /// @pre info.Matrix is symmetric (see IsSymmetric), and info.MaxBodies and
-        ///      info.CollisionSteps are positive.
+        /// @param info  Gravity, the collision matrix, the body budget, the collision steps and the
+        ///              contact cache.
+        /// @pre info.Matrix is symmetric (see IsSymmetric), info.MaxBodies and
+        ///      info.CollisionSteps are positive, and the contact cache tolerances are in range.
         /// @return The owned world.
         [[nodiscard]] static Unique<PhysicsWorld> Create(const PhysicsWorldInfo& info);
 

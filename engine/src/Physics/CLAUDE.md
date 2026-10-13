@@ -19,8 +19,8 @@ A `Scene` optionally owns a `PhysicsWorld` exactly the way it optionally owns a 
 when its system set runs `PhysicsSystem`**, so a scene with no physics instantiates nothing,
 allocates nothing, and steps nothing: the minimal template and the editor's preview scenes are
 untouched. The world is created from a **`PhysicsWorldInfo`** carrying gravity, the collision
-matrix, the body budget and the collision steps — and **no step rate**, because a world steps in the
-Sim phase at that phase's fixed `SimTickRate`. A second independent rate would need an accumulator
+matrix, the body budget, the collision steps and the contact cache — and **no step rate**, because a
+world steps in the Sim phase at that phase's fixed `SimTickRate`. A second independent rate would need an accumulator
 and a substep policy while giving up the determinism, replay and transform interpolation the Sim
 phase already supplies. **`CollisionSteps`** (default 1) divides each Sim step instead: `Step(delta)`
 runs that many solver collision steps of `delta / N` inside the one step, so there is still one rate
@@ -33,12 +33,14 @@ world or creates one from the scene's **`PhysicsSettings`** — world-scoped con
 **`ToPhysicsWorldInfo`**. So a level that names `PhysicsSystem` simulates wherever it runs — its own
 application's managed world, a second world the application opens, the editor's Play — with no
 application code. The component carries the uniform `Gravity`, the three budgets, a `DebugDraw`
-switch, `CollisionSteps`, and `Collisions`: `PhysicsCollisionRule { A; B; Collide; }` overrides applied in order over
+switch, `CollisionSteps`, the contact cache's three settings (see
+[A body turning in place](#a-body-turning-in-place--the-contact-cache)), and `Collisions`:
+`PhysicsCollisionRule { A; B; Collide; }` overrides applied in order over
 `DefaultCollisionMatrix()`, **each setting its pair in both directions**, so an authored table is
 symmetric by construction and the asymmetric-matrix assert cannot be reached from data. A zero
-budget, or zero collision steps, is logged and replaced by the default rather than asserted on, since
-authored data must not abort an editor session. The settings are read once, at creation; editing them on a running world
-does nothing.
+budget, zero collision steps, or a contact cache tolerance out of range is logged and replaced by
+the default rather than asserted on, since authored data must not abort an editor session. The
+settings are read once, at creation; editing them on a running world does nothing.
 
 - **An installed world wins.** A world set before start — from `OnWorldLoaded`, from a system started
   earlier, from anything — is used as it is and the settings are not read, so a consumer whose world
@@ -491,6 +493,36 @@ readily. Changing it re-creates the body, as a mass change does.
 fixed step applies an impulse of `m Δv` that step, so `SetLinearVelocity`, `SetAngularVelocity` and
 `AddImpulse(At)` already cover a controller. A per-step force would differ only across collision
 steps — applied at each one rather than once at the start — and nothing needs that difference.
+
+## A body turning in place — the contact cache
+
+**A body pair that has barely moved relative to itself reuses last step's collision result** rather
+than running narrow-phase detection again — the solver's body-pair cache, and what makes a resting
+stack cheap. The reuse is judged on the pair's **relative pose alone**: it ends once the pair has
+shifted more than **`ContactCacheMaxDistance`** (metres, default **1 mm**) or turned more than
+**`ContactCacheMaxAngle`** (degrees, default **2°**) since the result was found, and
+**`ContactCacheEnabled`** switches it off outright. The defaults are the solver's own
+(`DefaultContactCacheMaxDistance`, `DefaultContactCacheMaxAngle`); the world converts them to the
+solver's squared distance and cosine of the half-angle at creation, the default landing on its
+constant bit for bit.
+
+**The failure the defaults allow is a long body turning beside a resting one.** The cached result
+is kept whatever it was — including *no contact*, for a pair whose bounding boxes overlap but which
+lie further apart than the 2 cm speculative reach. The shift is measured between centres of
+mass in one body's frame, and from the resting body's frame a body turning about its own centre does
+not shift at all, so only the angle ends the reuse. Until it does, a point at radius `r` on the
+turning body moves up to `r · angle` into its neighbour with no contact reported, waking nothing: a
+12 m beam yawing at 0.08 rad/s beside a sleeping block 4.5 m out sinks **11 cm** into it over 20
+steps at the defaults, and the solver then pushes the two apart. An angle tolerance of **0.25°**
+meets the same turn within **0.2 mm**, the contact reported on the step the two first touch.
+
+**Tighten the angle when a consumer has long bodies that turn near resting ones** — to about the
+solver's 2 cm penetration slop over the longest radius, `angle° ≈ 1.15 / r` (0.25° covers 4.6 m,
+0.2° about 5.7 m). The cost is collision detection for every pair whose bodies turn: a turning body's
+pairs re-run the narrow phase every `angle / ω` seconds instead of every 2° of turn, and a pair at
+rest still reuses its result as before. The distance tolerance rarely needs touching; a body
+translating past its neighbour shifts the pair from either frame. Switching the cache off re-runs the
+narrow phase for every pair every step.
 
 ## The character controller — a kinematic capsule with per-body up
 

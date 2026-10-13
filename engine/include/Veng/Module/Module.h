@@ -512,10 +512,13 @@ extern "C"
 /// systems read the context every tick, its client host builds the replay callback, and it inlines
 /// the world's accessors, so a stale one reads the context short and calls through the wrong
 /// signatures.
+/// Version 123 exposes the solver's contact cache: PhysicsWorldInfo and PhysicsSettings grow
+/// ContactCacheEnabled, ContactCacheMaxDistance and ContactCacheMaxAngle. A module creates worlds
+/// and spawns the settings component, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 122u
+#define VENG_MODULE_ABI_VERSION 123u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

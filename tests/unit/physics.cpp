@@ -5,7 +5,9 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <limits>
 
+#include <Veng/Log.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
@@ -730,6 +732,9 @@ TEST_CASE("authored PhysicsSettings reach the world PhysicsSystem creates")
                       .MaxBodies = 7,
                       .DebugDraw = true,
                       .CollisionSteps = 3,
+                      .ContactCacheEnabled = false,
+                      .ContactCacheMaxDistance = 0.0005f,
+                      .ContactCacheMaxAngle = 0.25f,
                   });
     fixture.Start();
 
@@ -738,6 +743,9 @@ TEST_CASE("authored PhysicsSettings reach the world PhysicsSystem creates")
     const PhysicsWorldInfo& info = world->GetInfo();
     CHECK(info.MaxBodies == 7);
     CHECK(info.CollisionSteps == 3);
+    CHECK_FALSE(info.ContactCacheEnabled);
+    CHECK(info.ContactCacheMaxDistance == 0.0005f);
+    CHECK(info.ContactCacheMaxAngle == 0.25f);
     CHECK(info.Gravity.y == doctest::Approx(-1.5f));
     CHECK(world->IsDebugDrawEnabled());
     CHECK_FALSE(LayersCollide(info.Matrix, PhysicsLayer::Moving, PhysicsLayer::Moving));
@@ -1067,4 +1075,132 @@ TEST_CASE("collision sub-steps keep the step deterministic, pinned by a golden o
     INFO("pose hash = " << hash);
     CHECK(run() == hash);
     CHECK(hash == GoldenHash);
+}
+
+namespace
+{
+    // How deep the deepest corner of box @p a lies inside box @p b, in metres; not positive when no
+    // corner is inside. A corner's depth is its distance to the nearest face of @p b.
+    f32 DeepestCornerInside(const PhysicsPose& a, const vec3 aHalf, const PhysicsPose& b,
+                            const vec3 bHalf)
+    {
+        f32 deepest = -std::numeric_limits<f32>::infinity();
+        const quat toB = glm::inverse(b.Rotation);
+        for (u32 corner = 0; corner < 8; ++corner)
+        {
+            const vec3 local((corner & 1U) != 0 ? aHalf.x : -aHalf.x,
+                             (corner & 2U) != 0 ? aHalf.y : -aHalf.y,
+                             (corner & 4U) != 0 ? aHalf.z : -aHalf.z);
+            const dvec3 world = a.Position + dvec3(a.Rotation * local);
+            const vec3 inB = toB * vec3(world - b.Position);
+            const vec3 depth = bHalf - glm::abs(inB);
+            deepest = std::max(deepest, std::min({depth.x, depth.y, depth.z}));
+        }
+        return deepest;
+    }
+
+    // What a long body turning in place beside a resting one did to it.
+    struct TurnBesideRest
+    {
+        // The deepest the two boxes overlapped at the end of any step, in metres.
+        f32 DeepestOverlap = 0.0f;
+        // Whether the turning body reported touching the resting one.
+        bool Touched = false;
+    };
+
+    // A 12 m beam turning about its own centre at 0.08 rad/s toward a sleeping 1 m-wide block whose
+    // near face is 15 cm from it and whose far edge is 4.5 m out along the beam. The cube is created first, so the
+    // solver measures the pair from the cube's frame, where the beam's centre does not move.
+    TurnBesideRest TurnBesideSleeper(const f32 contactCacheMaxAngle)
+    {
+        constexpr vec3 BeamHalf(6.0f, 0.5f, 0.25f);
+        constexpr vec3 CubeHalf(0.5f, 0.2f, 0.5f);
+        const PhysicsFixture fixture(
+            PhysicsWorldInfo{.Gravity = vec3(0.0f), .ContactCacheMaxAngle = contactCacheMaxAngle});
+
+        const Entity cube = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(cube, Transform{.Position = vec3(4.0f, 0.0f, -0.9f)});
+        fixture.World->Add<RigidBody>(cube, RigidBody{.Mass = 10.0f, .StartAsleep = true});
+        fixture.World->Add<Collider>(
+            cube, Collider{.Shape = ColliderShape::Box, .Extents = CubeHalf, .Restitution = 0.0f});
+        fixture.Tick(1);
+
+        const Entity beam = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(beam, Transform{});
+        fixture.World->Add<RigidBody>(
+            beam, RigidBody{.Mass = 1000.0f, .LinearDamping = 0.0f, .AngularDamping = 0.0f});
+        fixture.World->Add<Collider>(
+            beam, Collider{.Shape = ColliderShape::Box, .Extents = BeamHalf, .Restitution = 0.0f});
+        fixture.World->Add<ContactReport>(beam);
+        fixture.Tick(1);
+        REQUIRE_FALSE(fixture.Physics().IsBodyActive(cube));
+        // Turning about +Y carries the beam's +X arm toward -Z, into the cube.
+        fixture.Physics().SetAngularVelocity(beam, vec3(0.0f, 0.08f, 0.0f));
+
+        TurnBesideRest result;
+        for (u32 tick = 0; tick < 90; ++tick)
+        {
+            fixture.Tick(1);
+            const PhysicsPose beamPose = *fixture.Physics().GetBodyPose(beam);
+            const PhysicsPose cubePose = *fixture.Physics().GetBodyPose(cube);
+            result.DeepestOverlap = std::max(
+                {result.DeepestOverlap, DeepestCornerInside(cubePose, CubeHalf, beamPose, BeamHalf),
+                 DeepestCornerInside(beamPose, BeamHalf, cubePose, CubeHalf)});
+            for (const BodyContact& contact : fixture.World->Get<BodyContacts>(beam).Current)
+            {
+                result.Touched = result.Touched || contact.Other == cube;
+            }
+        }
+        return result;
+    }
+}
+
+TEST_CASE("a long body turning beside a resting one sinks no deeper than its reach times the "
+          "contact cache angle")
+{
+    // The solver's penetration slop: how far it lets resting contacts sink.
+    constexpr f32 Slop = 0.02f;
+    // How far out along the beam the block's far edge sits.
+    constexpr f32 Reach = 4.5f;
+    const auto bound = [](const f32 angle) { return Reach * glm::radians(angle) + Slop; };
+
+    const TurnBesideRest atDefault = TurnBesideSleeper(DefaultContactCacheMaxAngle);
+    CHECK(atDefault.DeepestOverlap <= bound(DefaultContactCacheMaxAngle));
+    CHECK(atDefault.Touched);
+
+    // 0.25 degrees sweeps 2 cm at the reach, so the turn is met within the slop.
+    const TurnBesideRest tightened = TurnBesideSleeper(0.25f);
+    CHECK(tightened.DeepestOverlap <= Slop);
+    CHECK(tightened.Touched);
+}
+
+TEST_CASE("a contact cache tolerance out of range in authored settings falls back with a warning")
+{
+    usize warnings = 0;
+    Log::SetSink(
+        [&](const Log::Level level, std::string_view)
+        {
+            if (level == Log::Level::Warn)
+            {
+                ++warnings;
+            }
+        });
+    const PhysicsWorldInfo negative = ToPhysicsWorldInfo(
+        PhysicsSettings{.ContactCacheMaxDistance = -0.01f, .ContactCacheMaxAngle = 270.0f});
+    const PhysicsWorldInfo notFinite = ToPhysicsWorldInfo(
+        PhysicsSettings{.ContactCacheMaxDistance = std::numeric_limits<f32>::infinity(),
+                        .ContactCacheMaxAngle = std::numeric_limits<f32>::quiet_NaN()});
+    const PhysicsWorldInfo edges = ToPhysicsWorldInfo(
+        PhysicsSettings{.ContactCacheMaxDistance = 0.0f, .ContactCacheMaxAngle = 180.0f});
+    Log::SetSink(nullptr);
+
+    CHECK(warnings == 4);
+    for (const PhysicsWorldInfo& info : {negative, notFinite})
+    {
+        CHECK(info.ContactCacheMaxDistance == DefaultContactCacheMaxDistance);
+        CHECK(info.ContactCacheMaxAngle == DefaultContactCacheMaxAngle);
+    }
+    CHECK(edges.ContactCacheMaxDistance == 0.0f);
+    CHECK(edges.ContactCacheMaxAngle == 180.0f);
+    CHECK(PhysicsWorld::Create(edges) != nullptr);
 }

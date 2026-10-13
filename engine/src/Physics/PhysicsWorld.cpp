@@ -39,6 +39,7 @@
 #include <cstring>
 #include <iterator>
 #include <mutex>
+#include <numbers>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -167,6 +168,18 @@ namespace Veng
         [[nodiscard]] bool IsPositiveFinite(const f32 value)
         {
             return value > 0.0f && std::isfinite(value);
+        }
+
+        /// @brief Whether @p metres is a contact cache distance the solver can take.
+        [[nodiscard]] bool IsContactCacheDistanceValid(const f32 metres)
+        {
+            return metres >= 0.0f && std::isfinite(metres);
+        }
+
+        /// @brief Whether @p degrees is a contact cache angle the solver can take.
+        [[nodiscard]] bool IsContactCacheAngleValid(const f32 degrees)
+        {
+            return degrees >= 0.0f && degrees <= 180.0f;
         }
 
         /// @brief Whether two Collider settings would produce the same shape and surface.
@@ -530,6 +543,14 @@ namespace Veng
         System.Init(info.MaxBodies, AutoBodyMutexCount, info.MaxBodyPairs,
                     info.MaxContactConstraints, Layers, Layers, Layers);
         System.SetGravity(Detail::ToJolt(info.Gravity));
+        JPH::PhysicsSettings settings = System.GetPhysicsSettings();
+        settings.mUseBodyPairContactCache = info.ContactCacheEnabled;
+        settings.mBodyPairCacheMaxDeltaPositionSq =
+            info.ContactCacheMaxDistance * info.ContactCacheMaxDistance;
+        // In double, so the default angle lands on the solver's own constant bit for bit.
+        settings.mBodyPairCacheCosMaxDeltaRotationDiv2 = static_cast<f32>(
+            std::cos(static_cast<double>(info.ContactCacheMaxAngle) * std::numbers::pi / 360.0));
+        System.SetPhysicsSettings(settings);
         Contacts.BodyOwners = &BodyOwners;
         Contacts.MinVelocityForRestitution = System.GetPhysicsSettings().mMinVelocityForRestitution;
         Contacts.EstimateIterations = System.GetPhysicsSettings().mNumVelocitySteps;
@@ -564,6 +585,9 @@ namespace Veng
             .MaxBodyPairs = settings.MaxBodyPairs,
             .MaxContactConstraints = settings.MaxContactConstraints,
             .CollisionSteps = settings.CollisionSteps,
+            .ContactCacheEnabled = settings.ContactCacheEnabled,
+            .ContactCacheMaxDistance = settings.ContactCacheMaxDistance,
+            .ContactCacheMaxAngle = settings.ContactCacheMaxAngle,
         };
 
         for (const PhysicsCollisionRule& rule : settings.Collisions)
@@ -602,6 +626,21 @@ namespace Veng
         fallBack(info.MaxContactConstraints, defaults.MaxContactConstraints,
                  "MaxContactConstraints");
         fallBack(info.CollisionSteps, defaults.CollisionSteps, "CollisionSteps");
+        if (!IsContactCacheDistanceValid(info.ContactCacheMaxDistance))
+        {
+            Log::Warn(
+                "PhysicsSettings::ContactCacheMaxDistance {} is negative or not finite; using "
+                "the default {}",
+                info.ContactCacheMaxDistance, defaults.ContactCacheMaxDistance);
+            info.ContactCacheMaxDistance = defaults.ContactCacheMaxDistance;
+        }
+        if (!IsContactCacheAngleValid(info.ContactCacheMaxAngle))
+        {
+            Log::Warn("PhysicsSettings::ContactCacheMaxAngle {} is outside [0, 180] degrees; using "
+                      "the default {}",
+                      info.ContactCacheMaxAngle, defaults.ContactCacheMaxAngle);
+            info.ContactCacheMaxAngle = defaults.ContactCacheMaxAngle;
+        }
         return info;
     }
 
@@ -612,6 +651,12 @@ namespace Veng
                   "directions");
         VE_ASSERT(info.MaxBodies > 0, "PhysicsWorldInfo::MaxBodies must be positive");
         VE_ASSERT(info.CollisionSteps > 0, "PhysicsWorldInfo::CollisionSteps must be positive");
+        VE_ASSERT(IsContactCacheDistanceValid(info.ContactCacheMaxDistance),
+                  "PhysicsWorldInfo::ContactCacheMaxDistance {} must be finite and not negative",
+                  info.ContactCacheMaxDistance);
+        VE_ASSERT(IsContactCacheAngleValid(info.ContactCacheMaxAngle),
+                  "PhysicsWorldInfo::ContactCacheMaxAngle {} must lie in [0, 180] degrees",
+                  info.ContactCacheMaxAngle);
         return Unique<PhysicsWorld>(new PhysicsWorld(info));
     }
 
