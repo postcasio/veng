@@ -410,6 +410,9 @@ namespace Veng::Net
             // then replay the recorded inputs forward through the real Sim systems, re-recording.
             const std::span<const StoredInput> tape = history.InputsAfter(consumedTick);
             const vector<StoredInput> inputs(tape.begin(), tape.end());
+            // A delta snapshot carries only what changed, so a component it leaves out is rewound to
+            // this peer's own prediction at C rather than replayed from its present value.
+            (void)history.Restore(consumedTick, scene);
             ApplyAuthoritative(scene, authoritative, registry);
             history.Clear();
             // Server-owned state is held across the replay: every replayed tick reads its latest

@@ -322,6 +322,42 @@ namespace
         CHECK(glm::length(w.World->Get<PredictionError>(w.Pawn).Position) > 0.0f);
     }
 
+    TEST_CASE("Reconcile: a component the record does not carry replays from its prediction at C")
+    {
+        // A delta snapshot leaves out what the server did not change. The replay integrates the
+        // score each tick, so starting it from the present value instead of the value at C would
+        // count the ticks after C twice.
+        SoloWorld w;
+        w.World->Add<VengTest::TestScore>(w.Pawn);
+        const auto advance = [&w](Scene& scene) { ++scene.Get<VengTest::TestScore>(w.Pawn).Value; };
+        for (u64 tick = 1; tick <= 6; ++tick)
+        {
+            advance(*w.World);
+            w.PredictTick(tick, vec2(1.0f, 0.0f));
+        }
+        REQUIRE(w.World->Get<VengTest::TestScore>(w.Pawn).Value == 6);
+
+        // The server's pose disagrees at 3; its score agreed, so the record does not carry it.
+        Transform displaced;
+        REQUIRE(ReadFields(w.History.Captured(3, w.Pawn, TypeIdOf<Transform>()), &displaced,
+                           w.Types.Info(TypeIdOf<Transform>()), w.Types)
+                    .has_value());
+        displaced.Position.x += 1.0f;
+        const ReplayTick base = w.Replay();
+        const ReplayTick replay =
+            [&](Scene& scene, const u64 tick, const PlayerInput& input, const bool replayStart)
+        {
+            advance(scene);
+            base(scene, tick, input, replayStart);
+        };
+        const std::vector<PredictedRecord> records{w.AuthoritativeTransform(displaced)};
+        const ReconcileResult result =
+            Reconcile(*w.World, w.History, records, 3, replay, ReconcileTolerances{});
+
+        REQUIRE(result.ReplayedTicks == 3);
+        CHECK(w.World->Get<VengTest::TestScore>(w.Pawn).Value == 6);
+    }
+
     TEST_CASE("Reconcile: a confirmation older than the ring holds the prediction, never crashing")
     {
         SoloWorld w;
