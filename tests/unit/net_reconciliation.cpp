@@ -482,18 +482,17 @@ namespace
         return Prefab::Create(std::move(entities), {});
     }
 
-    // Contexts over real test services, with a settable NetRole and replay flag.
+    // Contexts over real test services, with a settable NetRole. One is held per world: building the
+    // services is far dearer than a tick.
     struct TestContext
     {
         TestSupport::TestServices Services;
         NetRole Role = NetRole::Server;
-        bool Replay = false;
 
         SystemContext Make()
         {
             SystemContext context = Services.Make();
             context.Role = Role;
-            context.IsReplay = Replay;
             return context;
         }
     };
@@ -508,6 +507,7 @@ namespace
         std::unordered_map<u64, InputJitterBuffer> Jitter;
         std::unordered_map<ConnectionId, Entity> Pawns;
         MovementSystem Movement;
+        TestContext Contexts;
 
         explicit ServerWorld(Transport& transport,
                              ReplicationServer::Settings settings = {.SnapshotInterval = 2},
@@ -578,9 +578,7 @@ namespace
                 }
             }
 
-            TestContext ctx;
-            ctx.Role = NetRole::Server;
-            Movement.OnUpdate(*World, delta, ctx.Make());
+            Movement.OnUpdate(*World, delta, Contexts.Make());
         }
 
         void NetPump(f64 now, u64 tick)
@@ -606,6 +604,7 @@ namespace
         InputSendBuffer Send;
         MovementSystem Movement;
         RemoteInterpolationSystem Interp;
+        TestContext Contexts;
         Unique<Scene> ClientScene;
         Entity LocalSeat = Entity::Null;
         Entity LocalCamera = Entity::Null;
@@ -623,6 +622,7 @@ namespace
             Send = InputSendBuffer(InputSendBuffer::Settings{.Redundancy = 4});
             Interp.SetSettings(RemoteInterpolationSystem::Settings{
                 .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
+            Contexts.Role = NetRole::Client;
 
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
@@ -669,10 +669,9 @@ namespace
                     {
                         world.Get<Intent>(OwnPawn) = ControlMap(input);
                     }
-                    TestContext ctx;
-                    ctx.Role = NetRole::Client;
-                    ctx.Replay = true;
-                    Movement.OnUpdate(world, Delta, ctx.Make());
+                    SystemContext context = Contexts.Make();
+                    context.IsReplay = true;
+                    Movement.OnUpdate(world, Delta, context);
                 },
             });
         }
@@ -692,9 +691,7 @@ namespace
             {
                 world->Get<Intent>(OwnPawn) = ControlMap(world->Get<PlayerInput>(LocalSeat));
             }
-            TestContext ctx;
-            ctx.Role = NetRole::Client;
-            Movement.OnUpdate(*world, delta, ctx.Make());
+            Movement.OnUpdate(*world, delta, Contexts.Make());
             Host->RecordPrediction(clientTick);
             StampLocalSeatInput(Send, *world, clientTick, /*presented=*/true);
         }
@@ -705,9 +702,7 @@ namespace
             PredictStep(clientTick, delta, scripted);
             if (Scene* world = Host->World())
             {
-                TestContext ctx;
-                ctx.Role = NetRole::Client;
-                Interp.OnUpdate(*world, delta, ctx.Make());
+                Interp.OnUpdate(*world, delta, Contexts.Make());
             }
             if (Client->State() == ClientState::Connected && Host->CurrentJoinId() != ControlJoinId)
             {
