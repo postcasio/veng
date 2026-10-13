@@ -40,7 +40,8 @@ namespace Veng
     /// reconcile (create, re-create and destroy bodies so the world matches the RigidBody/Collider
     /// components), push (place static bodies and drive kinematic ones toward their target pose),
     /// step, pull (write each simulated body's result back into PhysicsPose, and into Transform for
-    /// a body whose RigidBody sets SyncTransform), and publish (each Sensor's SensorOverlaps).
+    /// a body whose RigidBody sets SyncTransform), and publish (each Sensor's SensorOverlaps, and
+    /// each ContactReport entity's BodyContacts).
     ///
     /// A body's pose is world space. An entity carrying a RigidBody is therefore expected to be a
     /// scene-graph root: its Transform is read and written as a world pose, and a parent's

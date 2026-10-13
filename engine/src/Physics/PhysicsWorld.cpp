@@ -37,7 +37,11 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <mutex>
+#include <span>
+#include <tuple>
+#include <utility>
 
 namespace Veng
 {
@@ -527,6 +531,8 @@ namespace Veng
                     info.MaxContactConstraints, Layers, Layers, Layers);
         System.SetGravity(Detail::ToJolt(info.Gravity));
         Contacts.BodyOwners = &BodyOwners;
+        Contacts.MinVelocityForRestitution = System.GetPhysicsSettings().mMinVelocityForRestitution;
+        Contacts.EstimateIterations = System.GetPhysicsSettings().mNumVelocitySteps;
         System.SetContactListener(&Contacts);
         System.SetBodyActivationListener(&Activations);
         GravityListener.Sources = &GravitySources;
@@ -650,6 +656,112 @@ namespace Veng
 
     namespace
     {
+        /// @brief Turns recording of a live body's contacts on or off, in place.
+        /// @param native   The world's backend state.
+        /// @param entity   The entity owning the body.
+        /// @param record   The body's record, updated to match.
+        /// @param reports  Whether the body's contacts are recorded from the next step.
+        void SetReportsContacts(PhysicsWorld::Native& native, const Entity entity,
+                                Detail::BodyRecord& record, const bool reports)
+        {
+            if (record.ReportContacts == reports)
+            {
+                return;
+            }
+            record.ReportContacts = reports;
+            Detail::ContactRecorder& contacts = native.Contacts;
+            const JPH::uint index = record.Id.GetIndex();
+            if (reports)
+            {
+                if (contacts.Reporting.size() <= index)
+                {
+                    contacts.Reporting.resize(index + 1, 0);
+                }
+                contacts.Reporting[index] = 1;
+                ++contacts.ReportingBodies;
+                native.ReportEntities.emplace_back(entity);
+            }
+            else
+            {
+                contacts.Reporting[index] = 0;
+                --contacts.ReportingBodies;
+                std::erase(native.ReportEntities, entity);
+            }
+        }
+
+        /// @brief Orders samples by reporting entity, then by the entity touched.
+        [[nodiscard]] bool SampleOrder(const Detail::ContactSample& a,
+                                       const Detail::ContactSample& b)
+        {
+            const auto key = [](const Detail::ContactSample& sample)
+            {
+                return std::tuple(sample.Self.Index, sample.Self.Generation,
+                                  sample.Contact.Other.Index, sample.Contact.Other.Generation);
+            };
+            return key(a) < key(b);
+        }
+
+        /// @brief Merges a step's samples into one contact per pair, capped per reporting body.
+        ///
+        /// A pair's manifolds — one per touching sub-shape pair, per collision step, plus any the
+        /// continuous pass found — become one contact: the point and normal of the deepest sample,
+        /// the largest approach speed, the summed impulse, and begun if any sample began. Each
+        /// reporting body then keeps its MaxBodyContacts fastest approaches, fastest first.
+        /// @param samples  The step's samples; consumed.
+        /// @param out      Destination, cleared then filled, ordered by reporting entity.
+        /// @return How many contacts the cap left out.
+        u32 MergeContactSamples(vector<Detail::ContactSample>& samples,
+                                vector<Detail::ContactSample>& out)
+        {
+            out.clear();
+            // Stable, so a pair's samples sum in the order the solver produced them.
+            std::ranges::stable_sort(samples, SampleOrder);
+            for (const Detail::ContactSample& sample : samples)
+            {
+                if (out.empty() || SampleOrder(out.back(), sample))
+                {
+                    out.emplace_back(sample);
+                    continue;
+                }
+                Detail::ContactSample& merged = out.back();
+                BodyContact& contact = merged.Contact;
+                if (sample.Depth > merged.Depth)
+                {
+                    merged.Depth = sample.Depth;
+                    contact.Point = sample.Contact.Point;
+                    contact.Normal = sample.Contact.Normal;
+                }
+                contact.ApproachSpeed =
+                    std::max(contact.ApproachSpeed, sample.Contact.ApproachSpeed);
+                contact.Impulse += sample.Contact.Impulse;
+                contact.Began = contact.Began || sample.Contact.Began;
+            }
+            samples.clear();
+
+            u32 dropped = 0;
+            usize kept = 0;
+            for (usize first = 0; first < out.size();)
+            {
+                usize last = first + 1;
+                while (last < out.size() && out[last].Self == out[first].Self)
+                {
+                    ++last;
+                }
+                const auto group = std::span(out).subspan(first, last - first);
+                std::ranges::stable_sort(
+                    group, [](const Detail::ContactSample& a, const Detail::ContactSample& b)
+                    { return a.Contact.ApproachSpeed > b.Contact.ApproachSpeed; });
+                const usize keep = std::min<usize>(group.size(), MaxBodyContacts);
+                dropped += static_cast<u32>(group.size() - keep);
+                std::ranges::move(group.first(keep),
+                                  std::next(out.begin(), static_cast<std::ptrdiff_t>(kept)));
+                kept += keep;
+                first = last;
+            }
+            out.resize(kept);
+            return dropped;
+        }
+
         /// @brief Removes one body and everything recorded beside it, queuing nothing.
         /// @param world  The world owning the body.
         /// @param found  The body's record.
@@ -658,7 +770,8 @@ namespace Veng
         {
             PhysicsWorld::Native& native = world.GetNative();
             const Entity entity = found->first;
-            const Detail::BodyRecord& record = found->second;
+            Detail::BodyRecord& record = found->second;
+            SetReportsContacts(native, entity, record, false);
 
             // A constraint outliving one of its bodies would reference a destroyed body, so the pair
             // goes first.
@@ -722,7 +835,7 @@ namespace Veng
 
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
                                   const Collider& collider, const PhysicsPose& pose,
-                                  const bool sensor)
+                                  const bool sensor, const bool reportContacts)
     {
         if (!m_Native->Reconciling)
         {
@@ -765,6 +878,7 @@ namespace Veng
                 {
                     ApplyMotionSettings(*m_Native, record, body);
                 }
+                SetReportsContacts(*m_Native, entity, record, reportContacts);
                 return;
             }
             RemoveBodyRecord(*this, existing);
@@ -848,7 +962,8 @@ namespace Veng
         {
             m_Native->SensorEntities.emplace_back(entity);
         }
-        m_Native->Bodies.emplace(entity, record);
+        Detail::BodyRecord& added = m_Native->Bodies.emplace(entity, record).first->second;
+        SetReportsContacts(*m_Native, entity, added, reportContacts);
         m_Native->BodyOwners.emplace(id.GetIndexAndSequenceNumber(), entity);
         ++m_Native->CreatedSinceStep;
     }
@@ -901,6 +1016,11 @@ namespace Veng
         m_Native->Bodies.clear();
         m_Native->BodyOwners.clear();
         m_Native->Contacts.Overlaps.clear();
+        m_Native->Contacts.Reporting.clear();
+        m_Native->Contacts.ReportingBodies = 0;
+        m_Native->Contacts.Samples.clear();
+        m_Native->ReportEntities.clear();
+        m_Native->ReportedContacts.clear();
         m_Native->Driven.clear();
         m_Native->SensorEntities.clear();
         m_Native->Pending.clear();
@@ -1172,6 +1292,24 @@ namespace Veng
         // The solver reports one manifold per touching sub-shape pair, so a body with several
         // faces against the sensor arrives more than once.
         out.erase(std::ranges::unique(out).begin(), out.end());
+    }
+
+    void PhysicsWorld::GetBodyContacts(const Entity entity, vector<BodyContact>& out) const
+    {
+        out.clear();
+        const auto record = m_Native->Bodies.find(entity);
+        if (record == m_Native->Bodies.end() || !record->second.ReportContacts)
+        {
+            return;
+        }
+        const auto [first, last] = std::ranges::equal_range(
+            m_Native->ReportedContacts, std::pair(entity.Index, entity.Generation), {},
+            [](const Detail::ContactSample& sample)
+            { return std::pair(sample.Self.Index, sample.Self.Generation); });
+        for (auto it = first; it != last; ++it)
+        {
+            out.emplace_back(it->Contact);
+        }
     }
 
     void PhysicsWorld::CreateConstraint(const Entity owner, const ConstraintSettings& settings)
@@ -1535,6 +1673,7 @@ namespace Veng
         m_Native->Contacts.DebugEnabled = m_DebugDrawEnabled;
         m_Native->Contacts.Contacts.clear();
         m_Native->Contacts.Overlaps.clear();
+        m_Native->Contacts.Samples.clear();
         m_Native->Activations.Deactivated.clear();
 
         m_Native->Activations.Recording = true;
@@ -1543,6 +1682,8 @@ namespace Veng
         m_Native->Activations.Recording = false;
         VE_ASSERT(error == JPH::EPhysicsUpdateError::None,
                   "Physics step exceeded a world budget (error bits {})", static_cast<u32>(error));
+        m_Native->DroppedContacts =
+            MergeContactSamples(m_Native->Contacts.Samples, m_Native->ReportedContacts);
         ++m_StepCount;
     }
 

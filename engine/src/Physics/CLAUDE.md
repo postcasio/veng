@@ -77,19 +77,22 @@ Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Sc
 PhysicsPose     { dvec3 Position; quat Rotation; }
 Sensor          { Layers; }
 SensorOverlaps  { vector<Entity> Current, Entered, Exited; }
+ContactReport   { }
+BodyContacts    { vector<BodyContact> Current; }   // BodyContact { Other; Point; Normal; ApproachSpeed; Impulse; Began; }
 FixedConstraint { Entity Target; }
 PointConstraint { Entity Target; vec3 Point; }
 HingeConstraint { Entity Target; vec3 Point; vec3 Axis; }
 ```
 
-`RigidBody`, `Collider`, `Sensor` and the three constraints are plain reflected components,
+`RigidBody`, `Collider`, `Sensor`, `ContactReport` and the three constraints are plain reflected components,
 registered in `RegisterBuiltinTypes`, authorable in the editor inspector and cooked into prefabs
 through the existing pipeline. An entity needs a `RigidBody` and a `Collider` to be simulated; a
 `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at runtime creates the
 backing body on the next step, removing either destroys it, and editing a field re-creates the body
 with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body,
 and `Quality`, `MaxLinearSpeed` and `MaxAngularSpeed`, which the solver changes on a live body; all
-five are taken in place, keeping the body's pose, velocity and sleep state. `RigidBody`, `Collider` and `Sensor` carry a removal hook (`VE_ON_REMOVE`)
+five are taken in place, keeping the body's pose, velocity and sleep state, as is adding or removing
+a `ContactReport`. `RigidBody`, `Collider`, `Sensor` and `ContactReport` carry a removal hook (`VE_ON_REMOVE`)
 that queues the entity for the next step's reconcile, which is how the step finds what left without
 sweeping every body. The three primitives are the shapes that need no cooked data, so a `Collider`
 describing one is complete on its own.
@@ -114,7 +117,8 @@ avoid; a compound is for genuinely *several* shapes.
 
 `PhysicsPose` is the solver's own pose channel, added by the step to every physics entity. It is
 registered fieldless (`VE_TYPE`), so it never serializes and never rides the wire — it is derived
-state, not authored state. `SensorOverlaps` is the same kind of thing for a sensor's overlap set.
+state, not authored state. `SensorOverlaps` is the same kind of thing for a sensor's overlap set,
+and `BodyContacts` for a reporting body's contacts.
 
 **A body's pose is world space.** A physics entity is expected to be a scene-graph root: its
 `Transform` is read and written as a world pose and a parent's transform is not composed into it.
@@ -195,6 +199,60 @@ what the sensor is told about at all.
 bodies it simulates, so a dynamic body that falls asleep inside a sensor leaves `Current` and is
 reported in `Exited`. Sensor bodies are created with the solver's kinematic-vs-non-dynamic pairing
 enabled, so a kinematic mover crossing a trigger volume *is* reported.
+
+## Contacts are state a system drains
+
+A body that must know what it hit — a vehicle's impacts, a body that takes damage from what it
+strikes, an impact sound's loudness — carries a **`ContactReport`**. The marker is opt-in, fieldless
+and authorable; a marked entity with a body is given a **`BodyContacts`** at the reconcile, and the
+step's publish pass writes into it what the body touched during the step. No game code runs inside
+the solver, as with sensors. Adding or removing the marker is taken in place, and the
+`BodyContacts` goes with it.
+
+`BodyContacts::Current` holds one `BodyContact` per other body:
+
+- **`Other`**, the entity touched.
+- **`Point`** and **`Normal`**: the contact point (midway between the two surfaces, the solver's own
+  convention) and the unit normal pointing **out of `Other`, toward this body**.
+- **`ApproachSpeed`**: the two bodies' relative velocity at the point along the normal, positive
+  when closing, read from the bodies as the solver finds the contact — **before it acts on it**.
+  Each body's velocity at the point includes its spin, and a kinematic body's is the velocity its
+  sweep set. It includes what gravity and forces add during the collision step, since the solver
+  applies them before it looks for contacts: a body at rest under gravity reports about `g·Δt / N`,
+  the fall the contact cancels.
+- **`Impulse`**: the normal impulse the solver's `EstimateCollisionResponse` predicts for the pair
+  in isolation, at their combined friction and restitution. **It is an estimate**, and is documented
+  as one: the solver's iterations, the island's other contacts, continuous collision and penetration
+  recovery can each differ from it. The impulse the solver actually applied lives in its manifold
+  cache, which has no public read, and reaching it would mean changing the solver; a consumer
+  needing the change of velocity the step caused reads the body's velocity after the step.
+- **`Began`**: true on the step the solver first reports the pair, false while it persists.
+
+**One entry per other body per step.** The solver reports one manifold per touching sub-shape pair
+(a compound's children), once per collision step, and once more for a hit its continuous pass
+finds, which reaches the same listener. They merge into one entry: the point and normal of the
+deepest contact point, the largest approach speed, the impulses summed, and `Began` if any began. So
+with `CollisionSteps` above one, a resting contact's impulse is still the step's whole weight, and a
+hit is begun on the step it happened. A linear-cast body's hit is recorded on the step it is
+stopped, with the speed it arrived at; the solver keeps that contact in its cache, so the next
+step's discrete contact persists rather than beginning again. A pair that has separated is simply
+absent, and a consumer needing an exit compares `Current` against its own last read, which keeps
+the record one vector where `SensorOverlaps` carries three. A sensor's contacts are overlaps and are
+never reported.
+
+**Sleep.** A pair at rest whose bodies are both asleep is not reported, as a sleeping body leaves a
+sensor's `Current`: the solver finds no contacts between sleeping bodies.
+
+**A bounded record.** A body keeps at most **`MaxBodyContacts`** (16) entries a step, the fastest
+approaches, ordered fastest first. The cap's overflow is counted in
+`PhysicsStepStats::ContactsDropped` rather than lost silently, beside `ContactsReported`.
+
+**It costs nothing unasked, and perturbs nothing.** The listener already runs for every manifold; a
+world in which no body reports pays one comparison per manifold, and reports zero. A reporting
+body's manifold costs a per-body flag lookup, two point velocities, one impulse estimate and an
+appended sample; the step then sorts and merges the samples. The listener only reads — it never
+writes `ContactSettings` — so a marked body moves exactly as an unmarked one, which the tests pin
+by hashing a world stepped with every body marked against the same world with none.
 
 ## Constraints — three, and the fixed one is the load-bearing one
 
@@ -322,7 +380,7 @@ the ones whose components changed. It runs five passes:
    (`SetBodyPose`, `RestoreBodyState`) is read back by name, and a whole-world `RestoreState` reads
    every body back once.
 5. **Publish.** Write each `Sensor` entity's overlap set into its `SensorOverlaps`, diffing against
-   last tick's for the enter/exit deltas.
+   last tick's for the enter/exit deltas, and each reporting body's contacts into its `BodyContacts`.
 
 **Why change ticks and a value compare, not one or the other.** A change tick is per tick, so it
 cannot tell the step's own pull (stamped this tick) from a system writing after the step in the same
@@ -340,8 +398,8 @@ cheaper. `PhysicsWorld::CreateBody` / `DestroyBody` called directly queue their 
 step re-checks it against its components — a body made for an entity carrying none is swept there.
 
 `PhysicsWorld::GetStepStats()` reports what the last `StepPhysics` did — entities reconciled, bodies
-pushed, bodies read back, and whether the reconcile was full — the counters the property tests
-assert, so a field of sleeping bodies reads zero in every one.
+pushed, bodies read back, whether the reconcile was full, and the contacts reported and dropped —
+the counters the property tests assert, so a field of sleeping bodies reads zero in every one.
 
 **Sleep, activation and impulse.** `RigidBody::StartAsleep` adds a `Dynamic` body asleep, so a body
 placed at rest costs nothing until a contact, an impulse or **`ActivateBody`** wakes it;
@@ -626,6 +684,7 @@ question; the step is not the bottleneck at this scale.
 `PhysicsWorld::SetDebugDrawEnabled` is the runtime toggle; when it is set and the tick has a
 `SystemContext::Debug` sink, `PhysicsSystem` calls `DrawDebug` each step. Shapes are drawn as
 wireframes tinted by motion type and dimmed while a dynamic body sleeps, and each active contact is
-a short normal spike. Contacts are collected by a `ContactListener` that only records — it never
-touches `ContactSettings`, so it cannot perturb the simulation — and recording is gated on the same
-toggle, so a world with the visualization off pays nothing beyond a virtual call.
+a short normal spike. Contacts are collected by the same `ContactListener` that feeds sensors and
+contact reports, which only records — it never touches `ContactSettings`, so it cannot perturb the
+simulation — and recording is gated on the same toggle, so a world with the visualization off pays
+nothing beyond a virtual call.

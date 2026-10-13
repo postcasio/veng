@@ -502,10 +502,14 @@ extern "C"
 /// MotionQuality enum registers, and PhysicsLayer grows Scatter (PhysicsLayerCount 6 → 7). A module
 /// spawns the physics components, creates worlds and builds collision matrices over the layer
 /// count, so a stale one lays all three out short.
+/// Version 121 publishes a body's contacts: the ContactReport and BodyContacts components register,
+/// PhysicsStepStats grows ContactsReported and ContactsDropped, and PhysicsWorld::CreateBody grows
+/// its reportContacts parameter. A module spawns the components, reads the statistics and creates
+/// bodies, so a stale one registers a short type table and lays the statistics out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 120u
+#define VENG_MODULE_ABI_VERSION 121u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

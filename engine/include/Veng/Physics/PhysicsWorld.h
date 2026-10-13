@@ -113,6 +113,11 @@ namespace Veng
         /// @brief Whether the step rebuilt the broad phase whole, as it does only after a batch of
         ///        bodies at least as large as the world they joined.
         bool OptimizedBroadPhase = false;
+        /// @brief Contacts the step recorded for bodies reporting them, one per pair, after the
+        ///        MaxBodyContacts cap; zero in a world where no body reports.
+        u32 ContactsReported = 0;
+        /// @brief Contacts the MaxBodyContacts cap left out of a body's report this step.
+        u32 ContactsDropped = 0;
     };
 
     /// @brief Whether placing a body wakes it.
@@ -246,7 +251,8 @@ namespace Veng
         /// from @p pose, discarding its velocity and contact state — the components are the
         /// authority and the body is their shadow. RigidBody::StartAsleep is read only here, at
         /// creation, and a difference in it alone re-creates nothing. RigidBody::Quality,
-        /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing.
+        /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing,
+        /// and so is @p reportContacts.
         /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
         /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
         ///
@@ -260,12 +266,15 @@ namespace Veng
         /// @param pose      The world-space pose to place a newly created body at.
         /// @param sensor    Whether the body detects overlap and resolves no contact. A body on
         ///                  PhysicsLayer::Trigger is a sensor regardless.
+        /// @param reportContacts  Whether each step records what the body touched, read back
+        ///                  through GetBodyContacts (the ContactReport marker). A sensor's contacts
+        ///                  are overlaps and are never reported.
         /// @pre A ColliderShape::Mesh collider whose geometry is a triangle mesh is not on a
         ///      Dynamic body — a triangle mesh has no interior and no inertia, so a dynamic one is
         ///      a fatal assert here rather than a solver that misbehaves invisibly.
         /// @pre RigidBody::MaxLinearSpeed, MaxAngularSpeed and InertiaScale are positive and finite.
         void CreateBody(Entity entity, const RigidBody& body, const Collider& collider,
-                        const PhysicsPose& pose, bool sensor = false);
+                        const PhysicsPose& pose, bool sensor = false, bool reportContacts = false);
 
         /// @brief Destroys @p entity's body; a no-op when it has none.
         ///
@@ -419,6 +428,19 @@ namespace Veng
         ///                    layer's bit is set.
         /// @param out         Destination vector, cleared then filled.
         void GetSensorOverlaps(Entity sensor, u32 layerMask, vector<Entity>& out) const;
+
+        /// @brief Fills @p out with the bodies @p entity's body touched during the last step.
+        ///
+        /// One entry per other body, at most MaxBodyContacts, fastest approach first; BodyContact
+        /// says what each field measures. Empty when the body does not report its contacts (see
+        /// CreateBody's reportContacts), has none, or touched nothing. Reading never perturbs the
+        /// simulation: the solver's listener only observes.
+        ///
+        /// @warning A pair at rest whose two bodies are both asleep is not reported, since the
+        /// solver finds no contacts between sleeping bodies.
+        /// @param entity  The reporting entity.
+        /// @param out     Destination vector, cleared then filled.
+        void GetBodyContacts(Entity entity, vector<BodyContact>& out) const;
 
         /// @brief Brings @p owner's constraint into line with @p settings, creating it if absent.
         ///

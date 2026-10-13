@@ -19,6 +19,7 @@
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
@@ -26,6 +27,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <array>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 
@@ -192,8 +194,20 @@ namespace Veng::Detail
     {
         /// @brief World-space contact point, narrowed to f32 for drawing.
         vec3 Point;
-        /// @brief Contact normal pointing out of the second body.
+        /// @brief Contact normal pointing out of the first body, toward the second.
         vec3 Normal;
+    };
+
+    /// @brief One manifold's contact as one reporting body sees it, before the step merges a pair's
+    ///        manifolds into one BodyContact.
+    struct ContactSample
+    {
+        /// @brief The reporting body's entity.
+        Entity Self;
+        /// @brief Penetration of the manifold's deepest point; negative while still apart.
+        f32 Depth = 0.0f;
+        /// @brief The contact as Self sees it.
+        BodyContact Contact;
     };
 
     /// @brief The world's layer table: broad-phase mapping plus both collision filters.
@@ -283,12 +297,17 @@ namespace Veng::Detail
         CollisionMatrix m_Matrix;
     };
 
-    /// @brief Collects contact points for the debug visualization and sensor overlaps for gameplay.
+    /// @brief Collects contact points for the debug visualization, sensor overlaps, and the contacts
+    ///        of the bodies that report them.
     ///
     /// It observes contacts and never changes settings, so it cannot perturb the simulation.
     /// Debug-contact recording is gated by DebugEnabled so a world with the visualization off pays
     /// nothing beyond the virtual call; sensor overlaps are always collected, since a sensor whose
-    /// overlaps went unrecorded would report an empty set rather than a stale one.
+    /// overlaps went unrecorded would report an empty set rather than a stale one. A contact is
+    /// sampled only when one of its bodies reports, so a world where none does pays one comparison.
+    ///
+    /// The solver calls these once per collision step, and once more for a contact its continuous
+    /// pass finds, so a pair yields several samples in a step; PhysicsWorld::Step merges them.
     ///
     /// The solver's job system is single-threaded, so these callbacks run on the thread that
     /// called Step and the containers below need no synchronization.
@@ -303,40 +322,68 @@ namespace Veng::Detail
         std::unordered_map<Entity, vector<Entity>> Overlaps;
         /// @brief Entity of each live body, keyed by the body's index-and-sequence value.
         const std::unordered_map<u32, Entity>* BodyOwners = nullptr;
+        /// @brief Whether each body reports its contacts, indexed by the body's index; grown on use.
+        vector<u8> Reporting;
+        /// @brief How many live bodies report their contacts.
+        u32 ReportingBodies = 0;
+        /// @brief One sample per manifold per reporting body during the current step.
+        vector<ContactSample> Samples;
+        /// @brief The solver's restitution threshold, which the impulse estimate applies as it does.
+        f32 MinVelocityForRestitution = 1.0f;
+        /// @brief Iterations the impulse estimate runs: the solver's own velocity steps.
+        u32 EstimateIterations = 10;
+
+        /// @brief Whether the body with @p id reports its contacts.
+        [[nodiscard]] bool IsReporting(const JPH::BodyID& id) const
+        {
+            const JPH::uint index = id.GetIndex();
+            return index < Reporting.size() && Reporting[index] != 0;
+        }
 
         /// @brief Records a newly detected contact manifold.
         /// @param body1     The first body in the pair.
         /// @param body2     The second body in the pair.
         /// @param manifold  The manifold's points and normal.
+        /// @param settings  The pair's combined friction and restitution, read and never written.
         void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2,
-                            const JPH::ContactManifold& manifold, JPH::ContactSettings&) override
+                            const JPH::ContactManifold& manifold,
+                            JPH::ContactSettings& settings) override
         {
-            Record(body1, body2, manifold);
+            Record(body1, body2, manifold, settings, true);
         }
 
         /// @brief Records a contact manifold that persists from the previous step.
         /// @param body1     The first body in the pair.
         /// @param body2     The second body in the pair.
         /// @param manifold  The manifold's points and normal.
+        /// @param settings  The pair's combined friction and restitution, read and never written.
         void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2,
                                 const JPH::ContactManifold& manifold,
-                                JPH::ContactSettings&) override
+                                JPH::ContactSettings& settings) override
         {
-            Record(body1, body2, manifold);
+            Record(body1, body2, manifold, settings, false);
         }
 
     private:
-        /// @brief Records @p manifold's points and, when either body is a sensor, the overlap.
+        /// @brief Records @p manifold's points, the overlap when either body is a sensor, and a
+        ///        sample for each body that reports its contacts.
         /// @param body1     The first body in the pair.
         /// @param body2     The second body in the pair.
         /// @param manifold  The manifold to record.
+        /// @param settings  The pair's combined contact settings.
+        /// @param began     Whether the solver reports the pair as new.
         void Record(const JPH::Body& body1, const JPH::Body& body2,
-                    const JPH::ContactManifold& manifold)
+                    const JPH::ContactManifold& manifold, const JPH::ContactSettings& settings,
+                    const bool began)
         {
             if (body1.IsSensor() || body2.IsSensor())
             {
                 RecordOverlap(body1, body2);
                 RecordOverlap(body2, body1);
+            }
+            else if (ReportingBodies != 0)
+            {
+                RecordReport(body1, body2, manifold, settings, began);
             }
             if (!DebugEnabled)
             {
@@ -366,6 +413,86 @@ namespace Veng::Detail
                 return;
             }
             Overlaps[sensorOwner->second].emplace_back(otherOwner->second);
+        }
+
+        /// @brief Samples @p manifold for whichever of its two bodies reports its contacts.
+        ///
+        /// The velocities are read as the solver finds the contact, before it acts on it; the
+        /// manifold's normal points out of body 1, toward body 2.
+        /// @param body1     The first body in the pair.
+        /// @param body2     The second body in the pair.
+        /// @param manifold  The manifold to sample.
+        /// @param settings  The pair's combined friction and restitution.
+        /// @param began     Whether the solver reports the pair as new.
+        void RecordReport(const JPH::Body& body1, const JPH::Body& body2,
+                          const JPH::ContactManifold& manifold,
+                          const JPH::ContactSettings& settings, const bool began)
+        {
+            const bool reports1 = IsReporting(body1.GetID());
+            const bool reports2 = IsReporting(body2.GetID());
+            const JPH::uint points = manifold.mRelativeContactPointsOn1.size();
+            if ((!reports1 && !reports2) || points == 0)
+            {
+                return;
+            }
+
+            const JPH::Vec3 normal = manifold.mWorldSpaceNormal;
+            JPH::uint deepest = 0;
+            f32 depth = -std::numeric_limits<f32>::infinity();
+            for (JPH::uint i = 0; i < points; ++i)
+            {
+                const f32 pointDepth =
+                    (manifold.mRelativeContactPointsOn1[i] - manifold.mRelativeContactPointsOn2[i])
+                        .Dot(normal);
+                if (pointDepth > depth)
+                {
+                    depth = pointDepth;
+                    deepest = i;
+                }
+            }
+            // The solver's own convention for a contact point: midway between the two surfaces.
+            const JPH::RVec3 point =
+                manifold.mBaseOffset + 0.5f * (manifold.mRelativeContactPointsOn1[deepest] +
+                                               manifold.mRelativeContactPointsOn2[deepest]);
+            const f32 approach =
+                (body1.GetPointVelocity(point) - body2.GetPointVelocity(point)).Dot(normal);
+
+            JPH::CollisionEstimationResult estimate;
+            JPH::EstimateCollisionResponse(
+                body1, body2, manifold, estimate, settings.mCombinedFriction,
+                settings.mCombinedRestitution, MinVelocityForRestitution, EstimateIterations);
+            f32 impulse = 0.0f;
+            for (const f32 contactImpulse : estimate.mContactImpulse)
+            {
+                impulse += contactImpulse;
+            }
+
+            const Entity entity1 = UnpackEntity(body1.GetUserData());
+            const Entity entity2 = UnpackEntity(body2.GetUserData());
+            const BodyContact contact{
+                .Point = FromJolt(point),
+                .ApproachSpeed = approach,
+                .Impulse = impulse,
+                .Began = began,
+            };
+            if (reports1)
+            {
+                BodyContact& seen = Samples
+                                        .emplace_back(ContactSample{
+                                            .Self = entity1, .Depth = depth, .Contact = contact})
+                                        .Contact;
+                seen.Other = entity2;
+                seen.Normal = -FromJolt(normal);
+            }
+            if (reports2)
+            {
+                BodyContact& seen = Samples
+                                        .emplace_back(ContactSample{
+                                            .Self = entity2, .Depth = depth, .Contact = contact})
+                                        .Contact;
+                seen.Other = entity1;
+                seen.Normal = FromJolt(normal);
+            }
         }
     };
 
@@ -466,6 +593,8 @@ namespace Veng::Detail
         bool Sensor = false;
         /// @brief Whether the entity carried a Sensor component when the body was created.
         bool SensorComponent = false;
+        /// @brief Whether the body's contacts are recorded each step (the ContactReport marker).
+        bool ReportContacts = false;
         /// @brief This body's slot in Native::Driven, or NotDriven for a Dynamic body.
         u32 Driven = NotDriven;
     };
@@ -555,6 +684,14 @@ namespace Veng
         vector<Detail::DrivenBody> Driven;
         /// @brief Entities whose body was created for a Sensor component, the ones a step publishes.
         vector<Entity> SensorEntities;
+        /// @brief Entities whose body reports its contacts, the ones a step publishes contacts to.
+        vector<Entity> ReportEntities;
+        /// @brief The last step's contacts, one per reporting body and other body, capped at
+        ///        MaxBodyContacts per reporting body; ordered by reporting entity, then fastest
+        ///        approach first.
+        vector<Detail::ContactSample> ReportedContacts;
+        /// @brief Contacts the last step's cap left out of a body's report.
+        u32 DroppedContacts = 0;
         /// @brief Entities the next reconcile re-checks whatever their change ticks say: a physics
         ///        component left them, or the body API was called on them directly.
         vector<Entity> Pending;

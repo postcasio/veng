@@ -225,6 +225,79 @@ namespace Veng
         vector<Entity> Exited;
     };
 
+    /// @brief Most entries a BodyContacts holds after one step.
+    ///
+    /// A body touching more bodies than this keeps the ones it approached fastest; the rest are
+    /// counted in PhysicsStepStats::ContactsDropped.
+    inline constexpr u32 MaxBodyContacts = 16;
+
+    /// @brief Marks an entity whose body's contacts are published after each step.
+    ///
+    /// Opt-in, so a world that marks nothing records nothing. A marked entity with a body is given a
+    /// BodyContacts at the step's reconcile, as a Sensor is given a SensorOverlaps, and the step
+    /// writes into it what the body touched — a vehicle's impacts, a body that takes damage from
+    /// what it hits, the loudness of an impact sound — for a gameplay system to drain in its own
+    /// phase. Adding or removing the marker is taken in place: the body is not re-created, and a
+    /// marked body moves exactly as an unmarked one does.
+    struct ContactReport
+    {
+    };
+
+    /// @brief One body another body touched during the last step.
+    ///
+    /// Every field is in the physics world's frame. A pair touching through several sub-shapes in
+    /// one step is one entry: the point and normal of the deepest contact point, the largest
+    /// approach speed, and the summed impulse.
+    struct BodyContact
+    {
+        /// @brief The entity owning the body touched.
+        Entity Other;
+        /// @brief World-space contact point, midway between the two surfaces at the deepest point.
+        dvec3 Point{0.0};
+        /// @brief Unit contact normal pointing out of Other, toward this body.
+        vec3 Normal{0.0f};
+        /// @brief How fast the two bodies were closing at Point along Normal, in metres per second,
+        ///        before the solver acted on the contact; positive when closing.
+        ///
+        /// Each body's velocity at the point includes its spin. It includes the velocity gravity
+        /// and forces add during the step, so a body resting under gravity reports about one
+        /// step's worth of fall: g·Δt divided by the world's collision steps. The largest over the
+        /// step's collision steps.
+        f32 ApproachSpeed = 0.0f;
+        /// @brief The normal impulse the contact is estimated to carry, in newton-seconds, summed
+        ///        over the step's collision steps.
+        ///
+        /// An estimate of the pair in isolation at their combined friction and restitution, not
+        /// the impulse the solver applied: the solver's iterations, the other contacts in the same
+        /// island, continuous collision and penetration recovery can each differ from it. A
+        /// consumer needing the change of velocity the step caused reads the body's velocity after
+        /// the step.
+        f32 Impulse = 0.0f;
+        /// @brief Whether the solver first reported the pair this step, rather than carrying a
+        ///        contact over from the previous one.
+        bool Began = false;
+    };
+
+    /// @brief The bodies an entity's body touched during the last step.
+    ///
+    /// Written by the step onto every entity carrying a ContactReport and a body: one entry per
+    /// other body, at most MaxBodyContacts, ordered fastest approach first. A pair that has
+    /// separated is simply absent; a consumer needing an exit compares Current against its own last
+    /// read. State a system drains, not an event it subscribes to: nothing a consumer does runs
+    /// inside the solver's step.
+    ///
+    /// @warning The solver finds contacts for the bodies it simulates, so a pair at rest whose two
+    /// bodies have both gone to sleep is not reported. Treat the set as "touching and active", as
+    /// a sensor's is.
+    ///
+    /// Runtime-only derived state: it carries no reflected field, so it never serializes and never
+    /// rides the wire.
+    struct BodyContacts
+    {
+        /// @brief The bodies touched during the last step, fastest approach first.
+        vector<BodyContact> Current;
+    };
+
     /// @brief Marks an entity whose physics state participates in rollback — a predicted body.
     ///
     /// A client that predicts a body's motion ahead of the server re-simulates it during
@@ -368,7 +441,8 @@ namespace Veng::Detail
 {
     /// @brief Tells @p scene's physics world that a physics component on @p entity is going.
     ///
-    /// The removal hook RigidBody, Collider and Sensor share: it queues the entity for the next
+    /// The removal hook RigidBody, Collider, Sensor and ContactReport share: it queues the entity
+    /// for the next
     /// step's reconcile, which destroys or re-creates its body, so the step finds what left
     /// without sweeping every body. A no-op on a scene with no physics world.
     /// @param scene   The scene the component is leaving.
@@ -455,6 +529,15 @@ VE_FIELD(Layers, .DisplayName = "Layers",
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::SensorOverlaps, 0x1D7CBF1FE92C5F71ULL);
+
+VE_ON_REMOVE(::Veng::ContactReport,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::ContactReport&)
+             { ::Veng::Detail::NotePhysicsComponentRemoved(scene, owner); });
+
+VE_REFLECT(::Veng::ContactReport, 0xB60655B1FAD46EFBULL)
+VE_REFLECT_END();
+
+VE_TYPE(::Veng::BodyContacts, 0xD37840E8065DE7E9ULL);
 
 VE_REFLECT(::Veng::FixedConstraint, 0x24E1EB68FD0AD48FULL)
 VE_FIELD(Target, .DisplayName = "Target", .Tooltip = "The other body this one is welded to")

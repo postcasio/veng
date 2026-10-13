@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 namespace Veng
 {
@@ -125,6 +126,29 @@ namespace Veng
             return a.Position == b.Position && a.Rotation == b.Rotation;
         }
 
+        /// @brief Gives a body's entity a BodyContacts when it reports its contacts, and takes it
+        ///        away when it does not.
+        /// @param scene    The scene the entity lives in.
+        /// @param entity   The entity to bring into line; it may be dead.
+        /// @param reports  Whether the entity has a body that reports its contacts.
+        void ReconcileContacts(Scene& scene, const Entity entity, const bool reports)
+        {
+            if (!scene.IsAlive(entity))
+            {
+                return;
+            }
+            const bool has = std::as_const(scene).Has<BodyContacts>(entity);
+            if (reports && !has)
+            {
+                scene.Add<BodyContacts>(entity);
+            }
+            else if (!reports && has)
+            {
+                // Nothing requires BodyContacts, so the removal is never refused.
+                (void)scene.Remove<BodyContacts>(entity);
+            }
+        }
+
         /// @brief Brings one entity's body into line with its components.
         ///
         /// Creates or re-creates the body when the entity carries a RigidBody and a Collider with a
@@ -145,11 +169,13 @@ namespace Veng
             if (body == nullptr || collider == nullptr)
             {
                 world.DestroyBody(entity);
+                ReconcileContacts(scene, entity, false);
                 return;
             }
             if (!HasShape(*collider))
             {
                 world.DestroyBody(entity);
+                ReconcileContacts(scene, entity, false);
                 if (std::ranges::find(native.AwaitingShape, entity) == native.AwaitingShape.end())
                 {
                     native.AwaitingShape.emplace_back(entity);
@@ -161,12 +187,13 @@ namespace Veng
             const RigidBody settings = *body;
             const Collider shape = *collider;
             const bool sensor = readScene.Has<Sensor>(entity);
+            const bool reports = readScene.Has<ContactReport>(entity);
             const PhysicsPose pose = ReadPose(readScene, entity, settings.SyncTransform);
 
             const auto before = native.Bodies.find(entity);
             const JPH::BodyID previous =
                 before != native.Bodies.end() ? before->second.Id : JPH::BodyID();
-            world.CreateBody(entity, settings, shape, pose, sensor);
+            world.CreateBody(entity, settings, shape, pose, sensor, reports);
             const auto after = native.Bodies.find(entity);
             const bool built = after != native.Bodies.end() && after->second.Id != previous;
 
@@ -182,6 +209,7 @@ namespace Veng
             {
                 scene.Add<SensorOverlaps>(entity);
             }
+            ReconcileContacts(scene, entity, reports);
         }
 
         /// @brief Reconciles each entity in @p work once, then empties it.
@@ -229,9 +257,9 @@ namespace Veng
         ///
         /// A component stamped at or after the tick the last reconcile ran at is a change, found by
         /// one pass over each physics pool's packed change ticks, so the pass touches only the
-        /// entities whose RigidBody, Collider or Sensor moved. Removals reach it through the
-        /// components' removal hook (Pending), and an entity waiting on cooked geometry is re-checked
-        /// each step. The first step, a step after a replay or a DestroyAllBodies, and any step
+        /// entities whose RigidBody, Collider, Sensor or ContactReport moved. Removals reach it
+        /// through the components' removal hook (Pending), and an entity waiting on cooked geometry
+        /// is re-checked each step. The first step, a step after a replay or a DestroyAllBodies, and any step
         /// whose scene tick has gone backwards walk every physics entity instead and sweep orphans,
         /// since change ticks cannot say what moved then.
         /// @param scene  The scene whose components are the authority.
@@ -281,6 +309,7 @@ namespace Veng
                 readScene.ForEachChangedSince<RigidBody>(since, collect);
                 readScene.ForEachChangedSince<Collider>(since, collect);
                 readScene.ForEachChangedSince<Sensor>(since, collect);
+                readScene.ForEachChangedSince<ContactReport>(since, collect);
             }
             ReconcileEach(scene, world, work, stats);
             if (full)
@@ -476,6 +505,25 @@ namespace Veng
                 overlaps->Current = current;
             }
         }
+
+        /// @brief Publishes what each reporting body touched during the step into its BodyContacts.
+        /// @param scene  The scene whose reporting entities are published to.
+        /// @param world  The world holding this step's contacts.
+        /// @param stats  The step's counters.
+        void PublishBodyContacts(Scene& scene, const PhysicsWorld& world, PhysicsStepStats& stats)
+        {
+            const PhysicsWorld::Native& native = world.GetNative();
+            for (const Entity owner : native.ReportEntities)
+            {
+                if (auto* contacts =
+                        scene.IsAlive(owner) ? scene.TryGet<BodyContacts>(owner) : nullptr)
+                {
+                    world.GetBodyContacts(owner, contacts->Current);
+                }
+            }
+            stats.ContactsReported = static_cast<u32>(native.ReportedContacts.size());
+            stats.ContactsDropped = native.DroppedContacts;
+        }
     }
 
     void Detail::NotePhysicsComponentRemoved(const Scene& scene, const Entity entity)
@@ -571,6 +619,7 @@ namespace Veng
         ReadBack(scene, *world, stats);
 
         PublishSensorOverlaps(scene, *world);
+        PublishBodyContacts(scene, *world, stats);
         native.Stats = stats;
     }
 

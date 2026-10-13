@@ -107,15 +107,17 @@ namespace Veng
         registry.Register<RumbleSource>();
 
         // Rigid-body simulation: what the solver simulates, the shape it collides with, the
-        // overlap-only sensor, and the three constraints. MotionType, PhysicsLayer and
-        // ColliderShape register transitively through their fields. PhysicsPose and
-        // SensorOverlaps are the solver's own output channels — runtime-only, so they carry no
-        // reflected field and neither serializes nor rides the wire.
+        // overlap-only sensor, the contact-report marker, and the three constraints. MotionType,
+        // PhysicsLayer and ColliderShape register transitively through their fields. PhysicsPose,
+        // SensorOverlaps and BodyContacts are the solver's own output channels — runtime-only, so
+        // they carry no reflected field and neither serializes nor rides the wire.
         registry.Register<RigidBody>();
         registry.Register<Collider>();
         registry.Register<PhysicsPose>();
         registry.Register<Sensor>();
         registry.Register<SensorOverlaps>();
+        registry.Register<ContactReport>();
+        registry.Register<BodyContacts>();
         registry.Register<FixedConstraint>();
         registry.Register<PointConstraint>();
         registry.Register<HingeConstraint>();
