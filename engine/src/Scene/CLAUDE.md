@@ -314,6 +314,16 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   so they do not follow by themselves, and a trail left alone streams off along its viewer's own
   motion. The origin's owner calls it with the displacement before `RibbonSystem` records the frame;
   entity `Transform`s stay the owner's to re-base.
+- **A floating origin also says where it stands, with `FloatingOrigin`.** One per scene
+  (`Veng/Scene/Components.h`, runtime-only, the first walked winning with a warning), it records at
+  double precision where the scene's coordinate origin stands in the frame its content rests in, and
+  how far out (`ViewerFrameReach`, a view depth) the viewer carries geometry of its own. The renderer
+  snaps its directional shadow cascades in that frame, and the cascades covering the reach in scene
+  space, so neither the distant scene nor the carried geometry shimmers (see
+  [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Shadows"). **The contract is one pass, one value**:
+  the pass that moves the origin re-bases the `Transform`s, calls `OffsetRibbons` with the
+  displacement and writes `FloatingOrigin::Position`, all from the same origin value, so the scene's
+  placements and the offset agree on every frame. A scene without one is a fixed-origin scene.
 
 ## Transient effects — a bounded pool, spawned and forgotten
 

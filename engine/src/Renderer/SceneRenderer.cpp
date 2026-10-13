@@ -46,6 +46,7 @@
 #include "HalfResTranslucency.h"
 #include <Veng/Renderer/BakedSkyCube.h>
 #include "PostProcessEffectResolver.h"
+#include "SceneFloatingOrigin.h"
 #include "SceneRendererIds.h"
 #include "SkyResolver.h"
 #include "SsrChain.h"
@@ -249,6 +250,15 @@ namespace Veng::Renderer
         Unique<RibbonScenePass> RibbonPostResolvePass;
         // Whether the ribbon over-budget warning has been logged; once per renderer.
         bool RibbonBudgetWarned = false;
+        // Each cascade set's last fit, which the next fit of that set index holds its radius
+        // ladder against. Valid only for a set fit at CascadeHistoryResolution and the current
+        // cascade count; a set whose light changed keeps it, since a held step is at most one too
+        // large and a needed one is taken at once.
+        std::array<CascadeData, MaxCascadeSets> CascadeHistory{};
+        std::array<bool, MaxCascadeSets> CascadeHistoryValid{};
+        u32 CascadeHistoryResolution = 0;
+        // Whether the several-FloatingOrigin warning has been logged; once per renderer.
+        bool MultipleFloatingOriginsWarned = false;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -2496,12 +2506,27 @@ namespace Veng::Renderer
         // One fit per granted cascade set; a frame that granted none still fits set 0 (straight
         // down) so the shadow pass and the constants block always have a valid matrix, which the
         // ShadowParams enable flag then leaves unsampled.
+        // Each set snaps in the frame the scene's content rests in, from the scene's
+        // FloatingOrigin, and holds its radius ladder against its own last fit.
         const u32 cascadeSetCount = std::max(packed.CascadeSetCount, 1u);
         std::array<CascadeData, MaxCascadeSets> cascadeSets{};
         {
             VE_PROFILE_SCOPE("Render/Cascades");
+            const FloatingOrigin origin = SceneFloatingOrigin(view.World);
+            if (!m_Internal->MultipleFloatingOriginsWarned && CountFloatingOrigins(view.World) > 1)
+            {
+                Log::Warn("SceneRenderer: several FloatingOrigin components in the scene; the "
+                          "shadow cascades snap against the first, ignoring the rest.");
+                m_Internal->MultipleFloatingOriginsWarned = true;
+            }
+            if (m_Internal->CascadeHistoryResolution != m_Settings.ShadowResolution)
+            {
+                m_Internal->CascadeHistoryValid.fill(false);
+                m_Internal->CascadeHistoryResolution = m_Settings.ShadowResolution;
+            }
             for (u32 s = 0; s < cascadeSetCount; ++s)
             {
+                const bool held = m_Internal->CascadeHistoryValid[s];
                 cascadeSets[s] =
                     ComputeCascades(view.Camera, packed.CascadeTravel[s], casterBounds,
                                     {.Count = m_Settings.CascadeCount,
@@ -2509,7 +2534,12 @@ namespace Veng::Renderer
                                      .Resolution = m_Settings.ShadowResolution,
                                      .MaxDistance = m_Settings.MaxShadowDistance,
                                      .MinDistance = m_Settings.MinShadowDistance,
-                                     .PancakeNear = m_Context.IsDepthClampSupported()});
+                                     .PancakeNear = m_Context.IsDepthClampSupported()},
+                                    {.Origin = origin.Position,
+                                     .ViewerFrameReach = origin.ViewerFrameReach,
+                                     .Previous = held ? &m_Internal->CascadeHistory[s] : nullptr});
+                m_Internal->CascadeHistory[s] = cascadeSets[s];
+                m_Internal->CascadeHistoryValid[s] = true;
             }
         }
         const std::span<const CascadeData> cascades(cascadeSets.data(), cascadeSetCount);

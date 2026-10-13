@@ -608,8 +608,8 @@ native, so `MaxAllocationScale` is the lever that supersamples a frame end to en
 
 Directional lights are shadowed by **cascaded shadow maps**, and a **bounded set of punctual
 lights** (`MaxShadowedPunctual`) by a **shared punctual shadow atlas**. The directional cascades
-split the camera frustum into depth slices, each cascade fit (bounding-sphere + texel-snapped) to
-its slice and rendered into a depth **atlas** in **one** pass (per-cascade viewports); the
+split the camera frustum into depth slices, each cascade fit (a bounding sphere on a radius ladder,
+snapped to whole texels in the frame the scene rests in) to its slice and rendered into a depth **atlas** in **one** pass (per-cascade viewports); the
 lighting pass selects the cascade by the fragment's view-space depth, remaps to the atlas tile,
 and **`SampleCmp`s** it through a **hardware comparison sampler** with a boundary cross-fade.
 
@@ -687,7 +687,41 @@ direction. A near-parallel *area* light denied a set falls back to its own persp
 Cascade fit is pure, device-free math (`Renderer::ComputeCascades`,
 `Veng/Renderer/ShadowCascades.h`) over the camera, light direction, and the world-space scene
 bound (the bound only extends each cascade's near plane toward the light to catch off-screen
-casters; the XY extent is the frustum slice). The punctual lights add the second arm: a **spot**
+casters; the XY extent is the frustum slice).
+
+**A cascade holds still against the scene.** A point at rest lands at the same sub-texel position in
+its cascade frame after frame, while the camera translates or turns, so shadow edges do not crawl:
+
+- **The size moves only in ladder steps.** Each slice's bounding sphere is measured in view space,
+  so for given splits its radius does not depend on the camera's orientation, to the bit. The radius
+  rounds up onto a fixed ladder, `2^(n/8)` world units (`CascadeStepRadius`,
+  `CascadeData::RadiusStep`), with hysteresis against the set's last fit (`CascadeFrame::Previous`):
+  a need that grows takes its step at once, and one hovering within a step below the held one keeps
+  it. The cost is at most two steps of radius (about 19 %) of texel density; the splits and
+  `SplitFar` are the true fit's, so cascade selection is unchanged. The renderer keeps each set
+  index's last fit, dropped on a change of resolution (a change of count is ignored by the fit).
+- **The pitch is the raster pitch.** The texel size is `2·r / (Resolution − 4)` and the box is exactly
+  `Resolution` of them wide, so the sphere keeps two texels beside it on each side — half a texel for
+  the snap's move and one for the guard band. `TexelWorldSize` is that pitch exactly, which the
+  lighting pass's bias and `LightShadowMapAt`'s texel size read; a medium spacing its taps by it sees
+  it change only in ladder steps.
+- **The snap is real, in the frame the scene's content rests in.** The light basis depends on the
+  light alone (`CascadeLightBasis`), and the box centre is snapped to whole texels on a grid fixed in
+  the **stable frame**: scene space for a fixed-origin scene, or, for a scene carrying a
+  `FloatingOrigin` (`Veng/Scene/Components.h`, read once per `Execute` through
+  `SceneFloatingOrigin`), scene space displaced by its `Position`. Only the grid's phase is taken
+  from the origin, in double precision; everything else stays in small render-space magnitudes. So a
+  consumer that re-centres its world on the viewer each frame still sees its distant scene hold still.
+- **The cascades covering the viewer's own geometry ride the viewer.** Every cascade whose slice
+  begins nearer than `FloatingOrigin::ViewerFrameReach` snaps in scene space instead
+  (`CascadeData::ViewerFrameCount`, always a prefix, recomputed from each fit's splits), so geometry
+  the viewer carries holds still too. The split between the two frames needs no handling: the
+  lighting pass already cross-fades each cascade into the next across the blend band, both samples
+  are correct shadows differing only in sub-texel phase, so a receiver's slight shift fades in by the
+  blend weight rather than across a line. The default reach of zero puts no cascade in the viewer's
+  frame.
+
+The punctual lights add the second arm: a **spot**
 renders one perspective shadow map through a single frustum, a **point** renders six 90° cube
 faces, both into the shared punctual atlas (a 2D atlas of `MaxShadowedPunctual·CubeFaceCount`
 tiles); the lighting pass samples each shadowed light's map (projective for a spot, cube-direction

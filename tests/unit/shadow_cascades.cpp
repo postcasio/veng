@@ -1,17 +1,25 @@
 // Cascade-math unit cases: pure CPU math, no Context, no Vulkan. ComputeCascades
-// is a glm-only function of a Camera, a light direction, and a scene bound, so
-// these run with no ICD.
+// is a glm-only function of a Camera, a light direction, a scene bound and a snap
+// frame, so these run with no ICD.
 
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cmath>
+#include <limits>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/component_wise.hpp>
 
 #include <Veng/Math/AABB.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/ShadowCascades.h>
+#include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+
+#include "Renderer/SceneFloatingOrigin.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -24,6 +32,71 @@ namespace
         camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, near, far);
         camera.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
         return camera;
+    }
+
+    constexpr f32 TestFovY = glm::radians(60.0f);
+    constexpr f32 TestAspect = 16.0f / 9.0f;
+
+    CameraView MakeCamera(const vec3 eye, const vec3 forward, const f32 near = 0.1f,
+                          const f32 far = 100.0f)
+    {
+        CameraView camera;
+        camera.SetPerspective(TestFovY, TestAspect, near, far);
+        camera.SetView(eye, eye + forward, vec3(0.0f, 1.0f, 0.0f));
+        return camera;
+    }
+
+    // A point's texel coordinate in cascade k: (ndc.xy · 0.5 + 0.5) · resolution.
+    vec2 TexelCoord(const CascadeData& data, const u32 k, const vec3 point, const u32 resolution)
+    {
+        const vec4 clip = data.ViewProj[k] * vec4(point, 1.0f);
+        return (vec2(clip) / clip.w * 0.5f + 0.5f) * static_cast<f32>(resolution);
+    }
+
+    // How far two texel coordinates are from differing by a whole number of texels, per axis.
+    f32 SubTexelMismatch(const vec2 a, const vec2 b)
+    {
+        const vec2 delta = a - b;
+        return glm::compMax(glm::abs(delta - glm::round(delta)));
+    }
+
+    // The eight world-space corners of the camera's frustum between two view depths, from the
+    // test camera's own field of view.
+    std::array<vec3, 8> SliceCorners(const CameraView& camera, const f32 nearDepth,
+                                     const f32 farDepth)
+    {
+        const mat4 viewToWorld = glm::inverse(camera.View());
+        std::array<vec3, 8> corners{};
+        usize i = 0;
+        for (const f32 depth : {nearDepth, farDepth})
+        {
+            const f32 halfHeight = depth * std::tan(TestFovY * 0.5f);
+            const f32 halfWidth = halfHeight * TestAspect;
+            for (const vec2 sign :
+                 {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f)})
+            {
+                corners[i++] =
+                    vec3(viewToWorld * vec4(sign.x * halfWidth, sign.y * halfHeight, -depth, 1.0f));
+            }
+        }
+        return corners;
+    }
+
+    // The fewest texels between any slice corner of any cascade and the edge of its tile.
+    f32 SliceMarginTexels(const CascadeData& data, const CameraView& camera, const u32 resolution)
+    {
+        const f32 res = static_cast<f32>(resolution);
+        f32 margin = std::numeric_limits<f32>::max();
+        for (u32 k = 0; k < data.Count; ++k)
+        {
+            const f32 nearDepth = k == 0 ? camera.GetNear() : data.SplitFar[k - 1];
+            for (const vec3& corner : SliceCorners(camera, nearDepth, data.SplitFar[k]))
+            {
+                const vec2 u = TexelCoord(data, k, corner, resolution);
+                margin = std::min({margin, u.x, u.y, res - u.x, res - u.y});
+            }
+        }
+        return margin;
     }
 
     bool IsFinite(const mat4& m)
@@ -96,49 +169,47 @@ TEST_CASE("ComputeCascades: Lambda endpoints reproduce uniform and logarithmic s
     }
 }
 
-TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
+TEST_CASE("ComputeCascades: every slice lands inside its tile with a texel to spare")
 {
-    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
-    const f32 near = camera.GetNear();
-    const f32 far = camera.GetFar();
-    const CascadeData data =
-        ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
+    // Stratified: three light directions (one straight down), two camera poses, and a fixed
+    // origin and one 1e5 units out. The box is exactly Resolution texels of the reported pitch.
+    const CascadeSettings settings{.Resolution = 1024};
+    const std::array<vec3, 3> lights = {vec3(0.3f, -1.0f, 0.2f), vec3(0.0f, -1.0f, 0.0f),
+                                        vec3(-0.9f, -0.25f, 0.4f)};
+    const std::array<CameraView, 2> cameras = {
+        MakeCamera(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, -0.2f, -1.0f)),
+        MakeCamera(vec3(-3.7f, 0.4f, 1.9f), vec3(0.8f, 0.3f, 0.5f))};
+    const std::array<dvec3, 2> origins = {dvec3(0.0), dvec3(1.0e5, -4.1e4, 7.3e4)};
 
-    const mat4 invViewProj = glm::inverse(camera.ViewProjection());
-
-    const auto worldPointAtViewDepth = [&](f32 viewDepth)
+    f32 margin = std::numeric_limits<f32>::max();
+    f32 widthError = 0.0f;
+    u32 fits = 0;
+    for (const vec3& light : lights)
     {
-        // Interpolate a center-of-screen world point between the near and far
-        // frustum centers by the view-depth fraction (linear in view depth).
-        // Reverse-Z: the near plane is NDC z = 1 and the far plane z = 0.
-        const f32 fraction = (viewDepth - near) / (far - near);
-        const vec4 nearH = invViewProj * vec4(0.0f, 0.0f, 1.0f, 1.0f);
-        const vec4 farH = invViewProj * vec4(0.0f, 0.0f, 0.0f, 1.0f);
-        const vec3 nearPoint = vec3(nearH) / nearH.w;
-        const vec3 farPoint = vec3(farH) / farH.w;
-        return nearPoint + (farPoint - nearPoint) * fraction;
-    };
-
-    const auto inClip = [](const vec4& clip)
-    {
-        const vec3 ndc = vec3(clip) / clip.w;
-        const f32 eps = 1e-3f;
-        return ndc.x >= -1.0f - eps && ndc.x <= 1.0f + eps && ndc.y >= -1.0f - eps &&
-               ndc.y <= 1.0f + eps && ndc.z >= -eps && ndc.z <= 1.0f + eps;
-    };
-
-    // An interior point of cascade 0 (~50% through its depth range).
-    const f32 cascade0Mid = near + (data.SplitFar[0] - near) * 0.5f;
-    const vec3 p0 = worldPointAtViewDepth(cascade0Mid);
-    CHECK(inClip(data.ViewProj[0] * vec4(p0, 1.0f)));
-
-    // An interior point of the last cascade (~95% depth — not the far corner,
-    // which guard-band/snap rounding can push past z = 1).
-    const u32 last = data.Count - 1;
-    const f32 lastStart = data.SplitFar[last - 1];
-    const f32 lastMid = lastStart + (data.SplitFar[last] - lastStart) * 0.5f;
-    const vec3 pLast = worldPointAtViewDepth(lastMid);
-    CHECK(inClip(data.ViewProj[last] * vec4(pLast, 1.0f)));
+        for (const CameraView& camera : cameras)
+        {
+            for (const dvec3& origin : origins)
+            {
+                const CascadeData data =
+                    ComputeCascades(camera, light, AABB::Empty(), settings, {.Origin = origin});
+                margin = std::min(margin, SliceMarginTexels(data, camera, settings.Resolution));
+                for (u32 k = 0; k < data.Count; ++k)
+                {
+                    // orthoZO: |X row| = 2 / width, row 0 being glm's [c][0] across columns.
+                    const f32 width =
+                        2.0f / glm::length(vec3(data.ViewProj[k][0][0], data.ViewProj[k][1][0],
+                                                data.ViewProj[k][2][0]));
+                    const f32 expected =
+                        static_cast<f32>(settings.Resolution) * data.TexelWorldSize[k];
+                    widthError = std::max(widthError, std::abs(width - expected) / expected);
+                }
+                ++fits;
+            }
+        }
+    }
+    CHECK(fits == 12);
+    CHECK(margin >= 1.0f);
+    CHECK(widthError < 1e-5f);
 }
 
 TEST_CASE("ComputeCascades: straight-down light yields finite matrices")
@@ -153,65 +224,292 @@ TEST_CASE("ComputeCascades: straight-down light yields finite matrices")
     }
 }
 
-TEST_CASE("ComputeCascades: cascade extent is rotation-invariant")
+TEST_CASE("ComputeCascades: turning changes neither the texel size nor the grid")
 {
-    // Two cameras at the same position, different yaw. The bounding-sphere fit
-    // makes each cascade's extent (sphere diameter) independent of orientation.
-    CameraView a;
-    a.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    a.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 2.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
-
-    CameraView b;
-    b.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    b.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(5.0f, 2.0f, 5.0f), vec3(0.0f, 1.0f, 0.0f));
-
+    // The camera stays put and yaws 0°, 37° and 180°, then pitches 20°. An empty bound keeps the
+    // splits fixed, so every pose measures the same slices.
+    const vec3 eye(0.4f, 2.0f, 3.0f);
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
-    const CascadeData da = ComputeCascades(a, lightDir, AABB::Empty(), CascadeSettings{});
-    const CascadeData db = ComputeCascades(b, lightDir, AABB::Empty(), CascadeSettings{});
-
-    // Recover each cascade's XY ortho extent from the projection scale: in
-    // glm::orthoZO, proj[0][0] = 2/(right-left), so the width is 2/proj[0][0].
-    // The matrices include lightView, but the projection scale survives.
-    for (u32 k = 0; k < da.Count; ++k)
+    const CascadeSettings settings{.Resolution = 1024};
+    const auto forward = [](const f32 yawDegrees, const f32 pitchDegrees)
     {
-        // The ortho scale is the X/Y row lengths of the linear part.
-        const f32 widthA = glm::length(vec3(da.ViewProj[k][0]));
-        const f32 widthB = glm::length(vec3(db.ViewProj[k][0]));
-        CHECK(widthA == doctest::Approx(widthB).epsilon(0.01));
+        const f32 yaw = glm::radians(yawDegrees);
+        const f32 pitch = glm::radians(pitchDegrees);
+        return vec3(std::sin(yaw) * std::cos(pitch), std::sin(pitch),
+                    -std::cos(yaw) * std::cos(pitch));
+    };
+    const std::array<CameraView, 4> poses = {
+        MakeCamera(eye, forward(0.0f, 0.0f)), MakeCamera(eye, forward(37.0f, 0.0f)),
+        MakeCamera(eye, forward(180.0f, 0.0f)), MakeCamera(eye, forward(180.0f, 20.0f))};
+
+    const CascadeData first = ComputeCascades(poses[0], lightDir, AABB::Empty(), settings);
+    // A point beside the eye lies in cascade 0's tile however the camera turns.
+    const vec3 point = eye + vec3(0.3f, -0.2f, 0.1f);
+    const vec2 firstTexel = TexelCoord(first, 0, point, settings.Resolution);
+    const f32 res = static_cast<f32>(settings.Resolution);
+    REQUIRE(glm::all(glm::greaterThan(firstTexel, vec2(0.0f))));
+    REQUIRE(glm::all(glm::lessThan(firstTexel, vec2(res))));
+
+    u32 sizeMismatches = 0;
+    u32 outsideTile = 0;
+    f32 worstMismatch = 0.0f;
+    for (usize i = 1; i < poses.size(); ++i)
+    {
+        const CascadeData data = ComputeCascades(poses[i], lightDir, AABB::Empty(), settings);
+        for (u32 k = 0; k < data.Count; ++k)
+        {
+            sizeMismatches += data.TexelWorldSize[k] == first.TexelWorldSize[k] &&
+                                      data.RadiusStep[k] == first.RadiusStep[k]
+                                  ? 0u
+                                  : 1u;
+        }
+        const vec2 texel = TexelCoord(data, 0, point, settings.Resolution);
+        outsideTile += glm::all(glm::greaterThan(texel, vec2(0.0f))) &&
+                               glm::all(glm::lessThan(texel, vec2(res)))
+                           ? 0u
+                           : 1u;
+        worstMismatch = std::max(worstMismatch, SubTexelMismatch(texel, firstTexel));
+    }
+    CHECK(sizeMismatches == 0);
+    CHECK(outsideTile == 0);
+    CHECK(worstMismatch < 1e-3f);
+}
+
+TEST_CASE("ComputeCascades: a translation leaves the grid where it was")
+{
+    // A fixed-origin scene and an empty bound, so the splits do not move. The camera steps a
+    // fraction of a texel, then several, along a diagonal; a point inside cascade 0's slice in
+    // both poses keeps its sub-texel position, and the box moves by whole texels.
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{.Resolution = 1024};
+    const vec3 eye(0.2f, 2.0f, 3.0f);
+    const vec3 forward = glm::normalize(vec3(0.1f, -0.3f, -1.0f));
+    const CameraView start = MakeCamera(eye, forward);
+    const CascadeData a = ComputeCascades(start, lightDir, AABB::Empty(), settings);
+    const vec3 point = eye + forward * 1.5f;
+    REQUIRE(1.5f < a.SplitFar[0]);
+    const vec2 texelA = TexelCoord(a, 0, point, settings.Resolution);
+
+    const vec3 diagonal = glm::normalize(vec3(1.0f, 1.0f, 1.0f));
+    for (const f32 texels : {0.3f, 7.6f})
+    {
+        const CameraView moved =
+            MakeCamera(eye + diagonal * (texels * a.TexelWorldSize[0]), forward);
+        const CascadeData b = ComputeCascades(moved, lightDir, AABB::Empty(), settings);
+        REQUIRE(b.TexelWorldSize[0] == a.TexelWorldSize[0]);
+        const vec2 texelB = TexelCoord(b, 0, point, settings.Resolution);
+        CHECK(SubTexelMismatch(texelA, texelB) < 1e-3f);
+        if (texels > 1.0f)
+        {
+            // The box followed the camera, by whole texels.
+            CHECK(glm::compMax(glm::abs(glm::round(texelA - texelB))) >= 1.0f);
+        }
     }
 }
 
-TEST_CASE("ComputeCascades: sub-texel camera translation yields a stable snapped box")
+TEST_CASE("ComputeCascades: a floating-origin shift moves nothing")
 {
+    // Frame B is frame A with every render-space position shifted by -d and the origin moved by
+    // +d, so the same scene stands in the same place in the stable frame.
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
-    const CascadeSettings settings{.Count = 4, .Lambda = 0.85f, .Resolution = 1024};
+    const CascadeSettings settings{.Resolution = 1024};
+    const vec3 eye(0.2f, 2.0f, 3.0f);
+    const vec3 forward = glm::normalize(vec3(0.1f, -0.3f, -1.0f));
+    const dvec3 origin(1.0e5, -3.7e4, 6.2e4);
+    const CascadeData a = ComputeCascades(MakeCamera(eye, forward), lightDir, AABB::Empty(),
+                                          settings, {.Origin = origin});
+    const vec3 point = eye + forward * 1.5f;
 
-    CameraView a;
-    a.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    a.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
-
-    // Translate the camera by a tiny amount — well under a texel for the near
-    // cascade — and re-fit. The snapped light-space box (its XY scale) should be
-    // identical within a tight epsilon.
-    CameraView b;
-    b.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    b.SetView(vec3(0.0001f, 2.0f, 10.0001f), vec3(0.0001f, 0.0f, 0.0001f), vec3(0.0f, 1.0f, 0.0f));
-
-    const CascadeData da = ComputeCascades(a, lightDir, AABB::Empty(), settings);
-    const CascadeData db = ComputeCascades(b, lightDir, AABB::Empty(), settings);
-
-    // The full ViewProj for cascade 0 should match within a tight epsilon: the
-    // snapped min is identical and the extent is sphere-stable.
-    for (int c = 0; c < 4; ++c)
+    for (const vec3 shift : {vec3(0.3f * a.TexelWorldSize[0]), vec3(12.3f, -4.5f, 7.8f)})
     {
-        for (int r = 0; r < 4; ++r)
+        const CascadeData b =
+            ComputeCascades(MakeCamera(eye - shift, forward), lightDir, AABB::Empty(), settings,
+                            {.Origin = origin + dvec3(shift)});
+        f32 worst = 0.0f;
+        for (u32 k = 0; k < a.Count; ++k)
         {
-            // epsilon 0.005 (0.5%): the snap is sphere-stable to well under a percent, but the
-            // bounding-sphere fit + texel snap accumulates a little more float rounding under
-            // MSVC than clang, so a 0.1% bound false-fails there while still pinning stability.
-            CHECK(da.ViewProj[0][c][r] == doctest::Approx(db.ViewProj[0][c][r]).epsilon(0.005));
+            const vec2 texelA = TexelCoord(a, k, point, settings.Resolution);
+            const vec2 texelB = TexelCoord(b, k, point - shift, settings.Resolution);
+            worst = std::max(worst, glm::compMax(glm::abs(texelA - texelB)));
+        }
+        CHECK(worst < 1e-3f);
+    }
+}
+
+TEST_CASE("ComputeCascades: texel lines lie on the stable frame's grid at any origin")
+{
+    // A point's sub-texel position is its stable-frame coordinate on the light's axes, in
+    // pitches, whatever the origin's magnitude: the grid is fixed in that frame, not in the
+    // render space the camera moves through.
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{.Resolution = 1024};
+    const vec3 eye(0.2f, 2.0f, 3.0f);
+    const vec3 forward = glm::normalize(vec3(0.1f, -0.3f, -1.0f));
+    const CameraView camera = MakeCamera(eye, forward);
+    const vec3 point = eye + forward * 1.5f;
+    const mat3 basis = CascadeLightBasis(lightDir);
+
+    f32 worst = 0.0f;
+    for (const dvec3 origin : {dvec3(0.0), dvec3(1234.567, -876.5, 345.25),
+                               dvec3(1.0e5, -3.7e4, 6.2e4), dvec3(3.0e5, 1.1e5, -2.4e5)})
+    {
+        const CascadeData data =
+            ComputeCascades(camera, lightDir, AABB::Empty(), settings, {.Origin = origin});
+        const dvec3 stable = dvec3(point) + origin;
+        for (u32 k = 0; k < data.Count; ++k)
+        {
+            const f64 pitch = data.TexelWorldSize[k];
+            const vec2 texel = TexelCoord(data, k, point, settings.Resolution);
+            for (glm::length_t axis = 0; axis < 2; ++axis)
+            {
+                const f64 along = (static_cast<f64>(basis[0][axis]) * stable.x) +
+                                  (static_cast<f64>(basis[1][axis]) * stable.y) +
+                                  (static_cast<f64>(basis[2][axis]) * stable.z);
+                // The clip space's y points down, so texel y counts against the light's up axis.
+                const f64 sign = axis == 0 ? 1.0 : -1.0;
+                const f64 delta = static_cast<f64>(texel[axis]) - (sign * along / pitch);
+                worst = std::max(worst, static_cast<f32>(std::abs(delta - std::round(delta))));
+            }
         }
     }
+    CHECK(worst < 1e-3f);
+}
+
+TEST_CASE("ComputeCascades: near cascades ride the viewer, far cascades rest in the stable frame")
+{
+    // Four cascades over fixed splits, and a reach between the first and second slices' near
+    // depths. In frame B the viewer has moved by d and the world is re-centred on it: the camera
+    // and a carried point stay put in render space, the origin moves by d, and a point at rest
+    // moves by -d.
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{.Count = 4, .Resolution = 1024};
+    const vec3 eye(0.2f, 2.0f, 3.0f);
+    const vec3 forward = glm::normalize(vec3(0.1f, -0.3f, -1.0f));
+    const CameraView camera = MakeCamera(eye, forward);
+    const dvec3 origin(1.0e5, -3.7e4, 6.2e4);
+
+    const CascadeData plain = ComputeCascades(camera, lightDir, AABB::Empty(), settings);
+    const f32 reach = 0.5f * (camera.GetNear() + plain.SplitFar[0]);
+    const CascadeData a = ComputeCascades(camera, lightDir, AABB::Empty(), settings,
+                                          {.Origin = origin, .ViewerFrameReach = reach});
+    CHECK(a.ViewerFrameCount == 1);
+
+    const vec3 carried = eye + forward * 1.2f + vec3(0.2f, 0.1f, 0.0f);
+    const vec3 resting = eye + forward * 20.0f;
+    for (const vec3 shift : {vec3(0.3f * a.TexelWorldSize[0]), vec3(21.0f, -9.4f, 28.7f)})
+    {
+        const CascadeData b =
+            ComputeCascades(camera, lightDir, AABB::Empty(), settings,
+                            {.Origin = origin + dvec3(shift), .ViewerFrameReach = reach});
+        CHECK(b.ViewerFrameCount == 1);
+        // The viewer-frame cascade holds still against the viewer, wholly.
+        const vec2 carriedA = TexelCoord(a, 0, carried, settings.Resolution);
+        const vec2 carriedB = TexelCoord(b, 0, carried, settings.Resolution);
+        CHECK(glm::compMax(glm::abs(carriedA - carriedB)) < 1e-3f);
+        // The stable-frame cascades hold still against the resting point; their boxes still
+        // follow the viewer, by whole texels.
+        f32 worst = 0.0f;
+        for (u32 k = 1; k < a.Count; ++k)
+        {
+            worst = std::max(
+                worst, SubTexelMismatch(TexelCoord(a, k, resting, settings.Resolution),
+                                        TexelCoord(b, k, resting - shift, settings.Resolution)));
+        }
+        CHECK(worst < 1e-3f);
+    }
+
+    // A reach past every slice's near depth puts every cascade in the viewer's frame: the fit
+    // collapsed onto carried geometry. A zero reach puts none there.
+    const CascadeData all =
+        ComputeCascades(camera, lightDir, AABB::Empty(), settings,
+                        {.Origin = origin, .ViewerFrameReach = plain.SplitFar[plain.Count - 1]});
+    CHECK(all.ViewerFrameCount == all.Count);
+    const CascadeData shifted =
+        ComputeCascades(camera, lightDir, AABB::Empty(), settings,
+                        {.Origin = origin + dvec3(21.0f, -9.4f, 28.7f),
+                         .ViewerFrameReach = plain.SplitFar[plain.Count - 1]});
+    f32 worstCarried = 0.0f;
+    for (u32 k = 0; k < all.Count; ++k)
+    {
+        worstCarried =
+            std::max(worstCarried, glm::compMax(glm::abs(TexelCoord(all, k, carried, 1024) -
+                                                         TexelCoord(shifted, k, carried, 1024))));
+    }
+    CHECK(worstCarried < 1e-3f);
+    CHECK(plain.ViewerFrameCount == 0);
+}
+
+TEST_CASE("ComputeCascades: the radius ladder holds a hovering need and grows at once")
+{
+    // One cascade, so the far plane alone sets the need. Find the far plane at which the step
+    // first rises, then hover half a percent either side of it.
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{.Count = 1, .Resolution = 1024};
+    const vec3 eye(0.2f, 2.0f, 3.0f);
+    const vec3 forward = glm::normalize(vec3(0.1f, -0.3f, -1.0f));
+    const auto fit = [&](const f32 far, const CascadeData* previous)
+    {
+        return ComputeCascades(MakeCamera(eye, forward, 0.1f, far), lightDir, AABB::Empty(),
+                               settings, {.Previous = previous});
+    };
+
+    const i32 lowStep = fit(10.0f, nullptr).RadiusStep[0];
+    f32 below = 10.0f;
+    f32 above = 20.0f;
+    REQUIRE(fit(above, nullptr).RadiusStep[0] > lowStep);
+    for (int i = 0; i < 40; ++i)
+    {
+        const f32 mid = 0.5f * (below + above);
+        (fit(mid, nullptr).RadiusStep[0] > lowStep ? above : below) = mid;
+    }
+
+    CascadeData held = fit(above * 1.005f, nullptr);
+    const i32 highStep = held.RadiusStep[0];
+    REQUIRE(fit(above * 0.995f, nullptr).RadiusStep[0] < highStep);
+    u32 changes = 0;
+    f32 margin = std::numeric_limits<f32>::max();
+    for (int i = 0; i < 12; ++i)
+    {
+        const f32 far = above * (i % 2 == 0 ? 0.995f : 1.005f);
+        held = fit(far, &held);
+        changes += held.RadiusStep[0] == highStep ? 0u : 1u;
+        margin = std::min(margin, SliceMarginTexels(held, MakeCamera(eye, forward, 0.1f, far),
+                                                    settings.Resolution));
+    }
+    CHECK(changes == 0);
+
+    // A need past the held step, either way, takes its own step at once.
+    const CascadeData grown = fit(above * 1.5f, &held);
+    CHECK(grown.RadiusStep[0] == fit(above * 1.5f, nullptr).RadiusStep[0]);
+    CHECK(grown.RadiusStep[0] > highStep);
+    margin = std::min(margin, SliceMarginTexels(grown, MakeCamera(eye, forward, 0.1f, above * 1.5f),
+                                                settings.Resolution));
+    const CascadeData shrunk = fit(above * 0.5f, &held);
+    CHECK(shrunk.RadiusStep[0] == fit(above * 0.5f, nullptr).RadiusStep[0]);
+    CHECK(shrunk.RadiusStep[0] < highStep - 1);
+
+    // The held radius never falls below the need: every slice still lands inside its tile.
+    CHECK(margin >= 1.0f);
+}
+
+TEST_CASE("SceneFloatingOrigin: reads the scene's component, or a fixed origin without one")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    const FloatingOrigin none = SceneFloatingOrigin(*scene);
+    CHECK(none.Position == dvec3(0.0));
+    CHECK(none.ViewerFrameReach == 0.0f);
+    CHECK(CountFloatingOrigins(*scene) == 0);
+
+    const Entity entity = scene->CreateEntity();
+    scene->Add<FloatingOrigin>(entity) = {.Position = dvec3(1.0e5, -2.5, 3.0e4),
+                                          .ViewerFrameReach = 12.0f};
+    const FloatingOrigin read = SceneFloatingOrigin(*scene);
+    CHECK(read.Position == dvec3(1.0e5, -2.5, 3.0e4));
+    CHECK(read.ViewerFrameReach == 12.0f);
+    CHECK(CountFloatingOrigins(*scene) == 1);
 }
 
 TEST_CASE("ComputeCascades: scene bound clamps the split range to the scene")
@@ -499,13 +797,12 @@ TEST_CASE("ComputeCascades: TexelWorldSize and DepthRange are positive and texel
     {
         CHECK(data.TexelWorldSize[k] > 0.0f);
         CHECK(data.DepthRange[k] > 0.0f);
-        // The snapped ortho width is the slice diameter plus the two-texel guard band;
-        // world-per-texel times the resolution recovers it from the projection scale
-        // (orthoZO: proj[0][0] = 2/width, so width = 2/|X row|, row 0 = glm [c][0]).
+        // The box is exactly Resolution texels of the reported pitch, recovered from the
+        // projection scale (orthoZO: proj[0][0] = 2/width, so width = 2/|X row|, row 0 = glm
+        // [c][0]).
         const f32 width = 2.0f / glm::length(vec3(data.ViewProj[k][0][0], data.ViewProj[k][1][0],
                                                   data.ViewProj[k][2][0]));
-        const f32 expectedWidth =
-            data.TexelWorldSize[k] * (static_cast<f32>(settings.Resolution) + 2.0f);
+        const f32 expectedWidth = data.TexelWorldSize[k] * static_cast<f32>(settings.Resolution);
         CHECK(width == doctest::Approx(expectedWidth).epsilon(0.001));
     }
 

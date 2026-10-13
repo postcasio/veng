@@ -11,6 +11,11 @@
 /// Turns a camera, a light direction, and the scene bound into per-cascade
 /// light-space view-proj matrices and split distances. glm-only — no Context, no
 /// device — so it compiles and unit-tests without an ICD, beside PunctualShadows.h.
+///
+/// A cascade holds still against the scene: its radius rounds up onto a fixed ladder of sizes,
+/// so its texel pitch changes only in whole steps, and its box is snapped to that pitch on a grid
+/// fixed in the frame the scene's content rests in (CascadeFrame), so a camera that translates or
+/// turns moves the box by whole texels and a point at rest keeps its sub-texel position.
 namespace Veng::Renderer
 {
     /// @brief Maximum number of shadow cascades the engine supports.
@@ -55,10 +60,18 @@ namespace Veng::Renderer
 
         /// @brief Each cascade's world units per shadow-map texel; [0, Count) valid.
         ///
-        /// The exact snap increment the cascade's light-space box was quantized to. The
-        /// lighting pass scales its normal-offset and depth bias by it, so bias grows with
-        /// cascade coarseness instead of being recovered approximately from the matrix.
+        /// The raster pitch: the box is exactly Resolution of these wide, and it is also the
+        /// increment the box is snapped to. The lighting pass scales its normal-offset and depth
+        /// bias by it, so bias grows with cascade coarseness instead of being recovered
+        /// approximately from the matrix. It changes only when RadiusStep does.
         std::array<f32, MaxCascades> TexelWorldSize;
+
+        /// @brief Each cascade's step on the radius ladder; [0, Count) valid.
+        ///
+        /// The cascade's box covers a sphere of CascadeStepRadius(RadiusStep[k]), the smallest
+        /// ladder radius at or above the slice's own bounding radius, held while the need stays
+        /// within one step below it (see CascadeFrame::Previous).
+        std::array<i32, MaxCascades> RadiusStep;
 
         /// @brief Each cascade's render ortho depth extent (far - near) in world units.
         ///
@@ -68,6 +81,63 @@ namespace Veng::Renderer
 
         /// @brief Number of valid cascades; clamp(settings.Count, 1, MaxCascades).
         u32 Count = 0;
+
+        /// @brief How many leading cascades snap in scene space rather than the stable frame.
+        ///
+        /// Cascade k takes the viewer's frame when its slice begins nearer than
+        /// CascadeFrame::ViewerFrameReach; the splits ascend, so those cascades are always the
+        /// prefix [0, ViewerFrameCount). Recomputed from each fit's splits.
+        u32 ViewerFrameCount = 0;
+    };
+
+    /// @brief Ladder steps per doubling of a cascade's radius.
+    inline constexpr i32 CascadeRadiusStepsPerOctave = 8;
+
+    /// @brief The radius, in world units, of a step on the cascade radius ladder.
+    ///
+    /// Step n is 2^(n / CascadeRadiusStepsPerOctave) world units; n may be negative.
+    /// @param step  The ladder step.
+    /// @return The step's radius.
+    [[nodiscard]] f32 CascadeStepRadius(i32 step);
+
+    /// @brief The light-space basis a directional light's cascades are snapped in.
+    ///
+    /// The rows are the light-space right, up and back axes of a light travelling along
+    /// @p lightDir, glm::lookAt's, taking world +Y as up unless the light points within about 8°
+    /// of straight up or down, where +Z is. It depends on the light alone, so a cascade's grid
+    /// turns only when its light does: a point p lies on the grid at basis · p.
+    /// @param lightDir  World-space direction the light travels; need not be normalized.
+    /// @return The rotation from world (or stable-frame) axes to light-space axes.
+    [[nodiscard]] mat3 CascadeLightBasis(vec3 lightDir);
+
+    /// @brief The frame a cascade fit snaps its grid in, and the history its ladder holds against.
+    ///
+    /// A fit snaps each cascade's box to whole texels of a grid fixed in the frame the scene's
+    /// content rests in. For a scene whose coordinate origin stays put that frame is scene space,
+    /// and the defaults describe it. A consumer that re-centres its world on the viewer each frame
+    /// passes where its origin stands in the stable frame (Origin), so the grid stays put while
+    /// scene space moves under it, and how far out its viewer carries geometry of its own
+    /// (ViewerFrameReach), whose cascades snap in scene space instead.
+    struct CascadeFrame
+    {
+        /// @brief The scene's coordinate origin, placed in the stable frame.
+        ///
+        /// A point at scene coordinates p lies at p + Origin in the stable frame. A translation
+        /// only. Read at double precision; only its phase against each cascade's pitch matters.
+        dvec3 Origin{0.0};
+
+        /// @brief View depth out to which the viewer carries geometry of its own.
+        ///
+        /// Every cascade whose slice begins nearer than this snaps in scene space, which rides
+        /// the viewer; the rest snap in the stable frame. Zero selects no cascade.
+        f32 ViewerFrameReach = 0.0f;
+
+        /// @brief Last frame's fit of this cascade set, for the ladder's hysteresis; may be null.
+        ///
+        /// With it, each cascade keeps its previous step while the need sits at most one step
+        /// below it, and takes the need's step otherwise, so the size grows at once and does not
+        /// flip on a need hovering across a step boundary. Ignored when its Count differs.
+        const CascadeData* Previous = nullptr;
     };
 
     /// @brief Inputs that control how cascades are split and sized.
@@ -77,7 +147,7 @@ namespace Veng::Renderer
         u32 Count = 4;
         /// @brief PSSM split blend: 0 = uniform splits, 1 = logarithmic.
         f32 Lambda = 0.85f;
-        /// @brief Per-cascade tile edge in texels; drives texel snapping.
+        /// @brief Per-cascade tile edge in texels; drives texel snapping. Must be even and above 4.
         u32 Resolution = 1024;
         /// @brief View-space cap on the shadowed range; 0 disables the cap.
         ///
@@ -119,14 +189,25 @@ namespace Veng::Renderer
     /// casters are included (the render matrix too, unless settings.PancakeNear keeps it
     /// tight for a depth-clamped shadow pass). settings.MaxDistance additionally caps the
     /// fitted far split.
+    ///
+    /// Each slice is bounded by a sphere measured in view space, so for given splits its size
+    /// does not depend on the camera's orientation. The radius rounds up onto the ladder
+    /// (CascadeStepRadius), the texel pitch is 2·radius / (Resolution − 4), and the box is exactly
+    /// Resolution texels of that pitch, centred on the sphere snapped to the pitch in the frame
+    /// @p frame names — so the sphere keeps at least one texel to spare on each side, and a box
+    /// move is a whole number of texels. The light basis depends on the light alone.
     /// @param camera       The view camera that defines the split frustum.
     /// @param lightDir     World-space direction the light travels (toward receivers).
     /// @param sceneBounds  World-space scene bound; may be empty.
     /// @param settings     Split count, lambda, and tile resolution.
+    /// @param frame        The snap frame and last frame's fit; the default is a fixed-origin
+    ///                     scene with no history.
     /// @return Per-cascade matrices and view-space split distances.
+    /// @pre settings.Resolution is even and greater than 4.
     [[nodiscard]] CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir,
                                               const AABB& sceneBounds,
-                                              const CascadeSettings& settings);
+                                              const CascadeSettings& settings,
+                                              const CascadeFrame& frame = {});
 
     /// @brief Tile layout of the directional shadow atlas for a cascade count and set count.
     ///

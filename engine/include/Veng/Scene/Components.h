@@ -1268,6 +1268,42 @@ namespace Veng
         SkyLighting Lighting = SkyLighting::None;
     };
 
+    /// @brief Where the scene's coordinate origin stands in the frame its content rests in.
+    ///
+    /// A consumer that re-centres its world on the viewer each frame moves scene space with the
+    /// viewer, so a renderer that snaps to scene space snaps to a grid sliding under content at
+    /// rest. This component tells the renderer where the origin stands: a point at scene
+    /// coordinates p lies at p + Position in the stable frame, a translation of scene space and
+    /// never a rotation. The directional shadow cascades snap their texel grid in that frame, so
+    /// content at rest keeps its sub-texel place in them while the origin moves.
+    ///
+    /// Write it in the same pass that moves the origin, from the same value — the pass that
+    /// re-bases the entities' Transforms and calls OffsetRibbons — so the scene's placements and
+    /// the offset agree on every frame. Keep Position modest, or re-base it rarely: its magnitude
+    /// multiplies any frame-to-frame wobble in a light's direction into a move of that light's
+    /// grid.
+    ///
+    /// Geometry the viewer carries rests in scene space, not in the stable frame.
+    /// ViewerFrameReach is the view depth out to which such geometry extends; every cascade whose
+    /// slice begins nearer than it snaps in scene space instead, riding the viewer. The trade:
+    /// content resting in one frame shifts sub-texel against a grid snapped in the other while the
+    /// two frames move apart. With a reach set, the carried geometry and the distant scene both
+    /// hold still, and scene content close enough to fall in the reach's cascades shifts slightly
+    /// while the viewer translates; without one, the carried geometry shifts instead. The cascade
+    /// blend band cross-fades between the two kinds of cascade with no seam.
+    ///
+    /// One per scene, resolved by the renderer via TryGetFirst each Execute; with several the first
+    /// walked wins and a warning logs once. No transform is read. A scene without one is a
+    /// fixed-origin scene, snapped in its own frame. Runtime-only: it carries no reflected field,
+    /// so it never serializes and never crosses the wire.
+    struct FloatingOrigin
+    {
+        /// @brief The scene origin's place in the stable frame, in world units.
+        dvec3 Position{0.0};
+        /// @brief View depth out to which the viewer carries geometry of its own; 0 for none.
+        f32 ViewerFrameReach = 0.0f;
+    };
+
     /// @brief Time-of-day sun drive: the author's opt-in to derive the sun from a clock time.
     ///
     /// An author adds this component to a scene entity to position the sun by time of day
@@ -2286,6 +2322,10 @@ VE_ENUMERATOR(IBL)
 VE_ENUM_END();
 
 VE_VARIANT(::Veng::SkySource, 0x3638DADE35D35C41ULL);
+
+// Registered without a reflected field, so it neither serializes nor rides the wire: the origin's
+// place is per-frame state its owner derives, meaningless to anyone else.
+VE_TYPE(::Veng::FloatingOrigin, 0xFF863E05FE73F806ULL);
 
 VE_REFLECT(::Veng::Sky, 0xC7D64305B199222CULL)
 VE_FIELD(Source, .DisplayName = "Source")

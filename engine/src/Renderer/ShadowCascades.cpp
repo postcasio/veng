@@ -194,9 +194,25 @@ namespace Veng::Renderer
         }
     }
 
-    CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir, const AABB& sceneBounds,
-                                const CascadeSettings& settings)
+    mat3 CascadeLightBasis(const vec3 lightDir)
     {
+        const vec3 dir = glm::normalize(lightDir);
+        const vec3 right = glm::normalize(glm::cross(dir, StableUp(dir)));
+        const vec3 up = glm::cross(right, dir);
+        return glm::transpose(mat3(right, up, -dir));
+    }
+
+    f32 CascadeStepRadius(const i32 step)
+    {
+        return std::exp2(static_cast<f32>(step) / static_cast<f32>(CascadeRadiusStepsPerOctave));
+    }
+
+    CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir, const AABB& sceneBounds,
+                                const CascadeSettings& settings, const CascadeFrame& frame)
+    {
+        VE_ASSERT(settings.Resolution > 4 && settings.Resolution % 2 == 0,
+                  "ComputeCascades needs an even Resolution above 4 (got {})", settings.Resolution);
+
         const mat4 view = camera.View();
         const mat4 viewProj = camera.ViewProjection();
         const mat4 proj = camera.Projection();
@@ -261,9 +277,6 @@ namespace Veng::Renderer
         CascadeData data{};
         data.Count = std::clamp(settings.Count, 1u, MaxCascades);
 
-        const vec3 dir = glm::normalize(lightDir);
-        const vec3 up = StableUp(dir);
-
         // PSSM split distances: blend logarithmic and uniform splits by Lambda.
         // d[0] is the near plane; d[Count] is the far plane. Cascade k spans
         // [d[k], d[k+1]] and SplitFar[k] = d[k+1].
@@ -279,78 +292,113 @@ namespace Veng::Renderer
         // Pin the final split to the far plane exactly (float pow drifts).
         splits[data.Count] = far;
 
-        // The shadow sub-frustum's own near/far plane corners, solved once at the bounded
-        // [near, far] depths. Each cascade slice below
-        // interpolates between these two planes by a fraction within the *shadow* range —
-        // always in [0, 1], so well-conditioned — rather than against the camera's full
-        // range, whose fractions underflow together when the render near is tiny.
-        const std::array<vec3, 8> shadowCorners =
-            FrustumCornersAtDepths(proj, viewToWorld, eye, near, far);
+        const mat3 basis = CascadeLightBasis(lightDir);
+
+        // Where the scene origin stands in the stable frame, on the light's axes. The only
+        // double-precision step: everything after it works with small render-space magnitudes.
+        // glm is column-major, so basis[c][r] is row r's component c.
+        std::array<f64, 2> originLight{};
+        for (glm::length_t r = 0; r < 2; ++r)
+        {
+            originLight[r] = (static_cast<f64>(basis[0][r]) * frame.Origin.x) +
+                             (static_cast<f64>(basis[1][r]) * frame.Origin.y) +
+                             (static_cast<f64>(basis[2][r]) * frame.Origin.z);
+        }
+
+        const CascadeData* previous =
+            frame.Previous != nullptr && frame.Previous->Count == data.Count ? frame.Previous
+                                                                             : nullptr;
+
+        const std::array<vec2, 4> ndcXY = {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f),
+                                           vec2(-1.0f, 1.0f)};
+        const f32 resolution = static_cast<f32>(settings.Resolution);
 
         for (u32 k = 0; k < data.Count; ++k)
         {
             data.SplitFar[k] = splits[k + 1];
 
-            const f32 nearFraction = (splits[k] - near) / (far - near);
-            const f32 farFraction = (splits[k + 1] - near) / (far - near);
+            // The slice's bounding sphere, measured in view space: the centroid of its eight
+            // corners and the largest distance to it. The corners come from the projection and
+            // the splits alone, so for given splits the radius does not depend on the camera's
+            // orientation to the bit; only the centroid is carried to world space.
             std::array<vec3, 8> corners{};
             for (usize i = 0; i < 4; ++i)
             {
-                const vec3 ray = shadowCorners[i + 4] - shadowCorners[i];
-                corners[i] = shadowCorners[i] + ray * nearFraction;
-                corners[i + 4] = shadowCorners[i] + ray * farFraction;
+                corners[i] = ViewPointAtDepth(proj, ndcXY[i], splits[k]);
+                corners[i + 4] = ViewPointAtDepth(proj, ndcXY[i], splits[k + 1]);
             }
-
-            // Bounding sphere of the slice corners: center is the centroid, radius
-            // the max distance to it. A sphere is rotation-invariant, so the
-            // cascade extent does not change as the camera turns (no size shimmer).
-            vec3 center(0.0f);
+            vec3 centroid(0.0f);
             for (const vec3& corner : corners)
             {
-                center += corner;
+                centroid += corner;
             }
-            center /= 8.0f;
-
+            centroid /= 8.0f;
             f32 radius = 0.0f;
             for (const vec3& corner : corners)
             {
-                radius = std::max(radius, glm::length(corner - center));
+                radius = std::max(radius, glm::length(corner - centroid));
+            }
+            radius = std::max(radius, 1e-6f);
+            const vec3 center = eye + viewToWorld * centroid;
+
+            // Round the radius up onto the ladder, holding last frame's step while the need sits
+            // at most one step below it: the size grows at once and does not flip on a need that
+            // hovers across a boundary.
+            i32 step = static_cast<i32>(
+                std::ceil(static_cast<f32>(CascadeRadiusStepsPerOctave) * std::log2(radius)));
+            if (CascadeStepRadius(step) < radius)
+            {
+                ++step;
+            }
+            if (previous != nullptr)
+            {
+                const i32 held = previous->RadiusStep[k];
+                if (step >= held - 1 && step <= held)
+                {
+                    step = held;
+                }
+            }
+            data.RadiusStep[k] = step;
+
+            // The pitch leaves two texels beside the sphere on each side of a Resolution-texel
+            // box: half a texel for the snap's move and one for the guard band, with room over.
+            const f32 texel = 2.0f * CascadeStepRadius(step) / (resolution - 4.0f);
+
+            // A cascade whose slice begins inside the viewer's reach snaps in scene space, which
+            // rides the viewer (zero phase); the rest snap on the stable frame's grid.
+            const bool viewerFrame = splits[k] < frame.ViewerFrameReach;
+            if (viewerFrame)
+            {
+                data.ViewerFrameCount = k + 1;
+            }
+            vec2 phase(0.0f);
+            if (!viewerFrame)
+            {
+                const f64 pitch = texel;
+                phase = vec2(
+                    static_cast<f32>(originLight[0] - pitch * std::floor(originLight[0] / pitch)),
+                    static_cast<f32>(originLight[1] - pitch * std::floor(originLight[1] / pitch)));
             }
 
-            // Look at the sphere center from a point pulled back by radius along the light axis.
-            const mat4 lightView = glm::lookAt(center - dir * radius, center, up);
+            // Snap the sphere's light-space centre to the grid: s + phase is a whole multiple of
+            // the pitch, so every texel line of the box sits on the frame's grid. The light view
+            // places s at the origin and pulls back by the sphere radius along the light axis.
+            const vec3 centerLight = basis * center;
+            const vec2 snapped = texel * glm::round((vec2(centerLight) + phase) / texel) - phase;
+            mat4 lightView(basis);
+            lightView[3] = vec4(-snapped.x, -snapped.y, -centerLight.z - radius, 1.0f);
 
-            // Texel snapping: quantize the light-space box min to texel increments
-            // so the box translates in texel steps, not sub-texel (no shimmer as
-            // the camera moves). worldUnitsPerTexel is guarded against a degenerate
-            // near-zero slice.
-            const f32 worldUnitsPerTexel =
-                radius > 1e-6f ? (2.0f * radius) / static_cast<f32>(settings.Resolution) : 1.0f;
+            // The box is exactly Resolution texels wide on both axes.
+            const f32 half = 0.5f * resolution * texel;
+            const f32 left = -half;
+            const f32 right = half;
+            const f32 bottom = -half;
+            const f32 top = half;
 
-            // The sphere center in light space: its X/Y are the box center, its Z
-            // the box's depth midpoint (light view looks down -Z, so the eye at
-            // +radius pull-back puts the center at z = -radius).
-            const vec4 centerLight = lightView * vec4(center, 1.0f);
-            f32 left =
-                std::floor((centerLight.x - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
-            f32 bottom =
-                std::floor((centerLight.y - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
-            f32 right = left + 2.0f * radius;
-            f32 top = bottom + 2.0f * radius;
-
-            // One-texel guard band on each side so a caster exactly on the slice
-            // edge does not sample off its tile.
-            left -= worldUnitsPerTexel;
-            bottom -= worldUnitsPerTexel;
-            right += worldUnitsPerTexel;
-            top += worldUnitsPerTexel;
-
-            // The slice's own depth extent along the light axis in light space.
-            // glm::orthoZO takes positive distances in front of the eye; light view
-            // looks down -Z, so a light-space z of -d is a front distance of d. The
-            // deeper edge (more-negative z) is the larger front distance.
-            const f32 tightNearDistance = -(centerLight.z + radius); // front distance, near edge
-            const f32 farDistance = -(centerLight.z - radius);       // front distance, far edge
+            // The sphere's own depth extent along the light axis. glm::orthoZO takes positive
+            // distances in front of the eye; the light view puts the centre a radius in front.
+            const f32 tightNearDistance = 0.0f;
+            const f32 farDistance = 2.0f * radius;
 
             // The near plane extended toward the light via the scene bound so casters
             // between the light and the slice still reach it. Only the light-axis near
@@ -387,7 +435,7 @@ namespace Veng::Renderer
             cullOrtho[1][1] *= -1.0f;
             data.CullViewProj[k] = ReverseZClip() * cullOrtho * lightView;
 
-            data.TexelWorldSize[k] = worldUnitsPerTexel;
+            data.TexelWorldSize[k] = texel;
             data.DepthRange[k] = farDistance - renderNearDistance;
         }
 

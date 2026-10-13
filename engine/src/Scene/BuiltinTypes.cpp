@@ -269,6 +269,10 @@ namespace Veng
         registry.Register<Sky>();
         registry.Register<TimeOfDay>();
 
+        // Where a re-centring scene's origin stands in the frame its content rests in, which the
+        // renderer's shadow cascades snap in (runtime-only).
+        registry.Register<FloatingOrigin>();
+
         // A scene-authored point field, resolved by the renderer per Execute. Its authored Lod
         // (Renderer::PointFieldLod) and CellSize register transitively; the runtime-only Field
         // carries no reflected field, so it neither registers Renderer::PointField nor serializes.
