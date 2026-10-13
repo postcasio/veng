@@ -318,12 +318,27 @@ stream resends it only when the server's value changes. **The wire carries no co
 for any entity, server-owned or not — so a server-side removal never reaches a peer until the entity
 despawns; model "gone" as a value (a flag, a zero) when a peer must see it.
 
+**A rollback restarts the whole predicted set from C.** A delta snapshot carries only the components
+the server changed, so before writing the authoritative records the reconciler rewinds every tracked
+component to this peer's own prediction at C (`PredictionHistory::Restore`); a component the record
+leaves out therefore replays from its value at C, never from its present one.
+
+**A floating-origin world takes Transform's translation out of the compare.** Where every peer writes
+each `Transform`'s translation per frame as the entity's offset from its own camera, and keeps the
+entity's place in a replicated component of its own, the translation differs between peers by where
+each camera stands, so it would mismatch on every snapshot. `ReconcileTolerances::TransformTranslation`
+(per world, through `GameNetInfo::ClientWorldTolerances` or `GameNetPolicy`) set false compares a
+`Transform`'s rotation and scale only, keeps the live translation through a rollback, and smooths a
+correction in rotation alone; the place component carries the position correction.
+
 **A predicted body carries physics through the rollback.** A predicted character moves through a
 kinematic capsule and a predicted vehicle is a rigid body in the collision world, so re-running either
 means restoring its solver state and re-driving the world it collides against. The `Predicted` marker
 (`Veng/Physics/Components.h`) declares which bodies roll back — the local character, a vehicle under
 the local seat's controller, and any loose body that must roll back with it while it matters. The
-world saves every `Predicted` body's state after each step, and `Reconcile` brackets the replay with
+engine marks a predicted character on possession; a vehicle's body, and anything that rolls back
+with it, is the consumer's to mark, since only the consumer knows which bodies its controller
+drives. The world saves every `Predicted` body's state after each step, and `Reconcile` brackets the replay with
 `BeginPhysicsReplay(scene, C)` and `EndPhysicsReplay(scene)`: the predicted bodies restart from their
 state at C, every other body is put back afterwards exactly as the replay found it, and the world's
 step count keeps counting live steps. The replay callback (`Net::ReplayTick`) is told which replayed

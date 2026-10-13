@@ -1597,9 +1597,8 @@ namespace Veng
                     jc.World->Add<Authority>(entity, Authority{.Tier = Tier::Predicted});
                 }
                 // A predicted character's physics state rolls back: mark it so the mover re-seats its
-                // capsule onto the reconciled pose. Only a character carries the marker — a predicted
-                // entity with no capsule has nothing to re-seat, and everything else in the world is
-                // deterministic-from-tick or static.
+                // capsule onto the reconciled pose. A predicted vehicle body is the consumer's to
+                // mark, since only it knows which of its bodies its controller drives.
                 if (jc.World->Has<CharacterController>(entity) && !jc.World->Has<Predicted>(entity))
                 {
                     jc.World->Add<Predicted>(entity);

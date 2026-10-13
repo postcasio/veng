@@ -43,6 +43,18 @@ namespace Veng
             /// A teleport-scale correction should not ease over 100+ ms across the screen; past this
             /// the render offset is dropped and the pose snaps to the corrected position at once.
             f32 SnapDistance = 4.0f;
+            /// @brief Whether a Transform's translation is predicted state the reconciler compares,
+            ///        restores and smooths.
+            ///
+            /// False for a world drawn about a floating origin, where every peer writes each
+            /// Transform's translation per frame as the entity's offset from its own camera and keeps
+            /// the entity's place in a component of its own that replicates beside it. The
+            /// translation then differs between peers by where each peer's camera stands, which no
+            /// tolerance reconciles. Off, the reconciler compares a Transform's rotation and scale
+            /// only, a rollback keeps the live translation rather than writing the authoritative one
+            /// over it, and a correction is smoothed in rotation alone; the place component carries
+            /// the position correction.
+            bool TransformTranslation = true;
         };
 
         /// @brief Field-aware equality: spatial leaves within tolerance, every other leaf exact.

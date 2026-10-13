@@ -163,14 +163,23 @@ namespace Veng::Net
         }
 
         // Writes a decoded @p bytes value of @p info onto @p entity, adding the component when absent;
-        // a malformed value leaves the live component untouched.
+        // a malformed value leaves the live component untouched. With @p keepTranslation, a
+        // Transform keeps the translation it holds.
         void WriteComponent(Scene& scene, const Entity entity, const TypeInfo& info,
-                            std::span<const u8> bytes, const TypeRegistry& registry)
+                            std::span<const u8> bytes, const TypeRegistry& registry,
+                            const bool keepTranslation = false)
         {
             const ScratchComponent scratch(info);
             if (const VoidResult read = ReadFields(bytes, scratch.Ptr, info, registry); !read)
             {
                 return;
+            }
+            if (keepTranslation && info.Id == TypeIdOf<Transform>())
+            {
+                if (const auto* const live = scene.TryGet<Transform>(entity); live != nullptr)
+                {
+                    static_cast<Transform*>(scratch.Ptr)->Position = live->Position;
+                }
             }
             void* dest = scene.TryGetComponent(entity, info.Id);
             if (dest == nullptr)
@@ -184,7 +193,7 @@ namespace Veng::Net
         // Restores the predicted set's live components to the authoritative snapshot records — the
         // "server is right" rewind, from the record rather than the recorded prediction.
         void ApplyAuthoritative(Scene& scene, std::span<const PredictedRecord> records,
-                                const TypeRegistry& registry)
+                                const TypeRegistry& registry, const ReconcileTolerances& tol)
         {
             for (const PredictedRecord& record : records)
             {
@@ -199,7 +208,7 @@ namespace Veng::Net
                         continue;
                     }
                     WriteComponent(scene, record.Entity, registry.Info(component.Type),
-                                   component.Bytes, registry);
+                                   component.Bytes, registry, !tol.TransformTranslation);
                 }
             }
         }
@@ -319,6 +328,11 @@ namespace Veng::Net
                     {
                         return false;
                     }
+                    if (component.Type == TypeIdOf<Transform>() && !tol.TransformTranslation)
+                    {
+                        static_cast<Transform*>(predictedValue.Ptr)->Position =
+                            static_cast<const Transform*>(authoritativeValue.Ptr)->Position;
+                    }
                     if (!ValueMatch(authoritativeValue.Ptr, predictedValue.Ptr, info, registry,
                                     tol))
                     {
@@ -413,7 +427,7 @@ namespace Veng::Net
             // A delta snapshot carries only what changed, so a component it leaves out is rewound to
             // this peer's own prediction at C rather than replayed from its present value.
             (void)history.Restore(consumedTick, scene);
-            ApplyAuthoritative(scene, authoritative, registry);
+            ApplyAuthoritative(scene, authoritative, registry, tol);
             history.Clear();
             // Server-owned state is held across the replay: every replayed tick reads its latest
             // authoritative value, and nothing a replayed tick writes to it survives.
@@ -439,7 +453,7 @@ namespace Veng::Net
         {
             // Rollback disabled (no replay driver): snap to the authoritative state, clear history,
             // and re-predict forward from live input — the hard-snap fallback.
-            ApplyAuthoritative(scene, authoritative, registry);
+            ApplyAuthoritative(scene, authoritative, registry, tol);
             history.Clear();
             result.Snapped = true;
         }
@@ -457,7 +471,9 @@ namespace Veng::Net
             {
                 continue;
             }
-            const vec3 positionResidual = pose.Position - corrected->Position;
+            // A projected translation is no place, so a correction is smoothed in rotation alone.
+            const vec3 positionResidual =
+                tol.TransformTranslation ? pose.Position - corrected->Position : vec3(0.0f);
             const quat rotationResidual =
                 glm::normalize(pose.Rotation * glm::inverse(corrected->Rotation));
 

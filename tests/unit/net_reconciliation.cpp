@@ -358,6 +358,64 @@ namespace
         CHECK(w.World->Get<VengTest::TestScore>(w.Pawn).Value == 6);
     }
 
+    TEST_CASE(
+        "Reconcile: a projected Transform translation is no mismatch, and a rollback keeps it")
+    {
+        // The server's record names the pawn where the server's own camera projects it: far off in
+        // translation, exact in rotation.
+        const auto projected = [](SoloWorld& w, const u64 tick, const quat rotation)
+        {
+            Transform record;
+            REQUIRE(ReadFields(w.History.Captured(tick, w.Pawn, TypeIdOf<Transform>()), &record,
+                               w.Types.Info(TypeIdOf<Transform>()), w.Types)
+                        .has_value());
+            record.Position += vec3(100.0f, 0.0f, 0.0f);
+            record.Rotation = rotation;
+            return w.AuthoritativeTransform(record);
+        };
+        const auto predicted = [](SoloWorld& w)
+        {
+            for (u64 tick = 1; tick <= 6; ++tick)
+            {
+                w.PredictTick(tick, vec2(1.0f, 0.0f));
+            }
+        };
+        const ReconcileTolerances projection{.TransformTranslation = false};
+
+        SoloWorld held;
+        predicted(held);
+        const quat facing = held.World->Get<Transform>(held.Pawn).Rotation;
+        const PredictedRecord far = projected(held, 3, facing);
+        CHECK_FALSE(
+            Reconcile(*held.World, held.History, std::span(&far, 1), 3, held.Replay(), projection)
+                .Corrected);
+
+        // The same record in a world whose translation is state is a mismatch.
+        SoloWorld state;
+        predicted(state);
+        const PredictedRecord moved = projected(state, 3, facing);
+        CHECK(Reconcile(*state.World, state.History, std::span(&moved, 1), 3, state.Replay(),
+                        ReconcileTolerances{})
+                  .Corrected);
+
+        // A rotation the server disagrees with still corrects, and keeps this peer's translation.
+        SoloWorld turned;
+        predicted(turned);
+        const vec3 before = turned.World->Get<Transform>(turned.Pawn).Position;
+        const quat yawed = glm::angleAxis(0.5f, vec3(0.0f, 1.0f, 0.0f));
+        const PredictedRecord rotated = projected(turned, 3, yawed);
+        const ReconcileResult result = Reconcile(
+            *turned.World, turned.History, std::span(&rotated, 1), 3, turned.Replay(), projection);
+        REQUIRE(result.Corrected);
+        const Transform& after = turned.World->Get<Transform>(turned.Pawn);
+        CHECK(1.0f - std::abs(glm::dot(after.Rotation, yawed)) < 1.0e-6f);
+        CHECK(glm::length(after.Position - before) < 1.0f);
+        if (const auto* const error = turned.World->TryGet<PredictionError>(turned.Pawn))
+        {
+            CHECK(error->Position == vec3(0.0f));
+        }
+    }
+
     TEST_CASE("Reconcile: a confirmation older than the ring holds the prediction, never crashing")
     {
         SoloWorld w;

@@ -515,10 +515,13 @@ extern "C"
 /// Version 123 exposes the solver's contact cache: PhysicsWorldInfo and PhysicsSettings grow
 /// ContactCacheEnabled, ContactCacheMaxDistance and ContactCacheMaxAngle. A module creates worlds
 /// and spawns the settings component, so a stale one lays both out short.
+/// Version 124 lets a floating-origin world leave Transform's translation out of reconciliation:
+/// Net::ReconcileTolerances grows TransformTranslation. A module fills GameNetInfo's tolerances and
+/// returns them from GameNetPolicy::ClientWorldTolerances, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 123u
+#define VENG_MODULE_ABI_VERSION 124u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
