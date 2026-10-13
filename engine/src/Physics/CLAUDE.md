@@ -228,6 +228,13 @@ usize              Overlap      (const PhysicsWorld*, const Collider& shape, con
                                  const QueryFilter&, vector<Entity>& out);
 usize              OverlapBounds(const PhysicsWorld*, dvec3 center, f32 radius,
                                  const QueryFilter&, vector<Entity>& out);
+usize              OverlapContacts(const PhysicsWorld*, const Collider& shape, const PhysicsPose& at,
+                                   const QueryFilter&, vector<ShapeContact>& out);
+optional<SphereHit> ShapeCastSpheres(const PhysicsWorld*, const Collider& shape,
+                                     const PhysicsPose& from, dvec3 to,
+                                     span<const QuerySphere> spheres);
+usize              OverlapSpheres(const PhysicsWorld*, const Collider& shape, const PhysicsPose& at,
+                                  span<const QuerySphere> spheres, vector<ShapeContact>& out);
 ```
 
 - **The world is a pointer, and null is empty.** `Raycast(scene.GetPhysicsWorld(), …)` on a scene
@@ -254,6 +261,17 @@ usize              OverlapBounds(const PhysicsWorld*, dvec3 center, f32 radius,
   me" — steering, audio culling, interest management — is that question; a caller needing genuine
   intersection uses `Overlap`. The broad phase keeps f32 bounds rounded outward, and the query pads
   its radius by the centre's own f32 rounding, so the superset holds at any distance from origin.
+- **`OverlapContacts` is `Overlap` with the contact**: one `ShapeContact` per penetrated body, its
+  deepest point, the normal out of the body toward the shape and the depth, so a caller resolving
+  the contact itself — pushing a loose body out of an actor it is not solved against — knows which
+  way and how far.
+- **Spheres stand in for geometry that has no body.** `ShapeCastSpheres` and `OverlapSpheres` test
+  a shape against a span of `QuerySphere`s and nothing in the world: content derived on demand — a
+  procedural scatter too numerous to stand as bodies, objects that become bodies only once
+  something disturbs them — is tested where it is without a body, a broad-phase entry or churn.
+  Each sphere is culled against the shape's (swept) bounds before the narrow phase, so a generous
+  span costs a bounds test apiece, and the arithmetic is measured from the query's own origin, so
+  it holds far from the world's.
 - **Built shapes are shared.** A `PhysicsWorld` keeps one built solver shape per distinct collider
   (keyed by kind, extents, offset, rotation and cooked-geometry identity; friction and restitution
   are body settings and do not split it, and a collider's `Scale` wraps the shared shape per body

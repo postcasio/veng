@@ -6,6 +6,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 
 #include <Veng/Asset/AssetManager.h>
@@ -260,8 +261,98 @@ TEST_CASE("an overlap returns the entities inside the volume and none touching i
     CHECK(found.front() == inside);
 }
 
+TEST_CASE("a shape cast against spheres meets the first in its path and tests no body")
+{
+    const ContentFixture fixture;
+    // A wall nearer than every sphere: a world cast would stop at it, and this one never sees it.
+    fixture.SpawnBox(vec3(2.5f, 0.0f, 0.0f), vec3(0.25f, 5.0f, 5.0f));
+    fixture.Step(1);
+
+    // The cube's +x face starts at x = 1 and meets the nearer sphere's surface at x = 4: 30 % of
+    // the 10 m sweep. The others are farther along it, off it, or behind it.
+    const std::array<QuerySphere, 4> spheres{{
+        {.Center = dvec3(8.0, 0.0, 0.0), .Radius = 1.0f},
+        {.Center = dvec3(5.0, 0.0, 0.0), .Radius = 1.0f},
+        {.Center = dvec3(5.0, 5.0, 0.0), .Radius = 1.0f},
+        {.Center = dvec3(-5.0, 0.0, 0.0), .Radius = 1.0f},
+    }};
+    const Collider cube = CookedCollider(fixture.Hull);
+    const optional<SphereHit> hit =
+        ShapeCastSpheres(&fixture.Physics(), cube, PhysicsPose{}, dvec3(10.0, 0.0, 0.0), spheres);
+    REQUIRE(hit.has_value());
+    CHECK(hit->Index == 1);
+    CHECK(hit->Fraction == doctest::Approx(0.3f).epsilon(0.02));
+    CHECK(hit->Position.x == doctest::Approx(4.0).epsilon(0.02));
+    CHECK(hit->Normal.x == doctest::Approx(-1.0f).epsilon(0.02));
+
+    // The same sweep far from the origin meets the same sphere at the same fraction.
+    const dvec3 far(4.0e7, -3.0e7, 2.0e6);
+    std::array<QuerySphere, 4> moved = spheres;
+    for (QuerySphere& sphere : moved)
+    {
+        sphere.Center += far;
+    }
+    const optional<SphereHit> distant = ShapeCastSpheres(
+        &fixture.Physics(), cube, PhysicsPose{.Position = far}, far + dvec3(10.0, 0.0, 0.0), moved);
+    REQUIRE(distant.has_value());
+    CHECK(distant->Index == 1);
+    CHECK(distant->Fraction == doctest::Approx(0.3f).epsilon(0.02));
+
+    // A sweep that ends short of every sphere meets none, and one starting inside a sphere meets
+    // it at once.
+    CHECK_FALSE(
+        ShapeCastSpheres(&fixture.Physics(), cube, PhysicsPose{}, dvec3(2.5, 0.0, 0.0), spheres)
+            .has_value());
+    const std::array<QuerySphere, 1> around{{{.Center = dvec3(0.5, 0.0, 0.0), .Radius = 1.0f}}};
+    const optional<SphereHit> inside =
+        ShapeCastSpheres(&fixture.Physics(), cube, PhysicsPose{}, dvec3(10.0, 0.0, 0.0), around);
+    REQUIRE(inside.has_value());
+    CHECK(inside->Fraction == 0.0f);
+}
+
+TEST_CASE("an overlap reports how deep a shape sits in each body and sphere, and which way is out")
+{
+    const ContentFixture fixture;
+    // Half a metre into the 2 m test box from +x, and one touching its -x face from outside.
+    const Entity into = fixture.SpawnBox(vec3(1.5f, 0.0f, 0.0f), vec3(1.0f));
+    fixture.SpawnBox(vec3(-2.0f, 0.0f, 0.0f), vec3(1.0f));
+    fixture.Step(1);
+
+    const Collider volume{.Shape = ColliderShape::Box, .Extents = vec3(1.0f)};
+    vector<ShapeContact> contacts;
+    REQUIRE(OverlapContacts(&fixture.Physics(), volume, PhysicsPose{}, QueryFilter{}, contacts) ==
+            1);
+    CHECK(contacts[0].Body == into);
+    CHECK(contacts[0].Depth == doctest::Approx(0.5f).epsilon(0.02));
+    CHECK(contacts[0].Normal.x == doctest::Approx(-1.0f).epsilon(0.02));
+
+    // A sphere a quarter metre into the box from above, one touching it from below, one far off.
+    const std::array<QuerySphere, 3> spheres{{
+        {.Center = dvec3(0.0, 1.75, 0.0), .Radius = 1.0f},
+        {.Center = dvec3(0.0, -2.0, 0.0), .Radius = 1.0f},
+        {.Center = dvec3(9.0, 0.0, 0.0), .Radius = 1.0f},
+    }};
+    REQUIRE(OverlapSpheres(&fixture.Physics(), volume, PhysicsPose{}, spheres, contacts) == 1);
+    CHECK(contacts[0].Body.IsNull());
+    CHECK(contacts[0].Index == 0);
+    CHECK(contacts[0].Depth == doctest::Approx(0.25f).epsilon(0.02));
+    CHECK(contacts[0].Normal.y == doctest::Approx(-1.0f).epsilon(0.02));
+}
+
 TEST_CASE("queries against a scene with no physics world return empty rather than asserting")
 {
+    {
+        const Collider probe{.Shape = ColliderShape::Sphere, .Extents = vec3(1.0f)};
+        const std::array<QuerySphere, 1> spheres{{{.Center = dvec3(0.0), .Radius = 1.0f}}};
+        vector<ShapeContact> contacts{ShapeContact{.Depth = 1.0f}};
+        CHECK_FALSE(ShapeCastSpheres(nullptr, probe, PhysicsPose{}, dvec3(1.0, 0.0, 0.0), spheres)
+                        .has_value());
+        CHECK(OverlapContacts(nullptr, probe, PhysicsPose{}, QueryFilter{}, contacts) == 0);
+        CHECK(contacts.empty());
+        contacts.emplace_back();
+        CHECK(OverlapSpheres(nullptr, probe, PhysicsPose{}, spheres, contacts) == 0);
+        CHECK(contacts.empty());
+    }
     const Collider shape{.Shape = ColliderShape::Sphere, .Extents = vec3(1.0f)};
     vector<Entity> found{Entity{.Index = 7}};
 

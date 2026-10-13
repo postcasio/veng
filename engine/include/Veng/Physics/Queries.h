@@ -68,6 +68,50 @@ namespace Veng
         f32 Fraction = 0.0f;
     };
 
+    /// @brief A sphere a query tests against with no body standing for it.
+    ///
+    /// Geometry a caller derives on demand — a procedural scatter, or loose objects that become
+    /// bodies only once something disturbs them — is tested as a span of these rather than stood in
+    /// the world first, so it costs no body, no broad-phase entry and no churn.
+    struct QuerySphere
+    {
+        /// @brief The centre, in the physics world's frame.
+        dvec3 Center{0.0};
+        /// @brief The radius, in metres.
+        f32 Radius = 0.0f;
+    };
+
+    /// @brief Where a swept shape first met one of a set of spheres.
+    struct SphereHit
+    {
+        /// @brief The sphere met, as an index into the span the query was given.
+        u32 Index = 0;
+        /// @brief The contact point, in the physics world's frame.
+        dvec3 Position{0.0};
+        /// @brief The contact normal, pointing out of the sphere.
+        vec3 Normal = vec3(0.0f);
+        /// @brief Fraction of the swept displacement travelled before contact, in [0, 1].
+        f32 Fraction = 0.0f;
+    };
+
+    /// @brief How deep a placed shape sits in a body or a sphere, and which way is out.
+    struct ShapeContact
+    {
+        /// @brief The body penetrated, or a null entity when the contact is with a sphere.
+        Entity Body;
+        /// @brief The sphere penetrated, as an index into the span the query was given; zero for a
+        ///        body.
+        u32 Index = 0;
+        /// @brief The deepest point of the contact on the other's surface, in the physics world's
+        ///        frame.
+        dvec3 Position{0.0};
+        /// @brief The contact normal, pointing out of the body or sphere toward the shape: moving
+        ///        the shape Depth along it, or the other Depth against it, separates the two.
+        vec3 Normal = vec3(0.0f);
+        /// @brief How far the two interpenetrate along Normal, in metres; always positive.
+        f32 Depth = 0.0f;
+    };
+
     /// @brief Casts a ray and returns the nearest body it meets.
     ///
     /// A pure query: it mutates nothing, so a View-phase consumer may call it safely.
@@ -155,4 +199,58 @@ namespace Veng
     /// @return The number of entities written to @p out.
     VE_API usize OverlapBounds(const PhysicsWorld* world, dvec3 center, f32 radius,
                                const QueryFilter& filter, vector<Entity>& out);
+
+    /// @brief Sweeps a shape from a pose to a position and returns the first of a set of spheres
+    ///        it meets.
+    ///
+    /// The ShapeCast of a shape against geometry that has no body: the world's bodies are not
+    /// tested at all. Each sphere is first culled against the shape's swept bounds, so a span far
+    /// larger than what the sweep can reach costs a bounds test apiece. As with ShapeCast, the shape
+    /// is not rotated during the sweep, and a sphere it already overlaps at @p from reports 0.
+    ///
+    /// A pure query: it mutates nothing, so a View-phase consumer may call it safely.
+    /// @param world    The world whose shape cache resolves cooked geometry; **null returns
+    ///                 nullopt**.
+    /// @param shape    The shape to sweep. A triangle-mesh CollisionShape cannot be swept and is a
+    ///                 fatal assert.
+    /// @param from     The pose the sweep starts at, in the physics world's frame.
+    /// @param to       The position the sweep ends at, in the physics world's frame.
+    /// @param spheres  The spheres to test; a non-positive radius is never met.
+    /// @return The earliest contact (the lowest index on a tie), or nullopt when the sweep meets no
+    ///         sphere.
+    [[nodiscard]] VE_API optional<SphereHit> ShapeCastSpheres(const PhysicsWorld* world,
+                                                              const Collider& shape,
+                                                              const PhysicsPose& from, dvec3 to,
+                                                              std::span<const QuerySphere> spheres);
+
+    /// @brief Collects every body a shape placed at a pose penetrates, with how deep and which way
+    ///        is out.
+    ///
+    /// Overlap with the contact it found: one entry per body, its deepest point. A body merely
+    /// touching the volume from outside is not reported, as for Overlap. A pure query.
+    /// @param world   The world to query; **null fills nothing and returns 0**.
+    /// @param shape   The shape to test with.
+    /// @param at      Where to place it, in the physics world's frame.
+    /// @param filter  Which bodies may be reported.
+    /// @param out     Destination, cleared then filled in ascending entity slot order.
+    /// @return The number of contacts written to @p out.
+    VE_API usize OverlapContacts(const PhysicsWorld* world, const Collider& shape,
+                                 const PhysicsPose& at, const QueryFilter& filter,
+                                 vector<ShapeContact>& out);
+
+    /// @brief Collects every sphere of a set a shape placed at a pose penetrates, with how deep and
+    ///        which way is out.
+    ///
+    /// OverlapContacts against geometry that has no body. Each sphere is culled against the shape's
+    /// bounds first. A pure query.
+    /// @param world    The world whose shape cache resolves cooked geometry; **null fills nothing
+    ///                 and returns 0**.
+    /// @param shape    The shape to test with.
+    /// @param at       Where to place it, in the physics world's frame.
+    /// @param spheres  The spheres to test.
+    /// @param out      Destination, cleared then filled in ascending sphere index order.
+    /// @return The number of contacts written to @p out.
+    VE_API usize OverlapSpheres(const PhysicsWorld* world, const Collider& shape,
+                                const PhysicsPose& at, std::span<const QuerySphere> spheres,
+                                vector<ShapeContact>& out);
 }

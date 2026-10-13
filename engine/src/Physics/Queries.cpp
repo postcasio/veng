@@ -11,7 +11,9 @@
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
 #include <Jolt/Physics/Collision/RayCast.h>
@@ -317,6 +319,28 @@ namespace Veng
             };
         }
 
+        /// @brief The contact a solver collision result describes, in the physics world's frame.
+        /// @param hit   The result, its points relative to @p base.
+        /// @param base  The point the result's coordinates are measured from.
+        [[nodiscard]] ShapeContact ContactOf(const JPH::CollideShapeResult& hit, const dvec3 base)
+        {
+            // mPenetrationAxis is the way to move the other shape out, so the normal out of the
+            // other toward the query shape is its negation.
+            const vec3 axis = Detail::FromJolt(hit.mPenetrationAxis);
+            return ShapeContact{
+                .Position = base + dvec3(Detail::FromJolt(hit.mContactPointOn2)),
+                .Normal = glm::length(axis) > 0.0f ? -glm::normalize(axis) : vec3(0.0f, 1.0f, 0.0f),
+                .Depth = hit.mPenetrationDepth,
+            };
+        }
+
+        /// @brief A sphere's centre relative to a query's own origin, which keeps the narrow phase's
+        ///        single-precision arithmetic near zero in a world whose extent outruns f32.
+        [[nodiscard]] JPH::Vec3 RelativeCentre(const QuerySphere& sphere, const dvec3 origin)
+        {
+            return Detail::ToJolt(vec3(sphere.Center - origin));
+        }
+
         /// @brief Collects the owner of every body the broad phase reports, through a query filter.
         class BoundsCollector final : public JPH::CollideShapeBodyCollector
         {
@@ -546,6 +570,168 @@ namespace Veng
                                                          {}, layers);
 
         std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
+        return out.size();
+    }
+
+    optional<SphereHit> ShapeCastSpheres(const PhysicsWorld* world, const Collider& shape,
+                                         const PhysicsPose& from, const dvec3 to,
+                                         const std::span<const QuerySphere> spheres)
+    {
+        VE_PROFILE_SCOPE("Physics/ShapeCastSpheres");
+        if (world == nullptr || spheres.empty())
+        {
+            return std::nullopt;
+        }
+        const QueryShape built(*world, shape, /*sweeping=*/true);
+        if (built.Get() == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Everything is measured from the sweep's start, as the world cast's hits are.
+        const JPH::Vec3 direction = Detail::ToJolt(vec3(to - from.Position));
+        const JPH::ShapeCast cast = JPH::ShapeCast::sFromWorldTransform(
+            built.Get(), JPH::Vec3::sOne(), JPH::Mat44::sRotation(Detail::ToJolt(from.Rotation)),
+            direction);
+        JPH::AABox swept = cast.mShapeWorldBounds;
+        swept.Encapsulate(cast.mShapeWorldBounds.mMin + direction);
+        swept.Encapsulate(cast.mShapeWorldBounds.mMax + direction);
+
+        optional<SphereHit> best;
+        for (u32 i = 0; i < spheres.size(); ++i)
+        {
+            const QuerySphere& sphere = spheres[i];
+            const JPH::Vec3 centre = RelativeCentre(sphere, from.Position);
+            if (!(sphere.Radius > 0.0f) ||
+                swept.GetSqDistanceTo(centre) > sphere.Radius * sphere.Radius)
+            {
+                continue;
+            }
+            JPH::SphereShape target(sphere.Radius);
+            target.SetEmbedded();
+            JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+            JPH::CollisionDispatch::sCastShapeVsShapeWorldSpace(
+                cast, JPH::ShapeCastSettings{}, &target, JPH::Vec3::sOne(), JPH::ShapeFilter{},
+                JPH::Mat44::sTranslation(centre), JPH::SubShapeIDCreator{},
+                JPH::SubShapeIDCreator{}, collector);
+            if (!collector.HadHit() ||
+                (best.has_value() && collector.mHit.mFraction >= best->Fraction))
+            {
+                continue;
+            }
+            const JPH::ShapeCastResult& hit = collector.mHit;
+            const vec3 axis = Detail::FromJolt(hit.mPenetrationAxis);
+            best = SphereHit{
+                .Index = i,
+                .Position = from.Position + dvec3(Detail::FromJolt(hit.mContactPointOn2)),
+                .Normal = glm::length(axis) > 0.0f ? -glm::normalize(axis) : vec3(0.0f, 1.0f, 0.0f),
+                .Fraction = hit.mFraction,
+            };
+        }
+        return best;
+    }
+
+    usize OverlapContacts(const PhysicsWorld* world, const Collider& shape, const PhysicsPose& at,
+                          const QueryFilter& filter, vector<ShapeContact>& out)
+    {
+        VE_PROFILE_SCOPE("Physics/OverlapContacts");
+        out.clear();
+        if (world == nullptr)
+        {
+            return 0;
+        }
+        const QueryShape query(*world, shape, /*sweeping=*/false);
+        const JPH::Shape* built = query.Get();
+        if (built == nullptr)
+        {
+            return 0;
+        }
+
+        const PhysicsWorld::Native& native = world->GetNative();
+        const JPH::RMat44 transform =
+            JPH::RMat44::sRotationTranslation(Detail::ToJolt(at.Rotation),
+                                              Detail::ToJolt(at.Position)) *
+            JPH::Mat44::sTranslation(built->GetCenterOfMass());
+        JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+        const LayerMaskFilter layers(filter.Layers);
+        const QueryBodyFilter bodies(native, filter);
+        native.System.GetNarrowPhaseQuery().CollideShape(
+            built, JPH::Vec3::sOne(), transform, JPH::CollideShapeSettings{},
+            Detail::ToJolt(at.Position), collector, {}, layers, bodies);
+
+        // The solver reports one hit per touching sub-shape pair; each body keeps its deepest.
+        for (const JPH::CollideShapeResult& hit : collector.mHits)
+        {
+            if (hit.mPenetrationDepth <= OverlapPenetrationEpsilon)
+            {
+                continue;
+            }
+            const Entity owner = OwnerOf(native, hit.mBodyID2);
+            if (owner.IsNull())
+            {
+                continue;
+            }
+            ShapeContact contact = ContactOf(hit, at.Position);
+            contact.Body = owner;
+            const auto found = std::ranges::find(out, owner, &ShapeContact::Body);
+            if (found == out.end())
+            {
+                out.push_back(contact);
+            }
+            else if (contact.Depth > found->Depth)
+            {
+                *found = contact;
+            }
+        }
+        std::ranges::sort(out, {}, [](const ShapeContact& contact) { return contact.Body.Index; });
+        return out.size();
+    }
+
+    usize OverlapSpheres(const PhysicsWorld* world, const Collider& shape, const PhysicsPose& at,
+                         const std::span<const QuerySphere> spheres, vector<ShapeContact>& out)
+    {
+        VE_PROFILE_SCOPE("Physics/OverlapSpheres");
+        out.clear();
+        if (world == nullptr || spheres.empty())
+        {
+            return 0;
+        }
+        const QueryShape query(*world, shape, /*sweeping=*/false);
+        const JPH::Shape* built = query.Get();
+        if (built == nullptr)
+        {
+            return 0;
+        }
+
+        // Measured from the shape's own place, as the narrow phase's single precision wants.
+        const JPH::Mat44 transform = JPH::Mat44::sRotation(Detail::ToJolt(at.Rotation)) *
+                                     JPH::Mat44::sTranslation(built->GetCenterOfMass());
+        const JPH::AABox bounds = built->GetWorldSpaceBounds(transform, JPH::Vec3::sOne());
+        for (u32 i = 0; i < spheres.size(); ++i)
+        {
+            const QuerySphere& sphere = spheres[i];
+            const JPH::Vec3 centre = RelativeCentre(sphere, at.Position);
+            if (!(sphere.Radius > 0.0f) ||
+                bounds.GetSqDistanceTo(centre) > sphere.Radius * sphere.Radius)
+            {
+                continue;
+            }
+            JPH::SphereShape target(sphere.Radius);
+            target.SetEmbedded();
+            JPH::ClosestHitCollisionCollector<JPH::CollideShapeCollector> collector;
+            JPH::CollisionDispatch::sCollideShapeVsShape(
+                built, &target, JPH::Vec3::sOne(), JPH::Vec3::sOne(), transform,
+                JPH::Mat44::sTranslation(centre), JPH::SubShapeIDCreator{},
+                JPH::SubShapeIDCreator{}, JPH::CollideShapeSettings{}, collector);
+            if (!collector.HadHit() ||
+                collector.mHit.mPenetrationDepth <= OverlapPenetrationEpsilon)
+            {
+                continue;
+            }
+            ShapeContact contact = ContactOf(collector.mHit, at.Position);
+            contact.Index = i;
+            out.push_back(contact);
+        }
         return out.size();
     }
 }
