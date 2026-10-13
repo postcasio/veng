@@ -199,6 +199,11 @@ namespace Veng
         u32 InterestMinDwellSnapshots = 4;
         /// @brief Game hook adding entities to a connection's interest set beyond the spatial query; unset adds none.
         Net::InterestPolicy InterestPolicy;
+        /// @brief Game hook removing entities from a connection's interest set; unset removes none.
+        ///
+        /// The subtraction the other arms cannot express, applied after them: an entity it names never
+        /// reaches that connection, and leaves it with a visibility despawn when named after a spawn.
+        Net::InterestExclusion InterestExclusion;
         /// @brief Client policy selecting the predicted entity set on a possession change; null uses the default.
         ///
         /// The engine passes it to the mounted ClientHost, which promotes this set to Tier::Predicted

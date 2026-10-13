@@ -68,6 +68,8 @@ namespace Veng
         Net::InterestSettings Interest;
         /// @brief The game hook adding entities to each connection's interest set; unset adds none.
         Net::InterestPolicy InterestPolicy;
+        /// @brief The game hook removing entities from each connection's interest set; unset removes none.
+        Net::InterestExclusion InterestExclusion;
         /// @brief Seconds this world outlives zero presence before it reaps; unset inherits the directory default.
         ///
         /// The per-world override of WorldDirectoryInfo::IdleKeepWarmDwell: a gameplay bubble wants

@@ -518,10 +518,13 @@ extern "C"
 /// Version 124 lets a floating-origin world leave Transform's translation out of reconciliation:
 /// Net::ReconcileTolerances grows TransformTranslation. A module fills GameNetInfo's tolerances and
 /// returns them from GameNetPolicy::ClientWorldTolerances, so a stale one lays them out short.
+/// Version 125 lets a game remove entities from a connection's interest: GameNetInfo,
+/// ServerWorldResolution, ServerHostInfo and ServerWorldInfo grow InterestExclusion. A module fills
+/// GameNetInfo and returns resolutions from its world factory, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 124u
+#define VENG_MODULE_ABI_VERSION 125u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

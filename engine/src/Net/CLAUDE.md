@@ -397,6 +397,19 @@ marks it `AlwaysRelevant` too, and the scope still subtracts the owner. `net_int
 predicate; `net_two_world.cpp` pins the two-connection reach (an `OwnerOnly` entity reaching only its
 owner, an `ExceptOwner` one reaching everyone else).
 
+**`InterestExclusion` is the subtraction a game decides.** The scope subtracts by ownership; a rule
+the engine cannot know — a record too far from a connection's pawn to matter to it, by the game's own
+idea of distance — is a hook beside `InterestPolicy`, with the same shape (`scene`, `seat`, `pawn` →
+entities) and the opposite effect: what it returns is removed from the connection's set after every
+other arm, the scope included, and even an entity the connection owns. It gates spawn and delta
+alike, so a named entity never spawns to that connection, and one named after its spawn leaves with a
+`Visibility` despawn and re-baselines when the hook lets it go. It carries no hysteresis: a hook
+whose rule needs a band keeps it itself, keyed by the seat. Set per world (`ServerWorldResolution`,
+`ServerHostInfo`, `ServerWorldInfo`, or `GameNetInfo` for the initial world). The whole-world fast
+path stands while the hook returns nothing, so a hook with nothing to remove costs one call per
+connection per pump. `net_two_world.cpp` pins it: an entity the hook names for one connection never
+reaches it while the other has it, arrives when the hook lets go, and leaves again when named.
+
 ## Input replication
 
 Input replicates client→server (`Replication.h` input half, `InputFeed.h`). The client stamps its

@@ -1215,6 +1215,7 @@ namespace Veng
                                               .LeaveMultiplier = net.InterestLeaveMultiplier,
                                               .MinDwellSnapshots = net.InterestMinDwellSnapshots},
             .InterestPolicy = net.InterestPolicy,
+            .InterestExclusion = net.InterestExclusion,
             .AuthorizeTravel = m_AuthorizeTravel,
             .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
             .MaxHostedWorlds = net.MaxHostedWorlds,

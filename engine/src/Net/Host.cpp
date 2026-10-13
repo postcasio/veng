@@ -101,6 +101,7 @@ namespace Veng
             NetIdAllocator Allocator;
             Net::InterestSettings InterestSettings;
             Net::InterestPolicy InterestPolicy;
+            Net::InterestExclusion InterestExclusion;
             // Total replication bytes emitted for this world (snapshots + spawns/despawns), summed
             // across every connection over the host's lifetime — the per-world traffic instrument.
             u64 ReplicationBytes = 0;
@@ -259,26 +260,62 @@ namespace Veng
         }
 
         // The connection's interest set for a joined world this snapshot: the spatial query around its
-        // pawn ∪ the always-relevant entities ∪ the policy hook ∪ the entities it owns. Empty optional
-        // when interest is off (Radius 0), so Generate replicates the whole world.
+        // pawn ∪ the always-relevant entities ∪ the policy hook ∪ the entities it owns, narrowed by the
+        // relevance scope and the exclusion hook. Empty optional when nothing narrows the whole world,
+        // so Generate replicates all of it.
         optional<set<NetId>> ComputeInterest(HostedWorld& world, Net::ConnectionId id,
                                              JoinState& join)
         {
-            Scene& scene = *world.World;
+            // Read-only: a mutable access would stamp the seat's components as changed every pump.
+            const Scene& scene = *world.World;
             const bool radiusOff = world.InterestSettings.Radius <= 0.0f;
 
-            // Relevance scoping is a per-connection filter that must run even with the spatial radius
-            // off, so the whole-world fast path (nullopt) stands only when no entity carries a scope.
-            // The const view drives off the NetRelevance pool, so the emptiness test is O(1).
-            const auto relevanceView = std::as_const(scene).View<NetRelevance>();
+            const Entity seatEntity = join.Seat;
+            Entity pawn = Entity::Null;
+            if (!seatEntity.IsNull() && scene.IsAlive(seatEntity))
+            {
+                if (const auto* possesses = scene.TryGet<Possesses>(seatEntity))
+                {
+                    pawn = possesses->Pawn;
+                }
+            }
+
+            // The exclusion hook's entities, by wire id: removed after every other arm.
+            vector<NetId> excluded;
+            if (world.InterestExclusion)
+            {
+                for (const Entity entity : world.InterestExclusion(scene, seatEntity, pawn))
+                {
+                    const auto* const identity = !entity.IsNull() && scene.IsAlive(entity)
+                                                     ? scene.TryGet<NetIdentity>(entity)
+                                                     : nullptr;
+                    if (identity != nullptr)
+                    {
+                        excluded.push_back(identity->Id);
+                    }
+                }
+            }
+            const auto exclude = [&excluded](set<NetId>& interest)
+            {
+                for (const NetId net : excluded)
+                {
+                    interest.erase(net);
+                }
+            };
+
+            // Relevance scoping and exclusion are per-connection filters that must run even with the
+            // spatial radius off, so the whole-world fast path (nullopt) stands only when neither
+            // narrows anything. The const view drives off the NetRelevance pool, so the emptiness
+            // test is O(1).
+            const auto relevanceView = scene.View<NetRelevance>();
             const bool scoped = relevanceView.begin() != relevanceView.end();
-            if (radiusOff && !scoped)
+            if (radiusOff && !scoped && excluded.empty())
             {
                 return std::nullopt;
             }
 
-            // With the radius off but scoping present, the base set is every server entity; the scope
-            // filter at the tail then narrows it per connection.
+            // With the radius off but a filter present, the base set is every server entity; the
+            // filters at the tail then narrow it per connection.
             if (radiusOff)
             {
                 set<NetId> interest;
@@ -289,18 +326,12 @@ namespace Veng
                         interest.insert(identity.Id);
                     }
                 }
-                Net::ApplyRelevanceScope(scene, id, interest);
-                return interest;
-            }
-
-            const Entity seatEntity = join.Seat;
-            Entity pawn = Entity::Null;
-            if (!seatEntity.IsNull() && scene.IsAlive(seatEntity))
-            {
-                if (const auto* possesses = scene.TryGet<Possesses>(seatEntity))
+                if (scoped)
                 {
-                    pawn = possesses->Pawn;
+                    Net::ApplyRelevanceScope(scene, id, interest);
                 }
+                exclude(interest);
+                return interest;
             }
 
             vec3 viewerPos(0.0f);
@@ -324,9 +355,12 @@ namespace Veng
             {
                 for (const Entity entity : world.InterestPolicy(scene, seatEntity, pawn))
                 {
-                    if (!entity.IsNull() && scene.IsAlive(entity) && scene.Has<NetIdentity>(entity))
+                    const auto* const identity = !entity.IsNull() && scene.IsAlive(entity)
+                                                     ? scene.TryGet<NetIdentity>(entity)
+                                                     : nullptr;
+                    if (identity != nullptr)
                     {
-                        extra.push_back(scene.Get<NetIdentity>(entity).Id);
+                        extra.push_back(identity->Id);
                     }
                 }
             }
@@ -351,6 +385,7 @@ namespace Veng
             {
                 Net::ApplyRelevanceScope(scene, id, interest);
             }
+            exclude(interest);
             return interest;
         }
 
@@ -465,7 +500,8 @@ namespace Veng
                                        .SeatPrefabId = resolved.SeatPrefabId,
                                        .Replication = ReplicationServer(resolved.Replication),
                                        .InterestSettings = resolved.Interest,
-                                       .InterestPolicy = resolved.InterestPolicy});
+                                       .InterestPolicy = resolved.InterestPolicy,
+                                       .InterestExclusion = resolved.InterestExclusion});
         }
 
         // Resolves a join request through the directory in the fixed order (idempotent hit, then
@@ -898,7 +934,8 @@ namespace Veng
                                                  .SeatPrefabId = info.SeatPrefabId,
                                                  .Replication = ReplicationServer(info.Replication),
                                                  .InterestSettings = info.Interest,
-                                                 .InterestPolicy = info.InterestPolicy});
+                                                 .InterestPolicy = info.InterestPolicy,
+                                                 .InterestExclusion = info.InterestExclusion});
         state->Directory->Register(info.Key, info.WorldId);
 
         const Net::ServerInfo serverInfo = info.Server;
@@ -926,7 +963,8 @@ namespace Veng
                                .SeatPrefabId = world.SeatPrefabId,
                                .Replication = ReplicationServer(world.Replication),
                                .InterestSettings = world.Interest,
-                               .InterestPolicy = world.InterestPolicy});
+                               .InterestPolicy = world.InterestPolicy,
+                               .InterestExclusion = world.InterestExclusion});
         // Register the world as a never-reaped bucket of its key; re-adding the same id is idempotent.
         m_State->Directory->Register(world.Key, world.WorldId);
     }

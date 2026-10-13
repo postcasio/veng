@@ -34,6 +34,23 @@ namespace Veng
         using InterestPolicy =
             function<vector<Entity>(const Scene& scene, Entity seat, Entity pawn)>;
 
+        /// @brief A game hook removing entities from a connection's interest set.
+        ///
+        /// The subtraction the spatial arm, the always-relevant marks and InterestPolicy cannot
+        /// express: given the connection's seat and possessed pawn, returns the entities that connection
+        /// must not hear about — records of things too far from the pawn to matter to it, by a rule the
+        /// game owns. It runs after every other arm, the relevance scope included, so an entity it names
+        /// is never spawned to the connection, and one it names after a spawn leaves with a visibility
+        /// despawn and re-baselines when the hook stops naming it. It removes even what the connection
+        /// owns. The hook keeps any hysteresis of its own, keyed by the seat. Unset, or returning
+        /// nothing, removes nothing, and a world with no radius and no scope keeps its whole-world path.
+        /// @param scene  The server scene.
+        /// @param seat   The connection's seat entity (may be null before it spawns).
+        /// @param pawn   The seat's possessed pawn (may be null before possession).
+        /// @return The entities to keep from the connection.
+        using InterestExclusion =
+            function<vector<Entity>(const Scene& scene, Entity seat, Entity pawn)>;
+
         /// @brief The interest radius and boundary-stability knobs.
         struct InterestSettings
         {

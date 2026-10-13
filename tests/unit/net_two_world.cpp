@@ -114,7 +114,8 @@ namespace
         bool ScheduledConsume = false;
 
         explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f, bool quantize = false,
-                             function<optional<string>(const JoinRequestInfo&)> judgeTravel = {})
+                             function<optional<string>(const JoinRequestInfo&)> judgeTravel = {},
+                             InterestExclusion exclusion = {})
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
@@ -126,6 +127,7 @@ namespace
                 .Replication =
                     ReplicationServer::Settings{.SnapshotInterval = 2, .QuantizeSpatial = quantize},
                 .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
+                .InterestExclusion = std::move(exclusion),
                 .AuthorizeTravel = std::move(judgeTravel),
             });
             REQUIRE(host.has_value());
@@ -971,6 +973,75 @@ TEST_CASE("Relevance scope: an OwnerOnly entity reaches only its owner, ExceptOw
     // B (a non-owner) receives the ExceptOwner prop and never the OwnerOnly one.
     CHECK_FALSE(clientB.Host->Replication().Map().Lookup(netExceptOwner).IsNull());
     CHECK(clientB.Host->Replication().Map().Lookup(netOwnerOnly).IsNull());
+}
+
+TEST_CASE("Interest exclusion: an entity the hook names leaves only that connection, and returns")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    // The hook keeps the prop from connection A's seat while the flag is up; the whole world
+    // replicates otherwise, so any exclusion is the hook's alone.
+    Entity prop = Entity::Null;
+    bool keepFromA = true;
+    ConnectionId idA = 0;
+    Unique<ServerHost>* hostOf = nullptr;
+    const InterestExclusion exclusion = [&](const Scene&, const Entity seat,
+                                            const Entity) -> vector<Entity>
+    {
+        if (!keepFromA || prop.IsNull() || hostOf == nullptr || seat != (*hostOf)->SeatFor(idA))
+        {
+            return {};
+        }
+        return {prop};
+    };
+    ServerWorld server(*serverT, 0.0f, false, {}, exclusion);
+    hostOf = &server.Host;
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    const auto run = [&](u64 from, u64 to)
+    {
+        for (u64 tick = from; tick <= to; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            clientA.Frame(now, tick, Delta, std::nullopt);
+            clientB.Frame(now, tick, Delta, std::nullopt);
+        }
+    };
+
+    run(1, 60);
+    REQUIRE(server.Host->Server().Connections().size() == 2);
+    idA = clientA.Client->AssignedId();
+    // A prop connection A owns: the exclusion removes even what a connection owns.
+    prop = server.World->CreateEntity();
+    server.World->Add<Transform>(prop);
+    server.World->Add<Authority>(prop, Authority{.Tier = Tier::Server, .Owner = idA});
+
+    run(61, 120);
+    const NetId net = server.World->Get<NetIdentity>(prop).Id;
+    REQUIRE(net != InvalidNetId);
+    // Never spawned to A; B, which the hook does not name, has it.
+    CHECK(clientA.Host->Replication().Map().Lookup(net).IsNull());
+    CHECK_FALSE(clientB.Host->Replication().Map().Lookup(net).IsNull());
+
+    // The hook lets go: A receives it.
+    keepFromA = false;
+    run(121, 180);
+    CHECK_FALSE(clientA.Host->Replication().Map().Lookup(net).IsNull());
+
+    // Named again: it leaves A with a visibility despawn, and B keeps it throughout.
+    keepFromA = true;
+    run(181, 240);
+    CHECK(clientA.Host->Replication().Map().Lookup(net).IsNull());
+    CHECK_FALSE(clientB.Host->Replication().Map().Lookup(net).IsNull());
 }
 
 TEST_CASE("Two clients with quantization on: each sees the other's pawn move (not frozen at spawn)")
