@@ -1197,6 +1197,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gravity.cpp
             tests/unit/character_controller.cpp
             tests/unit/character_prediction.cpp
+            tests/unit/rigid_body_prediction.cpp
             tests/unit/interaction.cpp
             tests/unit/vehicle.cpp
             tests/unit/camera_rig.cpp

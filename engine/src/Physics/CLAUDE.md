@@ -351,7 +351,7 @@ usize              OverlapSpheres(const PhysicsWorld*, const Collider& shape, co
 `StepPhysics(Scene&, delta)` is the whole step as a free function, so a headless tool or a test
 drives a scene's physics without building a `SceneSimulation`. **It costs what moved, not what exists**: a
 scene can hold thousands of resting dynamic bodies and pay, per tick, for the ones that are awake and
-the ones whose components changed. It runs five passes:
+the ones whose components changed. It runs six passes:
 
 1. **Reconcile, change-driven.** A component stamped at or after the scene tick the last reconcile ran
    at is a change, found by `Scene::ForEachChangedSince` over the `RigidBody`, `Collider` and `Sensor`
@@ -381,6 +381,8 @@ the ones whose components changed. It runs five passes:
    every body back once.
 5. **Publish.** Write each `Sensor` entity's overlap set into its `SensorOverlaps`, diffing against
    last tick's for the enter/exit deltas, and each reporting body's contacts into its `BodyContacts`.
+6. **Record.** Save each `Predicted` body's state into the world's per-tick record, which a rollback
+   restores from (see [the replay gate](#the-replay-gate--the-predicted-set-is-what-rolls-back)).
 
 **Why change ticks and a value compare, not one or the other.** A change tick is per tick, so it
 cannot tell the step's own pull (stamped this tick) from a system writing after the step in the same
@@ -568,34 +570,83 @@ characters. A level names it before `PhysicsSystem`.
 
 ## The replay gate — the predicted set is what rolls back
 
-`PhysicsSystem::OnUpdate` **returns early on `SystemContext::IsReplay` when the scene carries no
-`Predicted` body.** A scene with nothing predicted does not participate in rollback: the solver is
-stateful in ways nothing restored before the replay — dynamic velocities, the contact cache, sleep
-state — so a replayed step would advance the physics clock (`GetStepCount`) against state that was
-never rewound and drift it from the sim tick permanently. For such a scene a mispredict of N ticks
-advances the world by **exactly one** step.
+A client that mispredicts restores its predicted set to the authoritative tick C and replays its
+recorded inputs C+1..now through the real Sim systems ([../Net/CLAUDE.md](../Net/CLAUDE.md)). The
+physics world takes part through three pieces: a per-tick record, a bracket around the replay, and
+the gate in `PhysicsSystem::OnUpdate`.
 
-**A scene predicting a character does roll back, and the step runs during replay.** The rolled-back
-set is declared by the **`Predicted`** marker (`Veng/Physics/Components.h`), and it is deliberately
-tiny — only a locally-controlled character carries one. Everything else the character collides
-against is either **static** (never changes) or a **kinematic body a deterministic Sim system
-re-drives from the replayed tick number** — so the world at any past tick is *recomputed*, not
-stored, and the state saved per predicted tick is one character's worth rather than the whole
-world's. During a replay the step therefore runs, re-driving those kinematic bodies to the
-configuration each replayed tick was actually in. That is the correctness point of the whole scheme:
-replaying a character against a moving surface's *current* pose reconciles it to a body that was
-never there. Client-authoritative **dynamic** bodies are out of scope for prediction
-(server-authoritative, interpolated), so their replay drift is not a concern this gate guards.
+**The predicted set is declared, by the `Predicted` marker** (`Veng/Physics/Components.h`): a
+locally-controlled character, a vehicle under the local seat's controller (dynamic or kinematic), and
+any loose body that must roll back with it while it matters. Everything else is static, a kinematic
+body a deterministic Sim system re-drives from the tick, or **held**.
 
-**The character's own state is saved and restored per character, not per world.**
+**The per-tick record.** After each step, live or replayed, `StepPhysics` saves every `Predicted`,
+non-static body's solver state (`SaveBodyState`'s bytes — pose, velocities, sleep), plus a driven
+body's push record, under the tick the step ran for: `PhysicsSystem` keys it by
+`SystemContext::Tick`, a bare `StepPhysics` by the scene's change tick, which the Sim phase stamps
+with the same number. Each body keeps a ring of `PredictionWindowTicks` slots
+(`Veng/Scene/Components.h`), the depth the prediction history keeps too, so a tick the history can
+replay from is a tick the world can restore. A body records from the first step it is predicted; its
+record is dropped at the first step it is not, or has lost its body, and a body re-created under
+the same entity starts an empty one. The cost is one save per predicted body per step, about a
+hundred bytes into a reused buffer. `PhysicsWorld::HasRecordedState` and `GetRecordedBodyCount` read
+it.
+
+**The bracket.** The reconcile calls `BeginPhysicsReplay(scene, C)` after writing the authoritative
+records onto the predicted set's components and before the first replayed tick, and
+`EndPhysicsReplay(scene)` after the last (`Veng/Physics/PhysicsSystem.h`).
+
+- **Begin** restores every predicted body to its recorded state at the end of C, and writes a
+  dynamic one's `PhysicsPose` from it; a predicted body with no record for C is left as it is. It
+  captures every other non-static body — its solver state, its `PhysicsPose`, the `Transform` the
+  readback writes, and a driven body's push record — and marks the world as replaying
+  (`PhysicsWorld::IsReplaying`).
+- **End** puts every captured body back exactly, so a mispredict of N ticks advances it by the live
+  ticks only, never N more, and restores the step count, so `GetStepCount` keeps counting live
+  steps. A captured body the replay destroyed is skipped, and one it re-created, or created, is left
+  as the replay made it: re-creating it is the creating system's business.
+- **The sets are fixed at Begin.** A body marked or unmarked `Predicted` during the replay keeps the
+  role it had when the replay began.
+
+**The restore puts a body where this peer predicted it was at C, and the consumer corrects it.** The
+solver's state is not replicated; what the server says about a predicted body arrives in replicated
+components, which the reconcile has just written. So the first replayed tick carries
+**`SystemContext::IsReplayStart`**, and a system whose body's authoritative state lives in its own
+components seats the body on them there — pose and velocity — before it simulates, keeping the rest
+(sleep state, anything the components do not carry) from the restore. The character mover's per-tick
+idempotent re-seat from `Transform` is the other supported way, below. A rollback with no recorded
+input after C replays nothing and so flags nothing.
+
+**Replayed steps run, and their effect on held bodies is discarded.** During the replay the world
+steps as it does live, re-driving kinematic bodies to the configuration each replayed tick was
+actually in — replaying against a moving surface's *current* pose would reconcile to a body that was
+never there. A predicted body therefore strikes held bodies **where they stand now, not where they
+stood at the replayed tick**, and whatever the strike did to them is undone at End. That is the stated
+approximation for a body nobody predicts. A consumer that needs a struck body to roll back too marks it
+`Predicted` while it matters — a loose body touching the vehicle, say — and its record starts on the
+next step.
+
+What the bracket does not restore:
+
+- **The solver's contact cache** is the world's, not a body's. The first replayed step warm-starts
+  from the contacts the last live step left, and after End the cache is the last replayed step's.
+  Neither changes which contacts are found; each shifts only where the solver's iterations begin.
+- **`BodyContacts` and `SensorOverlaps`** hold what the last replayed step published until the next
+  live step publishes over them.
+
+**The gate.** `PhysicsSystem::OnUpdate` **returns early on `SystemContext::IsReplay` when the scene
+carries no `Predicted` entity and its world is not replaying.** Such a scene takes no part in
+rollback: nothing restored its bodies, so a replayed step would advance them, and the physics clock,
+past the live ticks. A mispredict of N ticks advances its world by **exactly one** step, it keeps no
+record, and `BeginPhysicsReplay` does nothing.
+
+**A predicted character's capsule is saved and restored per character.**
 `PhysicsWorld::SaveCharacterState`/`RestoreCharacterState` capture and restore one capsule's pose,
-velocity and ground contact as opaque, solver-version-locked bytes — the per-character analogue of
-the whole-world `SaveState`/`RestoreState`. On a correction the reconcile writes the character's
-authoritative `Transform` (and the mover re-seats the capsule onto it — a **`Predicted`** character
-is re-seated from its `Transform` at the start of each `UpdateCharacter`, idempotent in steady
-prediction), and `RestoreCharacterState` restores the velocity and ground contact the components do
-not carry. The whole-world `SaveState`/`RestoreState` remain the seam for a full solver rewind and
-are still round-trip tested; the character rollback does not need them.
+velocity and ground contact as opaque, solver-version-locked bytes. A capsule is not a body, so the
+per-tick record does not hold it: on a correction the reconcile writes the character's authoritative
+`Transform` and the mover re-seats the capsule onto it at the start of each `UpdateCharacter`,
+idempotent in steady prediction. The whole-world `SaveState`/`RestoreState` remain the seam for a
+full solver rewind and are still round-trip tested; rollback does not need them.
 
 ## Layers are a closed table
 

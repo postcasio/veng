@@ -79,9 +79,10 @@ namespace Veng
             {
                 /// @brief Maximum recorded ticks retained; a Record past it trims the oldest.
                 ///
-                /// Defaults to twice the worst supported round trip in ticks, so a mispredict at the
-                /// oldest still-unacked tick has its inputs to replay.
-                usize Capacity = 128;
+                /// Defaults to PredictionWindowTicks, the depth a predicted body's physics record
+                /// keeps too, so a mispredict at the oldest still-unacked tick has its inputs to
+                /// replay and its bodies' states to restore.
+                usize Capacity = PredictionWindowTicks;
             };
 
             /// @brief Constructs a history with the default capacity.

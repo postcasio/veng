@@ -24,6 +24,9 @@
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/WorldEnvelope.h>
+#include <Veng/Physics/Components.h>
+#include <Veng/Physics/PhysicsSystem.h>
+#include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -191,7 +194,7 @@ namespace
         // The replay driver Reconcile calls per rolled-back tick.
         ReplayTick Replay()
         {
-            return [this](Scene& scene, const u64, const PlayerInput& input)
+            return [this](Scene& scene, const u64, const PlayerInput& input, const bool)
             {
                 constexpr f32 Delta = 1.0f / 60.0f;
                 scene.Get<Intent>(Pawn) = ControlMap(input);
@@ -412,7 +415,8 @@ namespace
         // and every replayed tick must read 40.
         vector<i32> seen;
         const ReplayTick base = w.Replay();
-        const ReplayTick replay = [&](Scene& scene, const u64 tick, const PlayerInput& input)
+        const ReplayTick replay =
+            [&](Scene& scene, const u64 tick, const PlayerInput& input, const bool replayStart)
         {
             const auto* health = scene.TryGet<VengTest::TestHealth>(w.Pawn);
             seen.push_back(health != nullptr ? health->Value : 0);
@@ -424,7 +428,7 @@ namespace
             {
                 scene.Get<VengTest::TestHealth>(w.Pawn).Value = -1;
             }
-            base(scene, tick, input);
+            base(scene, tick, input, replayStart);
         };
 
         Transform displaced;
@@ -652,7 +656,7 @@ namespace
                     }
                 },
                 .Replay =
-                    [this](Scene& world, const u64, const PlayerInput& input)
+                    [this](Scene& world, const u64, const PlayerInput& input, const bool)
                 {
                     constexpr f32 Delta = 1.0f / 60.0f;
                     ++ReplayedTicks;
@@ -1056,4 +1060,362 @@ TEST_CASE("Convergence: an ordinary replicated counter changing under a predicte
     // The same server-side writes to a replicated type that is not server-owned: every change is a
     // mismatch against the prediction.
     CHECK(ReplaysUnderServerCounter<VengTest::TestScore>() > 0);
+}
+
+// ---- Two-world rigid-body rollback -----------------------------------------------------------------
+
+namespace
+{
+    constexpr AssetId DrifterPrefabId{0x9746A164FF4D9145ULL};
+    constexpr f32 BodySpeed = 4.0f;
+    const vec3 DrifterVelocity(0.0f, 0.0f, 1.0f);
+
+    vec3 BodyVelocity(const PlayerInput& input)
+    {
+        const vec2 move = input.GetValue(MoveAction);
+        return vec3(move.x, 0.0f, move.y) * BodySpeed;
+    }
+
+    // A replicated, server-authoritative entity carrying a 1 kg dynamic sphere.
+    Ref<Prefab> MakeBodyPrefab(const TypeRegistry& registry, const vec3 position)
+    {
+        const auto record = [&](const TypeId id, const void* value)
+        {
+            vector<u8> out;
+            WriteFields(out, value, registry.Info(id), registry);
+            return out;
+        };
+        const Transform transform{.Position = position};
+        const Authority authority{.Tier = Tier::Server};
+        const RigidBody body{.Motion = MotionType::Dynamic, .Mass = 1.0f};
+        const Collider collider{.Shape = ColliderShape::Sphere, .Extents = vec3(0.5f)};
+
+        Prefab::PrefabEntity entity;
+        entity.Components.push_back(Prefab::Component{
+            .Type = TypeIdOf<Transform>(), .Record = record(TypeIdOf<Transform>(), &transform)});
+        entity.Components.push_back(Prefab::Component{
+            .Type = TypeIdOf<Authority>(), .Record = record(TypeIdOf<Authority>(), &authority)});
+        entity.Components.push_back(Prefab::Component{
+            .Type = TypeIdOf<RigidBody>(), .Record = record(TypeIdOf<RigidBody>(), &body)});
+        entity.Components.push_back(Prefab::Component{
+            .Type = TypeIdOf<Collider>(), .Record = record(TypeIdOf<Collider>(), &collider)});
+
+        vector<Prefab::PrefabEntity> entities;
+        entities.push_back(std::move(entity));
+        return Prefab::Create(std::move(entities), {});
+    }
+
+    Unique<PhysicsWorld> WeightlessWorld()
+    {
+        return PhysicsWorld::Create(PhysicsWorldInfo{.Gravity = vec3(0.0f)});
+    }
+
+    // The server: each pawn is a dynamic body whose velocity its seat's input sets before the step,
+    // beside a body drifting at a constant velocity nobody controls.
+    struct BodyServer
+    {
+        TypeRegistry Types;
+        Unique<Scene> World;
+        Unique<ServerHost> Host;
+        Ref<Prefab> PawnPrefab;
+        std::unordered_map<u64, InputJitterBuffer> Jitter;
+        std::unordered_map<ConnectionId, Entity> Pawns;
+        PhysicsSystem Physics;
+        TestContext Contexts;
+        Entity Drifter = Entity::Null;
+
+        explicit BodyServer(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            World = Scene::Create(Types);
+            World->SetPhysicsWorld(WeightlessWorld());
+            PawnPrefab = MakeBodyPrefab(Types, vec3(0.0f));
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .World = *World,
+                .Assets = TestAssets(),
+                .LevelId = LevelId,
+                .Replication = {.SnapshotInterval = 2},
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+
+            Drifter = MakeBodyPrefab(Types, vec3(6.0f, 0.0f, 0.0f))
+                          ->SpawnInto(*World, TestAssets())
+                          .Roots.front();
+            AssignServerNetIds(*World, Host->Allocator());
+            Host->Replication().SetEntityPrefab(World->Get<NetIdentity>(Drifter).Id,
+                                                DrifterPrefabId);
+        }
+
+        void RunSpawnRule()
+        {
+            for (const ConnectionId id : Host->Server().Connections())
+            {
+                const Entity seat = Host->SeatFor(id);
+                if (seat.IsNull())
+                {
+                    continue;
+                }
+                auto& possesses = World->Get<Possesses>(seat);
+                if (!possesses.Pawn.IsNull() && World->IsAlive(possesses.Pawn))
+                {
+                    continue;
+                }
+                const Entity pawn = PawnPrefab->SpawnInto(*World, TestAssets()).Roots.front();
+                World->Get<Authority>(pawn).Owner = id;
+                possesses.Pawn = pawn;
+                AssignServerNetIds(*World, Host->Allocator());
+                Host->Replication().SetEntityPrefab(World->Get<NetIdentity>(pawn).Id, PawnPrefabId);
+                Pawns[id] = pawn;
+            }
+        }
+
+        void SimStep(const u64 tick, const f32 delta)
+        {
+            World->SetChangeTick(tick);
+            RunSpawnRule();
+            FeedSeatInputs(*Host, Jitter, WorldInstanceId{}, *World, tick);
+            PhysicsWorld& solver = *World->GetPhysicsWorld();
+            for (const auto& [id, pawn] : Pawns)
+            {
+                const Entity seat = Host->SeatFor(id);
+                if (const PlayerInput* input =
+                        seat.IsNull() ? nullptr : World->TryGet<PlayerInput>(seat))
+                {
+                    solver.SetLinearVelocity(pawn, BodyVelocity(*input));
+                }
+            }
+            solver.SetLinearVelocity(Drifter, DrifterVelocity);
+            SystemContext context = Contexts.Make();
+            context.Tick = tick;
+            Physics.OnUpdate(*World, delta, context);
+        }
+
+        void NetPump(const f64 now, const u64 tick)
+        {
+            Host->Pump(now, tick);
+            IngestConnectionInputs(*Host, Jitter, InputJitterBuffer::Settings{}, Types);
+        }
+    };
+
+    // The client: it predicts its own pawn's body — marked Predicted on possession, seated on the
+    // authoritative Transform on a rollback's first replayed tick — and simulates the drifter
+    // locally without predicting it. Every pump that rolls back is checked to leave the drifter's
+    // body exactly as it found it.
+    struct BodyClient
+    {
+        TypeRegistry Types;
+        Ref<Prefab> PawnPrefab;
+        Ref<Prefab> DrifterPrefab;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        InputSendBuffer Send;
+        PhysicsSystem Physics;
+        RemoteInterpolationSystem Interp;
+        TestContext Contexts;
+        Unique<Scene> ClientScene;
+        Entity LocalSeat = Entity::Null;
+        Entity OwnPawn = Entity::Null;
+        Entity Drifter = Entity::Null;
+        u32 Rollbacks = 0;
+        u32 HeldChecks = 0;
+        u32 HeldViolations = 0;
+
+        explicit BodyClient(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            PawnPrefab = MakeBodyPrefab(Types, vec3(0.0f));
+            DrifterPrefab = MakeBodyPrefab(Types, vec3(6.0f, 0.0f, 0.0f));
+            Client = *Net::Client::Connect(
+                ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
+            Send = InputSendBuffer(InputSendBuffer::Settings{.Redundancy = 4});
+            Contexts.Role = NetRole::Client;
+            Interp.SetSettings(RemoteInterpolationSystem::Settings{
+                .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = TestAssets(),
+                .LoadLevel = [this](AssetId) -> Scene*
+                {
+                    ClientScene = Scene::Create(Types);
+                    ClientScene->SetPhysicsWorld(WeightlessWorld());
+                    LocalSeat = ClientScene->CreateEntity();
+                    ClientScene->Add<SeatInput>(LocalSeat);
+                    ClientScene->Add<PlayerInput>(LocalSeat);
+                    ClientScene->Add<Possesses>(LocalSeat);
+                    ClientScene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
+                    return ClientScene.get();
+                },
+                .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
+                {
+                    if (id == PawnPrefabId)
+                    {
+                        return PawnPrefab;
+                    }
+                    return id == DrifterPrefabId ? DrifterPrefab : nullptr;
+                },
+                .OnPossession =
+                    [this](Scene& world, const Entity pawn)
+                {
+                    OwnPawn = pawn;
+                    world.Get<Possesses>(LocalSeat).Pawn = pawn;
+                    if (!world.Has<Predicted>(pawn))
+                    {
+                        world.Add<Predicted>(pawn);
+                    }
+                },
+                .Replay =
+                    [this](Scene& world, const u64 tick, const PlayerInput& input,
+                           const bool replayStart)
+                {
+                    Rollbacks += replayStart ? 1u : 0u;
+                    world.Get<PlayerInput>(LocalSeat) = input;
+                    PhysicsWorld& solver = *world.GetPhysicsWorld();
+                    if (replayStart)
+                    {
+                        const Transform& seat = world.Get<Transform>(OwnPawn);
+                        solver.SetBodyPose(OwnPawn, PhysicsPose{.Position = dvec3(seat.Position),
+                                                                .Rotation = seat.Rotation});
+                    }
+                    solver.SetLinearVelocity(OwnPawn, BodyVelocity(input));
+                    SystemContext context = Contexts.Make();
+                    context.IsReplay = true;
+                    context.Tick = tick;
+                    context.IsReplayStart = replayStart;
+                    Physics.OnUpdate(world, 1.0f / 60.0f, context);
+                },
+            });
+        }
+
+        // Finds the drifter once it has arrived beside the possessed pawn, and starts it drifting on
+        // this peer.
+        void FindDrifter(Scene& world)
+        {
+            if (!Drifter.IsNull() || OwnPawn.IsNull())
+            {
+                return;
+            }
+            for (auto [entity, body] : world.View<RigidBody>())
+            {
+                (void)body;
+                if (entity != OwnPawn && world.GetPhysicsWorld()->HasBody(entity))
+                {
+                    Drifter = entity;
+                    world.GetPhysicsWorld()->SetLinearVelocity(Drifter, DrifterVelocity);
+                }
+            }
+        }
+
+        void Frame(const f64 now, const u64 clientTick, const f32 delta,
+                   const ActionState& scripted)
+        {
+            Scene* world = Host->World();
+            const u32 rollbacksBefore = Rollbacks;
+            vector<u8> drifterBefore;
+            if (world != nullptr && !Drifter.IsNull())
+            {
+                drifterBefore = world->GetPhysicsWorld()->SaveBodyState(Drifter);
+            }
+            Host->Pump(now);
+            world = Host->World();
+            if (world == nullptr)
+            {
+                return;
+            }
+            if (Rollbacks != rollbacksBefore && !drifterBefore.empty())
+            {
+                ++HeldChecks;
+                HeldViolations +=
+                    world->GetPhysicsWorld()->SaveBodyState(Drifter) != drifterBefore ? 1u : 0u;
+            }
+
+            world->Get<PlayerInput>(LocalSeat).State = scripted;
+            if (!OwnPawn.IsNull())
+            {
+                world->GetPhysicsWorld()->SetLinearVelocity(
+                    OwnPawn, BodyVelocity(world->Get<PlayerInput>(LocalSeat)));
+            }
+            SystemContext context = Contexts.Make();
+            context.Tick = clientTick;
+            Physics.OnUpdate(*world, delta, context);
+            FindDrifter(*world);
+            Host->RecordPrediction(clientTick);
+            StampLocalSeatInput(Send, *world, clientTick, /*presented=*/true);
+            // Eases a correction's render residual out.
+            Interp.OnUpdate(*world, delta, Contexts.Make());
+
+            if (Client->State() == ClientState::Connected && Host->CurrentJoinId() != ControlJoinId)
+            {
+                (void)Client->Server().Send(
+                    Channel::UnreliableSequenced,
+                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, 0, Types)));
+            }
+        }
+    };
+}
+
+TEST_CASE("Convergence: a predicted rigid body rolls back while a body nobody predicts holds still")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    const FaultInjectionConfig faults{.DropRate = 0.1f,
+                                      .DuplicateRate = 0.05f,
+                                      .ReorderRate = 0.1f,
+                                      .LatencyMs = 30.0f,
+                                      .JitterMs = 8.0f,
+                                      .Seed = 7};
+    SimulatedTransport serverLink(*serverT, faults);
+    SimulatedTransport clientLink(*clientT, faults);
+    BodyServer server(serverLink);
+    BodyClient client(clientLink);
+
+    constexpr u64 Lead = 4;
+    constexpr u64 Shove = 150;
+    const ActionState move = MoveState(vec2(1.0f, 0.5f));
+    const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 450; ++tick)
+    {
+        now += Delta;
+        serverLink.SetTime(now);
+        clientLink.SetTime(now);
+        client.Frame(now, tick + Lead, Delta, tick <= 300 ? move : stop);
+        server.SimStep(tick, Delta);
+        if (tick == Shove && !server.Pawns.empty())
+        {
+            // A push the client never predicted: the server's body moves half a metre aside.
+            const Entity pawn = server.Pawns.begin()->second;
+            PhysicsWorld& solver = *server.World->GetPhysicsWorld();
+            PhysicsPose pose = *solver.GetBodyPose(pawn);
+            pose.Position.z += 0.5;
+            solver.SetBodyPose(pawn, pose);
+            server.World->Get<Transform>(pawn).Position = vec3(pose.Position);
+        }
+        server.NetPump(now, tick);
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(server.Pawns.size() == 1);
+    const Entity serverPawn = server.Pawns.begin()->second;
+    REQUIRE_FALSE(client.OwnPawn.IsNull());
+    REQUIRE_FALSE(client.Drifter.IsNull());
+    const Scene& clientWorld = *client.Host->World();
+
+    // The pawn flew, and its prediction converged on the server's within float rounding of the
+    // seat, with the residual eased out.
+    const vec3 serverPosition = server.World->Get<Transform>(serverPawn).Position;
+    CHECK(serverPosition.x > 5.0f);
+    const auto* predicted = clientWorld.TryGet<Transform>(client.OwnPawn);
+    REQUIRE(predicted != nullptr);
+    CHECK(glm::length(predicted->Position - serverPosition) < 1.0e-3f);
+    CHECK_FALSE(clientWorld.Has<PredictionError>(client.OwnPawn));
+
+    // The shove forced at least one rollback, and no rollback ever moved the drifter.
+    CHECK(client.Rollbacks >= 1);
+    CHECK(client.HeldChecks >= 1);
+    CHECK(client.HeldViolations == 0);
+    // Rollbacks stay rare: a correction converges rather than recurring snapshot after snapshot.
+    CHECK(client.Rollbacks <= 5);
 }

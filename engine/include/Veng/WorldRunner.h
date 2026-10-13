@@ -123,6 +123,9 @@ namespace Veng
         bool FirstStep = false;
         /// @brief Whether this is the frame's last Sim step (see SystemContext::LastStepThisFrame).
         bool LastStep = false;
+        /// @brief Whether a Replay request is a rollback's first replayed tick (see
+        ///        SystemContext::IsReplayStart); ignored for every other phase.
+        bool ReplayStart = false;
     };
 
     /// @brief Builds the SystemContext a request describes, over the services its installer owns.
@@ -327,10 +330,12 @@ namespace Veng
         /// world and stamping @p tick, and advances the scene's Sim phase by that world's own fixed
         /// step — so a client replaying any of several joined worlds replays it under its own id, role
         /// and tick rate. The caller feeds the step's recorded input first.
-        /// @param scene  The live scene of a world this runner holds.
-        /// @param tick   The tick being replayed.
+        /// @param scene        The live scene of a world this runner holds.
+        /// @param tick         The tick being replayed.
+        /// @param replayStart  Whether this is the rollback's first replayed tick, stamped as
+        ///                     SystemContext::IsReplayStart.
         /// @pre A context factory is installed and @p scene is a world this runner holds.
-        void ReplaySimStep(Scene& scene, u64 tick);
+        void ReplaySimStep(Scene& scene, u64 tick, bool replayStart);
 
         /// @brief Sets the hook told a world's scene is about to be destroyed.
         ///

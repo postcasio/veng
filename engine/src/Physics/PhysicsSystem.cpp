@@ -103,11 +103,10 @@ namespace Veng
             }
         }
 
-        /// @brief Whether the scene carries any Predicted body — a body that rolls back.
+        /// @brief Whether the scene carries any Predicted entity — a body or character that rolls back.
         ///
-        /// Gates whether the step runs during a reconciliation replay: a scene with none does not
-        /// participate in rollback and is skipped, a scene predicting a character re-drives its
-        /// kinematic world so the character re-collides against the replayed tick's configuration.
+        /// Gates whether a scene takes part in rollback at all: a scene with none neither opens a
+        /// replay bracket nor steps during a replay.
         /// @param scene  The scene to test.
         [[nodiscard]] bool HasPredictedBody(const Scene& scene)
         {
@@ -526,6 +525,108 @@ namespace Veng
         }
     }
 
+    namespace
+    {
+        /// @brief Saves every Predicted, non-static body's state into the world's per-tick record.
+        ///
+        /// One save per predicted body per step, into the slot @p tick selects, reusing that slot's
+        /// buffer. A record no Predicted body refreshed this pass — the marker or the body went — is
+        /// dropped, so a scene with nothing predicted keeps no record.
+        /// @param scene  The scene whose Predicted markers name the bodies.
+        /// @param world  The world whose bodies are saved.
+        /// @param tick   The tick the step ran for.
+        void RecordPredictedBodies(const Scene& scene, const PhysicsWorld& world, const u64 tick)
+        {
+            PhysicsWorld::Native& native = world.GetNative();
+            const u64 pass = ++native.RecordPass;
+            for (auto [entity, predicted] : scene.View<Predicted>())
+            {
+                (void)predicted;
+                const auto body = native.Bodies.find(entity);
+                if (body == native.Bodies.end() || body->second.Body.Motion == MotionType::Static)
+                {
+                    continue;
+                }
+                Detail::PredictedBodyRecord& record = native.PredictedRecords[entity];
+                if (record.Ticks.empty())
+                {
+                    record.Ticks.resize(PredictionWindowTicks);
+                }
+                if (record.Id != body->second.Id)
+                {
+                    // A re-created body is a new body: nothing saved from the old one restores it.
+                    for (Detail::PredictedTick& slot : record.Ticks)
+                    {
+                        slot.Filled = false;
+                    }
+                    record.Id = body->second.Id;
+                }
+                record.Pass = pass;
+
+                Detail::PredictedTick& slot = record.Ticks[tick % record.Ticks.size()];
+                slot.State.clear();
+                slot.Filled = Detail::SaveBodyBytes(native, body->second.Id, slot.State);
+                slot.Tick = tick;
+                if (const u32 driven = body->second.Driven; driven != Detail::NotDriven)
+                {
+                    slot.LastPushed = native.Driven[driven].LastPushed;
+                    slot.Moving = native.Driven[driven].Moving;
+                }
+            }
+            std::erase_if(native.PredictedRecords,
+                          [pass](const auto& entry) { return entry.second.Pass != pass; });
+        }
+
+        /// @brief The whole step, with the predicted bodies' record keyed by @p tick.
+        /// @param scene  The scene whose bodies are reconciled and stepped.
+        /// @param delta  The step length in seconds.
+        /// @param tick   The tick the step runs for.
+        void StepPhysicsAt(Scene& scene, const f32 delta, const u64 tick)
+        {
+            PhysicsWorld* world = scene.GetPhysicsWorld();
+            if (world == nullptr)
+            {
+                return;
+            }
+            PhysicsWorld::Native& native = world->GetNative();
+            PhysicsStepStats stats;
+
+            // The components are the authority and the bodies are their shadow: bring the bodies
+            // whose components changed into line. The world's own body calls queue nothing meanwhile.
+            native.Reconciling = true;
+            Reconcile(scene, *world, stats);
+            native.Reconciling = false;
+
+            const Scene& readScene = scene;
+            ReconcileConstraints(readScene, *world);
+
+            // Gravity is a field, not a world constant: gather the scene's sources once per tick and
+            // install them, so the step listener evaluates them per dynamic body. An empty set clears
+            // the field and leaves the world's uniform gravity in force.
+            vector<GravitySourceInstance> gravity;
+            GatherGravitySources(readScene, gravity);
+            world->SetGravitySources(gravity);
+
+            Push(scene, *world, delta, stats);
+
+            {
+                VE_PROFILE_SCOPE("Physics/Step");
+                world->Step(delta);
+            }
+            stats.OptimizedBroadPhase = native.OptimizedLastStep;
+
+            // Pull: PhysicsPose is written for every body the step moved, so a consumer reading it
+            // sees this tick's result whether or not the Transform is bound to the solver.
+            ReadBack(scene, *world, stats);
+
+            PublishSensorOverlaps(scene, *world);
+            PublishBodyContacts(scene, *world, stats);
+            native.Stats = stats;
+
+            RecordPredictedBodies(readScene, *world, tick);
+        }
+    }
+
     void Detail::NotePhysicsComponentRemoved(const Scene& scene, const Entity entity)
     {
         if (PhysicsWorld* world = scene.GetPhysicsWorld())
@@ -582,45 +683,134 @@ namespace Veng
 
     void StepPhysics(Scene& scene, const f32 delta)
     {
+        StepPhysicsAt(scene, delta, scene.GetChangeTick());
+    }
+
+    void BeginPhysicsReplay(Scene& scene, const u64 tick)
+    {
         PhysicsWorld* world = scene.GetPhysicsWorld();
-        if (world == nullptr)
+        if (world == nullptr || !HasPredictedBody(scene))
         {
             return;
         }
         PhysicsWorld::Native& native = world->GetNative();
-        PhysicsStepStats stats;
-
-        // The components are the authority and the bodies are their shadow: bring the bodies whose
-        // components changed into line. The world's own body calls queue nothing meanwhile.
-        native.Reconciling = true;
-        Reconcile(scene, *world, stats);
-        native.Reconciling = false;
+        VE_ASSERT(!native.Replaying, "BeginPhysicsReplay: a replay is already open");
+        native.Replaying = true;
+        native.ReplayStepCount = native.StepCount;
 
         const Scene& readScene = scene;
-        ReconcileConstraints(readScene, *world);
-
-        // Gravity is a field, not a world constant: gather the scene's sources once per tick and
-        // install them, so the step listener evaluates them per dynamic body. An empty set clears
-        // the field and leaves the world's uniform gravity in force.
-        vector<GravitySourceInstance> gravity;
-        GatherGravitySources(readScene, gravity);
-        world->SetGravitySources(gravity);
-
-        Push(scene, *world, delta, stats);
-
+        native.HeldCount = 0;
+        for (const auto& [entity, body] : native.Bodies)
         {
-            VE_PROFILE_SCOPE("Physics/Step");
-            world->Step(delta);
+            if (body.Body.Motion == MotionType::Static)
+            {
+                continue;
+            }
+            const bool alive = scene.IsAlive(entity);
+            if (alive && readScene.Has<Predicted>(entity))
+            {
+                // A predicted body restarts from where it stood at the end of the authoritative tick.
+                const auto record = native.PredictedRecords.find(entity);
+                if (record == native.PredictedRecords.end() || record->second.Id != body.Id)
+                {
+                    continue;
+                }
+                const Detail::PredictedTick& slot =
+                    record->second.Ticks[tick % record->second.Ticks.size()];
+                if (!slot.Filled || slot.Tick != tick ||
+                    !Detail::RestoreBodyBytes(native, body.Id, slot.State))
+                {
+                    continue;
+                }
+                // Read back after the first replayed step even if it sleeps through it.
+                native.ReadBackNext.push_back(entity);
+                if (body.Driven != Detail::NotDriven)
+                {
+                    native.Driven[body.Driven].LastPushed = slot.LastPushed;
+                    native.Driven[body.Driven].Moving = slot.Moving;
+                }
+                else if (auto* pose = scene.TryGet<PhysicsPose>(entity))
+                {
+                    // A dynamic body's PhysicsPose is the readback's; a driven body's is its source.
+                    const optional<PhysicsPose> restored = world->GetBodyPose(entity);
+                    if (restored.has_value())
+                    {
+                        *pose = *restored;
+                    }
+                }
+                continue;
+            }
+
+            if (native.HeldCount == native.Held.size())
+            {
+                native.Held.emplace_back();
+            }
+            Detail::HeldBody& held = native.Held[native.HeldCount++];
+            held.Owner = entity;
+            held.Id = body.Id;
+            held.State.clear();
+            (void)Detail::SaveBodyBytes(native, body.Id, held.State);
+            const PhysicsPose* pose = alive ? readScene.TryGet<PhysicsPose>(entity) : nullptr;
+            held.HasPose = pose != nullptr;
+            if (pose != nullptr)
+            {
+                held.Pose = *pose;
+            }
+            const Transform* transform =
+                alive && body.Body.SyncTransform ? readScene.TryGet<Transform>(entity) : nullptr;
+            held.HasTransform = transform != nullptr;
+            if (transform != nullptr)
+            {
+                held.Transform = *transform;
+            }
+            held.Driven = body.Driven != Detail::NotDriven;
+            if (held.Driven)
+            {
+                held.LastPushed = native.Driven[body.Driven].LastPushed;
+                held.Moving = native.Driven[body.Driven].Moving;
+            }
         }
-        stats.OptimizedBroadPhase = native.OptimizedLastStep;
+    }
 
-        // Pull: PhysicsPose is written for every body the step moved, so a consumer reading it sees
-        // this tick's result whether or not the Transform is bound to the solver.
-        ReadBack(scene, *world, stats);
-
-        PublishSensorOverlaps(scene, *world);
-        PublishBodyContacts(scene, *world, stats);
-        native.Stats = stats;
+    void EndPhysicsReplay(Scene& scene)
+    {
+        PhysicsWorld* world = scene.GetPhysicsWorld();
+        if (world == nullptr || !world->GetNative().Replaying)
+        {
+            return;
+        }
+        PhysicsWorld::Native& native = world->GetNative();
+        for (usize i = 0; i < native.HeldCount; ++i)
+        {
+            const Detail::HeldBody& held = native.Held[i];
+            // A body the replay destroyed is gone, and one it re-created is not the body captured.
+            const auto body = native.Bodies.find(held.Owner);
+            if (body == native.Bodies.end() || body->second.Id != held.Id ||
+                !Detail::RestoreBodyBytes(native, held.Id, held.State))
+            {
+                continue;
+            }
+            if (scene.IsAlive(held.Owner))
+            {
+                if (auto* pose = held.HasPose ? scene.TryGet<PhysicsPose>(held.Owner) : nullptr)
+                {
+                    *pose = held.Pose;
+                }
+                if (auto* transform =
+                        held.HasTransform ? scene.TryGet<Transform>(held.Owner) : nullptr)
+                {
+                    *transform = held.Transform;
+                }
+            }
+            if (held.Driven && body->second.Driven != Detail::NotDriven)
+            {
+                native.Driven[body->second.Driven].LastPushed = held.LastPushed;
+                native.Driven[body->second.Driven].Moving = held.Moving;
+            }
+        }
+        native.HeldCount = 0;
+        native.StepCount = native.ReplayStepCount;
+        native.Replaying = false;
     }
 
     void PhysicsSystem::OnStart(Scene& scene, const SystemContext&)
@@ -630,22 +820,18 @@ namespace Veng
 
     void PhysicsSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
-        // A reconciliation replay re-runs the whole Sim phase. A scene with no predicted body does
-        // not participate in rollback: the solver's own state — dynamic velocities, the contact
-        // cache, sleep — is not restored, so stepping here would advance the physics clock against
-        // state that was never rewound and drift it from the sim tick permanently. Such a scene is
-        // gated out.
+        // A reconciliation replay re-runs the whole Sim phase. A scene with nothing predicted takes
+        // no part in rollback: nothing restored its bodies, so stepping here would advance them, and
+        // the physics clock, past the live ticks. Such a scene is gated out.
         //
-        // A scene predicting a character *does* roll back. The character's capsule state is restored
-        // from the per-tick save and its Transform from the authoritative record (the mover re-seats
-        // the capsule onto it), and the world it collides against is either static or a kinematic
-        // body a deterministic Sim system re-drives from the replayed tick. So the step runs during
-        // replay, re-driving those kinematic bodies to the configuration the tick was actually in —
-        // which is the correctness point: replaying a character against a moving surface's *current*
-        // pose reconciles to a body that was never there. Client-authoritative *dynamic* bodies are
-        // out of scope for prediction (server-authoritative, interpolated), so their replay drift is
-        // not a concern this gate must guard.
-        if (context.IsReplay && !HasPredictedBody(scene))
+        // A scene predicting a body does roll back, and the step runs: the predicted bodies were
+        // restored to the authoritative tick (BeginPhysicsReplay), the kinematic bodies a
+        // deterministic Sim system re-drives from the replayed tick are where that tick had them —
+        // replaying against a moving surface's *current* pose would reconcile to a body that was
+        // never there — and every other body is put back when the replay ends.
+        const PhysicsWorld* current = scene.GetPhysicsWorld();
+        if (context.IsReplay && (current == nullptr || !current->IsReplaying()) &&
+            !HasPredictedBody(scene))
         {
             // The replay's Sim systems stamp past ticks, which the reconcile's change test cannot
             // see past, so the next live step walks every physics entity.
@@ -656,7 +842,7 @@ namespace Veng
             return;
         }
 
-        StepPhysics(scene, delta);
+        StepPhysicsAt(scene, delta, context.Tick);
 
         const PhysicsWorld* world = scene.GetPhysicsWorld();
         if (world != nullptr && world->IsDebugDrawEnabled() && context.Debug != nullptr)

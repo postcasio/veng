@@ -1404,13 +1404,14 @@ TEST_CASE("Frame-keyed systems run once per frame and are handed the time since 
 namespace
 {
     // A Sim-phase probe recording, per scene, the world each lifecycle call's context names, and the
-    // delta and replay flag of the last step it ran.
+    // delta and replay flags of the last step it ran.
     struct WorldProbe final : SceneSystem
     {
         static inline std::map<const Scene*, WorldInstanceId> Started;
         static inline std::map<const Scene*, WorldInstanceId> Stepped;
         static inline std::map<const Scene*, f32> StepDelta;
         static inline std::map<const Scene*, bool> StepReplay;
+        static inline std::map<const Scene*, bool> StepReplayStart;
 
         static void Reset()
         {
@@ -1418,6 +1419,7 @@ namespace
             Stepped.clear();
             StepDelta.clear();
             StepReplay.clear();
+            StepReplayStart.clear();
         }
 
         void OnStart(Scene& scene, const SystemContext& context) override
@@ -1430,6 +1432,7 @@ namespace
             Stepped[&scene] = context.World;
             StepDelta[&scene] = delta;
             StepReplay[&scene] = context.IsReplay;
+            StepReplayStart[&scene] = context.IsReplayStart;
         }
     };
 }
@@ -1526,12 +1529,18 @@ TEST_CASE("A replayed step runs under the world holding its scene, at that world
     REQUIRE(runner.FindWorld(sceneB) == b);
     REQUIRE(runner.FindWorld(runner.ResolveWorld(a)->GetScene()) == a);
 
-    runner.ReplaySimStep(sceneB, 7);
+    runner.ReplaySimStep(sceneB, 7, true);
 
     CHECK(WorldProbe::Stepped[&sceneB] == b);
     CHECK(WorldProbe::StepDelta[&sceneB] == doctest::Approx(1.0f / 20.0f));
     CHECK(WorldProbe::StepReplay[&sceneB]);
+    CHECK(WorldProbe::StepReplayStart[&sceneB]);
     CHECK(WorldProbe::Stepped.size() == 1);
+
+    // Only the step the caller flags is a rollback's first.
+    runner.ReplaySimStep(sceneB, 8, false);
+    CHECK(WorldProbe::StepReplay[&sceneB]);
+    CHECK_FALSE(WorldProbe::StepReplayStart[&sceneB]);
 }
 
 TEST_CASE("A test services context reaches working audio and localization")

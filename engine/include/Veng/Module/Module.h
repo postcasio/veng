@@ -506,10 +506,16 @@ extern "C"
 /// PhysicsStepStats grows ContactsReported and ContactsDropped, and PhysicsWorld::CreateBody grows
 /// its reportContacts parameter. A module spawns the components, reads the statistics and creates
 /// bodies, so a stale one registers a short type table and lays the statistics out short.
+/// Version 122 rolls a predicted rigid body back: SystemContext grows IsReplayStart,
+/// SystemContextRequest grows ReplayStart, Net::ReplayTick and WorldRunner::ReplaySimStep take the
+/// replay-start flag, and PhysicsWorld moves its step count behind its backend state. A module's
+/// systems read the context every tick, its client host builds the replay callback, and it inlines
+/// the world's accessors, so a stale one reads the context short and calls through the wrong
+/// signatures.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 121u
+#define VENG_MODULE_ABI_VERSION 122u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

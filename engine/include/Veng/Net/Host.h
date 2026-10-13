@@ -574,8 +574,8 @@ namespace Veng
         /// On a mispredict the host restores the predicted set to the authoritative state and calls
         /// this for each recorded input C+1..now (see Net::ReplayTick): the implementer sets the local
         /// seat's PlayerInput and advances the scene's Sim phase for that tick with
-        /// SystemContext::IsReplay set. Unset disables rollback — a mispredict hard-snaps to the
-        /// authoritative state.
+        /// SystemContext::IsReplay set, and IsReplayStart on the first. Unset disables rollback — a
+        /// mispredict hard-snaps to the authoritative state.
         Net::ReplayTick Replay;
         /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
         Net::ReconcileTolerances Tolerances;

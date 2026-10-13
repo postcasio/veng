@@ -131,9 +131,9 @@ namespace Veng
     ///
     /// Every service is a required reference with no default, so a context that omits one does not
     /// compile. The defaulted fields — Pointer, View, Debug, Tick, Alpha, Role, World,
-    /// GameplayFocused, the step edges and IsReplay — are per-call data, not services. A runtime
-    /// context is built by the one factory an Application installs on its WorldRunner
-    /// (WorldRunner::BuildContext), for every start, step, stop and replay.
+    /// GameplayFocused, the step edges, IsReplay and IsReplayStart — are per-call data, not
+    /// services. A runtime context is built by the one factory an Application installs on its
+    /// WorldRunner (WorldRunner::BuildContext), for every start, step, stop and replay.
     struct SystemContext
     {
         /// @brief The asset manager a system loads or builds resources through.
@@ -273,6 +273,17 @@ namespace Veng
         /// entity's first live simulation of that tick. Such a system gates the side effect on this
         /// flag; a pure state advancer ignores it. False on every live tick and in the View phase.
         bool IsReplay = false;
+
+        /// @brief Whether this Sim step is the first replayed tick of a rollback.
+        ///
+        /// True on exactly one step per rollback — the first one replayed after the reconcile has
+        /// written the authoritative records onto the predicted set's components and the physics
+        /// world has restored its predicted bodies (BeginPhysicsReplay) — and false on every other
+        /// step, live or replayed. A system whose predicted body's authoritative state lives in its
+        /// own replicated components seats the body on them here, before it simulates: the solver's
+        /// restore puts a body where this peer predicted it was, which a correction then overrides.
+        /// Implies IsReplay.
+        bool IsReplayStart = false;
 
         /// @brief Returns a copy of this context with Alpha set to @p alpha.
         ///

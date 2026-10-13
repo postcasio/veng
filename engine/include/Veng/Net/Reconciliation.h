@@ -14,9 +14,11 @@
 // the authoritative record. On a match the prediction stands and history through C is trimmed; on a
 // mismatch the predicted set is restored to the authoritative record at C and the recorded inputs
 // C+1..now are replayed through the real Sim systems (re-recording history), then the visual residual
-// is eased out through a decaying render offset (never written into sim Transform). Device-free: it
-// drives the replay through a caller-supplied callback (which runs the scene's Sim phase with
-// SystemContext::IsReplay set), so it unit-tests over an in-process Scene the two-world-test way.
+// is eased out through a decaying render offset (never written into sim Transform). The replay is
+// bracketed by BeginPhysicsReplay / EndPhysicsReplay, so the scene's predicted bodies roll back with
+// it and every other body holds still through it. Device-free: it drives the replay through a
+// caller-supplied callback (which runs the scene's Sim phase with SystemContext::IsReplay set), so it
+// unit-tests over an in-process Scene the two-world-test way.
 // Server-owned state (VE_SERVER_OWNED) is outside all of this: the snapshot apply writes it live as
 // it arrives, and the reconciler never compares, restores or lets a replay rewrite it.
 
@@ -65,10 +67,13 @@ namespace Veng
         /// Called for each recorded input in C+1..now on a mispredict, in ascending order. The
         /// implementer sets the local seat's PlayerInput to @p input and advances the scene's Sim
         /// phase for @p tick with SystemContext::IsReplay set (so a system with outward side effects
-        /// gates them), re-running control + movement over the predicted set exactly as the live
-        /// client tick did. An empty callback disables rollback — a mispredict then hard-snaps to the
-        /// authoritative state.
-        using ReplayTick = function<void(Scene& scene, u64 tick, const PlayerInput& input)>;
+        /// gates them), and with SystemContext::IsReplayStart set to @p replayStart, re-running
+        /// control + movement over the predicted set exactly as the live client tick did. An empty
+        /// callback disables rollback — a mispredict then hard-snaps to the authoritative state.
+        /// The parameters are the scene, the tick being replayed, the input recorded for it, and
+        /// whether it is the rollback's first replayed tick (true on exactly one call per rollback).
+        using ReplayTick =
+            function<void(Scene& scene, u64 tick, const PlayerInput& input, bool replayStart)>;
 
         /// @brief The outcome of a reconciliation pass, for the caller and for tests.
         struct ReconcileResult
@@ -88,11 +93,14 @@ namespace Veng
         /// On a match (the recorded prediction at @p consumedTick equals the authoritative record
         /// under @p tol) the prediction stands and history through @p consumedTick is trimmed. On a
         /// mismatch the predicted set is restored to the authoritative record and @p replay steps the
-        /// recorded inputs C+1..now forward (re-recording history), then the pre-correction visible
-        /// pose is held as a decaying PredictionError render offset (unless the correction exceeds
-        /// @p tol.SnapDistance, when it snaps). A history underflow (@p consumedTick older than the
-        /// ring, or no @p replay) restores the authoritative present, clears history, and re-predicts
-        /// from live input — never a crash.
+        /// recorded inputs C+1..now forward (re-recording history) inside a physics replay bracket —
+        /// BeginPhysicsReplay(scene, C) before the first replayed tick, EndPhysicsReplay after the
+        /// last, so Predicted bodies restart from their state at C and every other body is put back
+        /// exactly as it stood before the replay — then the pre-correction visible pose is held as a
+        /// decaying PredictionError render offset (unless the correction exceeds @p tol.SnapDistance,
+        /// when it snaps). A history underflow (@p consumedTick older than the ring, or no @p replay)
+        /// restores the authoritative present, clears history, and re-predicts from live input —
+        /// never a crash.
         ///
         /// A server-owned component (TypeInfo::ServerOwned) takes no part: one in @p authoritative is
         /// ignored — neither compared (by value or by presence) nor applied — and the tracked

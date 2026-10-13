@@ -515,9 +515,10 @@ namespace Veng
         ///
         /// The per-character save side of the rollback seam: it stores exactly one character's worth
         /// of state, not the world's, because everything else a predicted character collides against
-        /// is either static or a kinematic body recomputed from the tick. The bytes are opaque and
-        /// version-locked to the solver build that produced them; nothing outside this class reads
-        /// them. Empty when @p entity has no capsule.
+        /// is static, a kinematic body recomputed from the tick, a predicted body the world restores
+        /// itself, or a body a replay holds still. The bytes are opaque and version-locked to the
+        /// solver build that produced them; nothing outside this class reads them. Empty when
+        /// @p entity has no capsule.
         /// @param entity  The entity whose capsule to capture.
         /// @return The captured state, or an empty vector when @p entity has no capsule.
         [[nodiscard]] vector<u8> SaveCharacterState(Entity entity) const;
@@ -567,11 +568,29 @@ namespace Veng
         /// @brief Returns what the last StepPhysics did, beyond the solver's own step.
         [[nodiscard]] const PhysicsStepStats& GetStepStats() const;
 
-        /// @brief Returns how many times Step has run, counting from world creation.
+        /// @brief Returns how many live steps have run, counting from world creation.
         ///
-        /// The physics clock. It must advance in lockstep with the sim tick; the replay gate in
-        /// PhysicsSystem exists to keep it there.
-        [[nodiscard]] u64 GetStepCount() const { return m_StepCount; }
+        /// The physics clock. It must advance in lockstep with the sim tick: the replay gate in
+        /// PhysicsSystem keeps a scene with nothing predicted from stepping during a replay, and
+        /// EndPhysicsReplay takes back the steps a rollback's replay ran.
+        [[nodiscard]] u64 GetStepCount() const;
+
+        /// @brief Whether a rollback replay is open: between BeginPhysicsReplay and EndPhysicsReplay.
+        [[nodiscard]] bool IsReplaying() const;
+
+        /// @brief Whether the per-tick record holds @p entity's body state at the end of @p tick.
+        ///
+        /// Each step saves every Predicted, non-static body's state under the tick it ran for,
+        /// keeping PredictionWindowTicks ticks; BeginPhysicsReplay restores from it. A body records
+        /// from the first step it is Predicted, and its record is dropped once it is not, or loses
+        /// its body.
+        /// @param entity  The predicted entity.
+        /// @param tick    The tick the step ran for.
+        /// @return True when a save for exactly @p tick is held.
+        [[nodiscard]] bool HasRecordedState(Entity entity, u64 tick) const;
+
+        /// @brief Returns how many bodies the per-tick record holds — zero when nothing is predicted.
+        [[nodiscard]] u32 GetRecordedBodyCount() const;
 
         /// @brief Captures the whole simulation state — poses, velocities, contacts, sleep — as bytes.
         ///
@@ -619,8 +638,6 @@ namespace Veng
         PhysicsWorldInfo m_Info;
         /// @brief The backend state.
         Unique<Native> m_Native;
-        /// @brief How many times Step has run.
-        u64 m_StepCount = 0;
         /// @brief Whether PhysicsSystem draws this world's bodies each tick.
         bool m_DebugDrawEnabled = false;
     };

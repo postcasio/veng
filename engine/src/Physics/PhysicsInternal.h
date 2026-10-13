@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Scene/Components.h>
 
 #include <Jolt/Jolt.h>
 
@@ -25,10 +26,13 @@
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/StateRecorder.h>
 
 #include <array>
+#include <cstring>
 #include <limits>
 #include <mutex>
+#include <span>
 #include <unordered_map>
 
 namespace Veng::Detail
@@ -634,6 +638,118 @@ namespace Veng::Detail
         /// @brief The CharacterController settings the capsule was built from, for idempotent reconcile.
         CharacterController Settings;
     };
+
+    /// @brief A solver state recorder over a byte buffer, writing what the solver's own recorder
+    ///        writes without its string stream.
+    ///
+    /// A per-tick save then reuses the buffer's capacity instead of allocating. A recorder made over
+    /// a vector appends to it; one made over a span reads from it, failing on a read past its end.
+    class BufferRecorder final : public JPH::StateRecorder
+    {
+    public:
+        /// @brief Makes a recorder that appends what the solver writes to @p out.
+        /// @param out  The buffer written to; it outlives the recorder.
+        explicit BufferRecorder(vector<u8>& out) : m_Out(&out) {}
+
+        /// @brief Makes a recorder that reads what the solver asks for from @p in.
+        /// @param in  The bytes read; they outlive the recorder.
+        explicit BufferRecorder(const std::span<const u8> in) : m_In(in) {}
+
+        /// @brief Appends @p count bytes; fails on a reading recorder.
+        void WriteBytes(const void* data, const size_t count) override
+        {
+            if (m_Out == nullptr)
+            {
+                m_Failed = true;
+                return;
+            }
+            const usize at = m_Out->size();
+            m_Out->resize(at + count);
+            std::memcpy(m_Out->data() + at, data, count);
+        }
+
+        /// @brief Reads the next @p count bytes, zero-filling and failing past the end.
+        void ReadBytes(void* data, const size_t count) override
+        {
+            if (m_Read + count > m_In.size())
+            {
+                std::memset(data, 0, count);
+                m_Failed = true;
+                return;
+            }
+            std::memcpy(data, m_In.data() + m_Read, count);
+            m_Read += count;
+        }
+
+        /// @brief Whether every byte has been read.
+        [[nodiscard]] bool IsEOF() const override { return m_Read >= m_In.size(); }
+
+        /// @brief Whether a read ran past the end or a write reached a reading recorder.
+        [[nodiscard]] bool IsFailed() const override { return m_Failed; }
+
+    private:
+        /// @brief The buffer a writing recorder appends to, or null for a reading one.
+        vector<u8>* m_Out = nullptr;
+        /// @brief The bytes a reading recorder reads.
+        std::span<const u8> m_In;
+        /// @brief How many bytes have been read.
+        usize m_Read = 0;
+        /// @brief Whether a read or write failed.
+        bool m_Failed = false;
+    };
+
+    /// @brief One tick of a predicted body's saved state.
+    struct PredictedTick
+    {
+        /// @brief Whether the slot holds a save.
+        bool Filled = false;
+        /// @brief The scene tick the step that produced the save ran for.
+        u64 Tick = 0;
+        /// @brief The body's solver state after that step (SaveBodyBytes).
+        vector<u8> State;
+        /// @brief A driven body's push record after that step (DrivenBody::LastPushed).
+        PhysicsPose LastPushed;
+        /// @brief A driven body's moving flag after that step (DrivenBody::Moving).
+        bool Moving = false;
+    };
+
+    /// @brief A predicted body's per-tick record: PredictionWindowTicks slots, indexed by tick.
+    struct PredictedBodyRecord
+    {
+        /// @brief The body the saves were taken from; a re-created body starts an empty record.
+        JPH::BodyID Id;
+        /// @brief The saves, the one for tick t at index t modulo the slot count.
+        vector<PredictedTick> Ticks;
+        /// @brief The record pass that last saw the body, so a body that stopped being predicted
+        ///        drops out at the next pass.
+        u64 Pass = 0;
+    };
+
+    /// @brief A body a replay holds still: its state when the replay began, put back when it ends.
+    struct HeldBody
+    {
+        /// @brief The entity owning the body.
+        Entity Owner;
+        /// @brief The body captured; a body the replay re-created is not this one and is skipped.
+        JPH::BodyID Id;
+        /// @brief The body's solver state when the replay began (SaveBodyBytes).
+        vector<u8> State;
+        /// @brief Whether the entity carried a PhysicsPose, which the replay's readback rewrites.
+        bool HasPose = false;
+        /// @brief The entity's PhysicsPose when the replay began.
+        PhysicsPose Pose;
+        /// @brief Whether the readback writes the entity's Transform (a non-static body that
+        ///        syncs it, and carries one).
+        bool HasTransform = false;
+        /// @brief The entity's Transform when the replay began.
+        Transform Transform;
+        /// @brief Whether the body is driven (static or kinematic), so its push record is restored.
+        bool Driven = false;
+        /// @brief The driven body's push record when the replay began.
+        PhysicsPose LastPushed;
+        /// @brief The driven body's moving flag when the replay began.
+        bool Moving = false;
+    };
 }
 
 namespace Veng
@@ -713,5 +829,40 @@ namespace Veng
         bool FullReadBack = false;
         /// @brief What the last StepPhysics did.
         PhysicsStepStats Stats;
+        /// @brief How many times Step has run, less the steps a replay ran.
+        u64 StepCount = 0;
+        /// @brief Each predicted body's per-tick record, keyed by its entity.
+        std::unordered_map<Entity, Detail::PredictedBodyRecord> PredictedRecords;
+        /// @brief The number of record passes run, so a pass can tell which records it saw.
+        u64 RecordPass = 0;
+        /// @brief Whether a replay is open (between BeginPhysicsReplay and EndPhysicsReplay).
+        bool Replaying = false;
+        /// @brief The step count when the open replay began, restored when it ends.
+        u64 ReplayStepCount = 0;
+        /// @brief The bodies the open replay holds still; the first HeldCount entries are live, and
+        ///        the rest keep their buffers for the next replay.
+        vector<Detail::HeldBody> Held;
+        /// @brief How many entries of Held the open replay captured.
+        usize HeldCount = 0;
     };
+}
+
+namespace Veng::Detail
+{
+    /// @brief Appends a body's solver state — active flag, pose, velocities, sleep — to @p out.
+    ///
+    /// The bytes are those PhysicsWorld::SaveBodyState returns.
+    /// @param native  The world's backend state.
+    /// @param id      The body to save.
+    /// @param out     The buffer appended to.
+    /// @return Whether the body was found and saved.
+    bool SaveBodyBytes(const PhysicsWorld::Native& native, const JPH::BodyID& id, vector<u8>& out);
+
+    /// @brief Restores a body from bytes SaveBodyBytes produced, without re-creating it.
+    /// @param native  The world's backend state.
+    /// @param id      The body to restore.
+    /// @param state   The saved bytes.
+    /// @return Whether the body was found and the bytes read in full.
+    bool RestoreBodyBytes(PhysicsWorld::Native& native, const JPH::BodyID& id,
+                          std::span<const u8> state);
 }

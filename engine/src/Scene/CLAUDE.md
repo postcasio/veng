@@ -915,7 +915,8 @@ entity of its world, and the engine opens it at the next frame-top reconcile.
 
 **A `SystemContext` is built, never assembled by hand.** Every service on it is a required reference
 with no default, so an omission is a compile error; the defaulted fields (`Pointer`, `View`, `Debug`,
-`Tick`, `Alpha`, `Role`, `World`, `GameplayFocused`, the step edges, `IsReplay`) are per-call data. At
+`Tick`, `Alpha`, `Role`, `World`, `GameplayFocused`, the step edges, `IsReplay`, `IsReplayStart`)
+are per-call data. At
 runtime one factory builds every context — start, Sim step, View pass, stop and replay — from a
 `SystemContextRequest` naming the world, scene and step (`WorldRunner::SetContextFactory` /
 `BuildContext`, installed by `Application`; see [../../CLAUDE.md](../../CLAUDE.md)). A unit test

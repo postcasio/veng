@@ -1,5 +1,6 @@
 #include <Veng/Net/Reconciliation.h>
 
+#include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
@@ -416,9 +417,12 @@ namespace Veng::Net
             const vector<TypeId> serverOwned = ServerOwnedTypeIds(registry);
             const vector<HeldComponent> held =
                 HoldServerOwned(scene, history.Tracked(), serverOwned, registry);
+            // Predicted bodies restart from their state at C; every other body is put back as it
+            // stands now once the replay ends, so it advances by live ticks only.
+            BeginPhysicsReplay(scene, consumedTick);
             for (const StoredInput& input : inputs)
             {
-                replay(scene, input.Tick, input.Input);
+                replay(scene, input.Tick, input.Input, result.ReplayedTicks == 0);
                 if (!serverOwned.empty())
                 {
                     ReleaseServerOwned(scene, history.Tracked(), serverOwned, held, registry);
@@ -426,6 +430,7 @@ namespace Veng::Net
                 history.Record(input.Tick, input.Input, scene);
                 ++result.ReplayedTicks;
             }
+            EndPhysicsReplay(scene);
         }
         else
         {

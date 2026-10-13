@@ -303,17 +303,22 @@ namespace Veng
     /// A client that predicts a body's motion ahead of the server re-simulates it during
     /// reconciliation: on a correction it restores the body to the authoritative state and replays
     /// the recorded input forward. This marker declares *which* bodies that applies to, and the set
-    /// is deliberately tiny: only a locally-controlled character carries one. Everything else in the
-    /// world is either **deterministic from the tick** — a kinematic platform or a spinning body,
-    /// whose pose a Sim system recomputes from the tick number and which is therefore *re-driven*
-    /// during a replay rather than stored — or **static**, which never changes. So the state saved
-    /// per predicted tick is one character's worth, not the whole world's.
+    /// is deliberately small: a locally-controlled character, a vehicle under the local seat's
+    /// controller, and any loose body that must roll back with it while it matters — one the vehicle
+    /// is touching, say. A marked rigid body's solver state is saved after every step and restored
+    /// at a rollback (BeginPhysicsReplay). Everything else is **static**, which never changes;
+    /// **deterministic from the tick** — a kinematic platform or a spinning body, whose pose a Sim
+    /// system recomputes from the tick number and which is therefore *re-driven* during a replay
+    /// rather than stored; or **held**: a body nobody predicts is put back after the replay exactly
+    /// as it stood before it, so it advances by live ticks only. So the state saved per predicted
+    /// tick is the predicted set's, not the whole world's.
     ///
     /// @warning Getting the set wrong is a desync that surfaces only when a particular body happens
     /// to matter to the outcome, so the rule is **declared here, not discovered**: mark a body
-    /// Predicted only when its state is genuinely stored-and-restored per tick (a locally-controlled
-    /// character), never a body a deterministic Sim system already reproduces from the tick. A
-    /// kinematic body marked Predicted would be saved needlessly; a predicted character left unmarked
+    /// Predicted only when this peer re-simulates it (its own character or vehicle, or a body that
+    /// vehicle strikes), never a body a deterministic Sim system already reproduces from the tick. A
+    /// held body a predicted one strikes during a replay is struck where it stands now, not where it
+    /// stood at the replayed tick, and the strike is discarded; a predicted character left unmarked
     /// would not be re-seated on a correction and would drift from the server irrecoverably.
     ///
     /// Runtime-only: it carries no reflected field, so it never serializes and never rides the wire.

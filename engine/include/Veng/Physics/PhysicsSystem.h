@@ -41,7 +41,9 @@ namespace Veng
     /// components), push (place static bodies and drive kinematic ones toward their target pose),
     /// step, pull (write each simulated body's result back into PhysicsPose, and into Transform for
     /// a body whose RigidBody sets SyncTransform), and publish (each Sensor's SensorOverlaps, and
-    /// each ContactReport entity's BodyContacts).
+    /// each ContactReport entity's BodyContacts). It then saves every Predicted body's state into
+    /// the world's per-tick record under the scene's change tick — the tick the Sim phase stamps —
+    /// which BeginPhysicsReplay restores from.
     ///
     /// A body's pose is world space. An entity carrying a RigidBody is therefore expected to be a
     /// scene-graph root: its Transform is read and written as a world pose, and a parent's
@@ -53,6 +55,43 @@ namespace Veng
     /// @param delta  The step length in seconds.
     VE_API void StepPhysics(Scene& scene, f32 delta);
 
+    /// @brief Opens a rollback replay: predicted bodies go back to tick @p tick, the rest are held.
+    ///
+    /// The reconciliation calls it after writing the authoritative records onto the predicted set
+    /// and before the first replayed tick. It:
+    /// - restores every Predicted body to its state at the end of @p tick from the world's per-tick
+    ///   record (PhysicsWorld::HasRecordedState), together with its PhysicsPose; a Predicted body
+    ///   with no record for @p tick is left as it is;
+    /// - captures every other non-static body — its solver state (sleep included), its PhysicsPose,
+    ///   the Transform the readback writes, and a driven body's push record — to be put back by
+    ///   EndPhysicsReplay;
+    /// - marks the world as replaying (PhysicsWorld::IsReplaying), so PhysicsSystem steps each
+    ///   replayed tick.
+    ///
+    /// The restore puts a body where this peer predicted it was at @p tick. A body whose
+    /// authoritative state arrives in replicated components is seated on them by its consumer on the
+    /// first replayed tick (SystemContext::IsReplayStart), which overrides the pose and velocity and
+    /// keeps the rest. The predicted and held sets are fixed here: a body marked or unmarked
+    /// Predicted during the replay keeps the role it had when the replay began.
+    ///
+    /// Inert on a scene with no PhysicsWorld, and on one carrying no Predicted entity, which takes
+    /// no part in rollback.
+    /// @param scene  The scene whose world replays.
+    /// @param tick   The authoritative tick the replay starts from (the reconcile's C).
+    /// @pre No replay is open on the scene's world.
+    VE_API void BeginPhysicsReplay(Scene& scene, u64 tick);
+
+    /// @brief Closes the replay BeginPhysicsReplay opened, putting every held body back exactly.
+    ///
+    /// Each body captured at the start is restored to its captured solver state, PhysicsPose,
+    /// Transform and push record, so the replay advanced it by no step at all; a held body the replay
+    /// destroyed is skipped, and one it re-created is left as created, as is a body it created. The
+    /// world's step count goes back to its value before the replay, so GetStepCount keeps counting
+    /// live steps, and the replaying mark clears. The predicted bodies keep what the replay made of
+    /// them. Inert when no replay is open.
+    /// @param scene  The scene whose world ends its replay.
+    VE_API void EndPhysicsReplay(Scene& scene);
+
     /// @brief Builtin Sim system stepping the scene's PhysicsWorld once per tick.
     ///
     /// Registration makes the system resolvable, not ordered: a level that wants physics **names
@@ -63,13 +102,12 @@ namespace Veng
     /// PhysicsSettings (or the defaults) become its world unless one is already installed.
     ///
     /// @warning During a client reconciliation replay (SystemContext::IsReplay), OnUpdate steps only
-    /// when the scene carries a Predicted body. A scene with none does not participate in rollback —
-    /// the solver's own state (dynamic velocities, the contact cache, sleep) is not restored, so a
-    /// replayed step would advance the physics clock against state that was never rewound and drift
-    /// it from the sim tick; such a scene returns early and a mispredict of N ticks advances the
-    /// world by exactly one step. A scene predicting a character does roll back: the step runs during
-    /// replay, re-driving its kinematic bodies to the configuration each replayed tick was actually
-    /// in so the character re-collides correctly. See Physics/CLAUDE.md, "The replay gate".
+    /// when the scene carries a Predicted entity or its world is replaying. A scene with none does
+    /// not participate in rollback and returns early, so a mispredict of N ticks advances its world
+    /// by exactly one step. A scene predicting a body does roll back: the step runs during the
+    /// replay, between BeginPhysicsReplay and EndPhysicsReplay, re-simulating the predicted bodies
+    /// against kinematic bodies re-driven to each replayed tick, and the bodies nobody predicts are
+    /// put back afterwards. See Physics/CLAUDE.md, "The replay gate".
     class VE_API PhysicsSystem final : public SceneSystem
     {
     public:
@@ -81,7 +119,8 @@ namespace Veng
         /// @brief Reconciles and steps the scene's PhysicsWorld, then draws it when enabled.
         /// @param scene    The scene whose bodies are simulated.
         /// @param delta    Time in seconds since the previous tick.
-        /// @param context  Per-tick services; IsReplay gates the step and Debug receives the draw.
+        /// @param context  Per-tick services; IsReplay gates the step, Tick keys the predicted
+        ///                 bodies' record, and Debug receives the draw.
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
 
         /// @brief Destroys every body the scene's world holds, leaving the world itself alive.

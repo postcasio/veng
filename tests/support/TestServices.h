@@ -82,7 +82,7 @@ namespace Veng::TestSupport
 
         /// @brief Returns the context @p request describes, as a WorldRunner's factory builds it.
         ///
-        /// Stamps the world, tick, alpha, step edges and the replay flag from the request, and binds the
+        /// Stamps the world, tick, alpha, step edges and the replay flags from the request, and binds the
         /// audio and haptics facades to the request scene's presentation scope (the application scope
         /// for a scene a case built itself, which holds none); the role stays Server, and
         /// Pointer, View and Debug stay empty (a test presents nothing, so a ticking world is Muted).
@@ -97,6 +97,7 @@ namespace Veng::TestSupport
             context.FirstStepThisFrame = request.FirstStep;
             context.LastStepThisFrame = request.LastStep;
             context.IsReplay = request.Phase == SystemContextPhase::Replay;
+            context.IsReplayStart = context.IsReplay && request.ReplayStart;
             const PresentationScope* scope = request.Scene.GetPresentationScope();
             const PresentationScopeId scopeId =
                 scope != nullptr ? scope->GetId() : m_Presentation.GetApplicationScope();

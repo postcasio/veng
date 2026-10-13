@@ -246,7 +246,7 @@ namespace Veng
         return it != m_Worlds.end() ? (*it)->Id : WorldInstanceId{};
     }
 
-    void WorldRunner::ReplaySimStep(Scene& scene, const u64 tick)
+    void WorldRunner::ReplaySimStep(Scene& scene, const u64 tick, const bool replayStart)
     {
         const WorldInstanceId world = FindWorld(scene);
         VE_ASSERT(world.IsValid(), "WorldRunner::ReplaySimStep: the scene is no world's");
@@ -256,7 +256,8 @@ namespace Veng
             BuildContext(SystemContextRequest{.World = world,
                                               .Scene = scene,
                                               .Phase = SystemContextPhase::Replay,
-                                              .Tick = tick}));
+                                              .Tick = tick,
+                                              .ReplayStart = replayStart}));
     }
 
     void WorldRunner::SetSceneRetiringHook(function<void(Scene&)> hook)

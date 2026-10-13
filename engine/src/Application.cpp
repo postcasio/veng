@@ -1342,7 +1342,8 @@ namespace Veng
             { NotifyPossession(world, pawn); },
             .Prediction = net.PredictionPolicy,
             .Replay =
-                [this](Scene& scene, const u64 tick, const PlayerInput& input)
+                [this](Scene& scene, const u64 tick, const PlayerInput& input,
+                       const bool replayStart)
             {
                 // Feed the recorded input to the local seat, then advance the Sim phase for this tick
                 // with IsReplay set: InputMappingSystem leaves the fed input alone and side-effecting
@@ -1359,7 +1360,7 @@ namespace Veng
                     });
                 // The client host reconciles every joined world through this one hook, so the step
                 // replays under the world holding this scene, never the managed one.
-                m_WorldRunner->ReplaySimStep(scene, tick);
+                m_WorldRunner->ReplaySimStep(scene, tick, replayStart);
             },
             // Per-key reconcile tolerances, unset by default (every join uses the shared value): a
             // world in a non-metre unit supplies its own so its client does not reconcile unbounded
@@ -2602,7 +2603,8 @@ namespace Veng
             .GameplayFocused = m_InputRouter->IsGameplayFocused(),
             .FirstStepThisFrame = request.FirstStep,
             .LastStepThisFrame = request.LastStep,
-            .IsReplay = request.Phase == SystemContextPhase::Replay};
+            .IsReplay = request.Phase == SystemContextPhase::Replay,
+            .IsReplayStart = request.Phase == SystemContextPhase::Replay && request.ReplayStart};
 
         // The presenting viewport supplies the view descriptor and debug-draw sink, and its presence
         // is what lets the world's seats take input. It matches on its retained scene — last frame's

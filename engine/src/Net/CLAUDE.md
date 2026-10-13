@@ -318,16 +318,23 @@ stream resends it only when the server's value changes. **The wire carries no co
 for any entity, server-owned or not — so a server-side removal never reaches a peer until the entity
 despawns; model "gone" as a value (a flag, a zero) when a peer must see it.
 
-**A predicted body carries physics through the rollback.** A character's motion runs through a
-kinematic capsule against the collision world, so re-running it means restoring the capsule's state
-and re-driving the world it collides against. The `Predicted` marker (`Veng/Physics/Components.h`)
-declares which bodies roll back — only a locally-controlled character — and `PhysicsSystem` steps
-during a replay when the scene carries one, re-driving its deterministic-from-tick kinematic bodies
-to each replayed tick's configuration; the mover re-seats the capsule onto the reconciled `Transform`
-and `PhysicsWorld::RestoreCharacterState` restores the velocity and ground contact the reflected
-components do not carry. A remote character is not simulated — it interpolates and is made solid by a
-kinematic proxy (`RemoteCharacterBodySystem`) so the local character is blocked by it. The whole path
-is in [../Physics/CLAUDE.md](../Physics/CLAUDE.md), "The replay gate".
+**A predicted body carries physics through the rollback.** A predicted character moves through a
+kinematic capsule and a predicted vehicle is a rigid body in the collision world, so re-running either
+means restoring its solver state and re-driving the world it collides against. The `Predicted` marker
+(`Veng/Physics/Components.h`) declares which bodies roll back — the local character, a vehicle under
+the local seat's controller, and any loose body that must roll back with it while it matters. The
+world saves every `Predicted` body's state after each step, and `Reconcile` brackets the replay with
+`BeginPhysicsReplay(scene, C)` and `EndPhysicsReplay(scene)`: the predicted bodies restart from their
+state at C, every other body is put back afterwards exactly as the replay found it, and the world's
+step count keeps counting live steps. The replay callback (`Net::ReplayTick`) is told which replayed
+tick is the rollback's first, and stamps it as `SystemContext::IsReplayStart`; a system whose
+predicted body's authoritative state lives in its own replicated components seats the body on them
+there, since the solver's restore puts it where this peer predicted it was. A character is re-seated
+by its mover from the reconciled `Transform` each tick instead, with
+`PhysicsWorld::RestoreCharacterState` for the velocity and ground contact the components do not carry.
+A remote character is not simulated — it interpolates and is made solid by a kinematic proxy
+(`RemoteCharacterBodySystem`) so the local character is blocked by it. The whole path is in
+[../Physics/CLAUDE.md](../Physics/CLAUDE.md), "The replay gate".
 
 ## The compressed wire
 

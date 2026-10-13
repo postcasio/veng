@@ -884,7 +884,7 @@ namespace Veng
             RemoveBodyRecord(*this, existing);
         }
 
-        JPH::RefConst<JPH::Shape> shape = m_Native->Shapes.Acquire(collider, m_StepCount);
+        JPH::RefConst<JPH::Shape> shape = m_Native->Shapes.Acquire(collider, m_Native->StepCount);
         if (shape == nullptr)
         {
             // A ColliderShape::Mesh collider whose geometry has not arrived yet has no shape; the
@@ -1067,23 +1067,41 @@ namespace Veng
         m_Native->ReadBackNext.push_back(entity);
     }
 
+    bool Detail::SaveBodyBytes(const PhysicsWorld::Native& native, const JPH::BodyID& id,
+                               vector<u8>& out)
+    {
+        const JPH::BodyLockRead lock(native.System.GetBodyLockInterface(), id);
+        if (!lock.Succeeded())
+        {
+            return false;
+        }
+        BufferRecorder recorder(out);
+        native.System.SaveBodyState(lock.GetBody(), recorder);
+        return true;
+    }
+
+    bool Detail::RestoreBodyBytes(PhysicsWorld::Native& native, const JPH::BodyID& id,
+                                  const std::span<const u8> state)
+    {
+        const JPH::BodyLockWrite lock(native.System.GetBodyLockInterface(), id);
+        if (!lock.Succeeded())
+        {
+            return false;
+        }
+        BufferRecorder recorder(state);
+        native.System.RestoreBodyState(lock.GetBody(), recorder);
+        return !recorder.IsFailed();
+    }
+
     vector<u8> PhysicsWorld::SaveBodyState(const Entity entity) const
     {
         const auto found = m_Native->Bodies.find(entity);
-        if (found == m_Native->Bodies.end())
+        vector<u8> state;
+        if (found != m_Native->Bodies.end())
         {
-            return {};
+            (void)Detail::SaveBodyBytes(*m_Native, found->second.Id, state);
         }
-        const JPH::BodyLockRead lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
-        if (!lock.Succeeded())
-        {
-            return {};
-        }
-        JPH::StateRecorderImpl recorder;
-        m_Native->System.SaveBodyState(lock.GetBody(), recorder);
-        const std::string data = recorder.GetData();
-        const auto* bytes = reinterpret_cast<const u8*>(data.data());
-        return {bytes, bytes + data.size()};
+        return state;
     }
 
     VoidResult PhysicsWorld::RestoreBodyState(const Entity entity, const std::span<const u8> state)
@@ -1093,22 +1111,35 @@ namespace Veng
         {
             return std::unexpected("PhysicsWorld::RestoreBodyState: the entity has no body");
         }
-        const JPH::BodyLockWrite lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
-        if (!lock.Succeeded())
-        {
-            return std::unexpected("PhysicsWorld::RestoreBodyState: the body could not be locked");
-        }
-        JPH::StateRecorderImpl recorder;
-        recorder.WriteBytes(state.data(), state.size());
-        recorder.Rewind();
-        m_Native->System.RestoreBodyState(lock.GetBody(), recorder);
-        if (recorder.IsFailed())
+        if (!Detail::RestoreBodyBytes(*m_Native, found->second.Id, state))
         {
             return std::unexpected(
                 "PhysicsWorld::RestoreBodyState: the bytes are not a readable state");
         }
         m_Native->ReadBackNext.push_back(entity);
         return {};
+    }
+
+    bool PhysicsWorld::IsReplaying() const
+    {
+        return m_Native->Replaying;
+    }
+
+    bool PhysicsWorld::HasRecordedState(const Entity entity, const u64 tick) const
+    {
+        const auto record = m_Native->PredictedRecords.find(entity);
+        if (record == m_Native->PredictedRecords.end() || record->second.Ticks.empty())
+        {
+            return false;
+        }
+        const Detail::PredictedTick& slot =
+            record->second.Ticks[tick % record->second.Ticks.size()];
+        return slot.Filled && slot.Tick == tick;
+    }
+
+    u32 PhysicsWorld::GetRecordedBodyCount() const
+    {
+        return static_cast<u32>(m_Native->PredictedRecords.size());
     }
 
     void PhysicsWorld::MoveKinematicBody(const Entity entity, const PhysicsPose& target,
@@ -1655,7 +1686,7 @@ namespace Veng
 
     void PhysicsWorld::Step(const f32 delta)
     {
-        m_Native->Shapes.Sweep(m_StepCount);
+        m_Native->Shapes.Sweep(m_Native->StepCount);
 
         // A full rebuild of the trees pays only after a batch at least as large as the world it
         // joins — a level's worth at once, the first step included. A trickle of bodies, a window
@@ -1684,7 +1715,12 @@ namespace Veng
                   "Physics step exceeded a world budget (error bits {})", static_cast<u32>(error));
         m_Native->DroppedContacts =
             MergeContactSamples(m_Native->Contacts.Samples, m_Native->ReportedContacts);
-        ++m_StepCount;
+        ++m_Native->StepCount;
+    }
+
+    u64 PhysicsWorld::GetStepCount() const
+    {
+        return m_Native->StepCount;
     }
 
     vector<u8> PhysicsWorld::SaveState() const

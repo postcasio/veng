@@ -803,6 +803,14 @@ namespace Veng
         Predicted = 3,
     };
 
+    /// @brief How many client ticks a prediction keeps for rollback.
+    ///
+    /// Twice the worst supported round trip in ticks, so a mispredict at the oldest still-unacked
+    /// tick has its inputs and state to roll back to. The prediction history's default capacity and
+    /// the depth of a predicted body's per-tick physics record share it, so a tick the history can
+    /// replay from is a tick the solver can restore.
+    inline constexpr usize PredictionWindowTicks = 128;
+
     /// @brief Ownership annotation marking who simulates an entity.
     ///
     /// Threaded onto entities with sensible defaults (authored entities are Server;
