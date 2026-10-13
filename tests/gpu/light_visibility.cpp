@@ -6,7 +6,9 @@
 // lit probe in the middle of each cascade's depth range, so every cascade is read, and runs once
 // from the half-resolution layer (single tap) and once at full resolution (3×3 PCF). The area-light
 // case reads a Sphere light's punctual tile. A last case reads FindLightByTag back against the
-// index the C++ packing gave the tagged light.
+// index the C++ packing gave the tagged light. Two more read LightShadowMapAt at the same probes:
+// each cascade's probes name that cascade's texel size and far split, and an area light's tile a
+// perspective texel growing with the distance from the light.
 
 #include <doctest/doctest.h>
 
@@ -48,6 +50,8 @@ namespace
     constexpr f32 CascadeProbes = 0.0f;
     constexpr f32 FixedProbes = 1.0f;
     constexpr f32 TagLookup = 2.0f;
+    constexpr f32 CascadeMapProbes = 3.0f;
+    constexpr f32 TileMapProbes = 4.0f;
     constexpr f32 SingleTap = 0.0f;
     constexpr f32 Pcf = 1.0f;
 
@@ -280,6 +284,62 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(Cell(pixels, 1, 0).r < 0.05f);
     CHECK(Cell(pixels, 1, 1).r > 0.3f);
     CHECK(Cell(pixels, 1, 2).r > 0.3f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "light visibility: each cascade's points name that cascade's map")
+{
+    VisibilityFixture f(*this, "veng_gpu_light_visibility_cascade_map.vengpack");
+    BuildDirectionalScene(f);
+    SetCascadeProbes(f.Half, SingleTap);
+    f.Half->SetParam("Select",
+                     vec4(CascadeMapProbes, SingleTap, static_cast<f32>(ProbedTag), 0.0f));
+    f.AddProbe(f.Half);
+
+    f.Render();
+    const vector<u8> pixels = f.Render();
+    f32 named = 1e9f;
+    for (u32 c = 0; c < Columns; ++c)
+    {
+        for (u32 row = 0; row < 2; ++row)
+        {
+            const vec3 cell = Cell(pixels, c, row);
+            named = glm::min(named, glm::min(cell.r, glm::min(cell.g, cell.b)));
+        }
+        named = glm::min(named, Cell(pixels, c, 2).r);
+    }
+    CHECK(named > 0.3f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "light visibility: an area light's tile resolves finer nearer the light")
+{
+    VisibilityFixture f(*this, "veng_gpu_light_visibility_tile_map.vengpack");
+    const Entity lamp = f.World->CreateEntity();
+    f.World->Add<Transform>(lamp).Position = vec3(0.0f, 8.0f, 0.0f);
+    f.World->Add<Light>(lamp) = Light{
+        .Type = LightType::Sphere,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Intensity = 1.0f / LuminousAnchor,
+        .Range = 50.0f,
+        .Radius = 0.25f,
+        .Tag = ProbedTag,
+    };
+    f.AddBox(vec3(0.0f, -0.1f, 0.0f), vec3(20.0f, 0.2f, 20.0f));
+
+    // Seven units below the light on its axis and a little to the side of it, and 6.25 below it,
+    // all inside the tile's fitted depth range: a perspective texel is as wide as its depth.
+    f.Full->SetParam("Select",
+                     vec4(TileMapProbes, SingleTap, static_cast<f32>(ProbedTag), 6.25f / 7.0f));
+    f.Full->SetParam("Shadowed", vec4(0.0f, 1.0f, 0.0f, 0.0f));
+    f.Full->SetParam("Lit", vec4(0.5f, 1.0f, 0.0f, 0.0f));
+    f.Full->SetParam("Past", vec4(0.0f, 1.75f, 0.0f, 0.0f));
+    f.AddProbe(f.Full);
+
+    const vec3 centre = Cell(f.Render(), 1, 1);
+    CHECK(centre.r > 0.3f);
+    CHECK(centre.g > 0.3f);
+    CHECK(centre.b > 0.3f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

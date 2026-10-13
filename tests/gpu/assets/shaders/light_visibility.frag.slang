@@ -14,6 +14,14 @@
 //       row 2 Past.xyz.
 //   2 — tag lookup: red where FindLightByTag(Select.z) returns Select.w, green where a tag no light
 //       carries (Select.z + 1) and the untagged default both return LightIndexInvalid.
+//   3 — cascade map probes: mode 0's probes, each asking LightShadowMapAt for the map there. In
+//       rows 0 and 1, red is 1 where its texel size is cascade c's, green where its covered depth
+//       is cascade c's far split, blue where it projects along the light's direction; in row 2,
+//       past the cascades, red is 1 where it names no map.
+//   4 — tile map probes, every pixel asking about the same three points: red is 1 where the
+//       texel size at Shadowed.xyz is between a thousandth and one and Lit.xyz's within a tenth of
+//       it, green where its covered depth is unbounded, and blue where Past.xyz's texel size over
+//       Shadowed.xyz's is Select.w to within three per cent.
 struct MaterialParams
 {
     float4 Select;
@@ -36,7 +44,7 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     uint tag = uint(p.Select.z);
 
-    if (p.Select.x > 1.5)
+    if (p.Select.x > 1.5 && p.Select.x < 2.5)
     {
         uint found = FindLightByTag(vc, tag);
         float matches = found == uint(p.Select.w) ? 1.0 : 0.0;
@@ -53,9 +61,10 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     uint filter = p.Select.y > 0.5 ? LightVisibilityPcf : LightVisibilitySingleTap;
     uint light = FindLightByTag(vc, tag);
 
+    float mode = p.Select.x > 2.5 ? p.Select.x - 3.0 : p.Select.x;
     float3 probe;
     float cascadeMatches = 0.0;
-    if (p.Select.x > 0.5)
+    if (mode > 0.5)
     {
         probe = row == 0u ? p.Shadowed.xyz : (row == 1u ? p.Lit.xyz : p.Past.xyz);
     }
@@ -70,6 +79,32 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
         uint count = uint(g_Shadow.ShadowParams.z);
         float viewDepth = -mul(vc.View, float4(probe, 1.0)).z;
         cascadeMatches = SelectCascade(viewDepth, count, set) == column ? 1.0 : 0.0;
+    }
+
+    if (p.Select.x > 3.5)
+    {
+        LightShadowMap axis = LightShadowMapAt(vc, light, p.Shadowed.xyz);
+        float beside = LightShadowMapAt(vc, light, p.Lit.xyz).TexelSize;
+        float nearer = LightShadowMapAt(vc, light, p.Past.xyz).TexelSize;
+        bool sized = axis.TexelSize > 1e-3 && axis.TexelSize < 1.0 &&
+                     abs(beside / axis.TexelSize - 1.0) < 0.1;
+        bool scaled = abs(nearer / max(axis.TexelSize, 1e-9) - p.Select.w) < 0.03 * p.Select.w;
+        return float4(sized ? 1.0 : 0.0, axis.CoveredDepth >= LightShadowMapUnbounded ? 1.0 : 0.0,
+                      scaled ? 1.0 : 0.0, 1.0);
+    }
+    if (p.Select.x > 2.5)
+    {
+        LightShadowMap map = LightShadowMapAt(vc, light, probe);
+        if (row == 2u)
+        {
+            return float4(map.TexelSize == 0.0 ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+        }
+        GpuLight lit = LoadLight(vc, light);
+        uint set = LightCascadeSet(lit.Cone.w);
+        bool texel = abs(map.TexelSize / g_Shadow.Sets[set].TexelSize[column] - 1.0) < 1e-3;
+        bool covered = abs(map.CoveredDepth / g_Shadow.Sets[set].Splits[column] - 1.0) < 1e-3;
+        bool toward = dot(map.TowardLight, normalize(-lit.DirectionType.xyz)) > 0.999;
+        return float4(texel ? 1.0 : 0.0, covered ? 1.0 : 0.0, toward ? 1.0 : 0.0, 1.0);
     }
 
     float visibility = LightVisibility(vc, light, probe, filter);

@@ -4,7 +4,9 @@
 // fragment), this answers the two questions a medium asks at many points along its ray: which
 // light is the one it wants (FindLightByTag), and how much of that light's shadow-mapped visibility
 // reaches a world position (LightVisibility). It evaluates no BRDF, phase function or radiance;
-// the material does, with the light record LoadLight returns.
+// the material does, with the light record LoadLight returns. LightShadowMapAt says which map
+// that visibility is read through at a point and how finely it resolves there, so a march can
+// space its lookups by the map's own texels.
 //
 // Include it after Veng/translucent.slang, whose view block and push block it reads. A material that
 // also lights a surface includes Veng/forward_lighting.slang in place of Veng/translucent.slang (it
@@ -135,4 +137,113 @@ float LightVisibility(ViewConstants vc, uint lightIndex, float3 worldPosition, u
 float LightVisibility(ViewConstants vc, uint lightIndex, float3 worldPosition)
 {
     return LightVisibility(vc, lightIndex, worldPosition, LightVisibilitySingleTap);
+}
+
+// The view depth LightShadowMapAt reports for a map that view depth does not select: a punctual
+// tile, which covers what its projection holds at any depth.
+static const float LightShadowMapUnbounded = 3.0e38;
+
+// The shadow map LightVisibility reads a light through at one point, as a medium spacing its
+// lookups along a ray needs it. The map resolves nothing finer than a texel across the direction
+// it projects along, so lookups about a texel apart along the ray's image in the map read all it
+// holds, and the image's length is the ray's length times the sine of its angle to TowardLight,
+// over TexelSize.
+struct LightShadowMap
+{
+    // The unit direction toward the light that the map projects along at the point.
+    float3 TowardLight;
+    // The world units one of the map's texels spans at the point, across TowardLight; zero where
+    // no map covers the point, which LightVisibility reads as lit.
+    float TexelSize;
+    // The view depth out to which the same map covers: a cascade's far split, past which the next
+    // cascade (or none) takes over; LightShadowMapUnbounded for a punctual tile.
+    float CoveredDepth;
+};
+
+// The map LightVisibility reads lightIndex through at worldPosition, chosen by the same arm and
+// cascade select. A cascade's texel size is its fit's own; a punctual tile's is measured by
+// projecting the point and one beside it across the light's direction, so it is the tile's
+// perspective footprint at the point's depth. Zero TexelSize wherever LightVisibility would
+// return 1 without sampling: no live light, no shadow cast or a cascade set denied, shadows off,
+// past the last cascade, or outside a punctual tile's frustum.
+LightShadowMap LightShadowMapAt(ViewConstants vc, uint lightIndex, float3 worldPosition)
+{
+    LightShadowMap map;
+    map.TowardLight = float3(0.0, 1.0, 0.0);
+    map.TexelSize = 0.0;
+    map.CoveredDepth = 0.0;
+    if (lightIndex >= vc.LightState.y)
+    {
+        return map;
+    }
+    GpuLight light = LoadLight(vc, lightIndex);
+    float flags = light.Cone.w;
+    float type = light.DirectionType.w;
+    bool isDirectional = type == LightTypeDirectional;
+    bool isArea = type > LightTypeSpot + 0.5;
+    if (isDirectional || (isArea && LightIsAreaCascadeShadowed(flags)))
+    {
+        map.TowardLight = normalize(-light.DirectionType.xyz);
+        uint count = uint(g_Shadow.ShadowParams.z);
+        if (LightCastsNoShadow(flags) || LightIsCascadeDenied(flags) ||
+            g_Shadow.ShadowParams.w < 0.5 || count == 0u)
+        {
+            return map;
+        }
+        uint set = LightCascadeSet(flags);
+        float viewDepth = -mul(vc.View, float4(worldPosition, 1.0)).z;
+        uint cascade = SelectCascade(viewDepth, count, set);
+        if (cascade < count)
+        {
+            map.TexelSize = g_Shadow.Sets[set].TexelSize[cascade];
+            map.CoveredDepth = g_Shadow.Sets[set].Splits[cascade];
+        }
+        return map;
+    }
+
+    float3 toLight = light.PositionRange.xyz - worldPosition;
+    float dist = length(toLight);
+    if (dist <= 1e-4)
+    {
+        return map;
+    }
+    float3 L = toLight / dist;
+    map.TowardLight = L;
+    int slot = int(light.Cone.z);
+    if (LightCastsNoShadow(flags) || slot < 0)
+    {
+        return map;
+    }
+    PunctualShadowRecord record = g_Punctual.Records[slot];
+    if (record.Params.x < 0.5)
+    {
+        return map;
+    }
+    uint face = record.Params.x > 1.5 ? 0u : SelectCubeFace(-L);
+    float4 clip = mul(record.ViewProj[face], float4(worldPosition, 1.0));
+    float3 up = abs(L.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float3 across = normalize(cross(L, up));
+    float reach = 1e-3 * dist;
+    float4 beside = mul(record.ViewProj[face], float4(worldPosition + across * reach, 1.0));
+    if (clip.w <= 0.0 || beside.w <= 0.0)
+    {
+        return map;
+    }
+    float3 ndc = clip.xyz / clip.w;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    float2 tileSize = float2(1.0 / float(CubeFaceCount), 1.0 / float(MaxShadowedPunctual));
+    float2 tileMin = float2(float(face), float(slot)) * tileSize;
+    if (ndc.z < 0.0 || ndc.z > 1.0 || any(uv < tileMin) || any(uv > tileMin + tileSize))
+    {
+        return map;
+    }
+    // In texels of the tile, whose atlas-UV texel is anisotropic (PunctualShadowVisibility).
+    float2 texel = g_Punctual.AtlasParams.x * tileSize;
+    float texels = length((beside.xy / beside.w * 0.5 + 0.5 - uv) / texel);
+    if (texels > 0.0)
+    {
+        map.TexelSize = reach / texels;
+        map.CoveredDepth = LightShadowMapUnbounded;
+    }
+    return map;
 }

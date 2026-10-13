@@ -1191,7 +1191,7 @@ light shafts, dust lit through a window, any view-filling medium a material inte
 includes `shadow.slang`, `Veng/light_buffer.slang` and `Veng/light_flags.slang`, not the lighting
 core, plus `Veng/ibl_maps.slang`'s set-4 declarations, which it never samples: a material's
 declared sets must be contiguous (`ShaderInterface::GroupBindingsBySet`), and the forward-lit
-layout binds set 4 ahead of the shadow set. It answers two questions:
+layout binds set 4 ahead of the shadow set. It answers three questions:
 
 - **`LightVisibility(vc, lightIndex, worldPosition[, filter])`** is the share of a light reaching a
   point through the opaque shadow maps, in [0, 1]. It dispatches on the light's arm exactly as
@@ -1209,11 +1209,21 @@ layout binds set 4 ahead of the shadow set. It answers two questions:
   light as its u32 bits (`PackLightTag`), read back by `LoadLightTag` as raw bits, so the stride is
   unchanged and any tag survives. The tag namespace is the consumer's; a debug build warns once per
   duplicate when two lights in a view carry the same nonzero tag (`PackedSceneLights::DuplicateTag`).
+- **`LightShadowMapAt(vc, lightIndex, worldPosition)`** is the map `LightVisibility` reads a light
+  through at a point (`LightShadowMap`): the direction toward the light it projects along, the world
+  units one of its texels spans across that direction, and the view depth out to which the same map
+  covers — a cascade's far split, or `LightShadowMapUnbounded` for a punctual tile, whose texel size
+  is measured by projecting the point and one beside it, so it is the tile's perspective footprint at
+  the point's depth. A ray's image in the map is its length times the sine of its angle to the light
+  over the texel size, so a medium that spaces its lookups about a texel apart along that image reads
+  everything the map holds and no more; the covered depth tells it where along the ray to ask again.
+  The texel size is zero wherever `LightVisibility` reads 1 without sampling.
 
-Neither takes a derivative, so both are legal in a loop and in divergent flow. A fragment including
+None takes a derivative, so all are legal in a loop and in divergent flow. A fragment including
 the file declares set 5, so `IsForwardLit` recognises it and the pass binds the forward layout in
 both layers, with no new path; `tests/gpu/light_visibility.cpp` reads every cascade from the
-half-resolution layer and at full resolution, and an area light's punctual tile. The shared light
+half-resolution layer and at full resolution, and an area light's punctual tile, and asks
+`LightShadowMapAt` about the same probes. The shared light
 includes (and `Veng/ibl_maps.slang`) carry `#pragma once`, so a material lighting a surface includes
 `Veng/forward_lighting.slang` and then this.
 
