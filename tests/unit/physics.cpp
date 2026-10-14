@@ -953,6 +953,47 @@ TEST_CASE("halving a body's inertia scale doubles the spin an off-centre impulse
     CHECK(halfSpin / wholeSpin == doctest::Approx(2.0f).epsilon(1e-4));
 }
 
+TEST_CASE("a body turned between kinematic and dynamic keeps its motion, its mass and its record")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    constexpr f32 Mass = 10.0f;
+    const Entity body = SpawnSphere(fixture, vec3(0.0f), 0.5f,
+                                    RigidBody{.Motion = MotionType::Kinematic,
+                                              .Mass = Mass,
+                                              .LinearDamping = 0.0f,
+                                              .AngularDamping = 0.0f});
+    fixture.World->Add<Predicted>(body);
+    fixture.Tick(1);
+
+    // Driven a tenth of a metre a step, then handed to the solver between two steps.
+    for (u32 i = 1; i <= 3; ++i)
+    {
+        fixture.World->Get<Transform>(body).Position = vec3(0.1f * static_cast<f32>(i), 0.0f, 0.0f);
+        fixture.Tick(1);
+    }
+    const u64 driven = fixture.SimTick;
+    fixture.World->Get<RigidBody>(body).Motion = MotionType::Dynamic;
+    fixture.Tick(1);
+
+    // It carried on at the speed its last sweep set, and the record from before the turn stands.
+    CHECK(fixture.World->Get<Transform>(body).Position.x == doctest::Approx(0.4f).epsilon(1e-4));
+    CHECK(fixture.Physics().GetLinearVelocity(body).x == doctest::Approx(6.0f).epsilon(1e-4));
+    CHECK(fixture.Physics().HasRecordedState(body, driven));
+
+    // It weighs its authored mass.
+    fixture.Physics().AddImpulse(body, vec3(0.0f, Mass, 0.0f));
+    CHECK(fixture.Physics().GetLinearVelocity(body).y == doctest::Approx(1.0f).epsilon(1e-4));
+
+    // Turned back, it holds the pose its source names and stops there.
+    fixture.Tick(1);
+    const vec3 held = fixture.World->Get<Transform>(body).Position;
+    fixture.World->Get<RigidBody>(body).Motion = MotionType::Kinematic;
+    fixture.Tick(2);
+    CHECK(glm::length(fixture.World->Get<Transform>(body).Position - held) < 1e-5f);
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(body)) < 1e-5f);
+    CHECK(fixture.Physics().HasRecordedState(body, driven));
+}
+
 TEST_CASE("motion quality and speed limits are taken in place, and an inertia scale re-creates")
 {
     const PhysicsFixture fixture(WeightlessWorld());

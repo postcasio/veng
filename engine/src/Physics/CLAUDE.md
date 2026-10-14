@@ -94,8 +94,15 @@ backing body on the next step, removing either destroys it, and editing a field 
 with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body,
 and `Quality`, `MaxLinearSpeed` and `MaxAngularSpeed`, which the solver changes on a live body; all
 five are taken in place, keeping the body's pose, velocity and sleep state, as is adding or removing
-a `ContactReport`. `RigidBody`, `Collider`, `Sensor` and `ContactReport` carry a removal hook (`VE_ON_REMOVE`)
-that queues the entity for the next step's reconcile, which is how the step finds what left without
+a `ContactReport`. **Turning a body between `Kinematic` and `Dynamic`, with nothing else changed, is
+taken in place too**: it keeps its identity — so a `Predicted` body's per-tick record runs on through
+the switch — its pose, its velocities and its contacts, and is woken. A body turned `Dynamic`
+integrates from the velocity it holds (a kinematic one's is what its last sweep set), and one turned
+`Kinematic` is driven from its source component from the next step. A kinematic body is built with
+the mass properties a dynamic one would have, its authored `Mass` included, so the one it turns into
+weighs what its component says; it is how a driven body is handed to the solver the moment something
+is about to strike it, keeping the motion it had. `RigidBody`, `Collider`, `Sensor` and
+`ContactReport` carry a removal hook (`VE_ON_REMOVE`) that queues the entity for the next step's reconcile, which is how the step finds what left without
 sweeping every body. The three primitives are the shapes that need no cooked data, so a `Collider`
 describing one is complete on its own.
 

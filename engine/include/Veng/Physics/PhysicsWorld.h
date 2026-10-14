@@ -277,7 +277,10 @@ namespace Veng
         /// authority and the body is their shadow. RigidBody::StartAsleep is read only here, at
         /// creation, and a difference in it alone re-creates nothing. RigidBody::Quality,
         /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing,
-        /// and so is @p reportContacts.
+        /// and so is @p reportContacts. A body turned between Kinematic and Dynamic with nothing
+        /// else changed is turned in place: it keeps its identity, pose, velocities and contacts,
+        /// and is woken — a kinematic one driven from its source component from the next step, a
+        /// dynamic one integrated from the velocities it holds.
         /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
         /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
         ///

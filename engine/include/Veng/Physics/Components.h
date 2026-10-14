@@ -99,10 +99,11 @@ namespace Veng
         MotionType Motion = MotionType::Dynamic;
         /// @brief The collision layer this body sits on; the world's CollisionMatrix filters pairs by it.
         PhysicsLayer Layer = PhysicsLayer::Moving;
-        /// @brief Mass in kilograms; ignored for a Static or Kinematic body.
+        /// @brief Mass in kilograms; ignored for a Static body.
         ///
         /// Zero derives the mass from the collider's volume, after its Scale, at the solver's
         /// default density of 1000 kg/m³; any positive value is the mass whatever the shape's size.
+        /// A Kinematic body carries it unread, so one turned Dynamic in place weighs what it says.
         f32 Mass = 1.0f;
         /// @brief Fraction of linear velocity shed per second; ignored for a non-Dynamic body.
         f32 LinearDamping = 0.05f;

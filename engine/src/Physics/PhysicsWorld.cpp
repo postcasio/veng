@@ -876,6 +876,67 @@ namespace Veng
             record.Body.MaxLinearSpeed = body.MaxLinearSpeed;
             record.Body.MaxAngularSpeed = body.MaxAngularSpeed;
         }
+
+        /// @brief Whether @p body differs from a live body's settings only in turning it between
+        ///        Kinematic and Dynamic, which the solver takes on the body it holds.
+        [[nodiscard]] bool SwitchesMotionInPlace(const Detail::BodyRecord& record,
+                                                 const RigidBody& body, const Collider& collider,
+                                                 const bool sensor)
+        {
+            const auto moving = [](const MotionType motion)
+            { return motion == MotionType::Kinematic || motion == MotionType::Dynamic; };
+            RigidBody same = body;
+            same.Motion = record.Body.Motion;
+            return record.Body.Motion != body.Motion && moving(record.Body.Motion) &&
+                   moving(body.Motion) && SameSettings(record.Body, same) &&
+                   SameSettings(record.Shape, collider) && record.SensorComponent == sensor;
+        }
+
+        /// @brief Turns a live body between Kinematic and Dynamic in place, keeping its identity,
+        ///        pose and velocities, and waking it.
+        ///
+        /// A body turned Kinematic is driven from its source component from the next step, and its
+        /// first push stops whatever velocity it kept unless the source has moved; one turned
+        /// Dynamic leaves the driven set and is integrated from the velocities it holds.
+        /// @param native  The world's backend state.
+        /// @param entity  The body's entity.
+        /// @param record  Its record, updated to match.
+        /// @param body    The settings to take.
+        void SwitchMotion(PhysicsWorld::Native& native, const Entity entity,
+                          Detail::BodyRecord& record, const RigidBody& body)
+        {
+            JPH::BodyInterface& bodies = native.System.GetBodyInterface();
+            bodies.SetMotionType(record.Id, ToJoltMotion(body.Motion), JPH::EActivation::Activate);
+            if (body.Motion == MotionType::Dynamic)
+            {
+                const u32 slot = record.Driven;
+                const auto last = static_cast<u32>(native.Driven.size() - 1);
+                if (slot != last)
+                {
+                    native.Driven[slot] = native.Driven[last];
+                    native.Bodies.find(native.Driven[slot].Owner)->second.Driven = slot;
+                }
+                native.Driven.pop_back();
+                record.Driven = Detail::NotDriven;
+            }
+            else
+            {
+                PhysicsPose at;
+                at.Position = Detail::FromJolt(bodies.GetPosition(record.Id));
+                at.Rotation = Detail::FromJolt(bodies.GetRotation(record.Id));
+                record.Driven = static_cast<u32>(native.Driven.size());
+                native.Driven.emplace_back(Detail::DrivenBody{.Owner = entity,
+                                                              .Id = record.Id,
+                                                              .Motion = body.Motion,
+                                                              .SyncTransform = body.SyncTransform,
+                                                              .LastPushed = at,
+                                                              .Moving = true});
+            }
+            record.Body.Motion = body.Motion;
+            record.Body.SyncTransform = body.SyncTransform;
+            record.Body.StartAsleep = body.StartAsleep;
+            ApplyMotionSettings(native, record, body);
+        }
     }
 
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
@@ -926,6 +987,12 @@ namespace Veng
                 SetReportsContacts(*m_Native, entity, record, reportContacts);
                 return;
             }
+            if (SwitchesMotionInPlace(record, body, collider, sensor))
+            {
+                SwitchMotion(*m_Native, entity, record, body);
+                SetReportsContacts(*m_Native, entity, record, reportContacts);
+                return;
+            }
             RemoveBodyRecord(*this, existing);
         }
 
@@ -965,7 +1032,9 @@ namespace Veng
         // A sensor is told about non-dynamic bodies too, so a kinematic mover entering a trigger
         // volume is reported rather than passing through it unseen.
         settings.mCollideKinematicVsNonDynamic = settings.mIsSensor;
-        if (body.Motion == MotionType::Dynamic && body.Mass > 0.0f)
+        // A kinematic body carries the mass a dynamic one would, so one turned Dynamic in place
+        // weighs what its component says.
+        if (body.Motion != MotionType::Static && !triangleMesh && body.Mass > 0.0f)
         {
             settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
             settings.mMassPropertiesOverride.mMass = body.Mass;
