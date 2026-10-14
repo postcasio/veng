@@ -2689,6 +2689,7 @@ namespace Veng::Renderer
                 .JitterNdc = vec4(jitterNdc, m_PreviousJitterNdc),
                 .PrevFromCurDirection =
                     mat4(m_PreviousDirectionViewProj * glm::inverse(directionViewProj)),
+                .EnvironmentLightTint = vec4(resolvedView.EnvironmentLightTint, 0.0f),
             };
             for (u32 i = 0; i < ShCoefficientCount; ++i)
             {
@@ -2755,6 +2756,7 @@ namespace Veng::Renderer
                     .RenderSize = validExtent,
                     .IblFactor =
                         ambientArm == AmbientArm::Ibl ? resolvedView.EnvironmentIntensity : 0.0f,
+                    .IblTint = resolvedView.EnvironmentLightTint,
                     .SamplesPerQuad = resolvedView.SsrSamplesPerQuad,
                     .RoughnessThreshold = resolvedView.SsrRoughnessThreshold,
                     .VarianceThreshold = resolvedView.SsrVarianceThreshold,

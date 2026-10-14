@@ -67,6 +67,9 @@ namespace Veng::Renderer
         // The previous frame's unjittered (projection x rotation-only view) times the inverse of
         // this frame's: reprojects the direction behind a pixel with no finite depth.
         mat4 PrevFromCurDirection;
+        // rgb the colour multiplying the sky's ambient light (SceneView::EnvironmentLightTint);
+        // w unused.
+        vec4 EnvironmentLightTint;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

@@ -69,6 +69,7 @@ namespace Veng
         settings.DepthOfField = look.DepthOfField;
 
         view.AmbientFloor = look.AmbientFloor;
+        view.EnvironmentLightTint = look.EnvironmentLightTint;
         view.Exposure = look.Exposure;
         view.Tonemapper = look.Tonemapper;
         view.AutoExposureMinLuminance = look.AutoExposureMinLuminance;
@@ -107,6 +108,7 @@ namespace Veng
     void CopyLookKnobs(const Renderer::ViewState& resolved, Renderer::ViewState& view)
     {
         view.AmbientFloor = resolved.AmbientFloor;
+        view.EnvironmentLightTint = resolved.EnvironmentLightTint;
         view.Exposure = resolved.Exposure;
         view.Tonemapper = resolved.Tonemapper;
         view.AutoExposureMinLuminance = resolved.AutoExposureMinLuminance;

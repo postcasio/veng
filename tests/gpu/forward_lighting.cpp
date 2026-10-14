@@ -11,6 +11,10 @@
 // SurfaceFlagNoEnvironmentLighting into the g-buffer, the translucent twin sets
 // ForwardSurface::DeclinesEnvironmentLighting, and both must take the flat ambient floor under an
 // image-based or SH sky.
+//
+// And it carries the environment light tint: under either sky arm, a tinted face reads the tint
+// times the untinted face per channel, deferred and forward, while a face declining the sky's light
+// is untouched by it.
 
 #include <cstring>
 
@@ -95,9 +99,10 @@ namespace
         return writer.Build();
     }
 
-    // Two uniform skies of very different colour and brightness.
+    // Two uniform skies of very different colour and brightness, and a neutral one.
     constexpr AssetId WarmPanorama{0x62F1025508D196B5ULL};
     constexpr AssetId CoolPanorama{0x95D20444346C88C0ULL};
+    constexpr AssetId NeutralPanorama{0x87CFEDC28BDDBBCAULL};
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -325,6 +330,118 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // the environment's content does not reach it. The tolerance covers the g-buffer's 8-bit albedo
     // against the forward path's exact floats.
     CHECK(flaggedError < 0.01f);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "forward lighting: the environment light tint scales the sky's ambient light per "
+                  "channel, deferred and forward, and leaves a surface declining it alone")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path outArchive = CookForwardPack("veng_gpu_forward_environment_tint.vengpack");
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const MountHandle neutralMount =
+        assets.MountMemory(PanoramaArchive(NeutralPanorama, vec3(1.0f)), "neutral sky");
+    const AssetResult<AssetHandle<EnvironmentMap>> neutral =
+        assets.LoadSync<EnvironmentMap>(NeutralPanorama);
+    REQUIRE(neutral.has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> opaque =
+        assets.LoadSync<MaterialInstance>(AssetId{0xF34FF2CE488F7B19ULL});
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(AssetId{0xA1F58FB895475E00ULL});
+    REQUIRE(opaque.has_value());
+    REQUIRE(translucent.has_value());
+
+    const Ref<Mesh> opaqueCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *opaque), "Environment Tint Opaque");
+    const Ref<Mesh> translucentCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *translucent), "Environment Tint Lit");
+
+    // No light at all: the face's radiance is its ambient term alone.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity skyEntity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(skyEntity);
+    auto* source = static_cast<EnvironmentSky*>(sky.Source.SetActive(TypeIdOf<EnvironmentSky>()));
+    source->Map = *neutral;
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const auto SetDeclines = [&](bool declines)
+    {
+        for (const AssetHandle<MaterialInstance>* instance : {&*opaque, &*translucent})
+        {
+            const_cast<MaterialInstance&>(*instance->Get())
+                .SetParam("DeclinesEnvironment", declines ? 1.0f : 0.0f);
+        }
+    };
+
+    // The front face's centre texel through the identity tone curve, so the readback is linear in
+    // the ambient term.
+    const auto FaceColour = [&](const Ref<Mesh>& mesh, const vec3& tint) -> vec3
+    {
+        const Entity cube = scene->CreateEntity();
+        scene->Add<Transform>(cube).Position = vec3(0.0f, 0.0f, -0.5f);
+        scene->Add<MeshRenderer>(cube).Mesh = assets.Adopt(mesh);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = 0.5f,
+                                                           .Tonemapper = Tonemapper::None,
+                                                           .EnvironmentLightTint = tint});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        scene->DestroyEntity(cube);
+        return DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    };
+
+    constexpr vec3 Tint{1.0f, 0.5f, 0.25f};
+    f32 scaleError = 0.0f;
+    f32 declinedError = 0.0f;
+    for (const SkyLighting lighting : {SkyLighting::IBL, SkyLighting::SH})
+    {
+        CAPTURE(static_cast<u32>(lighting));
+        sky.Lighting = lighting;
+
+        SetDeclines(false);
+        for (const Ref<Mesh>& mesh : {opaqueCube, translucentCube})
+        {
+            const vec3 untinted = FaceColour(mesh, vec3(1.0f));
+            // Lit in every channel, and short of the clamp, so the readback is the ambient term.
+            REQUIRE(glm::min(untinted.r, glm::min(untinted.g, untinted.b)) > 0.05f);
+            REQUIRE(glm::max(untinted.r, glm::max(untinted.g, untinted.b)) < 0.95f);
+            const vec3 error = glm::abs(FaceColour(mesh, Tint) - Tint * untinted);
+            scaleError = glm::max(scaleError, glm::max(error.r, glm::max(error.g, error.b)));
+        }
+
+        SetDeclines(true);
+        for (const Ref<Mesh>& mesh : {opaqueCube, translucentCube})
+        {
+            const vec3 error = glm::abs(FaceColour(mesh, Tint) - FaceColour(mesh, vec3(1.0f)));
+            declinedError = glm::max(declinedError, glm::max(error.r, glm::max(error.g, error.b)));
+        }
+    }
+
+    // The tolerance covers the half-float output and the g-buffer's 8-bit albedo.
+    CHECK(scaleError < 0.01f);
+    CHECK(declinedError < 1e-4f);
 
     std::filesystem::remove(outArchive);
 }

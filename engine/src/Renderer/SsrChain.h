@@ -78,8 +78,11 @@ namespace Veng::Renderer
         uvec2 DenoiserRenderSize{0};
         /// @brief One over DenoiserRenderSize.
         vec2 DenoiserInverseRenderSize{0.0f};
+        /// @brief rgb the colour multiplying the environment the chain falls back to (the view's
+        ///        EnvironmentLightTint); w unused.
+        vec4 IblTint{1.0f, 1.0f, 1.0f, 0.0f};
     };
-    static_assert(sizeof(SsrConstants) == 464, "SsrConstants must match ssr_common.slang (std140)");
+    static_assert(sizeof(SsrConstants) == 480, "SsrConstants must match ssr_common.slang (std140)");
 
     /// @brief The view-dependent inputs a frame of the reflection chain runs with.
     struct SsrFrameInputs
@@ -95,6 +98,9 @@ namespace Veng::Renderer
         /// @brief The view's image-based-lighting intensity, or 0 for a view without image-based
         ///        lighting.
         f32 IblFactor = 0.0f;
+        /// @brief The colour multiplying the environment the chain falls back to
+        ///        (SceneView::EnvironmentLightTint).
+        vec3 IblTint{1.0f};
         /// @brief Rays per 2×2 quad of glossy pixels (SceneView::SsrSamplesPerQuad).
         u32 SamplesPerQuad = 1;
         /// @brief SceneView::SsrRoughnessThreshold.

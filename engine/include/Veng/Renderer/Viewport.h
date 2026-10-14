@@ -113,6 +113,8 @@ namespace Veng::Renderer
         ///
         /// The default is the engine's flat ambient, so a consumer authoring none is unchanged.
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
+        /// @brief The colour multiplying the sky's ambient light (SceneView::EnvironmentLightTint).
+        vec3 EnvironmentLightTint{1.0f};
         /// @brief Bloom bright-pass luminance knee, display-referred (1.0 = the post-exposure
         /// white point).
         f32 BloomThreshold = 1.0f;
@@ -1432,6 +1434,7 @@ VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto exposure high percenti
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
          .Category = "Exposure")
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient floor", .Category = "Lighting")
+VE_FIELD(EnvironmentLightTint, .DisplayName = "Environment light tint", .Category = "Lighting")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom threshold", .Display = {.Min = 0.0, .Max = 8.0},
          .Category = "Bloom")
 VE_FIELD(BloomFireflyCeiling, .DisplayName = "Bloom firefly ceiling",

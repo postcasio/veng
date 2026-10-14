@@ -1836,6 +1836,13 @@ namespace Veng
         /// tier). Mapped into the per-frame view and pushed into the lighting pass; the default is
         /// the engine's flat ambient, so a look leaving it unset renders unchanged.
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
+        /// @brief A linear RGB colour multiplying the light the sky gives the scene: the
+        ///        image-based and SH skylight ambient arms, and the reflections' fallback to them.
+        ///
+        /// White leaves the sky's light as it is. The skybox, the direct lights and the flat
+        /// ambient floor are not tinted. Mapped into the per-frame view each frame, so it moves with
+        /// no rebuild.
+        vec3 EnvironmentLightTint{1.0f};
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
         /// @brief Whether screen-space reflections run.
@@ -2519,6 +2526,7 @@ VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
+VE_FIELD(EnvironmentLightTint, .DisplayName = "Environment Light Tint")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
 VE_FIELD(SsrSamplesPerQuad, .DisplayName = "SSR Samples Per Quad", .Display = {.Min = 1, .Max = 4})

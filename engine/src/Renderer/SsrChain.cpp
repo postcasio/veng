@@ -1071,6 +1071,7 @@ namespace Veng::Renderer
             .TemporalVarianceGuidedTracingEnabled = inputs.VarianceGuidedTracing ? 1u : 0u,
             .DenoiserRenderSize = m_Extent,
             .DenoiserInverseRenderSize = vec2(1.0f) / vec2(m_Extent),
+            .IblTint = vec4(inputs.IblTint, 0.0f),
         };
         std::memcpy(static_cast<u8*>(m_Constants->GetMappedData()) + ConstantsOffset(), &constants,
                     sizeof(constants));

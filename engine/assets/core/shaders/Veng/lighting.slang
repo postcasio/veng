@@ -554,7 +554,7 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
         float2 brdf = g_BrdfLut.SampleLevel(g_IblSampler, float2(nDotV, s.Roughness), 0.0).rg;
         float3 specularIbl = prefiltered * (fresnel * brdf.x + brdf.y);
 
-        float scale = vc.AmbientFloor.w * ambientOcclusion;
+        float3 scale = vc.AmbientFloor.w * vc.EnvironmentLightTint.rgb * ambientOcclusion;
         ambient.Diffuse = diffuseIbl * scale;
         ambient.Specular = specularIbl * scale;
     }
@@ -565,8 +565,8 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
         // albedo/pi turns irradiance into outgoing radiance, matching the direct arm's
         // normalization (the IBL arm folds the same 1/pi into its irradiance convolution).
         float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
-        ambient.Diffuse =
-            irradiance * (s.Albedo / BrdfPi) * vc.AmbientParams.x * ambientOcclusion;
+        ambient.Diffuse = irradiance * (s.Albedo / BrdfPi) * vc.AmbientParams.x *
+                          vc.EnvironmentLightTint.rgb * ambientOcclusion;
     }
     else
     {

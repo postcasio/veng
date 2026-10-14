@@ -148,7 +148,7 @@ float3 FFX_SSSR_SampleEnvironmentMap(float3 direction, float preceptualRoughness
     float Width = float(width);
     int maxMipLevel = int(log2(float(Width > 0 ? Width : 1)));
     float mip = clamp(preceptualRoughness * float(maxMipLevel), 0.0, float(maxMipLevel));
-    return g_EnvironmentMap.SampleLevel(g_EnvironmentMapSampler, direction, mip).xyz * IBLFactor();
+    return g_EnvironmentMap.SampleLevel(g_EnvironmentMapSampler, direction, mip).xyz * IBLFactor() * IBLTint();
 }
 
 void FFX_SSSR_StoreRadiance(uint2 coordinate, float4 radiance)

@@ -1364,7 +1364,9 @@ is one of these:
   no jitter at all), so there is no jitter correction.
 - **D5** — the reference's environment cube is the view's prefiltered specular probe
   (`EnvironmentIbl`), sampled the reference's way (mip `sqrt(α) · log2(width)`), and its `iblFactor`
-  is the view's IBL intensity — 0 for a view whose ambient arm is not IBL. The chain samples the cube
+  is the view's IBL intensity — 0 for a view whose ambient arm is not IBL — times the view's
+  `EnvironmentLightTint` (`SsrConstants::IblTint`), so the fallback is the light the lighting pass's
+  IBL arm would have given. The chain samples the cube
   in that case too, so `EnvironmentIbl` zeroes it at initialization and leaves it sampled for compute
   as well as fragments (`SampleAny`).
 - **D6** — the sample's "specular IBL factor 0 for the lighting pass while SSSR is on" is a per-view
@@ -1803,7 +1805,13 @@ through those is not capped at `MaxViewsPerFrame` renders in all): two viewports
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
 buffer rings the same way.
 
-**Per-frame shading values ride the block, not a recompile.** `AmbientParams.x` carries the SH
+**Per-frame shading values ride the block, not a recompile.** `EnvironmentLightTint.rgb` is a
+colour multiplying the sky's light (`SceneView::EnvironmentLightTint`, from the scene's
+`RenderLook`, white by default): `Veng/lighting.slang` scales the IBL arm's diffuse and specular and
+the SH skylight arm's diffuse by it, so it reaches the deferred pass and the forward loop alike, and
+the reflection chain carries it into its environment fallback (D5). The skybox, the direct lights
+and the flat arm are untouched, so a consumer can colour the light a scene's surfaces take from the
+sky without recolouring the sky itself. `AmbientParams.x` carries the SH
 skylight arm's intensity, and `.y` / `.z` the geometric specular anti-aliasing variance scale and
 threshold (`SceneView::SpecularAntiAliasingVariance` / `SpecularAntiAliasingThreshold`, clamped to
 non-negative), read by `MakeLightingSurface`; `.w` the normal-map specular anti-aliasing scale
@@ -1846,7 +1854,7 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **720 bytes**. The shadow system's own state — each cascade
+latency instead of starving whichever captures registered last. Its stride is **816 bytes**. The shadow system's own state — each cascade
 set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
 instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 

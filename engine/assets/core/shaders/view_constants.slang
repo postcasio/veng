@@ -119,9 +119,12 @@ struct ViewConstants
     // position the same direction had last frame. It carries no translation to cancel, so it stays
     // exact far from the world origin, and it is the identity under a camera that has not turned.
     float4x4 PrevFromCurDirection;
+    // rgb the colour multiplying the light the sky gives the scene — the image-based and SH
+    // skylight ambient arms — white for none; w unused.
+    float4 EnvironmentLightTint;
 };
 
-static const uint ViewConstantsStride = 800;
+static const uint ViewConstantsStride = 816;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

@@ -724,6 +724,7 @@ namespace Veng::Renderer
             .AutoExposureLowPercentile = state.AutoExposureLowPercentile,
             .AutoExposureHighPercentile = state.AutoExposureHighPercentile,
             .AmbientFloor = state.AmbientFloor,
+            .EnvironmentLightTint = state.EnvironmentLightTint,
             .BloomThreshold = state.BloomThreshold,
             .BloomFireflyCeiling = state.BloomFireflyCeiling,
             .BloomIntensity = state.BloomIntensity,

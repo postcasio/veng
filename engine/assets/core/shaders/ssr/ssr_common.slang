@@ -59,6 +59,7 @@ struct SsrConstants
     uint Padding;
     uint2 DenoiserRenderSize;
     float2 DenoiserInverseRenderSize;
+    float4 IblTint;
 };
 
 // Every pass that reads the constants binds them at binding 0 of its own set 3, at this frame's
@@ -74,6 +75,7 @@ float4x4 PrevViewProjection() { return g_Ssr.PrevViewProjection; }
 uint2 RenderSize() { return g_Ssr.RenderSize; }
 float2 InverseRenderSize() { return g_Ssr.InverseRenderSize; }
 float IBLFactor() { return g_Ssr.IblFactor; }
+float3 IBLTint() { return g_Ssr.IblTint.rgb; }
 float TemporalStabilityFactor() { return g_Ssr.TemporalStabilityFactor; }
 float DepthBufferThickness() { return g_Ssr.DepthBufferThickness; }
 float RoughnessThreshold() { return g_Ssr.RoughnessThreshold; }

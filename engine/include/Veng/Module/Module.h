@@ -524,10 +524,15 @@ extern "C"
 /// Version 126 holds a directional light's shadow cascades still against the scene: CascadeData
 /// grows RadiusStep and ViewerFrameCount, ComputeCascades takes a CascadeFrame, and the
 /// FloatingOrigin component registers. A module calls the fit and its scenes carry the component.
+/// Version 127 tints the sky's ambient light: RenderLook, Viewport::ViewState and SceneView grow
+/// EnvironmentLightTint, and the view-constants block (BindlessRegistry::ViewConstantsStride,
+/// 800 → 816 bytes) carries it. A module spawns looks and builds views, and its shaders index view
+/// regions by the stride, so a stale one lays the structs out short and reads every region past the
+/// first at the wrong offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 126u
+#define VENG_MODULE_ABI_VERSION 127u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

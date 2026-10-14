@@ -825,9 +825,9 @@ namespace Veng::Renderer
         /// Mirrors the shader-side constant in view_constants.slang; the ViewConstants
         /// block (the camera/view matrices, the sub-rect mapping, the sky SH, the frame
         /// clock, the scene-color grab handles, the view's light state, where its per-tile
-        /// light masks live, and the projection jitter with the direction reprojection) fills it
-        /// exactly.
-        static constexpr u32 ViewConstantsStride = 800;
+        /// light masks live, the projection jitter with the direction reprojection, and the sky's
+        /// ambient tint) fills it exactly.
+        static constexpr u32 ViewConstantsStride = 816;
 
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.

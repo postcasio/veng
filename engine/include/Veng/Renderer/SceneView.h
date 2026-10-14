@@ -304,6 +304,15 @@ namespace Veng::Renderer
         /// ambient, so a scene authoring none renders exactly as before.
         vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
 
+        /// @brief A linear RGB colour multiplying the light the sky gives the scene.
+        ///
+        /// Read by the lighting pass and the forward light loop each Execute: it scales the
+        /// image-based arm's diffuse and specular terms and the SH skylight arm's diffuse term, and
+        /// the screen-space reflections' fallback to the environment. The skybox, the direct lights
+        /// and the flat ambient floor are untouched. Filled from the scene's RenderLook; white, the
+        /// default, leaves the sky's light as it is.
+        vec3 EnvironmentLightTint{1.0f};
+
         /// @brief Environment map for the skybox and image-based lighting; empty for none.
         ///
         /// The renderer fills this from the resolved Sky component each Execute (its source is an
