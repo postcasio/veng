@@ -308,6 +308,29 @@ TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
     CHECK(barrier.DstAccess == vk::AccessFlagBits::eShaderWrite);
 }
 
+TEST_CASE("Schedule: a pass reading and writing one buffer takes one barrier from its last write")
+{
+    // A read-modify-write pass (an atomic counter, a per-instance history) declares both accesses.
+    // Its barriers all record before it runs, so the two fold into one: the previous replay's write
+    // must reach this pass's write, and a barrier sourced from the read alone would not carry it.
+    const vector<ScheduleResource> resources{ImportBuffer("History")};
+    const vector<RenderGraph::Access> readWrite{Access(0, AccessKind::StorageBufferRead),
+                                                Access(0, AccessKind::StorageBufferWrite)};
+    const vector<SchedulePass> passes{{.Name = "Cull", .Accesses = readWrite}};
+
+    const auto schedule = DeriveRenderGraphSchedule(resources, passes);
+
+    constexpr vk::AccessFlags ReadWrite =
+        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+    REQUIRE(schedule.size() == 1);
+    REQUIRE(schedule[0].BufferBarriers.size() == 1);
+    const ScheduledBufferBarrier& barrier = schedule[0].BufferBarriers[0];
+    CHECK(barrier.SrcStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(barrier.SrcAccess == ReadWrite);
+    CHECK(barrier.DstStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(barrier.DstAccess == ReadWrite);
+}
+
 TEST_CASE("Schedule: a depth attachment is flagged depth and a color attachment is not")
 {
     const vector<ScheduleResource> resources{

@@ -4,6 +4,8 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+
 namespace Veng::Renderer::Backend
 {
     namespace
@@ -19,6 +21,44 @@ namespace Veng::Renderer::Backend
                 return {.Stage = scope.Stage, .Access = scope.Access};
             }
             return {.Stage = prior.Stage | scope.Stage, .Access = prior.Access | scope.Access};
+        }
+
+        /// @brief One buffer slot's accesses within a pass, folded into one scope.
+        struct PassBufferScope
+        {
+            /// @brief The buffer's slot.
+            u32 Slot = 0;
+            /// @brief Every stage and access the pass declares on it.
+            SubresourceState Scope;
+        };
+
+        // A pass's buffer accesses, one scope per slot in order of first declaration. Every
+        // barrier a pass takes records before it runs, so a read and a write it declares on one
+        // buffer are one access: two barriers chained between them would order nothing, and the
+        // second would carry the read alone as its source, leaving an earlier write unseen by the
+        // pass's own write.
+        [[nodiscard]] vector<PassBufferScope> FoldPassBufferScopes(const SchedulePass& pass)
+        {
+            vector<PassBufferScope> folded;
+            for (const RenderGraph::Access& access : pass.Accesses)
+            {
+                if (!IsBufferAccess(access.Kind))
+                {
+                    continue;
+                }
+                const auto scope = ScopeFor(access.Kind);
+                const auto found =
+                    std::ranges::find(folded, access.Resource.Index, &PassBufferScope::Slot);
+                if (found == folded.end())
+                {
+                    folded.push_back({.Slot = access.Resource.Index,
+                                      .Scope = {.Stage = scope.Stage, .Access = scope.Access}});
+                    continue;
+                }
+                found->Scope.Stage |= scope.Stage;
+                found->Scope.Access |= scope.Access;
+            }
+            return folded;
         }
     }
 
@@ -43,13 +83,10 @@ namespace Veng::Renderer::Backend
         vector<SubresourceState> bufferScope(resources.size());
         for (const SchedulePass& pass : passes)
         {
-            for (const RenderGraph::Access& access : pass.Accesses)
+            for (const PassBufferScope& folded : FoldPassBufferScopes(pass))
             {
-                if (IsBufferAccess(access.Kind))
-                {
-                    SubresourceState& tracked = bufferScope[access.Resource.Index];
-                    tracked = AdvanceBufferScope(tracked, ScopeFor(access.Kind));
-                }
+                SubresourceState& tracked = bufferScope[folded.Slot];
+                tracked = AdvanceBufferScope(tracked, folded.Scope);
             }
         }
 
@@ -72,8 +109,6 @@ namespace Veng::Renderer::Backend
 
                 if (isBufferAccess)
                 {
-                    const auto scope = ScopeFor(access.Kind);
-
                     // A transient buffer read before any pass writes it reads undefined contents.
                     const bool isBufferRead = IsBufferReadAccess(access.Kind);
                     if (!source.IsImport && isBufferRead)
@@ -104,45 +139,6 @@ namespace Veng::Renderer::Backend
                         }
                     }
 
-                    // A barrier is due on a hazard (the prior access wrote, or this access
-                    // writes), and on a read in a stage or access no earlier read named: the
-                    // barrier that ordered those reads after the write reaches only its own
-                    // destination scope, so the new read chains after it from the earlier
-                    // readers' stages, as DecideBarrier does for images. A read inside the
-                    // tracked read scope needs none. The scope is OR'd across reads so a later
-                    // write waits on every prior read.
-                    const SubresourceState& prior = bufferScope[slot];
-                    const bool hadPriorAccess = static_cast<bool>(prior.Stage);
-                    const bool hazard = IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access);
-                    const bool newReadScope = static_cast<bool>(scope.Stage & ~prior.Stage) ||
-                                              static_cast<bool>(scope.Access & ~prior.Access);
-
-                    if (hadPriorAccess && hazard)
-                    {
-                        baked.BufferBarriers.push_back({
-                            .Slot = slot,
-                            .SrcStage = prior.Stage,
-                            .SrcAccess = prior.Access,
-                            .DstStage = scope.Stage,
-                            .DstAccess = scope.Access,
-                        });
-                    }
-                    else if (hadPriorAccess && newReadScope)
-                    {
-                        baked.BufferBarriers.push_back({
-                            .Slot = slot,
-                            .SrcStage = prior.Stage,
-                            .SrcAccess = {},
-                            .DstStage = scope.Stage,
-                            .DstAccess = scope.Access,
-                        });
-                    }
-                    bufferScope[slot] = AdvanceBufferScope(prior, scope);
-
-                    if (IsWriteAccess(scope.Access))
-                    {
-                        written[slot] = true;
-                    }
                     continue;
                 }
 
@@ -203,6 +199,51 @@ namespace Veng::Renderer::Backend
                         .Store = access.Store,
                         .Clear = access.Clear,
                     });
+                }
+            }
+
+            for (const PassBufferScope& folded : FoldPassBufferScopes(pass))
+            {
+                const u32 slot = folded.Slot;
+                const SubresourceState& scope = folded.Scope;
+
+                // A barrier is due on a hazard (the prior access wrote, or this pass writes), and
+                // on a read in a stage or access no earlier read named: the barrier that ordered
+                // those reads after the write reaches only its own destination scope, so the new
+                // read chains after it from the earlier readers' stages, as DecideBarrier does for
+                // images. A read inside the tracked read scope needs none. The scope is OR'd
+                // across reads so a later write waits on every prior read.
+                const SubresourceState& prior = bufferScope[slot];
+                const bool hadPriorAccess = static_cast<bool>(prior.Stage);
+                const bool hazard = IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access);
+                const bool newReadScope = static_cast<bool>(scope.Stage & ~prior.Stage) ||
+                                          static_cast<bool>(scope.Access & ~prior.Access);
+
+                if (hadPriorAccess && hazard)
+                {
+                    baked.BufferBarriers.push_back({
+                        .Slot = slot,
+                        .SrcStage = prior.Stage,
+                        .SrcAccess = prior.Access,
+                        .DstStage = scope.Stage,
+                        .DstAccess = scope.Access,
+                    });
+                }
+                else if (hadPriorAccess && newReadScope)
+                {
+                    baked.BufferBarriers.push_back({
+                        .Slot = slot,
+                        .SrcStage = prior.Stage,
+                        .SrcAccess = {},
+                        .DstStage = scope.Stage,
+                        .DstAccess = scope.Access,
+                    });
+                }
+                bufferScope[slot] = AdvanceBufferScope(prior, scope);
+
+                if (IsWriteAccess(scope.Access))
+                {
+                    written[slot] = true;
                 }
             }
 
