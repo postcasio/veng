@@ -53,7 +53,8 @@ namespace Veng
     /// @param field     The field whose presentation is resolved.
     /// @param registry  The registry holding the field type's TypeInfo default.
     /// @return The fully-resolved FieldDisplay; the consumer reads optionals via value_or.
-    FieldDisplay ResolveFieldDisplay(const FieldDescriptor& field, const TypeRegistry& registry);
+    VE_API FieldDisplay ResolveFieldDisplay(const FieldDescriptor& field,
+                                            const TypeRegistry& registry);
 
     /// @brief Resolves the widget a field actually draws, degrading an incompatible hint.
     ///
@@ -71,8 +72,8 @@ namespace Veng
     /// @param type       The field's concrete TypeId (selects vec3 vs. vec4 for Color).
     /// @param hasRange   Whether the resolved presentation carries both a Min and a Max.
     /// @return The widget kind that actually draws.
-    [[nodiscard]] WidgetKind EffectiveWidget(WidgetKind requested, FieldClass cls, TypeId type,
-                                             bool hasRange);
+    [[nodiscard]] VE_API WidgetKind EffectiveWidget(WidgetKind requested, FieldClass cls,
+                                                    TypeId type, bool hasRange);
 
     /// @brief Primary template authoring a type's default FieldDisplay; all-unset unless specialised.
     ///

@@ -44,7 +44,8 @@ namespace Veng::Renderer::Backend
     /// nullopt, as does a null texture or a build with no platform interop.
     /// @param texture  The platform texture handle (an @c MTLTexture on Apple).
     /// @return The texture's extent and mapped format, or nullopt when it cannot be imported.
-    [[nodiscard]] optional<ExternalTextureDescription> DescribeExternalTexture(void* texture);
+    [[nodiscard]] VE_API optional<ExternalTextureDescription>
+    DescribeExternalTexture(void* texture);
 
     /// @brief Imports an external platform texture as a managed engine Image.
     ///
@@ -61,8 +62,8 @@ namespace Veng::Renderer::Backend
     /// @param name     Debug name for the image.
     /// @return The imported image, or null.
     /// @pre Context::IsExternalTextureImportSupported() is true.
-    [[nodiscard]] Ref<Image> ImportExternalTexture(Context& context, void* texture,
-                                                   string_view name);
+    [[nodiscard]] VE_API Ref<Image> ImportExternalTexture(Context& context, void* texture,
+                                                          string_view name);
 
 #ifndef __APPLE__
     inline optional<ExternalTextureDescription> DescribeExternalTexture(void*)

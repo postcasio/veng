@@ -28,7 +28,7 @@ namespace Veng
     /// than caching a borrowed pointer: a structural change to the scene reallocates the component
     /// pools, so a cached pointer would dangle. A UI takeover holding a seat across a live scene's
     /// structural change reads and swaps the contexts through a fresh resolve each time it writes.
-    struct InputSeat
+    struct VE_API InputSeat
     {
         /// @brief The seat's Viewer entity, the key its focus stack and pointer association use.
         Entity Viewer = Entity::Null;
@@ -83,7 +83,7 @@ namespace Veng
     /// focus pop and context restore proceed untouched. Nor need it outlive its seat's world: once the
     /// world closes the router retires the scope's token (InputRouter::ForgetWorld), and destruction
     /// then restores no context into the destroyed scene and its pop is a silent no-op.
-    class SeatFocusScope
+    class VE_API SeatFocusScope
     {
     public:
         /// @brief Opens the takeover: pushes UI focus, swaps the context, associates the viewport.

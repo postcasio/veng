@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/StyleProperty.h>
@@ -24,9 +25,9 @@ namespace Veng::Cook
     /// @param value     The declaration's value text (trimmed of surrounding whitespace).
     /// @param located   The located-error prefix (file + selector/element context).
     /// @return The cooked declaration, or a located error.
-    [[nodiscard]] Result<CookedStyleProperty> ParseStyleDeclaration(Gui::StyleProperty property,
-                                                                    std::string_view value,
-                                                                    const string& located);
+    [[nodiscard]] VE_COOK_API Result<CookedStyleProperty>
+    ParseStyleDeclaration(Gui::StyleProperty property, std::string_view value,
+                          const string& located);
 
     /// @brief Parses an interaction-state name — the spelling a `:hover`/`:selected` pseudo-class
     ///        and a `fill-age-states` list share — into its ElementState bit.
@@ -45,7 +46,7 @@ namespace Veng::Cook
     /// @param value    The declaration's value text.
     /// @param located  The located-error prefix (file + selector/element context).
     /// @return The one or two cooked declarations, or a located error.
-    [[nodiscard]] Result<vector<CookedStyleProperty>>
+    [[nodiscard]] VE_COOK_API Result<vector<CookedStyleProperty>>
     ParseBoxShadowDeclaration(std::string_view value, const string& located);
 
     /// @brief Parses a color value (`#rrggbb`/`#rrggbbaa` hex or `rgb()`/`rgba()`) to linear.
@@ -59,7 +60,8 @@ namespace Veng::Cook
     /// @param value    The color text (hex with or without a leading `#`, or an rgb()/rgba() call).
     /// @param located  The located-error prefix (file + selector/element context).
     /// @return The linear straight-alpha color, or a located error.
-    [[nodiscard]] Result<vec4> ParseStyleColor(std::string_view value, const string& located);
+    [[nodiscard]] VE_COOK_API Result<vec4> ParseStyleColor(std::string_view value,
+                                                           const string& located);
 
     /// @brief Rejects a declaration block that authors more than one background fill source.
     ///
@@ -71,6 +73,6 @@ namespace Veng::Cook
     /// @param properties  The block's cooked declarations.
     /// @param located     The located-error prefix (file + selector/element context).
     /// @return Nothing, or a located error naming the two conflicting sources.
-    [[nodiscard]] VoidResult
+    [[nodiscard]] VE_COOK_API VoidResult
     CheckExclusiveFillSources(const vector<CookedStyleProperty>& properties, const string& located);
 }

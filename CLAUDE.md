@@ -3,7 +3,8 @@
 A C++26 Vulkan rendering engine. Built as a shared library (`libveng`) with a
 public API under `engine/include/Veng/` and a Vulkan backend hidden behind it.
 Primary dev platform is macOS via MoltenVK; the code is written to be portable
-(a Windows port is anticipated, hence `VE_API`).
+to Windows, which is why every exported symbol is annotated (see
+[Symbol export](#symbol-export--hidden-by-default-annotated-to-cross)).
 
 **The render thread is single.** The render `Context` is constructed explicitly
 by `Application` and threaded into every resource; `Context::BeginFrame`/
@@ -1001,6 +1002,47 @@ public header while linking only veng's PUBLIC deps. Vulkan, GLFW, VMA, and nfd
 link PRIVATE, so if a public header leaks a backend include, this test fails to
 build. CMake `PUBLIC`/`PRIVATE` linkage is load-bearing here — keep the PUBLIC
 deps PUBLIC and the backend libs PRIVATE.
+
+### Symbol export — hidden by default, annotated to cross
+
+**Every shared library builds with hidden symbol visibility, on every platform.** A symbol leaves
+its image only when its declaration carries that library's export macro: `VE_API` (libveng),
+`VE_EDITOR_API`, `VE_GRAPH_API`, `VE_MCP_API`, `VE_COOK_API`, each in the library's `Export.h`
+over the `VE_DLL_EXPORT` / `VE_DLL_IMPORT` primitives in `Veng/Export.h`. Each expands to the
+export side while its own library compiles (a private `*_BUILD_SHARED` define) and the import
+side everywhere else, so a library never reuses another's macro. Hiding on macOS/Linux too is the
+point: a missing annotation fails the link on the development host, not only under MSVC — and
+MSVC's export-everything mode is not an option, since it overflows a DLL's 65,535-export limit
+with every inline and template instantiation in the image.
+
+What takes the macro, and nothing else does:
+
+- **A non-template class or struct with any member defined out of line** — a non-inline method,
+  a non-inline static data member — takes it on the class (`class VE_API Foo`). On MSVC that
+  does not reach a nested class, so a nested class with out-of-line members carries its own.
+- **A free function or `extern` variable defined in a `.cpp`** takes it on the declaration,
+  after any `[[...]]` attributes (`[[nodiscard]] VE_API Foo MakeFoo();`).
+- **Header-only code takes none** — inline functions, templates, aggregates, a class whose every
+  member is defined in the header. Each image compiles its own copy.
+- **A function only a test calls is still exported** when the test links the library rather
+  than its sources: hidden is hidden from the test binary too.
+
+Two consequences only MSVC shows, and so must be reasoned about rather than observed here:
+
+- **An exported class's copy must be well-formed or deleted.** MSVC defines every non-deleted
+  special member of a `dllexport` class, so a class holding, say, a `vector<Unique<T>>` (whose
+  implicit copy is declared but ill-formed) declares its copy operations deleted.
+- **An inline member of an imported class may be called through the import table** in an
+  unoptimized MSVC build, so an image that calls such a member must link the defining library.
+  A header-only contract consumed without linking its library (the cook interface, which a cook
+  module uses without libveng_cook) therefore annotates individual out-of-line members
+  (`AssetImporterRegistry::MoveInto`) rather than the class.
+
+ImGui and imnodes are compiled into libveng and exported through `IMGUI_API` / `IMNODES_API`,
+both defined to `VE_API` in `Veng/Vendor/ImGuiConfig.h`; imnodes has no export macro of its own,
+so `cmake/PatchImNodes.cmake` adds one at fetch. A game module follows the same rule with a macro
+of its own keyed on `<name>_EXPORTS` — `veng_add_game` builds it hidden too (see
+`examples/template/MarkerSet.h`).
 
 ## Working norms
 

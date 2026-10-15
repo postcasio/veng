@@ -26,8 +26,8 @@ namespace Veng::Capture
     /// @param settings  The settings to check.
     /// @param channels  The audio device's channel count, checked only when a sound track is asked for.
     /// @return Nothing when the settings are encodable, else the reason they are not.
-    [[nodiscard]] VoidResult ValidateCaptureSettings(const VideoCaptureSettings& settings,
-                                                     u32 channels);
+    [[nodiscard]] VE_API VoidResult ValidateCaptureSettings(const VideoCaptureSettings& settings,
+                                                            u32 channels);
 
     /// @brief Resolves a capture's average bitrate in bits per second.
     ///
@@ -36,13 +36,14 @@ namespace Veng::Capture
     /// @param settings  The capture's settings.
     /// @param extent    The picture size in pixels.
     /// @return The average bitrate in bits per second.
-    [[nodiscard]] u64 DeriveBitsPerSecond(const VideoCaptureSettings& settings, uvec2 extent);
+    [[nodiscard]] VE_API u64 DeriveBitsPerSecond(const VideoCaptureSettings& settings,
+                                                 uvec2 extent);
 
     /// @brief Builds the default capture name, "<app>-<yyyymmdd-hhmmss>".
     /// @param appName  The host application's name; non-alphanumerics become hyphens.
     /// @param when     The wall-clock time to stamp, in local time.
     /// @return The name, with no extension and no directory.
-    [[nodiscard]] string DefaultCaptureName(string_view appName, std::time_t when);
+    [[nodiscard]] VE_API string DefaultCaptureName(string_view appName, std::time_t when);
 
     /// @brief Resolves a capture name to a file under @p directory.
     ///
@@ -51,7 +52,7 @@ namespace Veng::Capture
     /// @param directory  The directory recordings land in (Capture::VideoDirectory).
     /// @param name       The capture's base name, without extension.
     /// @return The resolved path, with the QuickTime extension.
-    [[nodiscard]] path ResolveVideoCapturePath(const path& directory, string_view name);
+    [[nodiscard]] VE_API path ResolveVideoCapturePath(const path& directory, string_view name);
 
     /// @brief Everything RecorderCore::Open needs: the backend, the settings, and the writer's descriptor.
     struct RecorderCoreInfo
@@ -67,7 +68,7 @@ namespace Veng::Capture
     };
 
     /// @brief Drives a VideoRecorderBackend: the slot map, the timestamps, the wait, and the drain.
-    class RecorderCore
+    class VE_API RecorderCore
     {
     public:
         /// @brief The clock and the wait step, injected so the band drives both.

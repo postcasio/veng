@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Mcp/Export.h>
 #include <Veng/Veng.h>
 
 #include <ostream>
@@ -46,6 +47,6 @@ namespace Veng::Mcp
     /// @param err    Sink for a single human-readable error line.
     /// @param label  The invoking exe's name, prefixed onto every error line (e.g. "veng-editor").
     /// @return The process exit code (0 on success; a distinct nonzero per failure class).
-    VE_API int RunClientCli(std::span<const string> args, std::ostream& out, std::ostream& err,
-                            string_view label);
+    VE_MCP_API int RunClientCli(std::span<const string> args, std::ostream& out, std::ostream& err,
+                                string_view label);
 }

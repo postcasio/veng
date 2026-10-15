@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Cook/Cooker.h>
 
 namespace Veng::Cook
@@ -11,7 +12,7 @@ namespace Veng::Cook
     /// this set directly. A libveng-linked cooker registers the full set with
     /// RegisterBuiltinImporters instead.
     /// @param cooker  The cooker to register into.
-    void RegisterCoreImporters(Cooker& cooker);
+    VE_COOK_API void RegisterCoreImporters(Cooker& cooker);
 
     /// @brief Registers the full built-in importer set: the core importers plus prefab and level.
     ///
@@ -22,7 +23,7 @@ namespace Veng::Cook
     /// unresolved libveng symbol into that link. The bootstrap cooks no prefabs or levels and
     /// registers RegisterCoreImporters alone.
     /// @param cooker  The cooker to register into.
-    void RegisterBuiltinImporters(Cooker& cooker);
+    VE_COOK_API void RegisterBuiltinImporters(Cooker& cooker);
 
     /// @brief Registers the prefab importer.
     ///
@@ -30,7 +31,7 @@ namespace Veng::Cook
     /// veng-free bootstrap cooker. Folded into RegisterBuiltinImporters; exposed individually
     /// for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterPrefabImporter(Cooker& cooker);
+    VE_COOK_API void RegisterPrefabImporter(Cooker& cooker);
 
     /// @brief Registers the level importer.
     ///
@@ -39,7 +40,7 @@ namespace Veng::Cook
     /// cooker. Folded into RegisterBuiltinImporters; exposed individually for a cooker that
     /// wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterLevelImporter(Cooker& cooker);
+    VE_COOK_API void RegisterLevelImporter(Cooker& cooker);
 
     /// @brief Registers the input-map importer.
     ///
@@ -48,7 +49,7 @@ namespace Veng::Cook
     /// builtins (InputAction / Binding). Folded into RegisterBuiltinImporters; exposed
     /// individually for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterInputMapImporter(Cooker& cooker);
+    VE_COOK_API void RegisterInputMapImporter(Cooker& cooker);
 
     /// @brief Registers the rumble-clip importer.
     ///
@@ -57,7 +58,7 @@ namespace Veng::Cook
     /// (Haptics::RumbleClipData and its curves). Folded into RegisterBuiltinImporters; exposed
     /// individually for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterRumbleClipImporter(Cooker& cooker);
+    VE_COOK_API void RegisterRumbleClipImporter(Cooker& cooker);
 
     /// @brief Registers the settings-schema importer (graphics and audio schemas alike).
     ///
@@ -66,7 +67,7 @@ namespace Veng::Cook
     /// builtins (its own reflected structs). Folded into RegisterBuiltinImporters; exposed
     /// individually for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterSettingsSchemaImporter(Cooker& cooker);
+    VE_COOK_API void RegisterSettingsSchemaImporter(Cooker& cooker);
 
     /// @brief Registers the audio-bus-graph importer.
     ///
@@ -75,7 +76,7 @@ namespace Veng::Cook
     /// engine builtins (its own reflected structs). Folded into RegisterBuiltinImporters; exposed
     /// individually for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterAudioBusGraphImporter(Cooker& cooker);
+    VE_COOK_API void RegisterAudioBusGraphImporter(Cooker& cooker);
 
     /// @brief Registers the stylesheet importer.
     ///
@@ -85,7 +86,7 @@ namespace Veng::Cook
     /// RegisterBuiltinImporters; exposed individually for a cooker that wants the core set plus only
     /// this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterStyleSheetImporter(Cooker& cooker);
+    VE_COOK_API void RegisterStyleSheetImporter(Cooker& cooker);
 
     /// @brief Registers the UI-document importer.
     ///
@@ -95,7 +96,7 @@ namespace Veng::Cook
     /// assets by id. Folded into RegisterBuiltinImporters; exposed individually for a cooker that
     /// wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
-    void RegisterUIDocumentImporter(Cooker& cooker);
+    VE_COOK_API void RegisterUIDocumentImporter(Cooker& cooker);
 
     /// @brief Registers the table-schema and data-table importers.
     ///
@@ -105,5 +106,5 @@ namespace Veng::Cook
     /// RegisterBuiltinImporters; exposed individually for a cooker that wants the core set plus
     /// only these importers.
     /// @param cooker  The cooker to register into.
-    void RegisterTableImporters(Cooker& cooker);
+    VE_COOK_API void RegisterTableImporters(Cooker& cooker);
 }

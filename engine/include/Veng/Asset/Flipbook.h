@@ -108,7 +108,7 @@ namespace Veng
     /// column `f % Columns`, row `f / Columns`, counted from the atlas's top-left; the populated
     /// frames run row-major. The asset is data a player reads — FlipbookSprite plays one in the
     /// world — and carries no playback state of its own.
-    class Flipbook
+    class VE_API Flipbook
     {
     public:
         /// @brief Builds a flipbook over an existing atlas texture.

@@ -13,7 +13,7 @@ namespace Veng
     ///
     /// Composed as T * R * S (scale first, rotate, then translate, applied to a
     /// column vector on the right).
-    [[nodiscard]] mat4 LocalMatrix(const Transform& transform);
+    [[nodiscard]] VE_API mat4 LocalMatrix(const Transform& transform);
 
     /// @brief Blends two Transforms component-wise by @p alpha.
     ///
@@ -25,8 +25,8 @@ namespace Veng
     /// @param to     The later (current-tick) transform.
     /// @param alpha  The interpolation fraction in [0, 1].
     /// @return The interpolated transform.
-    [[nodiscard]] Transform InterpolateTransform(const Transform& from, const Transform& to,
-                                                 f32 alpha);
+    [[nodiscard]] VE_API Transform InterpolateTransform(const Transform& from, const Transform& to,
+                                                        f32 alpha);
 
     /// @brief Returns the world matrix of an entity, composed up the Hierarchy chain (root to entity).
     ///
@@ -35,13 +35,13 @@ namespace Veng
     /// Either way the result is the same. An entity with no Transform contributes identity at its
     /// level. A Hierarchy cycle or a parent link referencing a dead entity is API misuse and a fatal
     /// VE_ASSERT.
-    [[nodiscard]] mat4 WorldMatrix(const Scene& scene, Entity entity);
+    [[nodiscard]] VE_API mat4 WorldMatrix(const Scene& scene, Entity entity);
 
     /// @brief Fills out with the world matrix of every entity that has a Transform, in pool dense order.
     ///
     /// Brings the scene's world-matrix pass current first, so this is one parent-first pass plus a
     /// copy, and no pass at all when nothing spatial moved since the last.
-    void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
+    VE_API void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
 
     /// @brief Returns the world-space AABB bounding every resident (Transform, MeshRenderer) entity's mesh.
     ///
@@ -50,5 +50,5 @@ namespace Veng
     /// a still-loading scene bounds to what is loaded. Returns AABB::Empty() when
     /// no resident mesh renderers exist. The bound itself is not cached; the world
     /// matrices come from the scene's world-matrix pass, brought current first.
-    [[nodiscard]] AABB SceneBounds(const Scene& scene);
+    [[nodiscard]] VE_API AABB SceneBounds(const Scene& scene);
 }

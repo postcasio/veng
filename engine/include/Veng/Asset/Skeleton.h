@@ -53,8 +53,8 @@ namespace Veng
     /// @param rotation     Local rotation in parent space.
     /// @param scale        Local scale, applied before the rotation.
     /// @return The bone's local transform.
-    [[nodiscard]] mat4 ComposeBoneTransform(const vec3& translation, const quat& rotation,
-                                            const vec3& scale);
+    [[nodiscard]] VE_API mat4 ComposeBoneTransform(const vec3& translation, const quat& rotation,
+                                                   const vec3& scale);
 
     /// @brief A bone hierarchy with inverse-bind matrices, loaded by AssetId.
     ///
@@ -62,7 +62,7 @@ namespace Veng
     /// system poses it each frame into the GPU skinning palette. Bones are in topological
     /// order; GlobalInverse folds the model's root transform out of the skin formula
     /// skin(bone) = GlobalInverse * modelBone(bone) * InverseBind(bone).
-    struct Skeleton
+    struct VE_API Skeleton
     {
         /// @brief Bones in topological (parent-before-child) order.
         vector<Bone> Bones;
@@ -160,7 +160,7 @@ namespace Veng
     /// of the same blob (AssetManager::ReadSkeleton) cannot disagree. Pure CPU.
     /// @param cooked  The cooked AssetTypes::Skeleton blob, as the archive stores it (inflated).
     /// @return The skeleton, or an error naming what is malformed.
-    [[nodiscard]] Result<Skeleton> ParseCookedSkeleton(std::span<const u8> cooked);
+    [[nodiscard]] VE_API Result<Skeleton> ParseCookedSkeleton(std::span<const u8> cooked);
 
     /// @brief AssetTypeTrait specialization mapping Skeleton to AssetTypes::Skeleton.
     template <>

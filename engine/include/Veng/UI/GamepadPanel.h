@@ -44,5 +44,5 @@ namespace Veng::UI
     /// there.
     /// @param app    The application whose pads are shown.
     /// @param clips  The clips offered for playing on each pad; none draws no play buttons.
-    void GamepadPanel(const Application& app, std::span<const GamepadPanelClip> clips = {});
+    VE_API void GamepadPanel(const Application& app, std::span<const GamepadPanelClip> clips = {});
 }

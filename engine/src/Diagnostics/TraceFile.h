@@ -91,7 +91,7 @@ namespace Veng::Diagnostics::TraceFileFormat
     /// decoder reads the tag rather than re-deriving it.
     /// @param value  The counter sample.
     /// @return The tag a writer must emit for @p value.
-    [[nodiscard]] CounterValueTag SelectCounterTag(f64 value) noexcept;
+    [[nodiscard]] VE_API CounterValueTag SelectCounterTag(f64 value) noexcept;
 
     /// @brief One decoded track descriptor, as the writer is handed it.
     struct TrackDescriptor
@@ -146,7 +146,7 @@ namespace Veng::Diagnostics::TraceFileFormat
     /// bytes (atomically, off the recording thread) once the trailer is written. The writer holds no
     /// I/O — it only builds the byte stream — so it is trivially testable and reusable by the fixture
     /// generator.
-    class TraceWriter
+    class VE_API TraceWriter
     {
     public:
         /// @brief Begins a stream, writing the fixed preamble.
@@ -240,10 +240,10 @@ namespace Veng::Diagnostics::TraceFileFormat
     /// @param offset  In/out cursor; advanced past the varint. Unchanged on failure.
     /// @param out     Receives the decoded value.
     /// @return True on success; false if the bytes end mid-varint.
-    [[nodiscard]] bool ReadVarint(std::span<const u8> data, usize& offset, u64& out);
+    [[nodiscard]] VE_API bool ReadVarint(std::span<const u8> data, usize& offset, u64& out);
 
     /// @brief Decodes a zigzag-encoded signed integer.
     /// @param encoded  The zigzag-encoded unsigned value.
     /// @return The signed value.
-    [[nodiscard]] i64 DecodeZigzag(u64 encoded);
+    [[nodiscard]] VE_API i64 DecodeZigzag(u64 encoded);
 }

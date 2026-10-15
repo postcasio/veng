@@ -265,7 +265,7 @@ namespace Veng::Renderer
     /// Bind() binds set 0 once per pipeline bind (a pass binds its pipeline, then
     /// the registry's set 0, then issues draws) — not once per draw. Draws select
     /// array elements via push-constant indices carried in the handles above.
-    class BindlessRegistry
+    class VE_API BindlessRegistry
     {
     public:
         /// @brief Constructs the registry, allocating the descriptor pool, layout, and set.
@@ -858,7 +858,7 @@ namespace Veng::Renderer
         /// and is only returned to the free list the next time AcquireNextFrame makes index i
         /// current (i.e. after its fence has been waited), by which point no in-flight draw
         /// can still be sampling it — or sooner, by ReclaimAllReleased, once nothing is in flight.
-        struct SlotArray
+        struct VE_API SlotArray
         {
             /// @brief Per-slot resource Ref keeping the resource alive.
             vector<Ref<void>> Slots;

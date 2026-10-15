@@ -21,7 +21,7 @@ namespace Veng::Renderer
     };
 
     /// @brief RAII wrapper around a vk::DescriptorPool.
-    class DescriptorPool
+    class VE_API DescriptorPool
     {
     public:
         /// @brief Creates and returns a DescriptorPool from @p info.

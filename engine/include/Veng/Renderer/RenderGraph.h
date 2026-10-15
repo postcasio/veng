@@ -113,7 +113,7 @@ namespace Veng::Renderer
     ///
     /// Resolves a declared transient to its concrete view for this frame and exposes
     /// the command buffer and the optional user-data pointer.
-    class PassContext
+    class VE_API PassContext
     {
     public:
         /// @brief The command buffer for this pass.
@@ -183,11 +183,21 @@ namespace Veng::Renderer
     ///
     /// Declare passes and their resource accesses; call Compile() to produce a
     /// replayable CompiledGraph.
-    class RenderGraph
+    class VE_API RenderGraph
     {
     public:
         /// @brief Constructs the graph bound to context, which allocates transients.
         explicit RenderGraph(Context& context) : m_Context(context) {}
+
+        // Declared explicitly so an exported class's copy is never instantiated: MSVC defines every
+        // non-deleted special member of a dllexport class, and the implicit copy of a vector of
+        // unique_ptr is declared but ill-formed.
+        /// @brief Not copyable: the graph owns its passes.
+        RenderGraph(const RenderGraph&) = delete;
+        /// @brief Not copy-assignable: the graph owns its passes.
+        RenderGraph& operator=(const RenderGraph&) = delete;
+        /// @brief Moves the passes and the compiled schedule into a new graph on the same context.
+        RenderGraph(RenderGraph&&) = default;
 
         /// @brief Discriminator for the kind of GPU work a pass performs.
         enum class PassType : u8
@@ -241,7 +251,7 @@ namespace Veng::Renderer
         };
 
         /// @brief Fluent builder for configuring a declared pass.
-        class PassBuilder
+        class VE_API PassBuilder
         {
         public:
             /// @brief Constructs a builder over the given pass slot.
@@ -407,7 +417,7 @@ namespace Veng::Renderer
     /// Built by RenderGraph::Compile(); replayed each frame via Execute. Owns its
     /// transient images and retires them through the per-frame deferred-destruction
     /// path on destruction.
-    class CompiledGraph
+    class VE_API CompiledGraph
     {
     public:
         /// @brief Retires owned transient images through the deferred-destruction path.

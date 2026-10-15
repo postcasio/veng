@@ -24,7 +24,7 @@ namespace Veng::Diagnostics
     /// (engine version, build configuration, git provenance, executable basename) are gathered by the
     /// sink itself; a caller supplies only the destination path, the capture mode, and — before close
     /// — the accounting counts.
-    class FileTraceSink final : public TraceSink
+    class VE_API FileTraceSink final : public TraceSink
     {
     public:
         /// @brief Creates a file sink writing to @p filePath, creating parent directories as needed.

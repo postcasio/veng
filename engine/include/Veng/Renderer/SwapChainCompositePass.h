@@ -75,7 +75,7 @@ namespace Veng::Renderer
     /// @brief Composites a scene output and an ImGui overlay into the swapchain.
     ///
     /// Single-owner (Unique); Create is the factory.
-    class SwapChainCompositePass
+    class VE_API SwapChainCompositePass
     {
     public:
         /// @brief Creates the pass and builds the composite pipeline.

@@ -38,7 +38,7 @@ namespace Veng::Audio
     /// resident payload) must outlive the decoder — and yields interleaved float frames on demand.
     /// The decode is CPU work suitable for a worker thread; it must never run on the audio callback
     /// thread, which reads only ready samples.
-    class VorbisMemoryDecoder
+    class VE_API VorbisMemoryDecoder
     {
     public:
         /// @brief Opens a decoder over an in-memory Vorbis bitstream.
@@ -90,7 +90,7 @@ namespace Veng::Audio
     /// resident AudioBuffer a voice reads directly) or an encoded Vorbis stream (Storage::Encoded —
     /// resident bytes an incremental decoder consumes at play time). The cook-time mode chose which;
     /// both describe the same signal, so SampleRate/Channels/FrameCount are meaningful either way.
-    class AudioClip
+    class VE_API AudioClip
     {
     public:
         /// @brief Decodes a cooked audio blob into a clip.

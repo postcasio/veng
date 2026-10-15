@@ -21,7 +21,7 @@
 
 namespace Veng::Renderer
 {
-    struct Context::Native
+    struct VE_API Context::Native
     {
         vk::Instance Instance;
         vk::PhysicalDevice PhysicalDevice;
@@ -232,7 +232,7 @@ namespace Veng::Renderer
         /// ImmediateCommands recording made outside one, once nothing else is in flight (see
         /// DrainPendingRetiresIfIdle); anything left at shutdown is caught by the drain-all in
         /// ~Context.
-        struct RetireBin
+        struct VE_API RetireBin
         {
             /// @brief Returns the number of handles and teardowns the bin holds.
             [[nodiscard]] usize Size() const;

@@ -38,9 +38,8 @@ namespace Veng::Renderer
     /// @param swapChainExtent  The window's framebuffer extent the composite writes.
     /// @return Direct when the last placement covers the window exactly, Black when there are no
     ///         placements, Gather otherwise.
-    [[nodiscard]] CompositeSceneSource
-    ResolveCompositeSceneSource(std::span<const CompositePlacement> placements,
-                                uvec2 swapChainExtent);
+    [[nodiscard]] VE_API CompositeSceneSource ResolveCompositeSceneSource(
+        std::span<const CompositePlacement> placements, uvec2 swapChainExtent);
 
     /// @brief Decides the composite's overlay source from whether the overlay layer drew.
     ///
@@ -48,5 +47,5 @@ namespace Veng::Renderer
     /// transparent stand-in in its place rather than an image holding a stale or undefined frame.
     /// @param layerDrew  Whether the overlay layer recorded any drawing this frame.
     /// @return Layer when it drew, Transparent otherwise.
-    [[nodiscard]] CompositeOverlaySource ResolveCompositeOverlaySource(bool layerDrew);
+    [[nodiscard]] VE_API CompositeOverlaySource ResolveCompositeOverlaySource(bool layerDrew);
 }

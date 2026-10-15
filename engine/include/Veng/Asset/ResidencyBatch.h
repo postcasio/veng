@@ -51,7 +51,7 @@ namespace Veng
     /// player spawned at OnStart) carries its own batch from its own SpawnInto call, owned
     /// by the spawning system, not the level's. The level blocks only on its world prefab's
     /// batch — pushing residency into the tick loop is out of scope.
-    class ResidencyBatch
+    class VE_API ResidencyBatch
     {
     public:
         /// @brief Constructs an empty (already-resident) batch.

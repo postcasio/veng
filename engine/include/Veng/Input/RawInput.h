@@ -33,7 +33,7 @@ namespace Veng
     /// is the wrong quantity for a tick (see Input::BeginSimTick). SeatInputView is the Sim-rate
     /// view, and InputMappingSystem — the engine's sole Sim-side reader of raw device state — uses
     /// it, not this.
-    class RawInput final : public RawInputView
+    class VE_API RawInput final : public RawInputView
     {
     public:
         /// @brief Control code selecting the mouse's horizontal delta as an axis source.
@@ -106,7 +106,7 @@ namespace Veng
     /// many frames elapsed, and it is stable across every system reading it within one tick. It also
     /// matters beyond feel: the resolved PlayerInput is what a client replicates and what a
     /// reconciliation replay re-runs, and neither can be keyed to a frame count.
-    class SeatInputView final : public RawInputView
+    class VE_API SeatInputView final : public RawInputView
     {
     public:
         /// @brief Control code selecting the pointer's viewport-local horizontal position as an axis source.
@@ -171,7 +171,7 @@ namespace Veng
     /// so it never also presses an action here. Only keys are ever claimed; a pad never is.
     ///
     /// The Control codes are RawInput's and SeatInputView's.
-    class FrameInputView final : public RawInputView
+    class VE_API FrameInputView final : public RawInputView
     {
     public:
         /// @brief Constructs the implicit seat's view: every device, the first connected pad.

@@ -29,11 +29,11 @@ namespace Veng
     struct AABB;
     struct Hierarchy;
     struct VisibleMesh;
-    mat4 WorldMatrix(const Scene& scene, Entity entity);
-    void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
-    AABB SceneBounds(const Scene& scene);
-    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds, Entity exclude,
-                      u32 layerMask);
+    VE_API mat4 WorldMatrix(const Scene& scene, Entity entity);
+    VE_API void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
+    VE_API AABB SceneBounds(const Scene& scene);
+    VE_API void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
+                             Entity exclude, u32 layerMask);
 
     namespace Detail
     {
@@ -52,7 +52,7 @@ namespace Veng
     /// type. Scene is Unique — single owner; the app owns it and a renderer reads it per frame as a
     /// `const Scene&`. The TypeRegistry it was created with must outlive it and must already have
     /// every component type registered.
-    class Scene
+    class VE_API Scene
     {
         /// @brief The erased per-type store; Scene is its only user.
         using ComponentPool = Detail::ComponentPool;

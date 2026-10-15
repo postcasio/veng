@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Types.h>
@@ -69,7 +70,7 @@ namespace Veng::Cook
     /// Returns the full verification report. Never aborts on a corrupt archive — mismatches
     /// are data in the report, not fatal errors.
     /// @param archivePath  Path to the .vengpack to verify.
-    [[nodiscard]] VerifyReport VerifyArchive(const path& archivePath);
+    [[nodiscard]] VE_COOK_API VerifyReport VerifyArchive(const path& archivePath);
 
     /// @brief Runs VerifyArchive and prints a per-asset OK/MISMATCH report to stdout.
     ///
@@ -79,6 +80,6 @@ namespace Veng::Cook
     /// @param types        Registry the report names each asset's type through; null names the
     ///                     engine builtins only, leaving a game-defined type as its hex id.
     ///                     Verification itself is a byte re-hash and never consults it.
-    [[nodiscard]] int VerifyArchiveCli(const path& archivePath,
-                                       const AssetTypeRegistry* types = nullptr);
+    [[nodiscard]] VE_COOK_API int VerifyArchiveCli(const path& archivePath,
+                                                   const AssetTypeRegistry* types = nullptr);
 }

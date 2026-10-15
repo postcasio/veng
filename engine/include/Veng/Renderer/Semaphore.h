@@ -11,7 +11,7 @@ namespace Veng::Renderer
     /// Distinct from TimelineSemaphore: a binary semaphore has no counter and is used
     /// exclusively for swapchain present/acquire sync. Single-owner (Unique) — nothing
     /// else holds a reference.
-    class Semaphore
+    class VE_API Semaphore
     {
     public:
         /// @brief Creates a binary semaphore.

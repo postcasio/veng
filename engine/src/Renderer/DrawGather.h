@@ -92,7 +92,7 @@ namespace Veng::Renderer
     /// same way within a process. Pipeline and mesh compare by address, so the order between two
     /// distinct meshes is arbitrary but fixed — which is all batching needs.
     /// @param keys The keys to sort in place.
-    void SortDrawKeys(std::span<DrawKey> keys);
+    VE_API void SortDrawKeys(std::span<DrawKey> keys);
 
     /// @brief Groups contiguous slots sharing a source mesh and a pipeline, and splits each group
     ///        into instanced runs.
@@ -106,8 +106,8 @@ namespace Veng::Renderer
     /// @param groups Receives one group per contiguous (mesh, pipeline) stretch; appended to.
     /// @param runs   Receives each group's runs, in order; appended to. A group's FirstRun indexes
     ///               this list as it stands after the call.
-    void GroupContiguousSlots(std::span<const DrawSlot> slots, vector<DrawGroup>& groups,
-                              vector<InstanceRun>& runs);
+    VE_API void GroupContiguousSlots(std::span<const DrawSlot> slots, vector<DrawGroup>& groups,
+                                     vector<InstanceRun>& runs);
 
     /// @brief Lays out the static opaque slots and triages the survivors the later phases gather.
     ///
@@ -179,7 +179,7 @@ namespace Veng::Renderer
     /// back-to-front order, and @p from is left empty.
     /// @param into The plan that receives the draws (re-sorted after the append).
     /// @param from The plan whose draws move; cleared.
-    void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from);
+    VE_API void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from);
 
     /// @brief The translucent back-to-front order: ascending priority groups, farthest first
     ///        within a group, and a half-resolution draw ahead of a full-resolution one at an equal
@@ -191,7 +191,8 @@ namespace Veng::Renderer
     /// @param a  The first draw.
     /// @param b  The second draw.
     /// @return True when @p a draws before @p b.
-    [[nodiscard]] bool TranslucentDrawsBefore(const TranslucentDraw& a, const TranslucentDraw& b);
+    [[nodiscard]] VE_API bool TranslucentDrawsBefore(const TranslucentDraw& a,
+                                                     const TranslucentDraw& b);
 
     /// @brief Cuts a frame's sorted translucent draws into the segments they composite in.
     ///
@@ -207,7 +208,7 @@ namespace Veng::Renderer
     /// @param half      The half-resolution draws, sorted.
     /// @param marginUv  How far each rectangle is grown before an overlap test, in UV per axis.
     /// @param out       Receives the segments.
-    void SegmentTranslucentDraws(std::span<const TranslucentDraw> full,
-                                 std::span<const TranslucentDraw> half, vec2 marginUv,
-                                 TranslucentSegments& out);
+    VE_API void SegmentTranslucentDraws(std::span<const TranslucentDraw> full,
+                                        std::span<const TranslucentDraw> half, vec2 marginUv,
+                                        TranslucentSegments& out);
 }

@@ -23,7 +23,7 @@ namespace Veng
     /// @param p     Sample position.
     /// @param seed  Seed distinguishing independent noise fields.
     /// @return The noise value, approximately in [-1, 1].
-    [[nodiscard]] f32 ValueNoise(vec3 p, u64 seed);
+    [[nodiscard]] VE_API f32 ValueNoise(vec3 p, u64 seed);
 
     /// @brief Gradient (Perlin-style) noise in 3D, seedable.
     ///
@@ -34,7 +34,7 @@ namespace Veng
     /// @param p     Sample position.
     /// @param seed  Seed distinguishing independent noise fields.
     /// @return The noise value, approximately in [-1, 1].
-    [[nodiscard]] f32 GradientNoise(vec3 p, u64 seed);
+    [[nodiscard]] VE_API f32 GradientNoise(vec3 p, u64 seed);
 
     /// @brief Fractal Brownian motion: a weighted sum of octaves of `GradientNoise`.
     ///
@@ -49,5 +49,6 @@ namespace Veng
     /// @param lacunarity  Frequency multiplier per octave.
     /// @param gain        Amplitude multiplier per octave.
     /// @return The summed, normalized noise value, approximately in [-1, 1].
-    [[nodiscard]] f32 Fbm(vec3 p, u64 seed, u32 octaves, f32 lacunarity = 2.0f, f32 gain = 0.5f);
+    [[nodiscard]] VE_API f32 Fbm(vec3 p, u64 seed, u32 octaves, f32 lacunarity = 2.0f,
+                                 f32 gain = 0.5f);
 }

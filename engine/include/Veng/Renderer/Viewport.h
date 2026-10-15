@@ -252,7 +252,7 @@ namespace Veng::Renderer
     /// — can be overridden one by one. RenderScale replaces the viewport's render scale while set.
     /// Runtime-only: nothing saves, replicates or restores it, and it lasts until cleared or until
     /// the viewport is destroyed.
-    struct ViewportDebugOverrides
+    struct VE_API ViewportDebugOverrides
     {
         /// @brief Topology overrides, written over the configured settings before they configure the
         ///        renderer.
@@ -355,7 +355,7 @@ namespace Veng::Renderer
     /// Single-owner (Unique); Create is the factory. A region or settings change invalidates
     /// GetOutput()/GetOutputHandle() exactly as the underlying SceneRenderer's Resize/Configure
     /// does — re-fetch both after SetRegion (on an extent change) and after Configure.
-    class Viewport
+    class VE_API Viewport
     {
     public:
         /// @brief Creates a Viewport owning a fresh SceneRenderer sized to the region's extent × RenderScale.

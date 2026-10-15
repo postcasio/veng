@@ -163,7 +163,7 @@ namespace Veng::Renderer
     /// and every persistent target is cleared to zero whenever Recreate creates it, the reference's
     /// first-frame clear. After the temporal resolve, this frame's radiance A holds the denoised
     /// reflection. See the renderer's CLAUDE.md for the chain and its deviations from the reference.
-    class SsrChain
+    class VE_API SsrChain
     {
     public:
         /// @brief The depth hierarchy's level count at most: the copy of the depth and six

@@ -46,7 +46,7 @@ namespace Veng::Audio
     /// The topology an unconfigured consumer runs on — `Master ⊃ {Music, SFX, UI, Ambience}` at
     /// unity gain, no DSP — reproducing the engine's historical fixed bus set exactly.
     /// @return The default graph data.
-    [[nodiscard]] AudioBusGraphData DefaultAudioBusGraphData();
+    [[nodiscard]] VE_API AudioBusGraphData DefaultAudioBusGraphData();
 
     /// @brief Validates an authored bus graph against the engine's topology rules.
     ///
@@ -55,14 +55,14 @@ namespace Veng::Audio
     /// collide under the interned BusId hash. A failing check returns a descriptive message.
     /// @param data  The authored graph.
     /// @return Success, or a message naming the first rule broken.
-    [[nodiscard]] VoidResult ValidateAudioBusGraph(const AudioBusGraphData& data);
+    [[nodiscard]] VE_API VoidResult ValidateAudioBusGraph(const AudioBusGraphData& data);
 
     /// @brief Cached, immutable cooked bus-graph asset: a game's complete mixer topology.
     ///
     /// A CPU-only asset with no GPU resource; load it through AssetManager::Load by AssetId like any
     /// other asset, then adopt it into the mixer with AudioEngine::ConfigureBusGraph. The asset
     /// carries the authored data verbatim; validation and flattening happen at adoption.
-    class AudioBusGraph
+    class VE_API AudioBusGraph
     {
     public:
         /// @brief Creates a graph asset from its decoded record.

@@ -58,7 +58,7 @@ namespace Veng
     /// Level is CPU data with no GPU resource. Load it through AssetManager::Load like any
     /// other asset; its world prefab and the prefab's embedded asset refs resolve as ordinary
     /// load-time dependencies.
-    class Level
+    class VE_API Level
     {
     public:
         /// @brief Creates a Level from its resolved world prefab and decoded level-scoped config.
@@ -139,7 +139,7 @@ namespace Veng
     /// @param scene     The scene the settings entity is created in.
     /// @param gameMode  The game-mode config a spawn rule reads.
     /// @param render    The render look the scene's presenting viewports resolve.
-    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const RenderLook& render);
+    VE_API void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const RenderLook& render);
 
     /// @brief AssetTypeTrait specialization mapping Level to AssetTypes::Level.
     template <>

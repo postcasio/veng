@@ -13,7 +13,7 @@ namespace Veng::Renderer
     ///
     /// Call Initialize() once after instance creation; all Mark* functions are
     /// no-ops when the extension is unavailable.
-    class DebugMarkers
+    class VE_API DebugMarkers
     {
     public:
         /// @brief Loads VK_EXT_debug_utils function pointers from @p instance.

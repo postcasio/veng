@@ -53,7 +53,7 @@ namespace Veng
     /// It is an `InputConsumer` the app registers first with the `InputRouter`, so it is offered
     /// every UI-owned event ahead of any later consumer and reads the cursor-capture signal to
     /// suspend its cursor poll while the cursor is captured.
-    class ImGuiLayer : public InputConsumer
+    class VE_API ImGuiLayer : public InputConsumer
     {
     public:
         /// @brief Creates an `ImGuiLayer`, initializing ImGui and the Vulkan backend.

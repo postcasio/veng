@@ -51,7 +51,8 @@ namespace Veng
     /// @param thresholds  The samples' thresholds, sorted ascending (at least one).
     /// @param parameter   The value to resolve.
     /// @return The bracketing indices and the weight toward Hi.
-    [[nodiscard]] BlendBracket FindBlendBracket(std::span<const f32> thresholds, f32 parameter);
+    [[nodiscard]] VE_API BlendBracket FindBlendBracket(std::span<const f32> thresholds,
+                                                       f32 parameter);
 
     /// @brief Advances a crossfade weight toward 1 over a fade duration, clamped and monotonic.
     ///
@@ -62,7 +63,7 @@ namespace Veng
     /// @param fadeIn   The fade duration in seconds; <= 0 completes immediately.
     /// @param delta    Time in seconds since the previous tick.
     /// @return The advanced weight in [0, 1].
-    [[nodiscard]] f32 AdvanceCrossfade(f32 weight, f32 fadeIn, f32 delta);
+    [[nodiscard]] VE_API f32 AdvanceCrossfade(f32 weight, f32 fadeIn, f32 delta);
 
     /// @brief Samples an animation into per-bone local TRS poses at a given time.
     ///
@@ -75,8 +76,8 @@ namespace Veng
     /// @param time      Playback time in seconds.
     /// @param loop      Whether to wrap time into [0, Duration) or clamp it.
     /// @param out       Receives one local TRS pose per skeleton bone.
-    void SampleAnimationLocalPose(const Skeleton& skeleton, const Animation& animation, f32 time,
-                                  bool loop, vector<JointPose>& out);
+    VE_API void SampleAnimationLocalPose(const Skeleton& skeleton, const Animation& animation,
+                                         f32 time, bool loop, vector<JointPose>& out);
 
     /// @brief Blends two equal-length local poses per bone: slerp rotation, lerp translation/scale.
     ///
@@ -87,8 +88,8 @@ namespace Veng
     /// @param b       The pose at weight 1 (must match a's length).
     /// @param weight  The blend fraction toward b, in [0, 1].
     /// @param out     Receives the blended pose (resized to a's length).
-    void BlendLocalPoses(const vector<JointPose>& a, const vector<JointPose>& b, f32 weight,
-                         vector<JointPose>& out);
+    VE_API void BlendLocalPoses(const vector<JointPose>& a, const vector<JointPose>& b, f32 weight,
+                                vector<JointPose>& out);
 
     /// @brief Composes per-bone local TRS poses into the local matrices the skinning palette needs.
     ///
@@ -96,7 +97,7 @@ namespace Veng
     /// SampleAnimationPose emits directly, produced here from a blended JointPose list.
     /// @param pose  The per-bone local TRS poses.
     /// @param out   Receives one local matrix per pose entry.
-    void ComposeLocalPose(const vector<JointPose>& pose, vector<mat4>& out);
+    VE_API void ComposeLocalPose(const vector<JointPose>& pose, vector<mat4>& out);
 
     /// @brief Post-multiplies joint rotations onto a per-bone local TRS pose.
     ///
@@ -105,7 +106,8 @@ namespace Veng
     /// pose so a clip and a procedural turn compose. An entry beyond the pose is ignored. Pure.
     /// @param rotations  The joint rotations to apply, in order.
     /// @param pose       The pose to modify in place.
-    void ApplyJointRotations(std::span<const JointRotation> rotations, vector<JointPose>& pose);
+    VE_API void ApplyJointRotations(std::span<const JointRotation> rotations,
+                                    vector<JointPose>& pose);
 
     /// @brief Resolves a JointOverrides' names against a skeleton into joint rotations.
     ///
@@ -115,8 +117,8 @@ namespace Veng
     /// @param skeleton   The skeleton the overrides pose.
     /// @param overrides  The component; its Resolved cache is refreshed when stale.
     /// @param out        Receives one rotation per resolved entry, in entry order.
-    void ResolveJointOverrides(const Skeleton& skeleton, JointOverrides& overrides,
-                               vector<JointRotation>& out);
+    VE_API void ResolveJointOverrides(const Skeleton& skeleton, JointOverrides& overrides,
+                                      vector<JointRotation>& out);
 
     /// @brief Samples an animation into per-bone local pose matrices at a given time.
     ///
@@ -129,8 +131,8 @@ namespace Veng
     /// @param time      Playback time in seconds.
     /// @param loop      Whether to wrap time into [0, Duration) or clamp it.
     /// @param out       Receives one local transform matrix per skeleton bone.
-    void SampleAnimationPose(const Skeleton& skeleton, const Animation& animation, f32 time,
-                             bool loop, vector<mat4>& out);
+    VE_API void SampleAnimationPose(const Skeleton& skeleton, const Animation& animation, f32 time,
+                                    bool loop, vector<mat4>& out);
 
     /// @brief Identifies the bone a clip bakes its root motion onto.
     ///
@@ -141,7 +143,8 @@ namespace Veng
     /// @param skeleton  The skeleton whose bone order the channels target.
     /// @param animation The clip to inspect.
     /// @return The root-motion bone index, or -1 if the clip bakes no translation.
-    [[nodiscard]] i32 FindRootMotionBone(const Skeleton& skeleton, const Animation& animation);
+    [[nodiscard]] VE_API i32 FindRootMotionBone(const Skeleton& skeleton,
+                                                const Animation& animation);
 
     /// @brief Samples a bone's animated local position at a time, falling back to its bind value.
     ///
@@ -152,8 +155,9 @@ namespace Veng
     /// @param bone      The bone index whose position track is read.
     /// @param time      Playback time in seconds.
     /// @return The bone's local-space position at time.
-    [[nodiscard]] vec3 SampleBoneLocalPosition(const Skeleton& skeleton, const Animation& animation,
-                                               i32 bone, f32 time);
+    [[nodiscard]] VE_API vec3 SampleBoneLocalPosition(const Skeleton& skeleton,
+                                                      const Animation& animation, i32 bone,
+                                                      f32 time);
 
     /// @brief View-phase system that advances Animators and writes each entity's SkinnedPose.
     ///
@@ -189,7 +193,7 @@ namespace Veng
     /// SkinnedPose, bumping SkinnedPose::Version when it does. Clocks advance and root motion is
     /// extracted every frame regardless; a finished one-shot clip clamps to its end, so it keys the
     /// same on every frame after and is posed once.
-    class AnimationSystem final : public SceneSystem
+    class VE_API AnimationSystem final : public SceneSystem
     {
     public:
         /// @brief Constructs the system with empty scratch.

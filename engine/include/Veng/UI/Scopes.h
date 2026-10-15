@@ -43,7 +43,7 @@ namespace Veng::UI
     ///
     /// `End` must run even when the window is collapsed, so the destructor calls it
     /// unconditionally; `m_Open` only gates the body via `operator bool`.
-    class [[nodiscard]] ScopedWindow
+    class VE_API [[nodiscard]] ScopedWindow
     {
     public:
         /// @brief Constructs the guard with the result of a prior `Begin` call.
@@ -73,7 +73,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginChild`/`EndChild`.
     ///
     /// `EndChild` runs unconditionally, mirroring `Begin`/`End`.
-    class [[nodiscard]] ScopedChild
+    class VE_API [[nodiscard]] ScopedChild
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginChild` call.
@@ -106,7 +106,7 @@ namespace Veng::UI
     /// factory pushed, all unconditionally (mirroring `Begin`/`End`). The body
     /// always draws — a toolbar has no collapsed state — so `operator bool` is always true;
     /// the guard exists for the RAII close, not a visibility gate.
-    class [[nodiscard]] ScopedToolbar
+    class VE_API [[nodiscard]] ScopedToolbar
     {
     public:
         /// @brief Constructs the guard.
@@ -138,7 +138,7 @@ namespace Veng::UI
     /// guard's destructor ends the group and restores the prior spacing/rounding state. The body
     /// always draws — a group has no collapsed state — so `operator bool` is always true; the
     /// guard exists for the RAII close, not a visibility gate.
-    class [[nodiscard]] ScopedJoined
+    class VE_API [[nodiscard]] ScopedJoined
     {
     public:
         /// @brief Constructs the guard.
@@ -167,7 +167,7 @@ namespace Veng::UI
     /// A `TreeNodeEx` that is open owes a `TreePop`; `CollapsingHeader` has no pop
     /// counterpart. The factory bakes which rule applies into `m_Pop` so the destructor
     /// pops only for an open `TreeNode`.
-    class [[nodiscard]] ScopedTree
+    class VE_API [[nodiscard]] ScopedTree
     {
     public:
         /// @brief Constructs the guard.
@@ -203,7 +203,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginTable`/`EndTable`.
     ///
     /// `EndTable` runs only when the table opened.
-    class [[nodiscard]] ScopedTable
+    class VE_API [[nodiscard]] ScopedTable
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginTable` call.
@@ -233,7 +233,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginMainMenuBar`/`EndMainMenuBar`.
     ///
     /// `EndMainMenuBar` runs only when the bar opened.
-    class [[nodiscard]] ScopedMenuBar
+    class VE_API [[nodiscard]] ScopedMenuBar
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginMainMenuBar` call.
@@ -277,7 +277,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginMenu`/`EndMenu`.
     ///
     /// `EndMenu` runs only when the menu opened.
-    class [[nodiscard]] ScopedMenu
+    class VE_API [[nodiscard]] ScopedMenu
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginMenu` call.
@@ -309,7 +309,7 @@ namespace Veng::UI
     /// `EndPopup` runs only when the popup is open. Both begin forms share the guard because
     /// they share that rule: `BeginPopupModal` ends the popup itself on every path that
     /// returns false, so a false result owes nothing either way.
-    class [[nodiscard]] ScopedPopup
+    class VE_API [[nodiscard]] ScopedPopup
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginPopup` call.
@@ -339,7 +339,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginCombo`/`ImGui::EndCombo`.
     ///
     /// `EndCombo` runs only when the combo's dropdown is open.
-    class [[nodiscard]] ScopedCombo
+    class VE_API [[nodiscard]] ScopedCombo
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginCombo` call.
@@ -369,7 +369,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginDragDropSource`/`EndDragDropSource`.
     ///
     /// `EndDragDropSource` runs only when the source began (an item is being dragged).
-    class [[nodiscard]] ScopedDragDropSource
+    class VE_API [[nodiscard]] ScopedDragDropSource
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginDragDropSource` call.
@@ -402,7 +402,7 @@ namespace Veng::UI
     /// @brief Scope guard for `ImGui::BeginDragDropTarget`/`EndDragDropTarget`.
     ///
     /// `EndDragDropTarget` runs only when the target began (the previous item can receive a drop).
-    class [[nodiscard]] ScopedDragDropTarget
+    class VE_API [[nodiscard]] ScopedDragDropTarget
     {
     public:
         /// @brief Constructs the guard with the result of a prior `BeginDragDropTarget` call.
@@ -436,7 +436,7 @@ namespace Veng::UI
     ///
     /// The body always runs and the destructor always pops. `m_Live` tracks move-out
     /// so a moved-from guard's destructor is a no-op.
-    class [[nodiscard]] DisabledScope
+    class VE_API [[nodiscard]] DisabledScope
     {
     public:
         /// @brief Constructs the guard.
@@ -458,7 +458,7 @@ namespace Veng::UI
     };
 
     /// @brief Unconditional scope guard for `ImGui::PushID`/`PopID`.
-    class [[nodiscard]] IdScope
+    class VE_API [[nodiscard]] IdScope
     {
     public:
         /// @brief Constructs the guard.
@@ -480,7 +480,7 @@ namespace Veng::UI
     };
 
     /// @brief Unconditional scope guard for `ImGui::PushStyleColor`/`PopStyleColor`.
-    class [[nodiscard]] StyleColorScope
+    class VE_API [[nodiscard]] StyleColorScope
     {
     public:
         /// @brief Constructs the guard.
@@ -502,7 +502,7 @@ namespace Veng::UI
     };
 
     /// @brief Unconditional scope guard for `ImGui::PushStyleVar`/`PopStyleVar`.
-    class [[nodiscard]] StyleVarScope
+    class VE_API [[nodiscard]] StyleVarScope
     {
     public:
         /// @brief Constructs the guard.
@@ -532,7 +532,7 @@ namespace Veng::UI
     /// never hides content — so `operator bool` is always true; the guard exists for the RAII close,
     /// not a visibility gate. The wrapped widgets must sit inside a window (the group needs one);
     /// the top-of-screen main menu bar is faded through `MainMenuBar(HoverFadeState&)` instead.
-    class [[nodiscard]] ScopedHoverFade
+    class VE_API [[nodiscard]] ScopedHoverFade
     {
     public:
         /// @brief Constructs the guard over the caller's fade state.
@@ -566,15 +566,15 @@ namespace Veng::UI
     /// @param title  Window title and ImGui id.
     /// @param open   Optional pointer toggled when the close button is clicked.
     /// @param flags  Window display flags.
-    [[nodiscard]] ScopedWindow Window(string_view title, bool* open = nullptr,
-                                      WindowFlags flags = WindowFlags::None);
+    [[nodiscard]] VE_API ScopedWindow Window(string_view title, bool* open = nullptr,
+                                             WindowFlags flags = WindowFlags::None);
 
     /// @brief Opens a child region and returns a scope guard whose destructor calls `EndChild` unconditionally.
     /// @param id    ImGui id string for the child region.
     /// @param size  Requested size; zero components fill the available space.
     /// @param flags Window display flags.
-    [[nodiscard]] ScopedChild Child(string_view id, vec2 size = {},
-                                    WindowFlags flags = WindowFlags::None);
+    [[nodiscard]] VE_API ScopedChild Child(string_view id, vec2 size = {},
+                                           WindowFlags flags = WindowFlags::None);
 
     /// @brief Opens a horizontal toolbar bar and returns a scope guard that closes it.
     ///
@@ -587,7 +587,7 @@ namespace Veng::UI
     /// gap below, so the panel content follows without a manual separator.
     /// @param id  ImGui id string for the toolbar's child region.
     /// @return A scope guard whose body is always drawn.
-    [[nodiscard]] ScopedToolbar Toolbar(string_view id);
+    [[nodiscard]] VE_API ScopedToolbar Toolbar(string_view id);
 
     /// @brief Fuses adjacent widgets into one visual control and returns a scope guard.
     ///
@@ -605,7 +605,7 @@ namespace Veng::UI
     /// @param id  ImGui id string for the group.
     /// @return A scope guard whose body is always drawn.
     /// @pre No `Joined` scope is already active (nesting is asserted against).
-    [[nodiscard]] ScopedJoined Joined(string_view id);
+    [[nodiscard]] VE_API ScopedJoined Joined(string_view id);
 
     /// @brief Pins a translucent, auto-sized overlay panel inside the current window.
     ///
@@ -623,8 +623,8 @@ namespace Veng::UI
     /// @param anchor   Which edge or corner of the content region the panel pins to.
     /// @param padding  Offset from the anchored edge/corner, in pixels.
     /// @return A scope guard; true inside it when the panel body should be drawn.
-    [[nodiscard]] ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor,
-                                               vec2 padding = {8, 8});
+    [[nodiscard]] VE_API ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor,
+                                                      vec2 padding = {8, 8});
 
     /// @brief Pins a translucent, auto-sized panel to the screen, outside any window.
     ///
@@ -637,8 +637,8 @@ namespace Veng::UI
     /// @param anchor   Which edge or corner of the work area the panel pins to.
     /// @param padding  Offset from the anchored edge/corner, in pixels.
     /// @return A scope guard; true inside it when the panel body should be drawn.
-    [[nodiscard]] ScopedWindow ScreenOverlay(string_view id, OverlayAnchor anchor,
-                                             vec2 padding = {16, 16});
+    [[nodiscard]] VE_API ScopedWindow ScreenOverlay(string_view id, OverlayAnchor anchor,
+                                                    vec2 padding = {16, 16});
 
     /// @brief Fades the widgets drawn inside the returned scope until the pointer hovers them.
     ///
@@ -650,24 +650,25 @@ namespace Veng::UI
     /// `MainMenuBar(HoverFadeState&)` overload instead.
     /// @param state  Caller-owned fade state, held across frames (see `HoverFadeState`).
     /// @return A scope guard whose body is always drawn.
-    [[nodiscard]] ScopedHoverFade HoverFade(HoverFadeState& state);
+    [[nodiscard]] VE_API ScopedHoverFade HoverFade(HoverFadeState& state);
 
     /// @brief Opens a tree node and returns a scope guard that calls `TreePop` when the node is open.
     /// @param label  Display label and ImGui id.
     /// @param flags  Tree display flags.
-    [[nodiscard]] ScopedTree TreeNode(string_view label, TreeFlags flags = TreeFlags::None);
+    [[nodiscard]] VE_API ScopedTree TreeNode(string_view label, TreeFlags flags = TreeFlags::None);
 
     /// @brief Opens a collapsing header and returns a scope guard with no pop (header has none).
     /// @param label  Display label and ImGui id.
     /// @param flags  Tree display flags.
-    [[nodiscard]] ScopedTree CollapsingHeader(string_view label, TreeFlags flags = TreeFlags::None);
+    [[nodiscard]] VE_API ScopedTree CollapsingHeader(string_view label,
+                                                     TreeFlags flags = TreeFlags::None);
 
     /// @brief Opens a table and returns a scope guard that calls `EndTable` when the table opened.
     ///
     /// The scope owns `BeginTable`/`EndTable`; row and column cursor calls are free functions.
     /// @param id       ImGui id string for the table.
     /// @param columns  Number of columns.
-    [[nodiscard]] ScopedTable Table(string_view id, i32 columns);
+    [[nodiscard]] VE_API ScopedTable Table(string_view id, i32 columns);
 
     /// @brief Opens a two-column property table for aligned `label : widget` inspector rows.
     ///
@@ -676,27 +677,27 @@ namespace Veng::UI
     /// the label in column 0, and stretches the next widget across column 1. The returned
     /// guard calls `EndTable` when the table opened.
     /// @param id  ImGui id string for the table.
-    [[nodiscard]] ScopedTable PropertyTable(string_view id);
+    [[nodiscard]] VE_API ScopedTable PropertyTable(string_view id);
 
     /// @brief Declares a column with a header label.
     /// @param label  Column header text.
-    void TableSetupColumn(string_view label);
+    VE_API void TableSetupColumn(string_view label);
 
     /// @brief Submits all column headers declared with `TableSetupColumn`.
-    void TableHeadersRow();
+    VE_API void TableHeadersRow();
 
     /// @brief Advances to the next row.
-    void TableNextRow();
+    VE_API void TableNextRow();
 
     /// @brief Advances to the next column.
-    void TableNextColumn();
+    VE_API void TableNextColumn();
 
     /// @brief Sets the active column by index.
     /// @param column  Zero-based column index.
-    void TableSetColumnIndex(i32 column);
+    VE_API void TableSetColumnIndex(i32 column);
 
     /// @brief Opens the main menu bar and returns a scope guard that calls `EndMainMenuBar` when opened.
-    [[nodiscard]] ScopedMenuBar MainMenuBar();
+    [[nodiscard]] VE_API ScopedMenuBar MainMenuBar();
 
     /// @brief Opens the main menu bar with a hover fade and returns a scope guard.
     ///
@@ -705,29 +706,29 @@ namespace Veng::UI
     /// scene until the user reaches for it. The returned guard settles the fade and pops the pushed
     /// alpha on close.
     /// @param fade  Caller-owned fade state, held across frames (see `HoverFadeState`).
-    [[nodiscard]] ScopedMenuBar MainMenuBar(HoverFadeState& fade);
+    [[nodiscard]] VE_API ScopedMenuBar MainMenuBar(HoverFadeState& fade);
 
     /// @brief Opens a menu and returns a scope guard that calls `EndMenu` when opened.
     /// @param label  Menu label and ImGui id.
-    [[nodiscard]] ScopedMenu Menu(string_view label);
+    [[nodiscard]] VE_API ScopedMenu Menu(string_view label);
 
     /// @brief Returns true the frame the menu item is clicked.
     ///
     /// `MenuItem` has no begin/end pair, so it is a free function.
     /// @param label    Item label.
     /// @param enabled  When false, the item is greyed out and non-interactive.
-    bool MenuItem(string_view label, bool enabled = true);
+    VE_API bool MenuItem(string_view label, bool enabled = true);
 
     /// @brief Toggles `*selected` when clicked and returns true the frame it changes.
     ///
     /// Used for panel-visibility checkboxes in the Window menu.
     /// @param label     Item label.
     /// @param selected  In/out toggle state.
-    bool MenuItem(string_view label, bool* selected);
+    VE_API bool MenuItem(string_view label, bool* selected);
 
     /// @brief Opens a popup and returns a scope guard that calls `EndPopup` when the popup is open.
     /// @param id  ImGui id string for the popup.
-    [[nodiscard]] ScopedPopup Popup(string_view id);
+    [[nodiscard]] VE_API ScopedPopup Popup(string_view id);
 
     /// @brief Opens a modal popup and returns a scope guard that calls `EndPopup` when it is open.
     ///
@@ -743,39 +744,39 @@ namespace Veng::UI
     /// @param open   Optional pointer; non-null draws a title-bar close button that clears it and
     ///               closes the modal, giving the user a dismissal the body need not draw.
     /// @param flags  Window display flags.
-    [[nodiscard]] ScopedPopup Modal(string_view title, bool* open = nullptr,
-                                    WindowFlags flags = WindowFlags::None);
+    [[nodiscard]] VE_API ScopedPopup Modal(string_view title, bool* open = nullptr,
+                                           WindowFlags flags = WindowFlags::None);
 
     /// @brief Queues a popup to open on the next frame.
     /// @param id  ImGui id string for the popup, matching a `Popup(id)` or `Modal(id)` call.
-    void OpenPopup(string_view id);
+    VE_API void OpenPopup(string_view id);
 
     /// @brief Closes the popup currently being drawn.
     ///
     /// Call inside an open `Popup` scope to dismiss it after a selection (a `Selectable`
     /// inside a popup does not close it on its own, unlike a `MenuItem`), or inside an open
     /// `Modal` scope, where it is the only way out the body can offer.
-    void CloseCurrentPopup();
+    VE_API void CloseCurrentPopup();
 
     /// @brief Directs keyboard focus to the next widget submitted.
     ///
     /// Call before an `InputText` to focus it — e.g. a search box the frame a picker
     /// popup appears, so the user can type immediately.
-    void SetKeyboardFocusHere();
+    VE_API void SetKeyboardFocusHere();
 
     /// @brief Opens a context-menu popup anchored to the previous item, on right-click.
     ///
     /// Wraps `BeginPopupContextItem`: right-clicking the previous widget opens it; the
     /// returned guard's destructor calls `EndPopup` when the popup is open.
     /// @param id  ImGui id string for the popup.
-    [[nodiscard]] ScopedPopup PopupContextItem(string_view id);
+    [[nodiscard]] VE_API ScopedPopup PopupContextItem(string_view id);
 
     /// @brief Opens a context-menu popup for empty space in the current window, on right-click.
     ///
     /// Wraps `BeginPopupContextWindow`: right-clicking window space not over an item opens it;
     /// the returned guard's destructor calls `EndPopup` when the popup is open.
     /// @param id  ImGui id string for the popup.
-    [[nodiscard]] ScopedPopup PopupContextWindow(string_view id);
+    [[nodiscard]] VE_API ScopedPopup PopupContextWindow(string_view id);
 
     /// @brief Opens a combo box with an author-drawn dropdown and returns a scope guard.
     ///
@@ -784,13 +785,13 @@ namespace Veng::UI
     /// carries the standard arrow; size the frame with `SetNextItemWidth` beforehand.
     /// @param id       ImGui id; prefix with `##` to suppress the trailing label.
     /// @param preview  Text shown inside the closed combo frame.
-    [[nodiscard]] ScopedCombo ComboBox(string_view id, string_view preview);
+    [[nodiscard]] VE_API ScopedCombo ComboBox(string_view id, string_view preview);
 
     /// @brief Begins a drag-drop source on the previous item.
     ///
     /// Inside an open guard, call `SetDragDropPayload` to attach the dragged data and draw
     /// a drag preview. The guard's destructor ends the source when it began.
-    [[nodiscard]] ScopedDragDropSource DragDropSource();
+    [[nodiscard]] VE_API ScopedDragDropSource DragDropSource();
 
     /// @brief Sets the payload carried by the active drag-drop source.
     ///
@@ -799,13 +800,13 @@ namespace Veng::UI
     /// @param type  Caller-defined payload type tag, matched by `AcceptDragDropPayload`.
     /// @param data  Pointer to the payload bytes to copy.
     /// @param size  Payload size in bytes.
-    void SetDragDropPayload(string_view type, const void* data, usize size);
+    VE_API void SetDragDropPayload(string_view type, const void* data, usize size);
 
     /// @brief Begins a drag-drop target on the previous item.
     ///
     /// Inside an open guard, call `AcceptDragDropPayload` to receive a matching drop. The
     /// guard's destructor ends the target when it began.
-    [[nodiscard]] ScopedDragDropTarget DragDropTarget();
+    [[nodiscard]] VE_API ScopedDragDropTarget DragDropTarget();
 
     /// @brief Accepts a dropped payload of the given type on the active target.
     ///
@@ -813,28 +814,28 @@ namespace Veng::UI
     /// Call only inside an open `DragDropTarget` scope.
     /// @param type  Payload type tag to match against the dragged source.
     /// @return Pointer to the payload bytes on drop, or nullptr.
-    [[nodiscard]] const void* AcceptDragDropPayload(string_view type);
+    [[nodiscard]] VE_API const void* AcceptDragDropPayload(string_view type);
 
     /// @brief Returns a scope guard that greys out and blocks input for nested widgets.
     /// @param disabled  When false the scope is a no-op (guard still destructs safely).
-    [[nodiscard]] DisabledScope Disabled(bool disabled = true);
+    [[nodiscard]] VE_API DisabledScope Disabled(bool disabled = true);
 
     /// @brief Pushes an id string onto the ImGui id stack and returns a scope guard that pops it.
     /// @param id  String pushed onto the id stack.
-    [[nodiscard]] IdScope PushId(string_view id);
+    [[nodiscard]] VE_API IdScope PushId(string_view id);
 
     /// @brief Pushes a style color and returns a scope guard that pops it.
     /// @param id     Style color slot to override.
     /// @param color  RGBA color value.
-    [[nodiscard]] StyleColorScope StyleColor(StyleColorId id, vec4 color);
+    [[nodiscard]] VE_API StyleColorScope StyleColor(StyleColorId id, vec4 color);
 
     /// @brief Pushes a vec2 style variable and returns a scope guard that pops it.
     /// @param id     Style variable slot to override.
     /// @param value  New value.
-    [[nodiscard]] StyleVarScope StyleVar(StyleVarId id, vec2 value);
+    [[nodiscard]] VE_API StyleVarScope StyleVar(StyleVarId id, vec2 value);
 
     /// @brief Pushes a float style variable and returns a scope guard that pops it.
     /// @param id     Style variable slot to override.
     /// @param value  New value.
-    [[nodiscard]] StyleVarScope StyleVar(StyleVarId id, f32 value);
+    [[nodiscard]] VE_API StyleVarScope StyleVar(StyleVarId id, f32 value);
 }

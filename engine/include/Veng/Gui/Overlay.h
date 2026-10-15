@@ -67,7 +67,7 @@ namespace Veng
     /// Interactive gates whether it takes input, and a system may flip it at runtime.
     ///
     /// The runtime is materialized on the first Drive; a component that never drives allocates none.
-    struct GuiOverlay
+    struct VE_API GuiOverlay
     {
         /// @brief Default-constructs an undriven overlay (its runtime is empty until Drive).
         GuiOverlay();

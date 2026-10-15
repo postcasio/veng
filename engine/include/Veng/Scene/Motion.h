@@ -20,7 +20,8 @@ namespace Veng
     /// @param transform  The transform mutated in place.
     /// @param motion     The constant linear and angular velocity to integrate.
     /// @param delta      Time in seconds since the previous tick.
-    void IntegrateConstantMotion(Transform& transform, const ConstantMotion& motion, f32 delta);
+    VE_API void IntegrateConstantMotion(Transform& transform, const ConstantMotion& motion,
+                                        f32 delta);
 
     /// @brief Generic gameplay system drifting and spinning each ConstantMotion entity.
     ///
@@ -29,7 +30,7 @@ namespace Veng
     /// motion is autonomous — driven by authored data, not by input or an Intent — so it is
     /// deterministic and Sim-phase by default. Ships with the engine; selected per level
     /// through the SystemRegistry like any other gameplay system.
-    class ConstantMotionSystem final : public SceneSystem
+    class VE_API ConstantMotionSystem final : public SceneSystem
     {
     public:
         /// @brief Integrates every (Transform, ConstantMotion) entity's velocities.

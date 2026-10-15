@@ -424,6 +424,8 @@ set_source_files_properties(src/Importers/FontImporter.cpp PROPERTIES
 # with is_*() checks first, so the abort paths are unreachable in normal operation — the same
 # "loud one-line fix on drift" house style as VE_ASSERT.
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
+# The objects are compiled into libveng_cook, so they take its export side of VE_COOK_API.
+target_compile_definitions(veng_cook_objs PRIVATE VE_COOK_BUILD_SHARED)
 # veng_cook_objs pulls in fmt through veng's public headers but does not link
 # fmt::fmt (only the executables below do), so it misses the PUBLIC /utf-8 fmt
 # attaches to its consumers. fmt 12.x static_asserts on it under MSVC; add it
@@ -492,14 +494,10 @@ target_link_libraries(libveng_cook PRIVATE veng_cook_objs
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
         msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml meshoptimizer)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
+target_compile_definitions(libveng_cook PRIVATE VE_COOK_BUILD_SHARED)
 target_precompile_headers(libveng_cook PRIVATE <Veng/Veng.h>)
 # libveng_cook.dylib / .so, exported as veng::cook — the spelling in-tree consumers already use.
 set_target_properties(libveng_cook PROPERTIES OUTPUT_NAME veng_cook EXPORT_NAME cook)
-# Auto-export all symbols on MSVC, mirroring macOS/Linux default visibility (as veng_graph does).
-if (MSVC)
-    set_target_properties(libveng_cook PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif ()
-
 # Installed beside libveng, finding it through the loader-relative lib dir and the host's Slang
 # through the directory find_library found it in (the SDK's, not vendored — see vengc below).
 get_filename_component(VENG_SLANG_LIBDIR "${Slang_LIBRARY}" DIRECTORY)

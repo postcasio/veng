@@ -15,7 +15,7 @@ namespace Veng::Renderer
     /// The present-wait (render-finished) semaphore is deliberately not here — it is
     /// owned per swapchain image by SwapChain, since a present holds it past the point
     /// the in-flight fence bounds. See SwapChain::GetCurrentRenderFinishedSemaphore.
-    class SynchronizationFrame
+    class VE_API SynchronizationFrame
     {
     public:
         /// @brief Allocates the per-frame primitives and command buffer.

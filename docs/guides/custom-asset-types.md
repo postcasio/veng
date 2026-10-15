@@ -251,17 +251,14 @@ patterns work, and the choice is yours:
   its cooked struct layouts, small helpers. Each image gets its own copy; nothing has to be
   exported. This is the default and needs no ceremony.
 - **An explicit export macro** for out-of-line functions defined in `lib<game>` and called from
-  `lib<game>_cook`. Declare a two-sided macro of your own, like veng's `VE_API`:
+  `lib<game>_cook`. Declare a two-sided macro of your own, like veng's `VE_API`, over the
+  `VE_DLL_EXPORT` / `VE_DLL_IMPORT` primitives in `<Veng/Export.h>`:
 
   ```cpp
-  #if defined(_WIN32)
   #if defined(my_game_EXPORTS)      // CMake defines <target>_EXPORTS while compiling the target
-  #define MY_GAME_API __declspec(dllexport)
+  #define MY_GAME_API VE_DLL_EXPORT
   #else
-  #define MY_GAME_API __declspec(dllimport)
-  #endif
-  #else
-  #define MY_GAME_API __attribute__((visibility("default")))
+  #define MY_GAME_API VE_DLL_IMPORT
   #endif
 
   MY_GAME_API string NormalizeMarkerName(string_view name);
@@ -271,13 +268,11 @@ patterns work, and the choice is yours:
   `Template::NormalizeMarkerName`, an out-of-line function compiled into `libtemplate`, so the two
   halves cannot disagree about what a name means.
 
-**The Windows hazard.** On macOS and Linux veng builds with default visibility, so an out-of-line
-symbol in `libmy_game` is importable from `libmy_game_cook` with no annotation at all — which is
-exactly why the macro is easy to forget. On Windows it is not: a symbol not `dllexport`ed by
-`my_game.dll` cannot be linked by `my_game_cook.dll`, and the failure is a link error in the cook
-module. Do not reach for `VE_MODULE_EXPORT` here — it is unconditionally `dllexport`, correct only
-for the C-ABI entry point a module defines and no one imports. There is no Windows CI, so this
-paragraph is reasoned from toolchain rules rather than observed.
+**Every platform enforces it.** `veng_add_game` builds `lib<game>` with hidden symbol visibility,
+so an out-of-line symbol the cook module calls without the macro fails the cook module's link on
+macOS and Linux exactly as a missing `dllexport` does on Windows. Do not reach for
+`VE_MODULE_EXPORT` here — it is unconditionally the export side, correct only for the C-ABI entry
+point a module defines and no one imports.
 
 `COOK_MODULE` on `veng_add_project` is the build-order edge and nothing more: `vengc` finds the
 module on its own, beside `--module`'s argument. It is named explicitly because the cook is an

@@ -22,7 +22,7 @@ namespace Veng::Renderer
     /// synchronization and no cross-instance leakage. Each instance mixes a distinct salt into every
     /// id it mints and checks it on Resolve, so an id minted by a foreign registry resolves to
     /// nullptr rather than to a same-numbered stranger.
-    class ViewportRegistry
+    class VE_API ViewportRegistry
     {
     public:
         /// @brief Constructs an empty registry with a fresh per-instance salt.

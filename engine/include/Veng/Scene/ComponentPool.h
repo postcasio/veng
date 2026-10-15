@@ -21,7 +21,7 @@ namespace Veng::Detail
     /// entity list, which is the order a query visits; the component bytes are packed in the same
     /// order (`Count * Info.Size`), aligned to the type. Remove is swap-and-pop: the tail element
     /// moves into the hole and its sparse entry is patched.
-    class ComponentPool
+    class VE_API ComponentPool
     {
     public:
         /// @brief The dense slot FindSlot reports for an entity the pool does not hold.

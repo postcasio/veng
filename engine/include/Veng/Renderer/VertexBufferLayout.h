@@ -6,7 +6,7 @@
 namespace Veng::Renderer
 {
     /// @brief One typed attribute element in a vertex buffer layout.
-    struct VertexBufferElement
+    struct VE_API VertexBufferElement
     {
         /// @brief Attribute format (determines byte width and interpretation).
         Format Type;
@@ -26,7 +26,7 @@ namespace Veng::Renderer
     /// Used to build the Vulkan vertex-input state for a graphics pipeline. Compute
     /// Stride (total vertex size in bytes) and the attribute offset table from a list
     /// of VertexBufferElement descriptors.
-    class VertexBufferLayout
+    class VE_API VertexBufferLayout
     {
     public:
         /// @brief Constructs a layout from an initializer list of attribute elements.

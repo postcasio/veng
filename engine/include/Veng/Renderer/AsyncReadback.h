@@ -61,7 +61,7 @@ namespace Veng::Renderer
     ///
     /// Usable with or without GeneratedTextureService — it reads any image carrying
     /// ImageUsage::TransferSrc.
-    class AsyncReadback
+    class VE_API AsyncReadback
     {
     public:
         /// @brief Constructs the readback pump for a context.

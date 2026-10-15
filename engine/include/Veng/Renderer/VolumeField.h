@@ -104,7 +104,7 @@ namespace Veng::Renderer
     /// acquire — the Texture::Finalize model, which is what makes an async-Build volume safe to
     /// sample bindlessly. Ref-counted (a pass and a component both hold one); the factories are the
     /// only construction path.
-    class VolumeField
+    class VE_API VolumeField
     {
     public:
         /// @brief Builds a volume field from CPU voxel data on a worker thread.

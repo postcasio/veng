@@ -20,7 +20,7 @@ namespace Veng
     /// @param runner  The runner the world resolves through.
     /// @param world   The world to test.
     /// @return True once the world is fully ready to present.
-    [[nodiscard]] bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world);
+    [[nodiscard]] VE_API bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world);
 
     /// @brief Returns whether a world is presentable to both the engine and a consumer's gate.
     ///
@@ -31,8 +31,8 @@ namespace Veng
     /// @param world   The world to test.
     /// @param gate    The consumer predicate, or an empty function for the engine's test alone.
     /// @return True once both tests pass.
-    [[nodiscard]] bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world,
-                                          const WorldPresentReadyGate& gate);
+    [[nodiscard]] VE_API bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world,
+                                                 const WorldPresentReadyGate& gate);
 
     /// @brief Instantiates the documents of a waiting world's visible overlays, without blocking.
     ///

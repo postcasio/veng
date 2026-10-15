@@ -23,8 +23,9 @@ namespace Veng::Renderer::Backend
     ///
     /// Reads the source state from the image's tracked per-subresource state and
     /// updates it to reflect the transition.
-    void TransitionImage(CommandBuffer& cmd, Image& image, ImageLayout newLayout, u32 baseLayer = 0,
-                         u32 layerCount = 1, u32 baseMip = 0, u32 mipCount = 1);
+    VE_API void TransitionImage(CommandBuffer& cmd, Image& image, ImageLayout newLayout,
+                                u32 baseLayer = 0, u32 layerCount = 1, u32 baseMip = 0,
+                                u32 mipCount = 1);
 
     /// @brief Explicit transition used by the render graph: the caller supplies
     /// the destination layout/stage/access for a declared use.
@@ -33,9 +34,9 @@ namespace Veng::Renderer::Backend
     /// emitted for a read-after-read inside the tracked read scope — the scope is
     /// widened instead; a read in a stage outside it takes a layout-preserving
     /// barrier (DecideBarrier).
-    void TransitionImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
-                         vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess, u32 baseLayer,
-                         u32 layerCount, u32 baseMip, u32 mipCount);
+    VE_API void TransitionImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
+                                vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess,
+                                u32 baseLayer, u32 layerCount, u32 baseMip, u32 mipCount);
 
     /// @brief Collects a run of image and buffer barriers and records them as one
     /// vkCmdPipelineBarrier.
@@ -48,7 +49,7 @@ namespace Veng::Renderer::Backend
     /// its own scopes would. An add whose subresource range overlaps a barrier still pending on the
     /// same image records the pending batch first, so two transitions of one subresource keep their
     /// order.
-    class BarrierBatch
+    class VE_API BarrierBatch
     {
     public:
         /// @brief Adds the transition of an image subresource range to a declared use.
@@ -100,7 +101,7 @@ namespace Veng::Renderer::Backend
     /// The first graphics use reads this to emit the ownership-acquire half and
     /// fold the timeline value into the frame submit. Called by the async upload
     /// worker after recording its copy.
-    void MarkProducedOn(Image& image, u32 producingFamily, u64 transferValue);
+    VE_API void MarkProducedOn(Image& image, u32 producingFamily, u64 transferValue);
 
     /// @brief Emits a buffer-memory barrier over the whole buffer between two
     /// stage/access scopes.
@@ -116,9 +117,9 @@ namespace Veng::Renderer::Backend
     /// @param srcAccess Access flags of the producing access.
     /// @param dstStage  Pipeline stage(s) of the consuming access.
     /// @param dstAccess Access flags of the consuming access.
-    void TransitionBuffer(CommandBuffer& cmd, Buffer& buffer, vk::PipelineStageFlags srcStage,
-                          vk::AccessFlags srcAccess, vk::PipelineStageFlags dstStage,
-                          vk::AccessFlags dstAccess);
+    VE_API void TransitionBuffer(CommandBuffer& cmd, Buffer& buffer,
+                                 vk::PipelineStageFlags srcStage, vk::AccessFlags srcAccess,
+                                 vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess);
 
     /// @brief Records the release half of a transfer→graphics queue-family ownership
     /// transfer for the whole image (TransferDst → ShaderReadOnly).
@@ -126,6 +127,6 @@ namespace Veng::Renderer::Backend
     /// A no-op when the families match (single-queue collapse). Recorded on the
     /// transfer queue's command buffer; its acquire counterpart is emitted on first
     /// graphics use.
-    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image, u32 transferFamily,
-                                     u32 graphicsFamily);
+    VE_API void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image, u32 transferFamily,
+                                            u32 graphicsFamily);
 }

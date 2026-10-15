@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Veng.h>
@@ -46,7 +47,8 @@ namespace VengEditor
     /// with.
     /// @param scene        The scene being previewed.
     /// @param environment  Whether the look's environment is available to light it.
-    [[nodiscard]] PreviewLighting PlanPreviewLighting(const Veng::Scene& scene, bool environment);
+    [[nodiscard]] VE_EDITOR_API PreviewLighting PlanPreviewLighting(const Veng::Scene& scene,
+                                                                    bool environment);
 
     /// @brief Lights `scene` as PlanPreviewLighting does with no environment: a sun, as an
     /// EditorOnly entity, when the scene carries no light.
@@ -54,7 +56,7 @@ namespace VengEditor
     /// The lighting of a scene with no preview look (a level's world). The sun belongs to the
     /// editor, not the document: it renders but is not listed or saved.
     /// @param scene  The scene being previewed.
-    void AddPreviewLighting(Veng::Scene& scene);
+    VE_EDITOR_API void AddPreviewLighting(Veng::Scene& scene);
 
     /// @brief What a scene viewport's lighting controls edit: the editor's own sky and sun, and
     /// the exposure over the look's.
@@ -86,6 +88,6 @@ namespace VengEditor
     /// daylight, only when the scene would otherwise be unlit.
     /// @param scene        The scene being previewed, before the editor adds any lighting to it.
     /// @param environment  The look's environment when it loaded; the invalid id otherwise.
-    [[nodiscard]] SceneLighting DefaultSceneLighting(const Veng::Scene& scene,
-                                                     Veng::AssetId environment);
+    [[nodiscard]] VE_EDITOR_API SceneLighting DefaultSceneLighting(const Veng::Scene& scene,
+                                                                   Veng::AssetId environment);
 }

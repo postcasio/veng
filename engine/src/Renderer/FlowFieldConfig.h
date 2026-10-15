@@ -44,5 +44,5 @@ namespace Veng::Renderer
     /// empty nor one entry per row, and a non-positive or non-finite step scale.
     /// @param config The configuration's shapes and knobs.
     /// @return An error naming the first rejection, or success.
-    [[nodiscard]] VoidResult ValidateFlowFieldConfig(const FlowFieldConfig& config);
+    [[nodiscard]] VE_API VoidResult ValidateFlowFieldConfig(const FlowFieldConfig& config);
 }

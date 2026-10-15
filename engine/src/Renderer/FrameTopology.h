@@ -239,8 +239,8 @@ namespace Veng::Renderer
     /// @param topology The frame's wired passes.
     /// @param reads    What the frame's drawn translucent materials declare they sample.
     /// @return The passes that record.
-    [[nodiscard]] SceneGrabRecording ResolveSceneGrabRecording(const FrameTopology& topology,
-                                                               SceneGrabReads reads);
+    [[nodiscard]] VE_API SceneGrabRecording ResolveSceneGrabRecording(const FrameTopology& topology,
+                                                                      SceneGrabReads reads);
 
     /// @brief Whether the frame composites the full lit scene, translucents included.
     ///
@@ -249,7 +249,7 @@ namespace Veng::Renderer
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @return True for the Final view, the Bloom debug arm and the two reflection debug arms on
     ///         the deferred path.
-    [[nodiscard]] bool ResolveSceneComposited(const SceneRendererSettings& settings);
+    [[nodiscard]] VE_API bool ResolveSceneComposited(const SceneRendererSettings& settings);
 
     /// @brief Decides which passes a frame wires from the topology settings and the resolved sky.
     ///
@@ -263,8 +263,8 @@ namespace Veng::Renderer
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @param sky      The resolved sky facts for the frame.
     /// @return The decided topology.
-    [[nodiscard]] FrameTopology ResolveFrameTopology(const SceneRendererSettings& settings,
-                                                     const SkyTopologyInput& sky);
+    [[nodiscard]] VE_API FrameTopology ResolveFrameTopology(const SceneRendererSettings& settings,
+                                                            const SkyTopologyInput& sky);
 
     /// @brief Whether a temporal resolve reconstructs the post-resolve allocation directly.
     ///
@@ -299,10 +299,10 @@ namespace Veng::Renderer
     /// @param settings The renderer settings.
     /// @return True when Settings.SSR is on in the shaded path's Final view, or the view is a
     ///         reflection debug arm.
-    [[nodiscard]] bool ResolveSsrActive(const SceneRendererSettings& settings);
+    [[nodiscard]] VE_API bool ResolveSsrActive(const SceneRendererSettings& settings);
 
     /// @brief Whether a view is one of the reflection chain's debug arms.
     /// @param mode The debug view.
     /// @return True for DebugView::Reflections and DebugView::ReflectionCoverage.
-    [[nodiscard]] bool IsReflectionDebugView(DebugView mode);
+    [[nodiscard]] VE_API bool IsReflectionDebugView(DebugView mode);
 }

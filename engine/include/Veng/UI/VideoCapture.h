@@ -32,7 +32,7 @@ namespace Veng::UI
     /// default `<app>-<yyyymmdd-hhmmss>` form.
     /// @param state  The panel state to resolve.
     /// @return The settings to hand VideoRecorder::Start.
-    [[nodiscard]] Capture::VideoCaptureSettings
+    [[nodiscard]] VE_API Capture::VideoCaptureSettings
     ResolveCaptureSettings(const VideoCapturePanelState& state);
 
     /// @brief Returns the average bitrate @p settings resolve to at @p extent, in megabits/second.
@@ -43,8 +43,8 @@ namespace Veng::UI
     /// @param settings  The capture's settings.
     /// @param extent    The picture size in pixels.
     /// @return The average bitrate in megabits per second.
-    [[nodiscard]] u32 CaptureBitrateMbps(const Capture::VideoCaptureSettings& settings,
-                                         uvec2 extent);
+    [[nodiscard]] VE_API u32 CaptureBitrateMbps(const Capture::VideoCaptureSettings& settings,
+                                                uvec2 extent);
 
     /// @brief Draws the recorder's settings, live state and Start/Stop control into the current window.
     ///
@@ -60,5 +60,5 @@ namespace Veng::UI
     /// from Finalizing to Off. Draws into the current window; the caller owns the window.
     /// @param recorder  The recorder the panel reports on and drives.
     /// @param state     The host-owned edited settings, read and written in place.
-    void VideoCapturePanel(Capture::VideoRecorder& recorder, VideoCapturePanelState& state);
+    VE_API void VideoCapturePanel(Capture::VideoRecorder& recorder, VideoCapturePanelState& state);
 }

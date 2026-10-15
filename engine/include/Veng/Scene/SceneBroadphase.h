@@ -28,7 +28,7 @@ namespace Veng
     /// the spatial-version counter; each broadphase derives its tree from the scene
     /// on the frames the version moves. Sync reads the scene const-only and never
     /// bumps the spatial version.
-    class SceneBroadphase
+    class VE_API SceneBroadphase
     {
     public:
         /// @brief How far a refit may degrade the tree's surface-area cost before Sync rebuilds it.

@@ -65,7 +65,7 @@ namespace Veng::Renderer
     /// The scratch cube is the reason VRAM is two full-size cubes, not one; only the displayed one
     /// carries the reduction chain down to the SH readback level, which the SH ambient tier reads
     /// back without blocking through RecordReductionMips + AsyncReadback.
-    class BakedSkyCube
+    class VE_API BakedSkyCube
     {
     public:
         /// @brief Creates the cube target, the 1×1 stand-in depth, and the per-face bake pipelines.

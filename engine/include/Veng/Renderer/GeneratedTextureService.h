@@ -90,7 +90,7 @@ namespace Veng::Renderer
     ///
     /// Owned by the service for as long as the job is live. A cancelled job's targets are released
     /// with it; a completed job's are held until Release() drops them.
-    class GeneratedTexture
+    class VE_API GeneratedTexture
     {
     public:
         /// @brief Layer selector meaning "every layer", for GetView.
@@ -389,7 +389,7 @@ namespace Veng::Renderer
     /// RenderGraph rather than through it — the graph's transients are 2D single-layer and its
     /// compiled schedule is static between rebuilds, neither of which suits a per-frame-varying set
     /// of layered, mipped targets.
-    class GeneratedTextureService
+    class VE_API GeneratedTextureService
     {
     public:
         /// @brief The fixed per-frame cost budget, and the floor of the adaptive one.

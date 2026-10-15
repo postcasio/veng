@@ -138,7 +138,7 @@ namespace Veng::Renderer
     ///
     /// **Determinism.** The same seeded fields, the same configuration and the same step count
     /// produce the same output on a given device. Cross-device bit-identity is *not* promised.
-    class FluidSim
+    class VE_API FluidSim
     {
     public:
         /// @brief Creates a solver over the supplied fields, loading its core compute kernels.
@@ -375,7 +375,7 @@ namespace Veng::Renderer
     /// @param extent The axis length in texels; must be non-zero.
     /// @param wrap   The axis's boundary behaviour.
     /// @return The folded coordinate, in [0, extent).
-    [[nodiscard]] i32 FoldFluidTexel(i32 coord, u32 extent, FluidWrap wrap);
+    [[nodiscard]] VE_API i32 FoldFluidTexel(i32 coord, u32 extent, FluidWrap wrap);
 
     /// @brief The grid position a semi-Lagrangian step back-traces a texel's centre to.
     ///
@@ -386,7 +386,8 @@ namespace Veng::Renderer
     /// @param timeStep  How much simulated time the step advances.
     /// @param rowMetric The row's metric scale.
     /// @return The back-traced position in grid coordinates (texel centres at i + 0.5).
-    [[nodiscard]] vec2 FluidBackTrace(uvec2 texel, vec2 velocity, f32 timeStep, f32 rowMetric);
+    [[nodiscard]] VE_API vec2 FluidBackTrace(uvec2 texel, vec2 velocity, f32 timeStep,
+                                             f32 rowMetric);
 
     /// @brief The bilinear tap the advection kernel reads at a back-traced position.
     ///
@@ -399,6 +400,7 @@ namespace Veng::Renderer
     /// @param wrapY    Boundary behaviour of the y axis.
     /// @param load     Reads a field texel; only already-folded coordinates are passed to it.
     /// @return The filtered value.
-    [[nodiscard]] vec4 SampleFluidBilinear(vec2 position, uvec2 extent, FluidWrap wrapX,
-                                           FluidWrap wrapY, const function<vec4(ivec2)>& load);
+    [[nodiscard]] VE_API vec4 SampleFluidBilinear(vec2 position, uvec2 extent, FluidWrap wrapX,
+                                                  FluidWrap wrapY,
+                                                  const function<vec4(ivec2)>& load);
 }

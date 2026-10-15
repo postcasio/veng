@@ -28,7 +28,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A view into a contiguous subresource range of a GPU image.
-    class ImageView
+    class VE_API ImageView
     {
     public:
         /// @brief Creates an image view from the given parameters.

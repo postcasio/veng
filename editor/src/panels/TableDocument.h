@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/DataTable.h>
 #include <Veng/Reflection/Serialize.h>
@@ -39,7 +40,7 @@ namespace VengEditor
     };
 
     /// @brief The editable contents of a `*.tableschema.json`: its columns and its key column.
-    struct TableSchemaDocument
+    struct VE_EDITOR_API TableSchemaDocument
     {
         /// @brief The columns in declaration order.
         Veng::vector<TableSchemaColumn> Columns;
@@ -135,6 +136,10 @@ namespace VengEditor
     };
 
     /// @brief The editable contents of a `*.table.json`: its schema reference and its rows.
+    ///
+    /// Exported member by member rather than as a class: MSVC defines every non-deleted special
+    /// member of a dllexport class, and this aggregate's implicit copy (of move-only rows) is
+    /// declared but ill-formed.
     struct TableDataDocument
     {
         /// @brief The schema the rows are authored against.
@@ -152,7 +157,7 @@ namespace VengEditor
         /// @param types        Registry the column types resolve through.
         /// @param diagnostics  Receives one message per cell that failed to bind.
         /// @return The parsed document.
-        [[nodiscard]] static TableDataDocument
+        [[nodiscard]] VE_EDITOR_API static TableDataDocument
         Read(const nlohmann::json& doc, std::span<const Veng::TableColumnDescriptor> columns,
              const Veng::TypeRegistry& types, Veng::vector<Veng::string>& diagnostics);
 
@@ -162,15 +167,16 @@ namespace VengEditor
         /// @param into     Destination JSON object, patched in place.
         /// @param columns  The resolved schema columns, naming what each row writes.
         /// @param types    Registry the column types resolve through.
-        void Write(nlohmann::json& into, std::span<const Veng::TableColumnDescriptor> columns,
-                   const Veng::TypeRegistry& types) const;
+        VE_EDITOR_API void Write(nlohmann::json& into,
+                                 std::span<const Veng::TableColumnDescriptor> columns,
+                                 const Veng::TypeRegistry& types) const;
 
         /// @brief Appends a row of default-constructed cells.
         /// @param columns  The resolved schema columns.
         /// @param types    Registry the column types resolve through.
         /// @return The new row's index.
-        Veng::usize AddRow(std::span<const Veng::TableColumnDescriptor> columns,
-                           const Veng::TypeRegistry& types);
+        VE_EDITOR_API Veng::usize AddRow(std::span<const Veng::TableColumnDescriptor> columns,
+                                         const Veng::TypeRegistry& types);
 
         /// @brief Inserts a value-copy of a row directly after it.
         ///
@@ -180,18 +186,18 @@ namespace VengEditor
         /// @param columns  The resolved schema columns.
         /// @param types    Registry the column types resolve through.
         /// @return The new row's index.
-        Veng::usize DuplicateRow(Veng::usize row,
-                                 std::span<const Veng::TableColumnDescriptor> columns,
-                                 const Veng::TypeRegistry& types);
+        VE_EDITOR_API Veng::usize DuplicateRow(Veng::usize row,
+                                               std::span<const Veng::TableColumnDescriptor> columns,
+                                               const Veng::TypeRegistry& types);
 
         /// @brief Removes a row.
         /// @param row  Index of the row to remove.
-        void RemoveRow(Veng::usize row);
+        VE_EDITOR_API void RemoveRow(Veng::usize row);
 
         /// @brief Moves a row to a new position, shifting the rest.
         /// @param from  Index of the row to move.
         /// @param to    Destination index.
-        void MoveRow(Veng::usize from, Veng::usize to);
+        VE_EDITOR_API void MoveRow(Veng::usize from, Veng::usize to);
 
         /// @brief Returns, per row, whether its key cell duplicates an earlier row's.
         ///
@@ -202,7 +208,7 @@ namespace VengEditor
         /// @param keyColumn  Index of the key column within @p columns.
         /// @param types      Registry the column types resolve through.
         /// @return One flag per row, true when the row's key appeared in an earlier row.
-        [[nodiscard]] Veng::vector<bool>
+        [[nodiscard]] VE_EDITOR_API Veng::vector<bool>
         DuplicateKeys(std::span<const Veng::TableColumnDescriptor> columns, Veng::u32 keyColumn,
                       const Veng::TypeRegistry& types) const;
     };

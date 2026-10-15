@@ -117,7 +117,7 @@ namespace Veng::Audio
     /// @param minDistance  Distance within which the source plays at full gain.
     /// @param maxDistance  Distance at or beyond which the source is silent.
     /// @return The attenuation factor in [0, 1].
-    [[nodiscard]] f32 DistanceAttenuation(f32 distance, f32 minDistance, f32 maxDistance);
+    [[nodiscard]] VE_API f32 DistanceAttenuation(f32 distance, f32 minDistance, f32 maxDistance);
 
     /// @brief Equal-power stereo pan from the source's direction in the listener's frame.
     ///
@@ -129,7 +129,8 @@ namespace Veng::Audio
     /// @param listenerRotation  The listener's world rotation.
     /// @param sourcePosition    The source's world position.
     /// @return The pan in [-1, +1] (VoiceParams::Pan).
-    [[nodiscard]] f32 StereoPan(vec3 listenerPosition, quat listenerRotation, vec3 sourcePosition);
+    [[nodiscard]] VE_API f32 StereoPan(vec3 listenerPosition, quat listenerRotation,
+                                       vec3 sourcePosition);
 
     /// @brief The Doppler resample ratio from listener and source velocity along their line of sight.
     ///
@@ -144,8 +145,9 @@ namespace Veng::Audio
     /// @param sourceVelocity    The source's world velocity, units per second.
     /// @param speedOfSound      The reference speed of sound, units per second.
     /// @return The pitch ratio (VoiceParams::Pitch multiplier), clamped to [0.5, 2].
-    [[nodiscard]] f32 DopplerRatio(vec3 listenerPosition, vec3 listenerVelocity,
-                                   vec3 sourcePosition, vec3 sourceVelocity, f32 speedOfSound);
+    [[nodiscard]] VE_API f32 DopplerRatio(vec3 listenerPosition, vec3 listenerVelocity,
+                                          vec3 sourcePosition, vec3 sourceVelocity,
+                                          f32 speedOfSound);
 
     /// @brief Distance-driven master reverb send: dry near the listener, wetter with distance.
     ///
@@ -155,7 +157,7 @@ namespace Veng::Audio
     /// @param minDistance  Distance within which the send is dry.
     /// @param maxDistance  Distance at or beyond which the send saturates.
     /// @return The reverb send in [0, 1] (VoiceParams::ReverbSend).
-    [[nodiscard]] f32 ReverbSend(f32 distance, f32 minDistance, f32 maxDistance);
+    [[nodiscard]] VE_API f32 ReverbSend(f32 distance, f32 minDistance, f32 maxDistance);
 
     /// @brief The listener pose voices are spatialized against.
     struct ListenerPose

@@ -51,7 +51,7 @@ namespace Veng
     };
 
     /// @brief Native OS window with GLFW backing.
-    class Window
+    class VE_API Window
     {
     public:
         /// @brief Initializes GLFW (first window only) and creates the native window.

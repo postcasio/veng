@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/UI/Types.h>
@@ -46,7 +47,7 @@ namespace VengEditor
     /// the host-managed UI::Window scope. A render-owning panel holds a registered
     /// Veng::Renderer::Viewport; the engine drive-list renders it each frame, so the
     /// panel records no scene render of its own.
-    class EditorPanel
+    class VE_EDITOR_API EditorPanel
     {
     public:
         virtual ~EditorPanel() = default;

@@ -182,7 +182,7 @@ namespace Veng::Audio
     /// judges it by that scope's state: a Held voice is frozen, a Muted one advances silently, a
     /// Closed one is stopped. A scene's systems reach the engine through Audio::ScopedAudio, which
     /// names their scene's scope; the bus, reverb and device configuration here is device-wide.
-    class AudioEngine
+    class VE_API AudioEngine
     {
     public:
         /// @brief Constructs the engine over its owning device.
@@ -753,7 +753,7 @@ namespace Veng::Audio
     /// surface is a separate capability. A stream-mode (Encoded) clip is the expected long-track
     /// input, decoded incrementally through a streaming voice, and crossfades against a resident
     /// track identically; the crossfade pair may mix the two freely.
-    class MusicDirector
+    class VE_API MusicDirector
     {
     public:
         /// @brief Constructs the director over its owning engine.

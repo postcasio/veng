@@ -36,7 +36,7 @@ namespace Veng::Renderer
     ///
     /// Shared (Ref) because the same module is referenced by PipelineShaderStageInfo on
     /// every pipeline that uses it.
-    class ShaderModule
+    class VE_API ShaderModule
     {
     public:
         /// @brief Loads SPIR-V from disk.

@@ -40,7 +40,7 @@ namespace Veng
     /// audio fade) is one of these rather than a bespoke curve per feature. Keys are expected sorted
     /// by Time, non-decreasing; two keys at one time author an instant jump, and the later key's value
     /// holds from that time on. An importer authoring curves validates the order.
-    struct Curve1D
+    struct VE_API Curve1D
     {
         /// @brief The keys, sorted by Time.
         vector<CurveKey> Keys;

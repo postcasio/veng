@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengGraph/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Reflection/Reflect.h>
@@ -73,7 +74,7 @@ namespace VengGraph
     /// The topology core's NodeType is data, not a subclass, so the emit-fn lives on
     /// the material-catalog side: RegisterMaterialNodeTypes fills this beside minting
     /// the node types, and CompileMaterialGraph resolves a node's emit-fn through it.
-    struct MaterialEmitTable
+    struct VE_GRAPH_API MaterialEmitTable
     {
         /// @brief NodeTypeId value → its emit-fn.
         std::unordered_map<Veng::u32, NodeEmitFn> Emitters;
@@ -191,7 +192,8 @@ namespace VengGraph
     /// Surface yields Albedo (vec4) + Normal (vec3) + Emissive (vec3), matching the
     /// authorable GBufferOutput channels. PostProcess, Sky, Translucent, and GuiFill each
     /// yield a single Color (vec4).
-    [[nodiscard]] Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain);
+    [[nodiscard]] VE_GRAPH_API Veng::vector<DomainOutputPin>
+    DomainOutputContract(Veng::MaterialDomain domain);
 
     /// @brief Registers the fixed, schema-independent material node types into @p catalog.
     ///
@@ -205,8 +207,9 @@ namespace VengGraph
     /// @param emit    Target emit table; one entry added per node type.
     /// @param domain  Material domain; shapes the MaterialOutput sinks and entry point.
     /// @return The minted node-type ids.
-    MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit,
-                                                Veng::MaterialDomain domain);
+    VE_GRAPH_API MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog,
+                                                             MaterialEmitTable& emit,
+                                                             Veng::MaterialDomain domain);
 
     /// @brief Registers the shading-math, swizzle, and utility node types into @p catalog.
     ///
@@ -217,7 +220,7 @@ namespace VengGraph
     /// Beside minting the types it fills @p emit with one emit-fn per type.
     /// @param catalog Target catalog; mutated by registration.
     /// @param emit    Target emit table; one entry added per node type.
-    void RegisterMathNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit);
+    VE_GRAPH_API void RegisterMathNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit);
 
     /// @brief Registers the reflected enum types carried by material node properties.
     ///
@@ -227,13 +230,13 @@ namespace VengGraph
     /// itself is registry-free (it reads FieldClass/TypeId directly), so a host that draws
     /// node properties registers these once alongside the engine builtins.
     /// @param registry Target registry; the enum types are registered idempotently.
-    void RegisterMaterialGraphTypes(Veng::TypeRegistry& registry);
+    VE_GRAPH_API void RegisterMaterialGraphTypes(Veng::TypeRegistry& registry);
 
     /// @brief Connection predicate for material graphs: exact TypeId equality plus
     /// f32→vecN splat and vec4→vec3/vec2 truncation.
     ///
     /// Coercion lives here only; the topology core stays a pure DAG enforcer.
-    [[nodiscard]] bool MaterialCanConnect(const PinType& from, const PinType& to);
+    [[nodiscard]] VE_GRAPH_API bool MaterialCanConnect(const PinType& from, const PinType& to);
 
     /// @brief Wraps an upstream expression to coerce its value into a target pin type.
     ///
@@ -245,8 +248,8 @@ namespace VengGraph
     /// @param from Source leaf type.
     /// @param to   Destination leaf type.
     /// @return The coerced expression.
-    [[nodiscard]] Veng::string CoerceExpr(const Veng::string& expr, const PinType& from,
-                                          const PinType& to);
+    [[nodiscard]] VE_GRAPH_API Veng::string CoerceExpr(const Veng::string& expr,
+                                                       const PinType& from, const PinType& to);
 }
 
 VE_ENUM(::VengGraph::ParamProvenance, 0x9F3C71A4D8E2065BULL)

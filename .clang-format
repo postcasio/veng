@@ -21,4 +21,13 @@ AlwaysBreakTemplateDeclarations: Yes
 SortIncludes: false
 FixNamespaceComments: false
 SpaceAfterCStyleCast: false
+AttributeMacros:
+  - VE_API
+  - VE_EDITOR_API
+  - VE_GRAPH_API
+  - VE_MCP_API
+  - VE_COOK_API
+  - VE_MODULE_EXPORT
+  - VE_DLL_EXPORT
+  - VE_DLL_IMPORT
 ...

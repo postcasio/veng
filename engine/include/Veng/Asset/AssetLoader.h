@@ -142,7 +142,7 @@ namespace Veng
     /// **single-phase** loader implements Load, which the manager runs on the calling thread for
     /// either kind of load — the protocol for a loader whose decode cannot be split from main-thread
     /// work.
-    class AssetLoader
+    class VE_API AssetLoader
     {
     public:
         virtual ~AssetLoader() = default;

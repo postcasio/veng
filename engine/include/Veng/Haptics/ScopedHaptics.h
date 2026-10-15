@@ -35,7 +35,7 @@ namespace Veng::Haptics
     ///
     /// Cheap to copy: it borrows everything it holds, and every borrowed object outlives the context
     /// it rides on.
-    class ScopedHaptics
+    class VE_API ScopedHaptics
     {
     public:
         /// @brief Returns a facade over nothing: it plays nothing and resolves every target to no pad.

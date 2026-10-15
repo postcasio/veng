@@ -71,7 +71,7 @@ namespace Veng::Renderer
     ///
     /// Single-owner (Unique); Create is the factory. Owns its RGBA16F assembly target and
     /// the bindless slots of the placements it last assembled.
-    class GatherPass
+    class VE_API GatherPass
     {
     public:
         /// @brief Creates the pass and builds the gather pipeline and assembly target.

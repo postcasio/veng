@@ -38,11 +38,12 @@ endif ()
 # so the standard decays to the newest the compiler supports.
 set(CMAKE_CXX_STANDARD 26)
 
-# ImGui (and the rest of the public API) is exported from the shared library;
-# consumers resolve ImGui:: symbols against libveng rather than compiling
-# their own copy, so symbols must stay visible.
-set(CMAKE_CXX_VISIBILITY_PRESET default)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
+# Every shared library exports only what its declarations annotate (Veng/Export.h), on every
+# platform: hidden visibility makes a missing annotation a link error on macOS/Linux too, rather
+# than only under MSVC's dllexport. ImGui is part of the exported surface through IMGUI_API.
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # Always emit compile_commands.json so clang-tidy and editor tooling can find the
 # per-TU flags, whether or not the in-build linter (below) is enabled.
@@ -517,6 +518,8 @@ FetchContent_Declare(
         imnodes
         GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
         GIT_TAG eb36902c892548ef94f88f51ad7e7c9c7058a71c
+        # Gives imnodes an export macro, which it lacks; see the script.
+        PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchImNodes.cmake
         EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(imnodes)
@@ -794,14 +797,12 @@ endif ()
 # test-name literals carry; /utf-8 pins both the source and execution charsets.
 # Added at the same boundary as the warnings below so only veng's own targets
 # inherit it.
-# /Yl- suppresses the __@@_PchSym_@... marker MSVC injects into every precompiled-header
-# object. That symbol exists so a static library built with a PCH pulls the PCH's own object
-# in at link, which nothing here needs — every PCH object is linked into its target directly.
-# It is not merely redundant: WINDOWS_EXPORT_ALL_SYMBOLS folds it into the generated
-# exports.def as a data symbol named `__`, which resolves to nothing and fails the link of
-# every shared target carrying a PCH (LNK2001, then LNK1120).
+# C4251/C4275 fire on every exported class holding or deriving from a standard-library type that
+# is not itself exported. Every image is built from one tree with one toolchain and one STL (see
+# Veng/Module/Module.h), which is exactly the case the warning exists to flag, so it carries no
+# information here and would fail the -Werror debug build.
 if (MSVC)
-    add_compile_options(/utf-8 /Yl-)
+    add_compile_options(/utf-8 /wd4251 /wd4275)
 endif ()
 
 # ---------------------------------------------------------------------------
@@ -1899,6 +1900,7 @@ if (VENG_BUILD_TESTS)
     # entry, labelled `gpu`, same skip contract as the rest of the band.
     add_executable(veng_test_gpu
             tests/gpu/main.cpp
+            tests/gpu/stb_image.cpp
             tests/gpu/audio_bus_graph_device.cpp
             tests/gpu/buffer_roundtrip.cpp
             tests/gpu/immediate_gpu_timing.cpp

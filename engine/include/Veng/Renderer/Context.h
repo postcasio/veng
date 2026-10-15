@@ -96,7 +96,7 @@ namespace Veng::Renderer
 
     /// @brief The Vulkan device context: owns the instance, device, queues, swap chain,
     /// frame synchronization, transfer pools, and the bindless registry.
-    class Context
+    class VE_API Context
     {
     public:
         /// @brief Constructs a context; call Initialize to set up Vulkan.

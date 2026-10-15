@@ -108,7 +108,7 @@ namespace Veng
     /// The runtime resources (the live document, the HDR target) are materialized on the first Drive.
     /// A cooked Document recipe is instantiated automatically; an imperatively-built document is
     /// injected through SetDocument before the first Drive.
-    struct GuiSurface
+    struct VE_API GuiSurface
     {
         /// @brief Default-constructs an unmaterialized surface (its runtime is empty until Drive).
         GuiSurface();

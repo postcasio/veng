@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Types.h>
@@ -24,7 +25,7 @@ namespace Veng::Cook
     ///
     /// Pure data, populated by ParseAssetPack. Used for cross-pack id resolution
     /// during cooking and for AssetId minting.
-    struct AssetPack
+    struct VE_COOK_API AssetPack
     {
         /// @brief Directory the pack JSON lives in; entry source paths are relative to it.
         path Dir;
@@ -40,7 +41,7 @@ namespace Veng::Cook
     /// Regenerates on collision (astronomically unlikely). The caller owns loading/parsing the packs.
     /// @param packs  Packs to check for collisions.
     /// @return A fresh, collision-free AssetId.
-    [[nodiscard]] AssetId GenerateAssetId(std::span<const AssetPack* const> packs);
+    [[nodiscard]] VE_COOK_API AssetId GenerateAssetId(std::span<const AssetPack* const> packs);
 
     /// @brief Mints a random non-zero AssetTypeId that collides with nothing in `existing`.
     ///
@@ -50,5 +51,5 @@ namespace Veng::Cook
     /// already claimed.
     /// @param existing  The registry the minted id must not collide with.
     /// @return A fresh, collision-free AssetTypeId.
-    [[nodiscard]] AssetTypeId GenerateAssetTypeId(const AssetTypeRegistry& existing);
+    [[nodiscard]] VE_COOK_API AssetTypeId GenerateAssetTypeId(const AssetTypeRegistry& existing);
 }

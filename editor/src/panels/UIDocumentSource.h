@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
@@ -15,8 +16,8 @@ namespace VengEditor
     /// @param idHex  Texture asset id, in the hex-string form the markup carries.
     /// @return The edited markup; nullopt when the tag or its start-tag terminator cannot be
     ///         located, so the mutation is abandoned rather than guessed.
-    [[nodiscard]] Veng::optional<Veng::string> SetNthImageSrc(Veng::string text, Veng::usize n,
-                                                              const Veng::string& idHex);
+    [[nodiscard]] VE_EDITOR_API Veng::optional<Veng::string>
+    SetNthImageSrc(Veng::string text, Veng::usize n, const Veng::string& idHex);
 
     /// @brief Appends a new `<Image>` as the document root's last child.
     ///
@@ -24,14 +25,14 @@ namespace VengEditor
     /// last. The authored image starts un-sourced — a styled box until a texture is assigned.
     /// @param text  The `*.vui.xml` markup.
     /// @return The edited markup; nullopt when the markup carries no closing tag.
-    [[nodiscard]] Veng::optional<Veng::string> AppendImage(Veng::string text);
+    [[nodiscard]] VE_EDITOR_API Veng::optional<Veng::string> AppendImage(Veng::string text);
 
     /// @brief The in-memory `*.vui.xml` markup an editor edits, written only on an explicit save.
     ///
     /// The markup text is the document: an authoring action rewrites it in memory and marks the
     /// editor dirty, and nothing reaches the file until Write. Holding it free of any UI dependency
     /// is what makes the editor's edit-then-save contract checkable without a frame or a device.
-    class UIDocumentSource
+    class VE_EDITOR_API UIDocumentSource
     {
     public:
         /// @brief Reads @p file into the in-memory markup, replacing whatever it held.

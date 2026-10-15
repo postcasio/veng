@@ -48,8 +48,8 @@ namespace Veng::Detail
     /// @param tasks   Task system the worker job and transfer upload run on.
     /// @param info    Texture description; its pixels are copied into the worker job.
     /// @return A Task yielding the unfinalized texture and its finalize step.
-    [[nodiscard]] Task<BuiltAsset<Texture>> SubmitAssetBuild(Renderer::Context& context,
-                                                             TaskSystem& tasks, TextureData info);
+    [[nodiscard]] VE_API Task<BuiltAsset<Texture>>
+    SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, TextureData info);
 
     /// @brief Submits the worker-legal build of a Mesh, returning its streaming result.
     ///
@@ -61,7 +61,7 @@ namespace Veng::Detail
     /// @param data    CPU geometry, moved into the worker job.
     /// @param name    Debug name for the mesh and its buffers.
     /// @return A Task yielding the resident mesh and a null finalize step.
-    [[nodiscard]] Task<BuiltAsset<Mesh>>
+    [[nodiscard]] VE_API Task<BuiltAsset<Mesh>>
     SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MeshData data, string name);
 
     /// @brief Submits the worker-legal build of a Material, returning its streaming result.
@@ -74,9 +74,9 @@ namespace Veng::Detail
     /// @param info    Material description; its shaders and textures must already be resident.
     /// @param layout  The reflected pipeline layout passed to Finalize.
     /// @return A Task yielding the unfinalized material and its finalize step.
-    [[nodiscard]] Task<BuiltAsset<Material>> SubmitAssetBuild(Renderer::Context& context,
-                                                              TaskSystem& tasks, MaterialInfo info,
-                                                              Ref<Renderer::PipelineLayout> layout);
+    [[nodiscard]] VE_API Task<BuiltAsset<Material>>
+    SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MaterialInfo info,
+                     Ref<Renderer::PipelineLayout> layout);
 
     /// @brief Submits the worker-legal build of a MaterialInstance, returning its streaming result.
     ///
@@ -87,7 +87,7 @@ namespace Veng::Detail
     /// @param tasks   Task system the worker job runs on.
     /// @param info    Instance description; its parent and override textures must already be resident.
     /// @return A Task yielding the unfinalized instance and its finalize step.
-    [[nodiscard]] Task<BuiltAsset<MaterialInstance>>
+    [[nodiscard]] VE_API Task<BuiltAsset<MaterialInstance>>
     SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MaterialInstanceInfo info);
 
     /// @brief Builds and finalizes a Texture inline on the calling thread.
@@ -98,7 +98,8 @@ namespace Veng::Detail
     /// @param context Render context the texture is created on.
     /// @param data    Texture description (extent, format, pixels, sampler settings).
     /// @return A ready, finalized texture.
-    [[nodiscard]] Ref<Texture> BuildAssetSync(Renderer::Context& context, const TextureData& data);
+    [[nodiscard]] VE_API Ref<Texture> BuildAssetSync(Renderer::Context& context,
+                                                     const TextureData& data);
 
     /// @brief Builds a Mesh inline on the calling thread.
     ///
@@ -108,8 +109,8 @@ namespace Veng::Detail
     /// @param data    CPU geometry.
     /// @param name    Debug name for the mesh and its buffers.
     /// @return A ready mesh.
-    [[nodiscard]] Ref<Mesh> BuildAssetSync(Renderer::Context& context, const MeshData& data,
-                                           const string& name);
+    [[nodiscard]] VE_API Ref<Mesh> BuildAssetSync(Renderer::Context& context, const MeshData& data,
+                                                  const string& name);
 
     /// @brief Builds and finalizes a Material inline on the calling thread.
     ///
@@ -120,8 +121,9 @@ namespace Veng::Detail
     /// @param data    Material description; its shaders and textures must already be resident.
     /// @param layout  The reflected pipeline layout passed to Finalize.
     /// @return A ready, finalized material.
-    [[nodiscard]] Ref<Material> BuildAssetSync(Renderer::Context& context, const MaterialInfo& data,
-                                               Ref<Renderer::PipelineLayout> layout);
+    [[nodiscard]] VE_API Ref<Material> BuildAssetSync(Renderer::Context& context,
+                                                      const MaterialInfo& data,
+                                                      Ref<Renderer::PipelineLayout> layout);
 
     /// @brief Builds and finalizes a MaterialInstance inline on the calling thread.
     ///
@@ -130,6 +132,6 @@ namespace Veng::Detail
     /// @param context Unused; the instance's context rides MaterialInstanceInfo::Context.
     /// @param data    Instance description; its parent and override textures must already be resident.
     /// @return A ready, finalized instance.
-    [[nodiscard]] Ref<MaterialInstance> BuildAssetSync(Renderer::Context& context,
-                                                       const MaterialInstanceInfo& data);
+    [[nodiscard]] VE_API Ref<MaterialInstance> BuildAssetSync(Renderer::Context& context,
+                                                              const MaterialInstanceInfo& data);
 }

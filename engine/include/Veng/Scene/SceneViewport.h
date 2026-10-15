@@ -40,8 +40,8 @@ namespace Veng
     ///                  are overwritten by this call.
     /// @param delta     Frame delta in seconds, forwarded to the renderer.
     /// @param alpha     The fixed-timestep interpolation fraction in [0, 1), forwarded to the gather.
-    void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
-                       const Renderer::ViewState& knobs, f32 delta = 0.0f, f32 alpha = 0.0f);
+    VE_API void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
+                              const Renderer::ViewState& knobs, f32 delta = 0.0f, f32 alpha = 0.0f);
 
     /// @brief Fills a pushed view state's depth-of-field fields from its resolved camera and target.
     ///
@@ -55,7 +55,7 @@ namespace Veng
     /// GPU loop.
     /// @param state               The view state being pushed; its DoF fields are overwritten.
     /// @param viewportPixelHeight The target's vertical extent in pixels.
-    void ResolveDofViewState(Renderer::ViewState& state, f32 viewportPixelHeight);
+    VE_API void ResolveDofViewState(Renderer::ViewState& state, f32 viewportPixelHeight);
 
     /// @brief Maps a render look onto a renderer's topology and per-frame view.
     ///
@@ -69,8 +69,8 @@ namespace Veng
     /// @param look      The look to map.
     /// @param settings  The topology/sizing knobs to update (the look's toggles are written in place).
     /// @param view      The per-frame view to update (the look's per-frame values are written).
-    void ApplyRenderLook(const RenderLook& look, Renderer::SceneRendererSettings& settings,
-                         Renderer::ViewState& view);
+    VE_API void ApplyRenderLook(const RenderLook& look, Renderer::SceneRendererSettings& settings,
+                                Renderer::ViewState& view);
 
     /// @brief Writes the look-owned per-frame fields of a resolved view over another view.
     ///
@@ -82,5 +82,5 @@ namespace Veng
     /// depth-of-field quality knobs are clamped again, since a resolver may have written them.
     /// @param resolved  The view carrying the resolved look's per-frame values.
     /// @param view      The view to write them over.
-    void CopyLookKnobs(const Renderer::ViewState& resolved, Renderer::ViewState& view);
+    VE_API void CopyLookKnobs(const Renderer::ViewState& resolved, Renderer::ViewState& view);
 }

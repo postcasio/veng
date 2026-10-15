@@ -39,14 +39,14 @@ namespace Veng::Haptics
     /// names the channel and the index of the offending key.
     /// @param clip  The clip to check.
     /// @return The first violation found, or an empty string.
-    [[nodiscard]] string CheckRumbleClip(const RumbleClipData& clip);
+    [[nodiscard]] VE_API string CheckRumbleClip(const RumbleClipData& clip);
 
     /// @brief A cooked rumble clip: a CPU-only asset holding its motor curves.
     ///
     /// Cooked from a `*.rumble.json` source and loaded by AssetId through the ordinary path; played
     /// by a RumbleSource or as a one-shot through ScopedHaptics::PlayOneShot. The data is immutable
     /// once built, so a clip is shared freely between everything playing it.
-    class RumbleClip
+    class VE_API RumbleClip
     {
     public:
         /// @brief Creates a clip from its decoded data.

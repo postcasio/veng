@@ -115,7 +115,7 @@ namespace Veng::Text
     /// entry point must be called from a single thread at a time (the caller serializes any worker
     /// offload). The source borrows each face's bytes and never copies them, so those bytes must
     /// outlive the face.
-    class GlyphSource
+    class VE_API GlyphSource
     {
     public:
         /// @brief Initializes the FreeType library. Fails if FreeType cannot be brought up.

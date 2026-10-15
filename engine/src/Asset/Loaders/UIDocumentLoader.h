@@ -56,7 +56,7 @@ namespace Veng
         /// @param id      The asset being decoded (for error reporting).
         /// @param cooked  The cooked blob bytes.
         /// @return The decoded recipe + dependency ids, or a structured load error.
-        [[nodiscard]] AssetResult<DecodedUIDocument> DecodeUIDocument(AssetId id,
-                                                                      std::span<const u8> cooked);
+        [[nodiscard]] VE_API AssetResult<DecodedUIDocument>
+        DecodeUIDocument(AssetId id, std::span<const u8> cooked);
     }
 }

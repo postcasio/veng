@@ -93,7 +93,7 @@ namespace Veng
     /// gameplay focus only under Gameplay focus (the implicit seat's releasing the cursor seat's), so
     /// one control may carry both a Cancel and a ReleaseFocus action, and because the press stays
     /// held across the release it never also cancels in the UI it uncovers.
-    class RoleResolver
+    class VE_API RoleResolver
     {
     public:
         /// @brief Resolves every seat for the frame, then dispatches the presses focus admits.

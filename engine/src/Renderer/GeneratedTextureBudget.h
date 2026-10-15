@@ -35,7 +35,7 @@ namespace Veng::Renderer
     /// through a learned milliseconds-per-cost that Observe folds in from each measured pump. The
     /// result rises a fraction of the gap a frame and falls to the target at once, and never drops
     /// below the floor.
-    class GeneratedTextureBudgetController
+    class VE_API GeneratedTextureBudgetController
     {
     public:
         /// @brief The longest frame period the policy takes as a frame's, in milliseconds.
@@ -118,6 +118,6 @@ namespace Veng::Renderer
     /// @param timings  A frame's per-pass timings (Context::GetLastGpuPassTimings).
     /// @param name     The scope's name.
     /// @return Its milliseconds, or zero when the frame recorded no such top-level scope.
-    [[nodiscard]] f32 FindTopLevelGpuScopeMs(std::span<const Context::GpuPassTiming> timings,
-                                             string_view name);
+    [[nodiscard]] VE_API f32 FindTopLevelGpuScopeMs(std::span<const Context::GpuPassTiming> timings,
+                                                    string_view name);
 }

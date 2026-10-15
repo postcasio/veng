@@ -23,7 +23,7 @@ namespace Veng::Gui
     /// in the handler table. The context borrows the data object; the caller keeps it alive for as
     /// long as the context is bound and bumps Version whenever a bound field changes so the next
     /// Update re-reads the dirtied bindings.
-    class BindingContext
+    class VE_API BindingContext
     {
     public:
         /// @brief Constructs an empty context — no data object, no handlers.

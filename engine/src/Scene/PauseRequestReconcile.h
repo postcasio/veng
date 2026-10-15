@@ -37,9 +37,9 @@ namespace Veng
     /// @param request  The request to reconcile.
     /// @param error    Filled with the reason on failure.
     /// @return RequestResult::Failed on a Client-tier world, RequestResult::Handled otherwise.
-    RequestResult ReconcilePauseRequest(WorldRunner& runner, PauseRequestScopes& scopes,
-                                        WorldInstanceId world, NetRole role,
-                                        const PauseRequest& request, string& error);
+    VE_API RequestResult ReconcilePauseRequest(WorldRunner& runner, PauseRequestScopes& scopes,
+                                               WorldInstanceId world, NetRole role,
+                                               const PauseRequest& request, string& error);
 
     /// @brief Drops a closed world's request-driven pause, if one is held.
     ///
@@ -47,5 +47,5 @@ namespace Veng
     /// resolves nothing and touches no simulation.
     /// @param scopes  The engine-owned held pauses, updated in place.
     /// @param world   The world that closed.
-    void ForgetWorldPause(PauseRequestScopes& scopes, WorldInstanceId world);
+    VE_API void ForgetWorldPause(PauseRequestScopes& scopes, WorldInstanceId world);
 }

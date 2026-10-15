@@ -98,7 +98,7 @@ namespace Veng::Renderer
     /// Step n is 2^(n / CascadeRadiusStepsPerOctave) world units; n may be negative.
     /// @param step  The ladder step.
     /// @return The step's radius.
-    [[nodiscard]] f32 CascadeStepRadius(i32 step);
+    [[nodiscard]] VE_API f32 CascadeStepRadius(i32 step);
 
     /// @brief The light-space basis a directional light's cascades are snapped in.
     ///
@@ -108,7 +108,7 @@ namespace Veng::Renderer
     /// turns only when its light does: a point p lies on the grid at basis · p.
     /// @param lightDir  World-space direction the light travels; need not be normalized.
     /// @return The rotation from world (or stable-frame) axes to light-space axes.
-    [[nodiscard]] mat3 CascadeLightBasis(vec3 lightDir);
+    [[nodiscard]] VE_API mat3 CascadeLightBasis(vec3 lightDir);
 
     /// @brief The frame a cascade fit snaps its grid in, and the history its ladder holds against.
     ///
@@ -204,10 +204,10 @@ namespace Veng::Renderer
     ///                     scene with no history.
     /// @return Per-cascade matrices and view-space split distances.
     /// @pre settings.Resolution is even and greater than 4.
-    [[nodiscard]] CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir,
-                                              const AABB& sceneBounds,
-                                              const CascadeSettings& settings,
-                                              const CascadeFrame& frame = {});
+    [[nodiscard]] VE_API CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir,
+                                                     const AABB& sceneBounds,
+                                                     const CascadeSettings& settings,
+                                                     const CascadeFrame& frame = {});
 
     /// @brief Tile layout of the directional shadow atlas for a cascade count and set count.
     ///
@@ -256,6 +256,6 @@ namespace Veng::Renderer
     /// @param set              Cascade-set index, selecting the atlas row band.
     /// @param grid             Atlas tile grid the tile is placed in.
     /// @return The tile-remapped world → light-clip matrix.
-    [[nodiscard]] mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 set,
-                                        const ShadowAtlasGrid& grid);
+    [[nodiscard]] VE_API mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 set,
+                                               const ShadowAtlasGrid& grid);
 }

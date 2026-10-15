@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Veng.h>
@@ -14,7 +15,7 @@
 namespace VengEditor
 {
     /// @brief AssetId-to-source-file index built from the pack manifest.
-    class AssetSourceIndex
+    class VE_EDITOR_API AssetSourceIndex
     {
     public:
         /// @brief One manifest entry: asset type and source paths.

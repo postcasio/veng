@@ -228,7 +228,7 @@ namespace Veng::Net
     [[nodiscard]] optional<JoinMessageType> PeekJoinType(std::span<const u8> payload);
 
     /// @brief Encodes a connect request (type byte + fields).
-    [[nodiscard]] vector<u8> EncodeConnectRequest(const ConnectRequestMessage& message);
+    [[nodiscard]] VE_API vector<u8> EncodeConnectRequest(const ConnectRequestMessage& message);
     /// @brief Encodes a connect accept (type byte + fields).
     [[nodiscard]] vector<u8> EncodeConnectAccept(const ConnectAcceptMessage& message);
     /// @brief Encodes a connect deny (type byte + fields).
@@ -252,11 +252,13 @@ namespace Veng::Net
     [[nodiscard]] vector<u8> EncodeGameMessage(ChannelId channel, const Blob& payload);
 
     /// @brief Decodes a connect request; nullopt if truncated or mistyped.
-    [[nodiscard]] optional<ConnectRequestMessage> DecodeConnectRequest(std::span<const u8> message);
+    [[nodiscard]] VE_API optional<ConnectRequestMessage>
+    DecodeConnectRequest(std::span<const u8> message);
     /// @brief Decodes a connect accept; nullopt if truncated or mistyped.
     [[nodiscard]] optional<ConnectAcceptMessage> DecodeConnectAccept(std::span<const u8> message);
     /// @brief Decodes a connect deny; nullopt if truncated, mistyped, or an unknown reason.
-    [[nodiscard]] optional<ConnectDenyMessage> DecodeConnectDeny(std::span<const u8> message);
+    [[nodiscard]] VE_API optional<ConnectDenyMessage>
+    DecodeConnectDeny(std::span<const u8> message);
     /// @brief Decodes a disconnect; nullopt if truncated, mistyped, or an unknown reason.
     [[nodiscard]] optional<DisconnectMessage> DecodeDisconnect(std::span<const u8> message);
     /// @brief Decodes a join request; nullopt if truncated or mistyped.

@@ -55,7 +55,7 @@ namespace Veng
     /// despawn. A lookup miss is normal during join (an entity's snapshot can arrive before its spawn)
     /// and is the caller's to handle — the codec simply drops the record, idempotent against the next
     /// snapshot.
-    class NetIdMap
+    class VE_API NetIdMap
     {
     public:
         /// @brief Binds (or rebinds) @p id to @p entity.
@@ -96,7 +96,7 @@ namespace Veng
     /// its joins; a ReplicationClient with no shared registry uses its own private one (a lone client
     /// has no peer join to contend with). Keyed by the anchor's two opaque halves — the engine never
     /// interprets them.
-    class AnchorBindings
+    class VE_API AnchorBindings
     {
     public:
         /// @brief The JoinId currently binding the anchor (@p lo, @p hi), or ControlJoinId if unbound.

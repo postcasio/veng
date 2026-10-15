@@ -22,7 +22,7 @@ namespace Veng::Audio
     /// once the real-time generation counter shows the callback cannot reach it (see
     /// AudioEngine::StopVoice and the module CLAUDE.md). It carries no device or backend state and
     /// is safe to build on any thread.
-    class AudioBuffer
+    class VE_API AudioBuffer
     {
     public:
         /// @brief Builds a buffer by copying interleaved float PCM.

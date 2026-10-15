@@ -16,7 +16,8 @@ namespace Veng
     /// the same mode recurs across colour depths. Pure and device-free.
     /// @param modes  The raw modes to canonicalize.
     /// @return The sorted, deduplicated modes.
-    [[nodiscard]] vector<DisplayVideoMode> DedupVideoModes(std::span<const DisplayVideoMode> modes);
+    [[nodiscard]] VE_API vector<DisplayVideoMode>
+    DedupVideoModes(std::span<const DisplayVideoMode> modes);
 
     /// @brief The full-screen modes the host platform offers, in menu order.
     ///
@@ -25,7 +26,7 @@ namespace Veng
     /// elsewhere. GetDisplayCapabilities publishes this as AvailableFullscreenModes, and
     /// ResolveDisplaySelection clamps a selection against it. Pure and device-free.
     /// @return The offered full-screen modes for this platform.
-    [[nodiscard]] vector<FullscreenMode> PlatformFullscreenModes();
+    [[nodiscard]] VE_API vector<FullscreenMode> PlatformFullscreenModes();
 
     /// @brief The unit a platform's window-system sizing calls take.
     enum class ScreenCoordinateUnit : u8
@@ -43,7 +44,7 @@ namespace Veng
     /// where the content scale is a UI hint only and never changes what a size means. Pure and
     /// device-free.
     /// @return The host's screen-coordinate unit.
-    [[nodiscard]] ScreenCoordinateUnit PlatformScreenCoordinateUnit();
+    [[nodiscard]] VE_API ScreenCoordinateUnit PlatformScreenCoordinateUnit();
 
     /// @brief How many pixels one screen coordinate spans on each axis.
     ///
@@ -53,7 +54,8 @@ namespace Veng
     /// @param contentScale  The window's content scale.
     /// @param unit          The platform's screen-coordinate unit.
     /// @return Pixels per screen coordinate.
-    [[nodiscard]] vec2 PixelsPerScreenCoordinate(vec2 contentScale, ScreenCoordinateUnit unit);
+    [[nodiscard]] VE_API vec2 PixelsPerScreenCoordinate(vec2 contentScale,
+                                                        ScreenCoordinateUnit unit);
 
     /// @brief Converts a pixel resolution to the screen coordinates the window-system sizing calls
     ///        take.
@@ -65,8 +67,8 @@ namespace Veng
     /// @param contentScale  The window's or monitor's content scale.
     /// @param unit          The platform's screen-coordinate unit.
     /// @return The size in screen coordinates.
-    [[nodiscard]] uvec2 ScreenCoordsFromPixels(uvec2 pixels, vec2 contentScale,
-                                               ScreenCoordinateUnit unit);
+    [[nodiscard]] VE_API uvec2 ScreenCoordsFromPixels(uvec2 pixels, vec2 contentScale,
+                                                      ScreenCoordinateUnit unit);
 
     /// @brief Converts a size in screen coordinates to pixels; the inverse of ScreenCoordsFromPixels.
     ///
@@ -76,8 +78,8 @@ namespace Veng
     /// @param contentScale  The window's or monitor's content scale.
     /// @param unit          The platform's screen-coordinate unit.
     /// @return The size in pixels.
-    [[nodiscard]] uvec2 PixelsFromScreenCoords(uvec2 coords, vec2 contentScale,
-                                               ScreenCoordinateUnit unit);
+    [[nodiscard]] VE_API uvec2 PixelsFromScreenCoords(uvec2 coords, vec2 contentScale,
+                                                      ScreenCoordinateUnit unit);
 
     /// @brief Resolves a requested present mode against what the surface supports.
     ///
@@ -87,8 +89,8 @@ namespace Veng
     /// @param requested  The present mode the settings ask for.
     /// @param supported  The present modes the surface reports.
     /// @return The requested mode when supported, else PresentMode::Vsync.
-    [[nodiscard]] PresentMode ResolvePresentMode(PresentMode requested,
-                                                 std::span<const PresentMode> supported);
+    [[nodiscard]] VE_API PresentMode ResolvePresentMode(PresentMode requested,
+                                                        std::span<const PresentMode> supported);
 
     /// @brief Clamps a persisted display selection to what the live hardware offers.
     ///
@@ -103,9 +105,8 @@ namespace Veng
     /// @param requested  The persisted selection.
     /// @param caps       The live hardware capabilities.
     /// @return The clamped selection, safe to apply.
-    [[nodiscard]] BuiltinDisplayChoices
-    ResolveDisplaySelection(const BuiltinDisplayChoices& requested,
-                            const DisplayCapabilities& caps);
+    [[nodiscard]] VE_API BuiltinDisplayChoices ResolveDisplaySelection(
+        const BuiltinDisplayChoices& requested, const DisplayCapabilities& caps);
 
     /// @brief The device work a display apply must perform, decided by diffing against current state.
     ///
@@ -131,9 +132,8 @@ namespace Veng
     /// @param current   The last applied selection, or nullopt on the first apply of a run.
     /// @param resolved  The selection about to be applied (already clamped to the hardware).
     /// @return The actions to perform.
-    [[nodiscard]] DisplayApplyActions
-    ComputeDisplayApplyActions(const optional<BuiltinDisplayChoices>& current,
-                               const BuiltinDisplayChoices& resolved);
+    [[nodiscard]] VE_API DisplayApplyActions ComputeDisplayApplyActions(
+        const optional<BuiltinDisplayChoices>& current, const BuiltinDisplayChoices& resolved);
 
     /// @brief Decides whether a user-driven full-screen toggle must be written back to the store.
     ///
@@ -148,7 +148,7 @@ namespace Veng
     /// @param observed  The mode observed the previous frame, or nullopt before the first observation.
     /// @param applied   The full-screen mode the engine last applied.
     /// @return The mode to persist, or nullopt when no write-back is needed.
-    [[nodiscard]] optional<FullscreenMode>
+    [[nodiscard]] VE_API optional<FullscreenMode>
     DecideFullscreenWriteBack(FullscreenMode live, optional<FullscreenMode> observed,
                               FullscreenMode applied);
 }

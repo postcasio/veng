@@ -38,11 +38,25 @@ namespace Veng
     /// Virtual pads occupy slots exactly as devices do, are edited through VirtualGamepadEvent, and
     /// report their state through Fill like any other pad. Connect and disconnect raise the ordinary
     /// GamepadConnectedEvent / GamepadDisconnectedEvent for both.
-    class GamepadSlots
+    class VE_API GamepadSlots
     {
     public:
         /// @brief The number of slots.
         static constexpr usize SlotCount = Input::MaxGamepads;
+
+        // Declared explicitly so the exported class's copy is never instantiated: MSVC defines every
+        // non-deleted special member of a dllexport class, and the queued events' implicit copy is
+        // declared but ill-formed.
+        /// @brief Constructs the table with every slot free and no events queued.
+        GamepadSlots() = default;
+        /// @brief Not copyable: the table owns its queued events.
+        GamepadSlots(const GamepadSlots&) = delete;
+        /// @brief Not copy-assignable: the table owns its queued events.
+        GamepadSlots& operator=(const GamepadSlots&) = delete;
+        /// @brief Moves the slots, motor levels and queued events into a new table.
+        GamepadSlots(GamepadSlots&&) = default;
+        /// @brief Moves the slots, motor levels and queued events into this table.
+        GamepadSlots& operator=(GamepadSlots&&) = default;
 
         /// @brief Records a newly connected device; it takes a slot at the next Commit.
         /// @param device  The device's connection key, unique among live devices.

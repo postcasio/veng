@@ -36,7 +36,7 @@ namespace Veng::Localization
     /// localization service loads a locale's catalog plus its fallback chain and resolves a key by
     /// FindMessage; the catalog itself performs no fallback (it holds one locale) — the chain is the
     /// service's job.
-    class LocaleCatalog
+    class VE_API LocaleCatalog
     {
     public:
         /// @brief The decoded parts of a cooked catalog blob, as the loader hands them over.

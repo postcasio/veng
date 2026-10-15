@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Export.h>
+
 namespace Veng
 {
     /// @brief Installs a process-wide handler that prints a symbolized backtrace on a fatal crash.
@@ -10,5 +12,5 @@ namespace Veng
     /// to stderr, resolving symbols and source lines through dbghelp where PDBs are present, then
     /// lets the default handling continue so Windows Error Reporting still records the crash.
     /// On other platforms this is a no-op. Idempotent; Application::Run installs it.
-    void InstallCrashReporter();
+    VE_API void InstallCrashReporter();
 }

@@ -65,8 +65,8 @@ namespace Veng
     /// @param dispatch  The application's operations.
     /// @param lookup    The per-world policy lookup.
     /// @return The policy-applying dispatch.
-    [[nodiscard]] RequestDispatch ApplyRequestPolicies(RequestDispatch dispatch,
-                                                       WorldRequestPolicyLookup lookup);
+    [[nodiscard]] VE_API RequestDispatch ApplyRequestPolicies(RequestDispatch dispatch,
+                                                              WorldRequestPolicyLookup lookup);
 
     /// @brief Drains every open world's request components once, in the fixed type order.
     ///
@@ -79,5 +79,5 @@ namespace Veng
     /// the drain applies the uniform handled / pending / failed consumption semantics.
     /// @param runner    The runner whose worlds' scenes are scanned.
     /// @param dispatch  The per-type operations a Pending request is dispatched to.
-    void DrainRequests(WorldRunner& runner, const RequestDispatch& dispatch);
+    VE_API void DrainRequests(WorldRunner& runner, const RequestDispatch& dispatch);
 }

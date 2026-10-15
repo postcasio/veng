@@ -24,7 +24,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A Vulkan descriptor set with typed write helpers and per-binding resource ownership.
-    class DescriptorSet
+    class VE_API DescriptorSet
     {
     public:
         /// @brief Creates a descriptor set from the given layout.

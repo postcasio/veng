@@ -29,7 +29,7 @@ namespace Veng::Gui
     ///
     /// The host borrows the asset manager, the type registry, and the bound context; all three must
     /// outlive it. It owns the document — dropping the host destroys the tree.
-    class DocumentHost
+    class VE_API DocumentHost
     {
     public:
         /// @brief Constructs an id-driven host; the document loads and instantiates on first Drive.

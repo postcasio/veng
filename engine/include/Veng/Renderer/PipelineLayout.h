@@ -70,7 +70,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A compiled Vulkan pipeline layout declaring descriptor sets and push-constant ranges.
-    class PipelineLayout
+    class VE_API PipelineLayout
     {
     public:
         /// @brief Creates a pipeline layout from the given parameters.

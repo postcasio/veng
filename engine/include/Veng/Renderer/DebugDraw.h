@@ -65,7 +65,7 @@ namespace Veng::Renderer
     /// target it tests against are per-renderer, so a single global accumulator could not
     /// composite correctly into multiple viewports (split-screen) with different cameras and depth.
     /// Veng is single-threaded; no synchronization is provided.
-    class DebugDraw
+    class VE_API DebugDraw
     {
     public:
         /// @brief Default ribbon thickness in screen pixels for the debug-draw helpers.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengGraph/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
@@ -70,7 +71,7 @@ namespace VengGraph
     /// @param domain  The material domain whose entry point MaterialOutput emits.
     /// @return Error when the graph has no MaterialOutput node, more than one, or a
     ///         node type lacks an emit-fn.
-    [[nodiscard]] Veng::Result<GeneratedFragment>
+    [[nodiscard]] VE_GRAPH_API Veng::Result<GeneratedFragment>
     CompileMaterialGraph(const NodeGraph& graph, const NodeCatalog& catalog,
                          const MaterialEmitTable& emit, Veng::MaterialDomain domain);
 
@@ -81,7 +82,7 @@ namespace VengGraph
     /// carries only what the cooker cannot reflect: a float param at its zero default is
     /// written as its member's name alone, and a scalar-uint member always states its
     /// "type". JSON assembly is in the .cpp so this header carries no JSON type.
-    [[nodiscard]] Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
-                                                 const MaterialShaderInterface& shader,
-                                                 Veng::MaterialDomain domain);
+    [[nodiscard]] VE_GRAPH_API Veng::string
+    WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
+                      const MaterialShaderInterface& shader, Veng::MaterialDomain domain);
 }

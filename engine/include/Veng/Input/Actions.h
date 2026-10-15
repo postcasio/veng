@@ -258,7 +258,7 @@ namespace Veng
     /// Carries one sample per action declared across the active contexts, in the deterministic
     /// stack-declared order the resolution contract defines, so the same active stack yields the
     /// same layout run to run. The Get*/Was* helpers are the surface a control system reads.
-    struct ActionState
+    struct VE_API ActionState
     {
         /// @brief The resolved samples, one per declared action, in stack-declared order.
         vector<ActionSample> Actions;
@@ -398,8 +398,9 @@ namespace Veng
     /// @param raw       This tick's raw input read surface.
     /// @param previous  The seat's resolved ActionState from last tick, for phase derivation.
     /// @return The resolved ActionState this tick.
-    [[nodiscard]] ActionState ResolveActions(std::span<const ResolvedContext> active,
-                                             const RawInputView& raw, const ActionState& previous);
+    [[nodiscard]] VE_API ActionState ResolveActions(std::span<const ResolvedContext> active,
+                                                    const RawInputView& raw,
+                                                    const ActionState& previous);
 
     /// @brief Returns a seat's action state at rest: every axis zero, nothing held, no edges.
     ///
@@ -410,7 +411,7 @@ namespace Veng
     /// returns reads as a fresh press.
     /// @param layout  The state whose samples to keep (typically the seat's previous state).
     /// @return The neutral state over @p layout's actions.
-    [[nodiscard]] ActionState NeutralActionState(const ActionState& layout);
+    [[nodiscard]] VE_API ActionState NeutralActionState(const ActionState& layout);
 }
 
 VE_LEAF(::Veng::ActionId, 0x5ED22C7AFCDD1E13ULL, ::Veng::FieldClass::Scalar);

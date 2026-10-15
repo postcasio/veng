@@ -143,7 +143,8 @@ namespace Veng::Gui
     /// @param assets       The asset manager a TextFont declaration's AssetId resolves through;
     ///                     borrowed, and may be null (leaving the style's font unchanged, the
     ///                     device-free path).
-    void ApplyDeclaration(Style& style, const StyleDeclaration& declaration, AssetManager* assets);
+    VE_API void ApplyDeclaration(Style& style, const StyleDeclaration& declaration,
+                                 AssetManager* assets);
 
     /// @brief A cached, reusable stylesheet asset: a flattened, resolved set of USS-like rules.
     ///
@@ -156,7 +157,7 @@ namespace Veng::Gui
     ///
     /// StyleSheet is CPU data with no GPU resource. Load it through AssetManager::Load like any
     /// other asset.
-    class StyleSheet
+    class VE_API StyleSheet
     {
     public:
         /// @brief Creates a StyleSheet from its resolved rules, clips, gradients, and dependencies.

@@ -10,7 +10,7 @@ namespace Veng
     ///
     /// Created and owned through `ImGuiLayer::CreateTexture`; the raw descriptor set lives
     /// in `Native` (see `Veng/Renderer/Native.h`).
-    class ImGuiTexture
+    class VE_API ImGuiTexture
     {
     public:
         /// @brief Destroys the texture, invoking `ImGuiLayer::DestroyTexture` for deferred cleanup.

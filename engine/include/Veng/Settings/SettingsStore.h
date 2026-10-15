@@ -88,7 +88,7 @@ namespace Veng
     /// version migrates, a corrupt file falls back to defaults with a warning and never aborts) and
     /// Save is atomic (a temporary renamed into place, so a crash mid-write leaves the previous file
     /// intact).
-    class SettingsStoreBase
+    class VE_API SettingsStoreBase
     {
     public:
         virtual ~SettingsStoreBase() = default;

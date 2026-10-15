@@ -58,7 +58,7 @@ namespace Veng::Renderer
     /// @param sceneDiagonal  Length of the world-space scene-bound diagonal (>= 0).
     /// @param settings       Translation / rotation thresholds.
     /// @return True if last frame's depth is trustworthy this frame.
-    [[nodiscard]] bool IsHiZHistoryValid(const HiZHistoryState& previous,
-                                         const HiZHistoryState& current, f32 sceneDiagonal,
-                                         const HiZHistorySettings& settings);
+    [[nodiscard]] VE_API bool IsHiZHistoryValid(const HiZHistoryState& previous,
+                                                const HiZHistoryState& current, f32 sceneDiagonal,
+                                                const HiZHistorySettings& settings);
 }

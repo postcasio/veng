@@ -148,7 +148,7 @@ namespace Veng::Renderer
     ///
     /// Showing one in a document is a driver reading GetOutput each frame and calling
     /// Gui::Document::SetImageTexture (or ClearImageTexture while it is not Ready).
-    struct ModelPortrait
+    struct VE_API ModelPortrait
     {
         /// @brief Default-constructs an unmaterialized portrait (its runtime is empty until driven).
         ModelPortrait();

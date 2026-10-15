@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Path.h>
 #include <Veng/Cook/Types.h>
@@ -94,7 +95,7 @@ namespace Veng::Cook
     /// reported as an explicit unattributed line.
     ///
     /// A `cook-project` invocation accumulates every pack into one record.
-    struct CookTiming
+    struct VE_COOK_API CookTiming
     {
         /// @brief One entry per pack asset, in cook order.
         vector<CookAssetTiming> Assets;
@@ -149,7 +150,8 @@ namespace Veng::Cook
     /// @param timing    The collected record.
     /// @param topCount  How many of the costliest assets to list.
     /// @return The formatted, newline-terminated report.
-    [[nodiscard]] string FormatCookTimingSummary(const CookTiming& timing, usize topCount = 10);
+    [[nodiscard]] VE_COOK_API string FormatCookTimingSummary(const CookTiming& timing,
+                                                             usize topCount = 10);
 
     /// @brief Writes the full per-asset table as CSV for a tool to consume.
     ///
@@ -159,5 +161,6 @@ namespace Veng::Cook
     /// Errors are located: `"timing '<path>': <reason>"`.
     /// @param file    Destination CSV path.
     /// @param timing  The collected record.
-    [[nodiscard]] VoidResult WriteCookTimingTable(const path& file, const CookTiming& timing);
+    [[nodiscard]] VE_COOK_API VoidResult WriteCookTimingTable(const path& file,
+                                                              const CookTiming& timing);
 }

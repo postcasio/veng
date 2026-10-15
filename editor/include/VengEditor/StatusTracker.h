@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Veng.h>
 
 namespace VengEditor
@@ -16,7 +17,7 @@ namespace VengEditor
     /// All calls run on the main thread — Begin from the request site, End from the task's
     /// main-thread continuation, GetSnapshot from the render frame — so the tracker needs no
     /// synchronization, matching the engine's single-render-thread model.
-    class StatusTracker
+    class VE_EDITOR_API StatusTracker
     {
     public:
         /// @brief Opaque handle identifying one tracked task, returned by Begin.

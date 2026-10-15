@@ -42,5 +42,5 @@ namespace Veng::Renderer
     /// baked `data/ltc_lut.bin` core-pack asset; rerun it to regenerate that binary if the fit
     /// changes (matrix table, then magnitude table, each written as RGBA32F).
     /// @return The Matrix and Magnitude tables, each LtcLut::Size² vec4 entries.
-    [[nodiscard]] LtcLut GenerateLtcLut();
+    [[nodiscard]] VE_API LtcLut GenerateLtcLut();
 }

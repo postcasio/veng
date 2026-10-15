@@ -282,7 +282,7 @@ namespace Veng::Gui
     /// is an empty list.
     /// @param text  The attribute value.
     /// @return The points in order, or nullopt when a token is not two numbers joined by a comma.
-    [[nodiscard]] optional<vector<vec2>> ParsePolylinePoints(string_view text);
+    [[nodiscard]] VE_API optional<vector<vec2>> ParsePolylinePoints(string_view text);
 
     /// @brief The per-element runtime state the widget layer maintains behind a control's kind.
     ///

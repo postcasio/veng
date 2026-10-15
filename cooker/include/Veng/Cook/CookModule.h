@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
 #include <Veng/Result.h>
@@ -53,7 +54,7 @@ namespace Veng::Cook
         /// @warning Ownership of code living in the module image moves with them: the cooker must
         ///          then be destroyed before the LoadedCookModule whose handle backs it.
         /// @param cooker  The cooker the importers are registered into.
-        void MoveInto(Cooker& cooker);
+        VE_COOK_API void MoveInto(Cooker& cooker);
 
     private:
         /// @brief Importers in registration order; the asset type each claims is its own Type().
@@ -87,7 +88,7 @@ namespace Veng::Cook
     /// against a different cook ABI — is a located Result error and its entry never runs.
     /// @param modulePath  Path to the cook-module shared library.
     /// @return The handle plus its registered importers, or a located error.
-    [[nodiscard]] Result<LoadedCookModule> LoadCookModule(const path& modulePath);
+    [[nodiscard]] VE_COOK_API Result<LoadedCookModule> LoadCookModule(const path& modulePath);
 
     /// @brief Derives the conventional cook-module path sitting beside a runtime module.
     ///
@@ -96,7 +97,7 @@ namespace Veng::Cook
     /// module was named; the caller decides whether a missing file is an error.
     /// @param runtimeModulePath  Path to the runtime module the cook module sits beside.
     /// @return The sibling cook-module path.
-    [[nodiscard]] path SiblingCookModulePath(const path& runtimeModulePath);
+    [[nodiscard]] VE_COOK_API path SiblingCookModulePath(const path& runtimeModulePath);
 
     /// @brief Inverts SiblingCookModulePath: the runtime module a cook module sits beside.
     ///
@@ -105,7 +106,7 @@ namespace Veng::Cook
     /// given only the cook module still load the asset-type identities its importers are keyed on.
     /// @param cookModulePath  Path to a cook module.
     /// @return The sibling runtime-module path, or nullopt when the stem is not `_cook`-suffixed.
-    [[nodiscard]] optional<path> SiblingRuntimeModulePath(const path& cookModulePath);
+    [[nodiscard]] VE_COOK_API optional<path> SiblingRuntimeModulePath(const path& cookModulePath);
 }
 
 extern "C"

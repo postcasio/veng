@@ -32,7 +32,7 @@ namespace Veng::Localization
     /// string service over the asset manager. Like AudioEngine it is main-thread-only: SetLocale
     /// mutates the chain and generation and Get/Format read them, all on the main thread, so no
     /// synchronization is provided and no consumer calls it from a TaskSystem worker.
-    class Localization
+    class VE_API Localization
     {
     public:
         /// @brief Constructs the inert null-object: no index, every key resolves to itself.
@@ -136,5 +136,5 @@ namespace Veng::Localization
     /// device-free test) degrades to visible keys rather than a null check at every call site.
     /// Immutable in practice: nothing may SetLocale on it, because it is const.
     /// @return The process-wide inert service.
-    [[nodiscard]] const Localization& NullService();
+    [[nodiscard]] VE_API const Localization& NullService();
 }

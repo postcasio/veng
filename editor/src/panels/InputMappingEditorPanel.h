@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
@@ -33,7 +34,7 @@ namespace VengEditor
     /// @param source  The .inputmap.json to read.
     /// @param types   Registry carrying InputMapData and its element types.
     /// @return The document, or an error naming the file and the malformed field.
-    [[nodiscard]] Veng::Result<Veng::InputMapData>
+    [[nodiscard]] VE_EDITOR_API Veng::Result<Veng::InputMapData>
     ReadInputMapDocument(const Veng::path& source, const Veng::TypeRegistry& types);
 
     /// @brief Writes a reflected input-map document back to its .inputmap.json.
@@ -44,9 +45,9 @@ namespace VengEditor
     /// @param data    The document.
     /// @param types   Registry carrying InputMapData and its element types.
     /// @return Empty on success; an I/O error otherwise.
-    [[nodiscard]] Veng::VoidResult WriteInputMapDocument(const Veng::path& source,
-                                                         const Veng::InputMapData& data,
-                                                         const Veng::TypeRegistry& types);
+    [[nodiscard]] VE_EDITOR_API Veng::VoidResult
+    WriteInputMapDocument(const Veng::path& source, const Veng::InputMapData& data,
+                          const Veng::TypeRegistry& types);
 
     /// @brief Docked panel for viewing and editing a .inputmap.json binding table.
     ///

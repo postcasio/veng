@@ -286,7 +286,7 @@ namespace Veng
     /// @param stick  The stick's raw (x, y), each −1..1.
     /// @param zone   The deadzone radius, as a fraction of full deflection.
     /// @return The shaped (x, y).
-    [[nodiscard]] vec2 ShapeStick(vec2 stick, f32 zone);
+    [[nodiscard]] VE_API vec2 ShapeStick(vec2 stick, f32 zone);
 
     /// @brief Shapes a trigger's pull through a deadzone.
     ///
@@ -296,7 +296,7 @@ namespace Veng
     /// @param pull  The trigger's raw pull, 0..1.
     /// @param zone  The deadzone, as a fraction of a full pull.
     /// @return The shaped pull, 0..1.
-    [[nodiscard]] f32 ShapeTrigger(f32 pull, f32 zone);
+    [[nodiscard]] VE_API f32 ShapeTrigger(f32 pull, f32 zone);
 
     class Window;
     class Event;
@@ -315,7 +315,7 @@ namespace Veng
     /// Because the router applies only the events routed to it, this snapshot reflects input
     /// **only while its layer owns focus** — a gameplay-focused snapshot sees the game's
     /// input exclusively; a UI-focused one sees input the editor camera reads.
-    class Input
+    class VE_API Input
     {
     public:
         /// @brief Constructs the input service borrowing the given window.

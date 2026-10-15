@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengGraph/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
@@ -23,7 +24,8 @@ namespace VengGraph
     /// @param graph   The graph to serialize.
     /// @param catalog Catalog used to resolve node type names and pin descs.
     /// @return A JSON object string carrying NodeGraphFormatVersion under "version".
-    [[nodiscard]] Veng::string WriteNodeGraph(const NodeGraph& graph, const NodeCatalog& catalog);
+    [[nodiscard]] VE_GRAPH_API Veng::string WriteNodeGraph(const NodeGraph& graph,
+                                                           const NodeCatalog& catalog);
 
     /// @brief Result kind of a graph read.
     ///
@@ -49,6 +51,7 @@ namespace VengGraph
     /// @param dest    Fresh graph to populate; must be constructed against catalog.
     /// @param catalog Catalog used to resolve node types and pin descs by name.
     /// @return The read outcome.
-    [[nodiscard]] NodeGraphReadOutcome ReadNodeGraph(Veng::string_view json, NodeGraph& dest,
-                                                     const NodeCatalog& catalog);
+    [[nodiscard]] VE_GRAPH_API NodeGraphReadOutcome ReadNodeGraph(Veng::string_view json,
+                                                                  NodeGraph& dest,
+                                                                  const NodeCatalog& catalog);
 }

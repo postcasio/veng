@@ -88,7 +88,7 @@ namespace Veng
     ///
     /// A render mesh is the wrong input to a solver — too dense, non-manifold, and split by
     /// material — so this is a separate asset with its own source, not a view onto a Mesh.
-    struct CollisionShape
+    struct VE_API CollisionShape
     {
         /// @brief Which geometry the shape carries.
         CollisionGeometry Geometry = CollisionGeometry::Convex;

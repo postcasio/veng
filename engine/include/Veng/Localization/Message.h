@@ -166,7 +166,7 @@ namespace Veng::Localization
     /// chain, not here.
     /// @param localeId  A locale id such as `"en"`, `"fr"`, `"pl-PL"`.
     /// @return The plural rule for the locale, or the English rule when the id is unknown.
-    PluralRule PluralRuleFor(string_view localeId);
+    VE_API PluralRule PluralRuleFor(string_view localeId);
 
     /// @brief Formats a message against named arguments, selecting the plural variant for a count.
     ///
@@ -188,7 +188,8 @@ namespace Veng::Localization
     /// @param elision  The locale's elision table; the empty default elides nothing.
     /// @return The formatted string, or an error describing the first malformed field — an unbound
     ///         name, an unbalanced brace, or a spec incompatible with its argument's type.
-    Result<string> FormatMessage(const Message& message, std::span<const FormatArg> args,
-                                 optional<i64> count, PluralRule rule, NumberFormat numbers = {},
-                                 const ElisionTable& elision = {});
+    VE_API Result<string> FormatMessage(const Message& message, std::span<const FormatArg> args,
+                                        optional<i64> count, PluralRule rule,
+                                        NumberFormat numbers = {},
+                                        const ElisionTable& elision = {});
 }

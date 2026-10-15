@@ -44,7 +44,7 @@ namespace Veng::Renderer
     /// layouts reach the pipeline builds through the owned-helper accessors below. The skybox, sky,
     /// and sky-material passes do not move — Rebuild still creates them, reading which to insert from
     /// the resolved kind/tier here.
-    class SkyResolver
+    class VE_API SkyResolver
     {
     public:
         /// @brief The kind of the sky source resolved from the scene's Sky component.

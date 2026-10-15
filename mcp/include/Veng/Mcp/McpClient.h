@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Mcp/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 #include <Veng/Mcp/McpClientInfo.h>
@@ -68,7 +69,7 @@ namespace Veng::Mcp
     /// header, so it stays acceptable to the server's Origin-rejection defense.
     ///
     /// It is Unique, single-owner; Create(const McpClientInfo&) is the factory.
-    class VE_API McpClient
+    class VE_MCP_API McpClient
     {
     public:
         /// @brief Constructs a client for the target described by @p info.

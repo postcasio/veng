@@ -97,7 +97,7 @@ namespace Veng::Renderer
     ///
     /// Single-owner (Unique); Create is the factory. See the namespace-level doc
     /// for the lifetime-split surface (Create/Resize/Configure/Execute/GetOutput).
-    class SceneRenderer
+    class VE_API SceneRenderer
     {
     public:
         /// @brief Creates a SceneRenderer and compiles its initial render graph.

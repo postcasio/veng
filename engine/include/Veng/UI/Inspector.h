@@ -83,7 +83,8 @@ namespace Veng::UI
     /// @param hooks Owner base + the consumer's gate hook.
     /// @return True when the field should be editable.
     /// @see IsFieldEnabled
-    [[nodiscard]] bool IsFieldEditable(const FieldDescriptor& field, const InspectorHooks& hooks);
+    [[nodiscard]] VE_API bool IsFieldEditable(const FieldDescriptor& field,
+                                              const InspectorHooks& hooks);
 
     /// @brief Walks a struct's (or component's) fields as property-table rows, grouping by Category.
     ///
@@ -100,8 +101,8 @@ namespace Veng::UI
     /// @param hooks  Registry + owner base + the consumer's drawing hooks.
     /// @return True when any field's edit changed it, so a caller can re-resolve the owner.
     /// @pre Called inside an open `UI::PropertyTable` scope.
-    bool DrawFields(void* base, std::span<const FieldDescriptor> fields,
-                    const InspectorHooks& hooks);
+    VE_API bool DrawFields(void* base, std::span<const FieldDescriptor> fields,
+                           const InspectorHooks& hooks);
 
     /// @brief Draws one field as a property-table row: label in column 0, value in column 1.
     ///
@@ -115,7 +116,8 @@ namespace Veng::UI
     /// @param hooks    Registry + owner base + the consumer's drawing hooks.
     /// @return True when this edit changed the field (including any nested/variant member).
     /// @pre Called inside an open `UI::PropertyTable` scope.
-    bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field, const InspectorHooks& hooks);
+    VE_API bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
+                                const InspectorHooks& hooks);
 
     /// @brief Draws only a field's value widget, with no label and no property-table row.
     ///
@@ -132,5 +134,6 @@ namespace Veng::UI
     /// @param field    Descriptor giving the field's type, class, and metadata.
     /// @param hooks    Registry + owner base + the consumer's drawing hooks.
     /// @return True when this edit changed the value.
-    bool DrawFieldValue(void* fieldPtr, const FieldDescriptor& field, const InspectorHooks& hooks);
+    VE_API bool DrawFieldValue(void* fieldPtr, const FieldDescriptor& field,
+                               const InspectorHooks& hooks);
 }

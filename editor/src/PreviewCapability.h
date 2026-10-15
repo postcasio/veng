@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Veng.h>
@@ -56,7 +57,7 @@ namespace VengEditor
     /// uncompressed float for HDR. Independent of any ship configuration — the safe profile
     /// overrides the active config's formats for the editor's own cook.
     /// @return A RoleToFormat resolving every role to an uncompressed, always-samplable format.
-    [[nodiscard]] Veng::RoleToFormat HostSafeFormats();
+    [[nodiscard]] VE_EDITOR_API Veng::RoleToFormat HostSafeFormats();
 
     /// @brief The host-safe build configuration the editor cooks previews against by default.
     ///
@@ -64,5 +65,5 @@ namespace VengEditor
     /// a ship configuration. The build of any real configuration stays unrestricted; only this
     /// editor-side preview cook is clamped.
     /// @return A configuration named "preview (host-safe)" over the uncompressed profile.
-    [[nodiscard]] Veng::BuildConfiguration HostSafeConfiguration();
+    [[nodiscard]] VE_EDITOR_API Veng::BuildConfiguration HostSafeConfiguration();
 }

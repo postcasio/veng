@@ -29,7 +29,7 @@ namespace Veng::Localization
     /// (the terminus of every fallback chain). The cook validates the fallback graph, so a loaded
     /// index is acyclic and every fallback names a present locale; the runtime service still guards
     /// its walk as defence.
-    class LocaleIndex
+    class VE_API LocaleIndex
     {
     public:
         /// @brief The decoded parts of a cooked index blob, as the loader hands them over.

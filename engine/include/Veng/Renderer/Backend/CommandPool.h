@@ -8,7 +8,7 @@ namespace Veng::Renderer
     class Context;
 
     /// @brief RAII wrapper around a single vk::CommandPool.
-    class CommandPool
+    class VE_API CommandPool
     {
     public:
         /// @brief Creates and returns a CommandPool for the given context.

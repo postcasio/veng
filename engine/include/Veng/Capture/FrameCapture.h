@@ -38,7 +38,7 @@ namespace Veng::Capture
     ///
     /// @warning Available only on a windowed run with a composite tail (an ImGui overlay): a headless
     ///          run composites no frame. IsAvailable() reports it and Request refuses with a reason.
-    class FrameCapture final : public Renderer::CaptureSink
+    class VE_API FrameCapture final : public Renderer::CaptureSink
     {
     public:
         /// @brief Constructs the capture over the context and the compositor it installs itself on.

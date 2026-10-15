@@ -87,9 +87,9 @@ namespace Veng::Renderer
     /// @param previous The level this instance drew at in this view last frame, or
     ///                 InstanceNoPreviousLod.
     /// @return Whether it is drawn and at which level.
-    [[nodiscard]] InstancedCullVerdict CullInstance(const MeshInstance& instance,
-                                                    const InstancedCullSet& set,
-                                                    const InstancedCullView& view,
-                                                    const InstancedCullReference& reference,
-                                                    u8 previous);
+    [[nodiscard]] VE_API InstancedCullVerdict CullInstance(const MeshInstance& instance,
+                                                           const InstancedCullSet& set,
+                                                           const InstancedCullView& view,
+                                                           const InstancedCullReference& reference,
+                                                           u8 previous);
 }

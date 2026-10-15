@@ -81,7 +81,7 @@ namespace Veng::Renderer
     /// only through InitializeTail (present alongside an ImGui overlay); without it RenderRegistered
     /// still renders every viewport and Composite is a no-op, the headless path that reads a
     /// managed viewport's offscreen target back directly.
-    class ViewportCompositor
+    class VE_API ViewportCompositor
     {
     public:
         /// @brief Constructs a compositor borrowing @p context; the gather + composite tail stays off until InitializeTail.

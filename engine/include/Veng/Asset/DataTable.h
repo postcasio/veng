@@ -161,7 +161,7 @@ namespace Veng
     /// holds a handle to the schema it was cooked against; the schema owns the column names,
     /// reflected types, and cell offsets the table's accessors resolve through. Carries no GPU
     /// resource.
-    class TableSchema
+    class VE_API TableSchema
     {
     public:
         /// @brief Creates a schema from its decoded columns.
@@ -277,7 +277,7 @@ namespace Veng
     /// An asset-handle cell yields a bare AssetId: the table never loads what it references, so
     /// the consumer decides what to load and when. The cook records each referenced asset as a
     /// dependency, which is what keeps the recook graph correct.
-    class DataTable
+    class VE_API DataTable
     {
     public:
         /// @brief The decoded parts of a cooked table blob, as the loader hands them over.

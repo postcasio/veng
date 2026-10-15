@@ -423,7 +423,7 @@ namespace Veng::Gui
     /// surroundings: its run's scissor, its transformed positions, and its arc mask. Geometry
     /// recorded under one state reproduces exactly only under an equal state, which is what a
     /// retained replay checks before it copies a range rather than re-emitting it.
-    struct DrawState
+    struct VE_API DrawState
     {
         /// @brief Whether a clip is open; Clip is meaningful only when it is.
         bool HasClip = false;
@@ -450,7 +450,7 @@ namespace Veng::Gui
     /// texture}. PushClip / PopClip maintain a scissor stack whose entries intersect. A render
     /// pass consumes GetVertices() / GetIndices() / GetRuns() and replays each run. Colors are
     /// linear by contract; the pass blends them in linear space.
-    class DrawList
+    class VE_API DrawList
     {
     public:
         /// @brief Constructs an empty draw list.

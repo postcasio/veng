@@ -102,7 +102,7 @@ namespace Veng::Renderer
     /// @param sceneBounds World-space bound to fit the frustum to, or nullopt for the base frustum.
     /// @return The (possibly fitted) view-proj, near, far, and fovy.
     /// @pre range > 0, outerCone ∈ (0, π/2) — asserted.
-    [[nodiscard]] SpotShadowView
+    [[nodiscard]] VE_API SpotShadowView
     ComputeSpotShadowView(vec3 position, vec3 direction, f32 range, f32 outerCone,
                           std::optional<AABB> sceneBounds = std::nullopt);
 
@@ -114,5 +114,5 @@ namespace Veng::Renderer
     /// @param position  World-space light position.
     /// @param range     Light falloff radius; used as the far plane.
     /// @pre range > 0 — asserted.
-    [[nodiscard]] PointShadowView ComputePointShadowView(vec3 position, f32 range);
+    [[nodiscard]] VE_API PointShadowView ComputePointShadowView(vec3 position, f32 range);
 }

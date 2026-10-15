@@ -25,7 +25,7 @@ namespace Veng::Text
     /// not coalesced, so a glyph much larger than any single freed rectangle may not reuse the
     /// scattered space of several — bounded in practice because glyph renditions cluster in size and
     /// a re-requested rendition re-rasterizes at the same size a freed one held.
-    class GlyphPacker
+    class VE_API GlyphPacker
     {
     public:
         /// @brief Packing policy.

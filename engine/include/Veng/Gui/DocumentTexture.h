@@ -38,7 +38,7 @@ namespace Veng::Gui
     ///
     /// The GPU resources are materialized on the first RenderToTarget. Single-owner; the target and
     /// pass are released at destruction.
-    class DocumentTexture
+    class VE_API DocumentTexture
     {
     public:
         /// @brief Default-constructs an unmaterialized texture (its target and pass are empty).

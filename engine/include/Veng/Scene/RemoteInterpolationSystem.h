@@ -107,7 +107,7 @@ namespace Veng
     /// It then drops samples fully behind the render tick, bounding the buffer. Because it runs in the
     /// View phase the produced pose is presentation only — never authoritative, never on the wire. With
     /// no remote entities the system idles, so the single-player render path is untouched.
-    class RemoteInterpolationSystem final : public SceneSystem
+    class VE_API RemoteInterpolationSystem final : public SceneSystem
     {
     public:
         /// @brief Client-side interpolation knobs.

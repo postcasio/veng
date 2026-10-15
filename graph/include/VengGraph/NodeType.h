@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengGraph/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 
@@ -67,7 +68,7 @@ namespace VengGraph
     ///
     /// Supplies NodeGraph's PinShapeFn and the node-instance property layout.
     /// @pre The catalog must outlive any graph that references its types.
-    class NodeCatalog
+    class VE_GRAPH_API NodeCatalog
     {
     public:
         /// @brief Mints a fresh NodeTypeId, stores the descriptor, and returns the id.

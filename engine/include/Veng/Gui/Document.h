@@ -149,7 +149,7 @@ namespace Veng::Gui
     /// already held marks nothing.
     ///
     /// The tree is not thread-safe; construct, mutate, Solve, and Build it on one thread.
-    class Document
+    class VE_API Document
     {
     public:
         /// @brief A device-free text-measurement function: a string and style to an intrinsic size.

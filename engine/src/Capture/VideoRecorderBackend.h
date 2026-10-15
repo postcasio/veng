@@ -148,8 +148,8 @@ namespace Veng::Capture
     };
 
     /// @brief Creates the platform backend, or null where this build has none.
-    [[nodiscard]] Unique<VideoRecorderBackend> CreateVideoRecorderBackend();
+    [[nodiscard]] VE_API Unique<VideoRecorderBackend> CreateVideoRecorderBackend();
 
     /// @brief Whether a platform backend is compiled into this build at all.
-    [[nodiscard]] bool IsVideoRecorderBackendCompiled();
+    [[nodiscard]] VE_API bool IsVideoRecorderBackendCompiled();
 }

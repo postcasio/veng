@@ -67,7 +67,7 @@ namespace Veng
     /// per-view instance: build one per renderer with AssetManager::BuildSync over the shared
     /// instance's parent and CopyParamsFrom the shared one, then write the per-view value into the
     /// copy.
-    class MaterialInstance
+    class VE_API MaterialInstance
     {
     public:
         ~MaterialInstance();

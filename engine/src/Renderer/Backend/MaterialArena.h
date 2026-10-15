@@ -23,7 +23,7 @@ namespace Veng::Renderer
     /// fence has been waited and no recorded draw still reads the range. Neighbours coalesce at
     /// that reclaim and never at release, because a range merged into the free list at release is
     /// allocatable immediately, which is what the window exists to prevent.
-    class MaterialArena
+    class VE_API MaterialArena
     {
     public:
         /// @brief One contiguous byte range of the arena.

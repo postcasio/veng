@@ -23,7 +23,7 @@ namespace Veng
     ///
     /// Prefab is CPU data with no GPU resource. Load it through AssetManager::Load like any other
     /// asset, create a Scene, and call SpawnInto.
-    class Prefab
+    class VE_API Prefab
     {
     public:
         /// @brief One component on a prefab entity: its TypeId and the WriteFields record bytes.

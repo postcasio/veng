@@ -46,7 +46,7 @@ namespace Veng::Renderer
     /// Constructed only through Create(). enable_shared_from_this lets the async Upload
     /// capture an owning Ref<Image> into the worker job so the image cannot be destroyed
     /// before the job runs.
-    class Image : public std::enable_shared_from_this<Image>
+    class VE_API Image : public std::enable_shared_from_this<Image>
     {
     public:
         /// @brief Creates an image from the given parameters.

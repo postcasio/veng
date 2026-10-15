@@ -68,7 +68,7 @@ namespace Veng::Renderer
     /// The selection rule is the whole policy: among the jobs with ticks left, the one with the
     /// highest priority wins, ties broken by request order. It is re-evaluated per tick, so raising
     /// a queued job's priority preempts a running one at the next tick rather than at the next job.
-    class GeneratedTextureQueue
+    class VE_API GeneratedTextureQueue
     {
     public:
         /// @brief A budget meaning "run every pending tick this pump".

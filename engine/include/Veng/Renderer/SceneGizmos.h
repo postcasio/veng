@@ -50,7 +50,7 @@ namespace Veng::Renderer
         Agents = 1u << 8u,
         /// @brief Every family above.
         All = Lights | Cameras | Colliders | Sockets | Interaction | Audio | Probes | Empties |
-              Agents,
+            Agents,
     };
 
     /// @brief Union of two gizmo sets.
@@ -97,7 +97,7 @@ namespace Veng::Renderer
     /// A consumer builds its selection interface from this rather than listing the families itself,
     /// so a family added to SceneGizmo appears in every consumer's interface unchanged.
     /// @return One entry per family, excluding None and All.
-    [[nodiscard]] std::span<const SceneGizmoGroupInfo> SceneGizmoGroupTable();
+    [[nodiscard]] VE_API std::span<const SceneGizmoGroupInfo> SceneGizmoGroupTable();
 
     /// @brief The optional art and the picking behaviour a gizmo pass draws with.
     ///
@@ -134,6 +134,6 @@ namespace Veng::Renderer
     /// @param debug   The accumulator to draw into.
     /// @param groups  The families to draw; SceneGizmo::None draws nothing.
     /// @param style   Icons, sizes, and whether billboards are pickable.
-    void DrawSceneGizmos(const Scene& scene, DebugDraw& debug, SceneGizmo groups,
-                         const SceneGizmoStyle& style = {});
+    VE_API void DrawSceneGizmos(const Scene& scene, DebugDraw& debug, SceneGizmo groups,
+                                const SceneGizmoStyle& style = {});
 }

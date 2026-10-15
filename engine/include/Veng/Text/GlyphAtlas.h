@@ -121,7 +121,7 @@ namespace Veng::Text
     /// Single-threaded with the renderer: Ensure, BeginFrame and RecordUploads run on the main
     /// thread only, matching the GlyphSource contract. The atlas holds no cross-run state — it is
     /// rebuilt from the faces each session.
-    class GlyphAtlas
+    class VE_API GlyphAtlas
     {
     public:
         /// @brief Constructs an empty atlas; pages are allocated lazily on first Ensure.

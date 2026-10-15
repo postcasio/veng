@@ -117,7 +117,7 @@ namespace Veng::Renderer
     /// group into alone, while the sort and the grouping run once however many views share them. An
     /// instance id is the caster-record index (the candidate's MeshCandidate). Pure CPU: the
     /// lists are kept across frames, so a steady state allocates nothing.
-    class DepthCasterGrouping
+    class VE_API DepthCasterGrouping
     {
     public:
         /// @brief Views one grouping holds: a caster's mask is one 64-bit word.

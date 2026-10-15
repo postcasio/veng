@@ -154,7 +154,7 @@ namespace Veng
     /// Owned by Application and threaded by reference into consumers; there is no global
     /// instance. Submit() runs a callable on a worker; PumpMainThread() drains continuations
     /// on the calling thread.
-    class TaskSystem
+    class VE_API TaskSystem
     {
     public:
         /// @brief Sentinel returned to callers; GetCurrentWorkerIndex() asserts rather than returning it.

@@ -56,7 +56,7 @@ namespace Veng::Audio
     /// @brief Builds the diagnostic self-test tone for a sample rate (a short faded sine burst).
     /// @param sampleRate Output sample rate in Hz.
     /// @return A finite mono tone whose sample count and peak are deterministic.
-    SelfTestTone GenerateSelfTestTone(u32 sampleRate);
+    VE_API SelfTestTone GenerateSelfTestTone(u32 sampleRate);
 
     /// @brief The audio device: the output backend and the real-time mixing path.
     ///
@@ -68,7 +68,7 @@ namespace Veng::Audio
     /// @warning The real-time callback thread reads only the immutable snapshot and mixes. It
     ///          touches no engine API and no engine state, which is the whole basis for the audio
     ///          subsystem being the one sanctioned exception to veng's single-thread rule.
-    class AudioDevice
+    class VE_API AudioDevice
     {
     public:
         /// @brief Frames of one block the callback-side tap ring carries.

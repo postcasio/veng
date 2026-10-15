@@ -36,7 +36,7 @@ namespace Veng::Gui
     ///
     /// Single-owner (Unique); Create is the factory. The bindless handle is released, and the image
     /// and view retired, at destruction.
-    class RenderTarget
+    class VE_API RenderTarget
     {
     public:
         /// @brief The fixed color format of the owned image: half-float RGBA.

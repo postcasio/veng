@@ -18,7 +18,7 @@ namespace Veng
     /// the world pointing out at them. The runner owns the scene (holds the Unique); the client-join
     /// seam may replace it (WorldRunner::InstallScene), and GetScene resolves the live one. The
     /// world's pause lives on its live scene's SceneSimulation, where the scene can see it.
-    struct World
+    struct VE_API World
     {
         /// @brief This world's minted identity.
         WorldInstanceId Id;

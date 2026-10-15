@@ -246,7 +246,7 @@ namespace Veng
     /// per-draw SSBO slot and **no** per-instance mutators — those live on MaterialInstance, the cheap
     /// override that owns a slot seeded from this parent's default block. Many instances share one
     /// parent's pipeline and differ only by a per-material slot.
-    class Material
+    class VE_API Material
     {
     public:
         /// @brief SelectorOffset sentinel: the material pushes no selector (it reads its index from the DrawData SSBO).

@@ -55,15 +55,15 @@ function(veng_add_game NAME)
     target_link_libraries(${NAME} PRIVATE veng::veng)
 
     # A game module is linked against, not only dlopen'd: its cook module, its editor module, and
-    # its test binaries all resolve its symbols. macOS/Linux export them via default visibility, so
-    # on MSVC auto-export to match — the same reason libveng itself does. /Yl- comes with it rather
-    # than separately: auto-export folds the __@@_PchSym_@... marker MSVC injects into every
-    # precompiled-header object into the generated exports.def as a data symbol named `__`, which
-    # resolves to nothing and fails the module's own link.
-    if (MSVC)
-        set_target_properties(${NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        target_compile_options(${NAME} PRIVATE /Yl-)
-    endif ()
+    # its test binaries all resolve its symbols. It exports exactly what its declarations annotate
+    # (Veng/Export.h): hidden visibility on every platform, so an unannotated symbol another image
+    # needs fails the link on the development host rather than only under MSVC. A game names its
+    # own two-sided macro over VE_DLL_EXPORT/VE_DLL_IMPORT, keyed on the <name>_EXPORTS symbol
+    # CMake defines while compiling lib<name> (see examples/template/MarkerSet.h).
+    set_target_properties(${NAME} PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        OBJCXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
 
     add_executable(${NAME}-launcher ${VENG_LAUNCHER_MAIN})
     target_link_libraries(${NAME}-launcher PRIVATE veng::veng)
@@ -106,6 +106,10 @@ function(veng_add_game NAME)
     if (ARG_COOK_SOURCES)
         add_library(${NAME}_cook SHARED ${ARG_COOK_SOURCES})
         target_link_libraries(${NAME}_cook PRIVATE veng::cook_interface veng::veng ${NAME})
+        # Its one export is the VE_MODULE_EXPORT entry pair.
+        set_target_properties(${NAME}_cook PROPERTIES
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN ON)
         set_target_properties(${NAME}_cook PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:${NAME}-launcher>)
 

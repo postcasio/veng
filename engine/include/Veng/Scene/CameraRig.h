@@ -28,8 +28,8 @@ namespace Veng
     /// @param follow      The follow Offset and Damping.
     /// @param delta       Time in seconds since the previous tick.
     /// @return The camera Transform for this tick.
-    [[nodiscard]] Transform FollowCamera(const Transform& current, const mat4& targetWorld,
-                                         const CameraFollow& follow, f32 delta);
+    [[nodiscard]] VE_API Transform FollowCamera(const Transform& current, const mat4& targetWorld,
+                                                const CameraFollow& follow, f32 delta);
 
     /// @brief Computes the camera Transform that orbits a focus point at a distance.
     ///
@@ -44,8 +44,8 @@ namespace Veng
     /// @param current The camera's current Transform (the focus-glide start point).
     /// @param delta   Time in seconds since the previous tick.
     /// @return The camera Transform for this tick.
-    [[nodiscard]] Transform OrbitCamera(const CameraOrbit& orbit, const Transform& current,
-                                        f32 delta);
+    [[nodiscard]] VE_API Transform OrbitCamera(const CameraOrbit& orbit, const Transform& current,
+                                               f32 delta);
 
     /// @brief Computes the first-person rotation a look heading resolves to.
     ///
@@ -55,7 +55,7 @@ namespace Veng
     /// unit tests drive.
     /// @param look The yaw/pitch heading and its pitch limit.
     /// @return The world-space rotation facing along the heading.
-    [[nodiscard]] quat LookRotation(const CameraLook& look);
+    [[nodiscard]] VE_API quat LookRotation(const CameraLook& look);
 
     /// @brief An orthonormal camera basis: the right, up, and view-forward axes.
     ///
@@ -87,8 +87,8 @@ namespace Veng
     /// @param minPitch       Lower pitch clamp, in radians.
     /// @param maxPitch       Upper pitch clamp, in radians.
     /// @return The orthonormal right/up/forward basis.
-    [[nodiscard]] CameraBasis FirstPersonBasis(vec3 characterUp, vec3 targetForward, f32 yaw,
-                                               f32 pitch, f32 minPitch, f32 maxPitch);
+    [[nodiscard]] VE_API CameraBasis FirstPersonBasis(vec3 characterUp, vec3 targetForward, f32 yaw,
+                                                      f32 pitch, f32 minPitch, f32 maxPitch);
 
     /// @brief Computes the first-person camera Transform for one tick.
     ///
@@ -103,9 +103,9 @@ namespace Veng
     /// @param rig           The eye/pitch/bob parameters.
     /// @param bobPhase      The accumulated bob phase, in radians.
     /// @return The camera Transform for this tick.
-    [[nodiscard]] Transform FirstPersonCamera(vec3 eyeAnchor, vec3 characterUp, vec3 targetForward,
-                                              const CameraLook& look, const FirstPersonRig& rig,
-                                              f32 bobPhase);
+    [[nodiscard]] VE_API Transform FirstPersonCamera(vec3 eyeAnchor, vec3 characterUp,
+                                                     vec3 targetForward, const CameraLook& look,
+                                                     const FirstPersonRig& rig, f32 bobPhase);
 
     /// @brief View-phase system that resolves each rigged camera's pose.
     ///
@@ -119,7 +119,7 @@ namespace Veng
     /// entity's rotation through LookRotation. All go through the scene accessor so the
     /// spatial-version bookkeeping is correct. The produced camera pose is purely local —
     /// never authoritative, never on the wire.
-    class CameraRigSystem final : public SceneSystem
+    class VE_API CameraRigSystem final : public SceneSystem
     {
     public:
         /// @brief Returns Phase::View — the rig derives view state after the Sim phase.

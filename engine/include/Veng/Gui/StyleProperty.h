@@ -204,7 +204,7 @@ namespace Veng::Gui
     /// @ref ParseStyleProperty. An unmapped value returns "unknown".
     /// @param property  The style property.
     /// @return A static, never-null name string.
-    [[nodiscard]] const char* ToString(StyleProperty property);
+    [[nodiscard]] VE_API const char* ToString(StyleProperty property);
 
     /// @brief Parses a USS declaration name into a StyleProperty.
     ///
@@ -212,7 +212,7 @@ namespace Veng::Gui
     /// cooker's stylesheet and inline-style parsing.
     /// @param name  The declaration name (e.g. "background", "corner-radius").
     /// @return The matching property, or nullopt when the name is unrecognized.
-    [[nodiscard]] optional<StyleProperty> ParseStyleProperty(std::string_view name);
+    [[nodiscard]] VE_API optional<StyleProperty> ParseStyleProperty(std::string_view name);
 
     /// @brief Whether a property's value interpolates continuously, so it can be eased.
     ///
@@ -223,7 +223,7 @@ namespace Veng::Gui
     /// rather than letting an author discover it by watching a property snap.
     /// @param property  The style property.
     /// @return True when a transition or a keyframe clip can interpolate the property.
-    [[nodiscard]] bool IsAnimatableProperty(StyleProperty property);
+    [[nodiscard]] VE_API bool IsAnimatableProperty(StyleProperty property);
 
     /// @brief Whether a property's value is a single linear-space color held in a vec4.
     ///
@@ -231,5 +231,5 @@ namespace Veng::Gui
     /// color, the box shadow's color, and stroke.
     /// @param property  The style property.
     /// @return True when the property's whole value is one color.
-    [[nodiscard]] bool IsColorProperty(StyleProperty property);
+    [[nodiscard]] VE_API bool IsColorProperty(StyleProperty property);
 }

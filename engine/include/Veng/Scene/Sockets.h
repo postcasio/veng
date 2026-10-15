@@ -34,8 +34,8 @@ namespace Veng
     /// @param meshEntity  The entity carrying the MeshRenderer whose mesh owns the socket.
     /// @param socketName  The authored socket name, matched exactly.
     /// @return The socket, valid for the mesh's lifetime, or nullptr.
-    [[nodiscard]] const MeshSocket* FindMeshSocket(const Scene& scene, Entity meshEntity,
-                                                   std::string_view socketName);
+    [[nodiscard]] VE_API const MeshSocket* FindMeshSocket(const Scene& scene, Entity meshEntity,
+                                                          std::string_view socketName);
 
     /// @brief Parents `child` to `meshEntity` and places it at the named socket.
     ///
@@ -56,7 +56,8 @@ namespace Veng
     /// @param socketName  The authored socket name, matched exactly.
     /// @return True when the socket resolved and the child was attached; false when it did not,
     ///         leaving both entities untouched.
-    bool AttachToSocket(Scene& scene, Entity child, Entity meshEntity, std::string_view socketName);
+    VE_API bool AttachToSocket(Scene& scene, Entity child, Entity meshEntity,
+                               std::string_view socketName);
 
     /// @brief One socket of a prefab, placed in prefab-root space.
     struct PrefabSocket
@@ -100,8 +101,8 @@ namespace Veng
     /// @return The sockets, sorted by EntityName then socket name (authored order breaks a tie),
     ///         or the first NotFound / WrongType / Corrupt error met reading the prefab, a nested
     ///         prefab, or a mesh.
-    [[nodiscard]] AssetResult<vector<PrefabSocket>> ReadPrefabSockets(const AssetManager& assets,
-                                                                      AssetId prefab);
+    [[nodiscard]] VE_API AssetResult<vector<PrefabSocket>>
+    ReadPrefabSockets(const AssetManager& assets, AssetId prefab);
 
     /// @brief One cooked mesh a prefab renders, placed in prefab-root space.
     struct PrefabMesh
@@ -141,6 +142,6 @@ namespace Veng
     /// @return The rendered meshes, sorted by EntityName (flattened authored order breaks a tie) —
     ///         empty for a prefab that renders nothing — or the first NotFound / WrongType / Corrupt
     ///         error met reading the prefab or a nested prefab.
-    [[nodiscard]] AssetResult<vector<PrefabMesh>> ReadPrefabMeshes(const AssetManager& assets,
-                                                                   AssetId prefab);
+    [[nodiscard]] VE_API AssetResult<vector<PrefabMesh>>
+    ReadPrefabMeshes(const AssetManager& assets, AssetId prefab);
 }

@@ -11,8 +11,16 @@
 /// — the macros add only member functions, no data members, so the layout is unchanged
 /// regardless. glm must be complete here: `imgui.h` pulls this in before it defines `ImVec2`.
 
+#include <Veng/Export.h>
+
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
+
+/// @brief Exports ImGui's API from libveng, which compiles it; consumers import it.
+#define IMGUI_API VE_API
+
+/// @brief Exports imnodes' API from libveng, as IMGUI_API does ImGui's (cmake/PatchImNodes.cmake).
+#define IMNODES_API VE_API
 
 #define IM_VEC2_CLASS_EXTRA                                                                        \
     ImVec2(const glm::vec2& v) : x(v.x), y(v.y) {}                                                 \

@@ -92,6 +92,6 @@ namespace Veng
     /// @param layerMask Render layers to gather; a renderer whose MeshRenderer::Layer bit is clear is
     ///                  omitted (and never widens outBounds). AllRenderLayers (the default) gathers
     ///                  every layer, so a caller wanting the whole scene passes nothing.
-    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
-                      Entity exclude = Entity::Null, u32 layerMask = AllRenderLayers);
+    VE_API void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
+                             Entity exclude = Entity::Null, u32 layerMask = AllRenderLayers);
 }

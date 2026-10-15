@@ -18,7 +18,7 @@ namespace Veng
     /// rather than by however long it actually took. **Now() does not follow the mode** — it stays
     /// wall time in both, because session timeouts, directory reaping and the net pumps must keep
     /// running at real cadence while the simulation is driven.
-    class Time
+    class VE_API Time
     {
     public:
         /// @brief Records the start time; called once before the main loop.

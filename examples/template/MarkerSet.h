@@ -9,20 +9,15 @@
 /// @brief Export annotation for the out-of-line symbols libtemplate shares with libtemplate_cook.
 ///
 /// The cook module links the runtime library, so an importer may call code the runtime defines —
-/// but only if that symbol is importable across the two images. On macOS/Linux default visibility
-/// makes it so; on Windows a symbol must be `dllexport`ed by the defining DLL and `dllimport`ed
-/// by the consumer, and veng's own VE_MODULE_EXPORT is unconditionally `dllexport` (it annotates
-/// the module's own C-ABI entry, which is never imported). So a game that shares out-of-line code
-/// between its two images needs its own two-sided macro; CMake defines `<target>_EXPORTS` while
-/// compiling the target itself, which is the side that must export.
-#if defined(_WIN32)
+/// but only a symbol libtemplate exports, since veng_add_game builds it with hidden visibility.
+/// veng's own VE_MODULE_EXPORT is unconditionally the export side (it annotates the module's own
+/// C-ABI entry, which is never imported), so a game that shares out-of-line code between its two
+/// images needs its own two-sided macro; CMake defines `<target>_EXPORTS` while compiling the
+/// target itself, which is the side that must export.
 #if defined(template_EXPORTS)
-#define TEMPLATE_API __declspec(dllexport)
+#define TEMPLATE_API VE_DLL_EXPORT
 #else
-#define TEMPLATE_API __declspec(dllimport)
-#endif
-#else
-#define TEMPLATE_API __attribute__((visibility("default")))
+#define TEMPLATE_API VE_DLL_IMPORT
 #endif
 
 /// @brief A game-defined asset type end to end: identity, cooked layout, runtime class, loader.

@@ -34,7 +34,7 @@ namespace Veng::Renderer
     /// four sampled maps + a linear sampler are exposed as one descriptor set the deferred
     /// lighting pass binds (set 4). Generation is recorded once when the bound environment
     /// changes (the caller gates the call); the BRDF LUT is generated once on first use.
-    class EnvironmentIbl
+    class VE_API EnvironmentIbl
     {
     public:
         /// @brief Creates the IBL resources and generation pipelines (no generation recorded yet).

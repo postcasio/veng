@@ -41,33 +41,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-/// @brief Shared-library export/import annotation for public veng symbols.
-///
-/// On macOS/Linux veng uses default symbol visibility, so this only matters
-/// on Windows (dllexport when building the library, dllimport when consuming it).
-#if defined(_WIN32)
-#if defined(VE_BUILD_SHARED)
-#define VE_API __declspec(dllexport)
-#elif defined(VE_USE_SHARED)
-#define VE_API __declspec(dllimport)
-#else
-#define VE_API
-#endif
-#else
-#define VE_API __attribute__((visibility("default")))
-#endif
-
-/// @brief Export annotation for a module's C-ABI entry point.
-///
-/// A module always defines and exports VengModuleRegister, so this must be
-/// unconditionally dllexport on Windows. VE_API cannot be reused: a consumer
-/// build defines it as dllimport, which would produce a link error on the symbol
-/// the module itself defines.
-#if defined(_WIN32)
-#define VE_MODULE_EXPORT __declspec(dllexport)
-#else
-#define VE_MODULE_EXPORT __attribute__((visibility("default")))
-#endif
+#include <Veng/Export.h>
 
 namespace Veng
 {

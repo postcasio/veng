@@ -700,7 +700,7 @@ namespace Veng
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
-    class Application
+    class VE_API Application
     {
     public:
         /// @brief Constructs the application with the given settings and borrowed registries.

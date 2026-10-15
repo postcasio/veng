@@ -36,13 +36,13 @@ namespace Veng::UI
     };
 
     /// @brief Returns true if the last item is hovered.
-    [[nodiscard]] bool ItemHovered();
+    [[nodiscard]] VE_API bool ItemHovered();
 
     /// @brief Returns true if the current window has interaction focus.
     ///
     /// For a panel gating its own input (e.g. a viewport driving an editor camera only
     /// while focused) — distinct from item hover.
-    [[nodiscard]] bool WindowFocused();
+    [[nodiscard]] VE_API bool WindowFocused();
 
     /// @brief Returns true if ImGui is currently using the mouse.
     ///
@@ -55,67 +55,67 @@ namespace Veng::UI
     /// it unconditionally.
     /// @return True when the UI is capturing the mouse; false when it is not, or when there is
     ///         no UI at all.
-    [[nodiscard]] bool WantCaptureMouse();
+    [[nodiscard]] VE_API bool WantCaptureMouse();
 
     /// @brief Returns true the frame the last item was clicked with the given button.
     /// @param button  Mouse button to query.
-    [[nodiscard]] bool IsItemClicked(MouseButton button = MouseButton::Left);
+    [[nodiscard]] VE_API bool IsItemClicked(MouseButton button = MouseButton::Left);
 
     /// @brief Returns true while the button is held.
     /// @param button  Mouse button to query.
-    [[nodiscard]] bool IsMouseDown(MouseButton button);
+    [[nodiscard]] VE_API bool IsMouseDown(MouseButton button);
 
     /// @brief Returns how far the mouse moved this frame, in UI pixels.
-    [[nodiscard]] vec2 MouseDelta();
+    [[nodiscard]] VE_API vec2 MouseDelta();
 
     /// @brief Returns this frame's vertical wheel (or trackpad scroll) movement: positive away
     /// from the user.
-    [[nodiscard]] f32 MouseWheel();
+    [[nodiscard]] VE_API f32 MouseWheel();
 
     /// @brief Returns true the frame the last item was deactivated after an edit.
-    [[nodiscard]] bool ItemEdited();
+    [[nodiscard]] VE_API bool ItemEdited();
 
     /// @brief Returns true the frame the last tree node's open state toggled.
     ///
     /// Lets a hierarchy panel tell an arrow-expand from a selection click on the same row.
-    [[nodiscard]] bool IsItemToggledOpen();
+    [[nodiscard]] VE_API bool IsItemToggledOpen();
 
     /// @brief Shows a tooltip with text when the last item is hovered.
     /// @param text  Tooltip content.
-    void Tooltip(string_view text);
+    VE_API void Tooltip(string_view text);
 
     /// @brief Returns true the frame the button was clicked down.
     /// @param button  Mouse button to query.
-    [[nodiscard]] bool IsMouseClicked(MouseButton button);
+    [[nodiscard]] VE_API bool IsMouseClicked(MouseButton button);
 
     /// @brief Returns true the frame the button completed a double-click.
     /// @param button  Mouse button to query.
-    [[nodiscard]] bool IsMouseDoubleClicked(MouseButton button);
+    [[nodiscard]] VE_API bool IsMouseDoubleClicked(MouseButton button);
 
     /// @brief Returns true the frame the key transitioned to pressed (with key-repeat).
     /// @param key  Key to query.
-    [[nodiscard]] bool IsKeyPressed(Key key);
+    [[nodiscard]] VE_API bool IsKeyPressed(Key key);
 
     /// @brief Returns true while either Ctrl key is held.
     ///
     /// For multi-select toggle modifiers in list/tree panels.
-    [[nodiscard]] bool IsCtrlDown();
+    [[nodiscard]] VE_API bool IsCtrlDown();
 
     /// @brief Returns true while either Shift key is held.
     ///
     /// For range-select modifiers in list/tree panels.
-    [[nodiscard]] bool IsShiftDown();
+    [[nodiscard]] VE_API bool IsShiftDown();
 
     /// @brief Returns true while either Super key (Cmd on macOS, Win on Windows) is held.
     ///
     /// For platform-native shortcut modifiers (Cmd+Z undo on macOS) alongside the Ctrl variant.
-    [[nodiscard]] bool IsSuperDown();
+    [[nodiscard]] VE_API bool IsSuperDown();
 
     /// @brief Returns the mouse position captured when the current popup was opened.
     ///
     /// Stable while the popup stays open, so newly placed content anchors to the open point.
-    [[nodiscard]] vec2 PopupMousePosition();
+    [[nodiscard]] VE_API vec2 PopupMousePosition();
 
     /// @brief Returns the running average frame rate (frames per second) of the UI backend.
-    [[nodiscard]] f32 FrameRate();
+    [[nodiscard]] VE_API f32 FrameRate();
 }

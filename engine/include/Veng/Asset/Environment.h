@@ -47,7 +47,7 @@ namespace Veng
     /// worker-legal and bindless registration is deferred to the main-thread Finalize(), which is
     /// also where the shared sampler is taken from the registry's cache.
     /// GetSampler()/GetHandle()/GetSamplerHandle() are valid only after Finalize().
-    class EnvironmentMap
+    class VE_API EnvironmentMap
     {
     public:
         ~EnvironmentMap();

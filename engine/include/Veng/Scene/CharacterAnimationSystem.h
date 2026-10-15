@@ -27,7 +27,7 @@ namespace Veng
     /// Runs in the View phase before AnimationSystem, so within one tick the character's finalized Sim
     /// state feeds the blend the same tick it is posed. An entity with a CharacterState but no
     /// AnimationBlend or AnimationStateSet is skipped — the mapping is opt-in per field.
-    class CharacterAnimationSystem final : public SceneSystem
+    class VE_API CharacterAnimationSystem final : public SceneSystem
     {
     public:
         /// @brief Returns Phase::View — it derives animation input from finalized Sim state.

@@ -114,7 +114,7 @@ namespace Veng::Gui
     /// panels in registration order and stops at the first that consumes. Focus navigation arrives as
     /// a role press (ForwardRole) and reaches the participating panels of the pressing seat, in
     /// registration order, likewise stopping at the first. The router must outlive the consumer.
-    class SurfaceInputConsumer final : public InputConsumer
+    class VE_API SurfaceInputConsumer final : public InputConsumer
     {
     public:
         /// @brief An opaque per-registration id.
@@ -124,7 +124,7 @@ namespace Veng::Gui
         ///
         /// Move-only; dropping it (or its owning scope) removes the surface from the consumer. A
         /// default/moved-from handle is inert.
-        class Registration
+        class VE_API Registration
         {
         public:
             /// @brief Constructs an inert, unregistered handle.

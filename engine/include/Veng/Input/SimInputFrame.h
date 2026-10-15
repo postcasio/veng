@@ -25,7 +25,7 @@ namespace Veng
     ///   latch consumes it; with no scene routed every step latches, so an unrouted stretch never
     ///   banks. Every step latches every pad's touchpad, the first step of the frame taking the
     ///   frame's motion.
-    class SimInputFrame
+    class VE_API SimInputFrame
     {
     public:
         /// @brief Closes the reported frame and opens the next one on the snapshot.

@@ -19,7 +19,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A compiled Vulkan compute pipeline.
-    class ComputePipeline
+    class VE_API ComputePipeline
     {
     public:
         /// @brief Creates a compute pipeline from the given parameters.

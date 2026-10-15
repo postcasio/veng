@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Application.h>
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/ModuleLoader.h>
@@ -66,7 +67,7 @@ namespace VengEditor
     /// Registers no Presented viewport — the dockspace is opaque ImGui, so the engine's
     /// managed gather/composite tail runs with zero placements (a cleared assembly target,
     /// ImGui over it). Render-owning panels hold their own registered Offscreen viewports.
-    class EditorHost : public Veng::Application, public PanelHost
+    class VE_EDITOR_API EditorHost : public Veng::Application, public PanelHost
     {
     public:
         /// @brief The game (and optional editor) modules the editor dlopens, owned by the caller.

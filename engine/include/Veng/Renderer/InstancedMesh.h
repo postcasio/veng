@@ -17,7 +17,7 @@ namespace Veng::Renderer
     /// xyz, translation in w. The datum is the consumer's — a colour, a seed, a variant — and a
     /// material reads it through Veng/instanced_mesh.slang's InstanceDatum. Laid out as the shader's
     /// InstanceRecord, 64 bytes.
-    struct MeshInstance
+    struct VE_API MeshInstance
     {
         /// @brief The transform's first row: x's coefficients, then x's translation.
         vec4 Row0{1.0f, 0.0f, 0.0f, 0.0f};
@@ -62,7 +62,7 @@ namespace Veng::Renderer
     /// instances it holds, from which the renderer bounds the whole set without visiting them.
     ///
     /// Render-thread only, like the rest of the renderer.
-    class InstanceSet
+    class VE_API InstanceSet
     {
     public:
         /// @brief The most write ranges kept for uploads; a renderer further behind uploads all.
@@ -179,7 +179,7 @@ namespace Veng::Renderer
     /// @brief The largest axis scale of a model matrix's upper 3x3.
     /// @param model The matrix.
     /// @return The length of its longest basis column.
-    [[nodiscard]] f32 MaxAxisScale(const mat4& model);
+    [[nodiscard]] VE_API f32 MaxAxisScale(const mat4& model);
 
     /// @brief The bounding sphere the level-of-detail rule measures a mesh by under a model matrix.
     ///
@@ -190,8 +190,8 @@ namespace Veng::Renderer
     /// @param meshBounds The mesh's level-0 bound.
     /// @param center     Receives the world-space centre.
     /// @param radius     Receives the world-space radius.
-    void InstanceBoundingSphere(const mat4& model, const AABB& meshBounds, vec3& center,
-                                f32& radius);
+    VE_API void InstanceBoundingSphere(const mat4& model, const AABB& meshBounds, vec3& center,
+                                       f32& radius);
 
     /// @brief The size in pixels a sphere projects to in an instanced set's reference view.
     ///
@@ -207,9 +207,10 @@ namespace Veng::Renderer
     /// @param center                The sphere's world-space centre.
     /// @param radius                The sphere's world-space radius.
     /// @return The size in pixels; the largest f32 for a sphere containing the eye.
-    [[nodiscard]] f32 ReferenceProjectedPixels(const mat4& referenceViewProj,
-                                               const vec3& referenceEye, f32 referenceHeightPixels,
-                                               const vec3& center, f32 radius);
+    [[nodiscard]] VE_API f32 ReferenceProjectedPixels(const mat4& referenceViewProj,
+                                                      const vec3& referenceEye,
+                                                      f32 referenceHeightPixels, const vec3& center,
+                                                      f32 radius);
 
     /// @brief What one view kept of one instanced mesh set in the last measured frame.
     struct InstancedMeshViewStats

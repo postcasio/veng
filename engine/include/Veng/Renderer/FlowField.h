@@ -76,7 +76,7 @@ namespace Veng::Renderer
     ///
     /// **Determinism.** The same seeded fields, the same configuration and the same step count
     /// produce the same output on a given device. Cross-device bit-identity is *not* promised.
-    class FlowField
+    class VE_API FlowField
     {
     public:
         /// @brief Creates a flow instance over the supplied fields, loading its compute kernels.
@@ -240,7 +240,7 @@ namespace Veng::Renderer
     /// @param extent The axis length in texels; must be non-zero.
     /// @param wrap   The axis's boundary behaviour.
     /// @return The folded coordinate, in [0, extent).
-    [[nodiscard]] i32 FoldFlowTexel(i32 coord, u32 extent, FlowWrap wrap);
+    [[nodiscard]] VE_API i32 FoldFlowTexel(i32 coord, u32 extent, FlowWrap wrap);
 
     /// @brief The grid position a semi-Lagrangian step back-traces a texel's centre to.
     ///
@@ -252,7 +252,8 @@ namespace Veng::Renderer
     /// @param stepScale How far one step moves the dye, per unit of velocity.
     /// @param rowMetric The row's metric scale.
     /// @return The back-traced position in grid coordinates (texel centres at i + 0.5).
-    [[nodiscard]] vec2 FlowBackTrace(uvec2 texel, vec2 velocity, f32 stepScale, f32 rowMetric);
+    [[nodiscard]] VE_API vec2 FlowBackTrace(uvec2 texel, vec2 velocity, f32 stepScale,
+                                            f32 rowMetric);
 
     /// @brief The bilinear tap the advection kernel reads at a back-traced position.
     ///
@@ -265,8 +266,8 @@ namespace Veng::Renderer
     /// @param wrapY    Boundary behaviour of the y axis.
     /// @param load     Reads a field texel; only already-folded coordinates are passed to it.
     /// @return The filtered value.
-    [[nodiscard]] vec4 SampleFlowBilinear(vec2 position, uvec2 extent, FlowWrap wrapX,
-                                          FlowWrap wrapY, const function<vec4(ivec2)>& load);
+    [[nodiscard]] VE_API vec4 SampleFlowBilinear(vec2 position, uvec2 extent, FlowWrap wrapX,
+                                                 FlowWrap wrapY, const function<vec4(ivec2)>& load);
 
     /// @brief The clamped unsharp value the sharpen kernel writes for one texel.
     ///
@@ -280,6 +281,6 @@ namespace Veng::Renderer
     /// @param neighbourhoodMax Per-channel maximum over the neighbourhood.
     /// @param strength  How hard to sharpen; 0 returns the centre unchanged.
     /// @return The clamped unsharp value.
-    [[nodiscard]] vec4 FlowSharpen(vec4 centre, vec4 blur, vec4 neighbourhoodMin,
-                                   vec4 neighbourhoodMax, f32 strength);
+    [[nodiscard]] VE_API vec4 FlowSharpen(vec4 centre, vec4 blur, vec4 neighbourhoodMin,
+                                          vec4 neighbourhoodMax, f32 strength);
 }

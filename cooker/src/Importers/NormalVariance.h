@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <span>
 
 #include <Veng/Veng.h>
@@ -28,7 +29,7 @@ namespace Veng::Cook
     /// @param rgba    RGBA8 texels, row-major.
     /// @param width   Width in texels.
     /// @param height  Height in texels.
-    NormalMoments NormalMomentsOfRgba8(std::span<const u8> rgba, u32 width, u32 height);
+    VE_COOK_API NormalMoments NormalMomentsOfRgba8(std::span<const u8> rgba, u32 width, u32 height);
 
     /// @brief The unit normals of a float normal map, each with zero spread.
     ///
@@ -47,7 +48,8 @@ namespace Veng::Cook
     /// @param source  The level to resample.
     /// @param width   Target width in texels.
     /// @param height  Target height in texels.
-    NormalMoments ResampleNormalMoments(const NormalMoments& source, u32 width, u32 height);
+    VE_COOK_API NormalMoments ResampleNormalMoments(const NormalMoments& source, u32 width,
+                                                    u32 height);
 
     /// @brief Halves a level with a 2x2 box filter, an odd edge clamping to its last column or row.
     ///
@@ -66,5 +68,5 @@ namespace Veng::Cook
     /// @param base      The chain's level 0.
     /// @param mipCount  How many levels to produce.
     /// @return One row-major variance array per level.
-    vector<vector<f32>> NormalVarianceChain(NormalMoments base, u32 mipCount);
+    VE_COOK_API vector<vector<f32>> NormalVarianceChain(NormalMoments base, u32 mipCount);
 }

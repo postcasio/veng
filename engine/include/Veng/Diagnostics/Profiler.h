@@ -168,7 +168,7 @@ namespace Veng::Diagnostics
     /// bytes and removes it from the registry. This is not optional bookkeeping —
     /// a transient worker thread whose thread_local buffer is destroyed at thread
     /// exit would otherwise leave the registry walking a dangling pointer. Move-only.
-    class ProfilerThreadRegistration
+    class VE_API ProfilerThreadRegistration
     {
     public:
         /// @brief Constructs an inert registration referencing no thread.
@@ -207,7 +207,7 @@ namespace Veng::Diagnostics
     /// which is how the argument-free scope macros reach recording state; a second
     /// concurrent instance is not supported. Under VE_PROFILE=OFF the class is a shell
     /// of documented no-ops holding no recording storage.
-    class Profiler
+    class VE_API Profiler
     {
     public:
         /// @brief Constructs the profiler, registers the calling (main) thread, and installs it active.
@@ -378,7 +378,7 @@ namespace Veng::Diagnostics
     /// construction, the GPU bridge — reach the live instance. Returns nullptr under
     /// VE_PROFILE=OFF, where no recording state exists. Not for the hot path: the
     /// argument-free scope macros resolve their thread state directly.
-    [[nodiscard]] Profiler* GetActiveProfiler() noexcept;
+    [[nodiscard]] VE_API Profiler* GetActiveProfiler() noexcept;
 
     /// @brief Reads the steady trace clock as a raw tick count — the profiler's timestamp source.
     ///
@@ -409,12 +409,12 @@ namespace Veng::Diagnostics
     /// The trace file format (and any decoder) records this to convert stored ticks to
     /// wall time. On Apple Silicon it is the 24 MHz architected timer, so one tick is
     /// ~41.7 ns.
-    [[nodiscard]] u64 TraceTickFrequency() noexcept;
+    [[nodiscard]] VE_API u64 TraceTickFrequency() noexcept;
 
     /// @brief Converts a NowTicks() tick count or delta to nanoseconds. Off the hot path.
     /// @param ticks  A tick count or tick delta from NowTicks().
     /// @return The equivalent nanoseconds.
-    [[nodiscard]] u64 TraceTicksToNanos(u64 ticks) noexcept;
+    [[nodiscard]] VE_API u64 TraceTicksToNanos(u64 ticks) noexcept;
 
     /// @brief Returns the directory captures are written to: `<build-dir>/captures/`.
     ///
@@ -422,7 +422,7 @@ namespace Veng::Diagnostics
     /// the build, so a scanner can order captures and attribute them to the build that produced them.
     /// A tool that names a capture resolves it under here (ResolveCapturePath); no capture path is ever
     /// a tool argument. Defined regardless of the VE_PROFILE gate — it is path math, no recording state.
-    [[nodiscard]] path CaptureDirectory();
+    [[nodiscard]] VE_API path CaptureDirectory();
 
     /// @brief Resolves a capture name to a full path under CaptureDirectory(), with the trace extension.
     ///
@@ -431,7 +431,7 @@ namespace Veng::Diagnostics
     /// the result always stays inside the capture directory.
     /// @param name  The capture's base name (without extension).
     /// @return The resolved path `CaptureDirectory() / <name>.vtrace`.
-    [[nodiscard]] path ResolveCapturePath(string_view name);
+    [[nodiscard]] VE_API path ResolveCapturePath(string_view name);
 }
 
 // ---------------------------------------------------------------------------

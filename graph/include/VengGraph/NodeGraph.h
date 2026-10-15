@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengGraph/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/FieldDescriptor.h>
@@ -118,7 +119,7 @@ namespace VengGraph
     ///
     /// Knows nothing of ImGui, Vulkan, or any domain. Domain knowledge enters only
     /// through the three construction hooks. The graph is a DAG by construction.
-    class NodeGraph
+    class VE_GRAPH_API NodeGraph
     {
     public:
         /// @brief Constructs a NodeGraph with the given domain hooks.

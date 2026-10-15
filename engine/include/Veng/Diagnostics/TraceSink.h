@@ -120,7 +120,7 @@ namespace Veng::Diagnostics
     /// Every method that touches a container is defined out of line, so a translation
     /// unit that merely parses this header does not instantiate the retained vectors'
     /// members.
-    class CapturingTestSink final : public TraceSink
+    class VE_API CapturingTestSink final : public TraceSink
     {
     public:
         /// @brief One retained chunk: the track it came from and a copy of its bytes.

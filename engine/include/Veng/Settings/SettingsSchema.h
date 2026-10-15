@@ -146,7 +146,7 @@ namespace Veng
     /// meaning of any option, which is the consuming game's and is resolved in code. It is read once
     /// to build a settings menu and to bound the persisted user choices. A CPU-only asset with no
     /// GPU resource; load it through AssetManager::Load by AssetId like any other asset.
-    class SettingsSchema
+    class VE_API SettingsSchema
     {
     public:
         /// @brief Creates a schema from its decoded record.

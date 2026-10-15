@@ -37,7 +37,7 @@ namespace Veng
         bool TakesValue = true;
     };
 
-    struct LaunchArguments
+    struct VE_API LaunchArguments
     {
         /// @brief Working directory to switch to before running; unset leaves it unchanged.
         ///

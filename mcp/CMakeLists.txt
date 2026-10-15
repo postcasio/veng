@@ -42,7 +42,7 @@ target_link_libraries(veng_mcp PUBLIC veng::veng)
 # Same -fno-exceptions enforcement as libveng: asserts are fatal, recoverable
 # operations return Veng::Result<T>. The vendored httplib TU below overrides this.
 target_compile_options(veng_mcp PRIVATE -fno-exceptions)
-target_compile_definitions(veng_mcp PRIVATE VE_BUILD_SHARED)
+target_compile_definitions(veng_mcp PRIVATE VE_MCP_BUILD_SHARED)
 
 target_precompile_headers(veng_mcp PRIVATE <Veng/Veng.h>)
 
@@ -65,12 +65,6 @@ set_source_files_properties(src/Vendor/HttpLib.cpp src/McpServer.cpp src/McpClie
         src/McpClientCli.cpp PROPERTIES
         COMPILE_OPTIONS -fexceptions
         SKIP_PRECOMPILE_HEADERS ON)
-
-# Auto-export all symbols on MSVC so consumers link against this shared library
-# without complete VE_API annotation — mirrors macOS/Linux default visibility.
-if (MSVC)
-    set_target_properties(veng_mcp PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif ()
 
 # nlohmann/json — JSON-RPC (de)serialization used directly in .cpp, so this library
 # still names the target itself (PRIVATE: never a public header here) even though

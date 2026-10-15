@@ -107,7 +107,7 @@ namespace Veng::Renderer
     ///
     /// Created via Sampler::Create; shared across any pipeline or descriptor set that
     /// needs the same sampling parameters.
-    class Sampler
+    class VE_API Sampler
     {
     public:
         /// @brief Creates a sampler with the given parameters.

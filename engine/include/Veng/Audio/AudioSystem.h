@@ -45,7 +45,7 @@ namespace Veng
     /// against too, and submits the scene's MusicState as that scope's music request, which the engine
     /// arbitrates against every other scope's. The engine's once-per-frame advance
     /// (AudioEngine::Update) is the application's, not this system's.
-    class AudioSystem final : public SceneSystem
+    class VE_API AudioSystem final : public SceneSystem
     {
     public:
         /// @brief Returns Phase::View — audio is placed against the poses the frame draws.

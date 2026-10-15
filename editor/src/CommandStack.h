@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Veng.h>
 
 #include <deque>
@@ -17,7 +18,7 @@ namespace VengEditor
     /// moves it back. The undo deque is capped at a fixed depth (the oldest entries drop). A dirty
     /// signal (set by any Push/Undo/Redo, cleared by MarkSaved) tracks unsaved changes for a save
     /// path; selection is editor state and never enters the stack.
-    class CommandStack
+    class VE_EDITOR_API CommandStack
     {
     public:
         /// @brief Maximum number of undo entries retained; older edits drop off the bottom.

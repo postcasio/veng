@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 
@@ -34,7 +35,7 @@ namespace VengEditor
     /// its dockspace and they cannot stray into the main host dockspace. The child set is
     /// fixed at construction; a subclass adds children with AddChild and arranges their
     /// initial split in BuildDefaultLayout.
-    class AssetEditorPanel : public EditorPanel
+    class VE_EDITOR_API AssetEditorPanel : public EditorPanel
     {
     public:
         /// @brief Submits the document window (with its dockspace and children) and the close prompt.

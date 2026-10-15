@@ -60,7 +60,7 @@ namespace Veng::Renderer::Backend
     };
 
     /// @brief Returns true if any of the access bits is a write (vs a pure read).
-    [[nodiscard]] bool IsWriteAccess(vk::AccessFlags access);
+    [[nodiscard]] VE_API bool IsWriteAccess(vk::AccessFlags access);
 
     /// @brief Decides whether a barrier is needed to transition a subresource
     /// from @p current state to the desired layout/stage/access.
@@ -84,14 +84,14 @@ namespace Veng::Renderer::Backend
     /// transfer. When the families match (single-queue collapse) both queue indices
     /// stay VK_QUEUE_FAMILY_IGNORED. The consumed subresource is graphics-produced
     /// thereafter, so a later use never re-acquires.
-    [[nodiscard]] BarrierDecision DecideBarrier(const SubresourceState& current,
-                                                vk::ImageLayout newLayout,
-                                                vk::PipelineStageFlags dstStage,
-                                                vk::AccessFlags dstAccess, u32 transferFamily,
-                                                u32 graphicsFamily);
+    [[nodiscard]] VE_API BarrierDecision DecideBarrier(const SubresourceState& current,
+                                                       vk::ImageLayout newLayout,
+                                                       vk::PipelineStageFlags dstStage,
+                                                       vk::AccessFlags dstAccess,
+                                                       u32 transferFamily, u32 graphicsFamily);
 
     /// @brief Returns the layout/stage/access scope required by the given access kind.
     ///
     /// Pure mapping used by TransitionImage and testable alongside DecideBarrier.
-    [[nodiscard]] SubresourceState ScopeFor(AccessKind kind);
+    [[nodiscard]] VE_API SubresourceState ScopeFor(AccessKind kind);
 }

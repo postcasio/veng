@@ -144,7 +144,7 @@ namespace Veng::Renderer
     /// output reads this frame's result. Push-to-render: a frame with no fresh SetView
     /// records nothing, so an idle capture costs nothing. Single-owner (Unique); Create is
     /// the factory, and destroying the capture self-unregisters it from the drive-list.
-    class SceneCapture
+    class VE_API SceneCapture
     {
     public:
         /// @brief Number of cube faces a full refresh spans — one face renders per pushed frame.

@@ -38,13 +38,14 @@ namespace Veng::Haptics
     /// @param time  The time since the clip started, in seconds.
     /// @param loop  Whether the playback wraps (a RumbleSource's resolved RumbleLoop).
     /// @return The channel levels.
-    [[nodiscard]] RumbleChannels EvaluateClip(const RumbleClipData& clip, f32 time, bool loop);
+    [[nodiscard]] VE_API RumbleChannels EvaluateClip(const RumbleClipData& clip, f32 time,
+                                                     bool loop);
 
     /// @brief Scales every channel by one factor, unclamped.
     /// @param channels  The levels.
     /// @param scale     The factor (an intensity times a fade).
     /// @return The scaled levels.
-    [[nodiscard]] RumbleChannels ScaleRumble(const RumbleChannels& channels, f32 scale);
+    [[nodiscard]] VE_API RumbleChannels ScaleRumble(const RumbleChannels& channels, f32 scale);
 
     /// @brief Mixes layered rumble: per channel, the maximum over the layers, scaled by a master
     ///        intensity and clamped to [0, 1].
@@ -54,8 +55,8 @@ namespace Veng::Haptics
     /// @param layers  Each sounding one-shot's and submitted layer's scaled levels.
     /// @param master  The master intensity applied after the maximum.
     /// @return The mixed levels; zero for no layers.
-    [[nodiscard]] RumbleChannels MixRumble(std::span<const RumbleChannels> layers,
-                                           f32 master = 1.0f);
+    [[nodiscard]] VE_API RumbleChannels MixRumble(std::span<const RumbleChannels> layers,
+                                                  f32 master = 1.0f);
 
     /// @brief What a rumble plays on.
     enum class RumbleTargetKind : u8
@@ -139,8 +140,8 @@ namespace Veng::Haptics
     ///                no pad.
     /// @param input   The input whose connected pads the implicit seat reads.
     /// @return The pad slot, or GamepadId::None.
-    [[nodiscard]] GamepadId ResolveRumbleTarget(const RumbleTarget& target, const Scene* scene,
-                                                const Input& input);
+    [[nodiscard]] VE_API GamepadId ResolveRumbleTarget(const RumbleTarget& target,
+                                                       const Scene* scene, const Input& input);
 
     /// @brief A read-only view of one one-shot the engine holds, for tooling and tests.
     struct RumbleOneShotInfo
@@ -210,7 +211,7 @@ namespace Veng::Haptics
     /// Systems reach it only through their context's scoped facade (SystemContext::Haptics);
     /// application code and tooling through Application::GetApplicationHaptics. Main-thread only,
     /// like the rest of the frame.
-    class HapticsEngine
+    class VE_API HapticsEngine
     {
     public:
         /// @brief Constructs an engine over the scope registry it judges its output by.

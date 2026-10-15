@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/SceneRendererSettings.h>
 #include <Veng/Renderer/Viewport.h>
@@ -91,7 +92,7 @@ namespace VengEditor
     /// way. The viewport is rendered by the engine drive-list (its owning panel registers it on
     /// this preview's behalf); each frame the preview pushes its view through Update, and Draw
     /// shows the result with its controls and turns drags on it into camera moves.
-    class MaterialPreview
+    class VE_EDITOR_API MaterialPreview
     {
     public:
         /// @param context  Renderer context owning all GPU resources.

@@ -51,5 +51,5 @@ namespace Veng::Renderer
     /// a non-positive or non-finite timestep.
     /// @param shape The configuration's shapes and knobs.
     /// @return An error naming the first rejection, or success.
-    [[nodiscard]] VoidResult ValidateFluidSimShape(const FluidSimShape& shape);
+    [[nodiscard]] VE_API VoidResult ValidateFluidSimShape(const FluidSimShape& shape);
 }

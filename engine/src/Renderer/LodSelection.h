@@ -22,7 +22,7 @@ namespace Veng::Renderer
     /// the view's height: radius × ProjectionScale / distance under a perspective projection, and
     /// radius × ProjectionScale under an orthographic one. The distance is to the eye, not the view
     /// depth, so turning the view in place moves no mesh across a threshold.
-    struct LodView
+    struct VE_API LodView
     {
         /// @brief The eye position (perspective only).
         vec3 Eye{0.0f};
@@ -46,7 +46,8 @@ namespace Veng::Renderer
     /// @param center The sphere's world-space centre.
     /// @param radius The sphere's world-space radius.
     /// @return The diameter as a fraction of the view height, times the view's ScreenScale.
-    [[nodiscard]] f32 ProjectedScreenSize(const LodView& view, const vec3& center, f32 radius);
+    [[nodiscard]] VE_API f32 ProjectedScreenSize(const LodView& view, const vec3& center,
+                                                 f32 radius);
 
     /// @brief Selects a level from a screen size against descending thresholds, with hysteresis.
     ///
@@ -59,8 +60,8 @@ namespace Veng::Renderer
     /// @param previous   The level drawn last frame, or NoPreviousLod.
     /// @param hysteresis The band's half-width as a fraction of the threshold, in [0, 1).
     /// @return The level, in [0, thresholds.size()].
-    [[nodiscard]] u32 SelectLod(std::span<const f32> thresholds, f32 screenSize, u32 previous,
-                                f32 hysteresis);
+    [[nodiscard]] VE_API u32 SelectLod(std::span<const f32> thresholds, f32 screenSize,
+                                       u32 previous, f32 hysteresis);
 
     /// @brief How a view chooses levels: its forced level and its hysteresis band.
     struct LodPolicy
@@ -80,6 +81,6 @@ namespace Veng::Renderer
     /// @param policy   The view's forced level and hysteresis.
     /// @param previous The level this mesh drew at in this view last frame, or NoPreviousLod.
     /// @return The level, below item.Mesh->GetLodCount().
-    [[nodiscard]] u32 ResolveMeshLod(const VisibleMesh& item, const LodView& view,
-                                     const LodPolicy& policy, u32 previous);
+    [[nodiscard]] VE_API u32 ResolveMeshLod(const VisibleMesh& item, const LodView& view,
+                                            const LodPolicy& policy, u32 previous);
 }

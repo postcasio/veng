@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/Path.h>
 
 #include <Veng/Asset/Archive.h>
@@ -90,7 +91,7 @@ namespace Veng::Cook
     /// tick count recorded on the same machine, never interpreted as a wall-clock time.
     /// @param file  The file to stat.
     /// @return The size and mtime, or nullopt when the file is missing/unreadable.
-    [[nodiscard]] optional<FileStat> StatFile(const path& file);
+    [[nodiscard]] VE_COOK_API optional<FileStat> StatFile(const path& file);
 
     /// @brief The full cooked result of one manifest entry, plus the inputs that determined it.
     ///
@@ -163,7 +164,7 @@ namespace Veng::Cook
     /// on a later lookup. A missing file yields nullopt, which a lookup treats as a cache miss.
     /// @param file  The file to hash.
     /// @return The content hash, or nullopt when the file cannot be opened.
-    [[nodiscard]] optional<ContentHash> HashFileContents(const path& file);
+    [[nodiscard]] VE_COOK_API optional<ContentHash> HashFileContents(const path& file);
 
     /// @brief A stable fingerprint of the parts of a build configuration that steer a cooked blob.
     ///
@@ -173,7 +174,8 @@ namespace Veng::Cook
     /// fingerprint and so a separate cache lineage.
     /// @param config  The configuration to fingerprint.
     /// @return The deterministic fingerprint string.
-    [[nodiscard]] string FingerprintBuildConfiguration(const BuildConfiguration& config);
+    [[nodiscard]] VE_COOK_API string
+    FingerprintBuildConfiguration(const BuildConfiguration& config);
 
     /// @brief Fingerprints the cook tool itself — the half of the cache's identity keying every entry.
     ///
@@ -189,7 +191,7 @@ namespace Veng::Cook
     /// leaving its path, and the format version is the one component always present.
     /// @param toolExe  The cook tool's own executable, or empty when it cannot be located.
     /// @return The base identity string to open a cache with.
-    [[nodiscard]] string ComputeCookBaseTag(const path& toolExe);
+    [[nodiscard]] VE_COOK_API string ComputeCookBaseTag(const path& toolExe);
 
     /// @brief Fingerprints the dlopened module images, for the entries that actually read them.
     ///
@@ -205,7 +207,8 @@ namespace Veng::Cook
     /// @param modulePath      The --module runtime module, or empty when none is loaded.
     /// @param cookModulePath  The resolved cook module, or empty when none is loaded.
     /// @return The module identity string to open a cache with.
-    [[nodiscard]] string ComputeCookModuleTag(const path& modulePath, const path& cookModulePath);
+    [[nodiscard]] VE_COOK_API string ComputeCookModuleTag(const path& modulePath,
+                                                          const path& cookModulePath);
 
     /// @brief A content-addressed on-disk cache of cooked, compression-ready asset blobs.
     ///
@@ -218,7 +221,7 @@ namespace Veng::Cook
     ///
     /// The cache is a pure optimization: a miss (or any validation failure) simply re-cooks. It is
     /// never consulted for correctness — the runtime never reads it, and vengc verify ignores it.
-    class CookCache
+    class VE_COOK_API CookCache
     {
     public:
         /// @brief Opens (creating if absent) a cache rooted at @p cacheDir.

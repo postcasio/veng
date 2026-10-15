@@ -95,7 +95,7 @@ namespace Veng::Gui
     ///
     /// UIDocument is CPU data with no GPU resource. Load it through AssetManager::Load like any
     /// other asset, then Gui::Document::Instantiate it.
-    class UIDocument
+    class VE_API UIDocument
     {
     public:
         /// @brief Creates a UIDocument from its recipe tree, referenced stylesheets, and dependencies.

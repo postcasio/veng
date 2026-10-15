@@ -44,7 +44,7 @@ namespace Veng
     /// resolver-ready ResolvedContext form built once at load. The GetResolved() form is what
     /// ResolveActions reads; GetActions()/GetBindings() expose the authored data (the editor's
     /// binding-table source).
-    class InputMappingContext
+    class VE_API InputMappingContext
     {
     public:
         /// @brief Creates a context from its decoded actions and bindings.

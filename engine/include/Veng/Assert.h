@@ -34,8 +34,8 @@ namespace Veng::Detail
     /// @param line  Source line number (__LINE__).
     /// @param expr  Stringified condition expression.
     /// @param message  Formatted diagnostic message.
-    [[noreturn]] void FatalAssert(const char* file, int line, const char* expr,
-                                  std::string_view message);
+    [[noreturn]] VE_API void FatalAssert(const char* file, int line, const char* expr,
+                                         std::string_view message);
 }
 
 /// @brief Asserts a condition; on failure logs, breaks into the debugger, then aborts.

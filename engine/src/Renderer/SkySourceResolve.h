@@ -32,5 +32,5 @@ namespace Veng::Renderer
     /// @param view The view whose sky-source fields are written; its fields must already sit at
     ///        their reset defaults (a fresh SceneView, or after SkyResolver's per-Execute reset).
     /// @return The resolved source kind, lighting tier, and bake mode.
-    ResolvedSkySource ResolveSkySource(const Sky* sky, SceneView& view);
+    VE_API ResolvedSkySource ResolveSkySource(const Sky* sky, SceneView& view);
 }

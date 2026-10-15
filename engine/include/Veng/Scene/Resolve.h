@@ -16,7 +16,7 @@ namespace Veng
     /// Primitives:: generator. Pure CPU — no render Context.
     /// @param source  The mesh source; its active alternative selects the generator.
     /// @return The generated MeshData, or nullopt when the source is empty.
-    [[nodiscard]] optional<MeshData> BuildShapeMeshData(const MeshSource& source);
+    [[nodiscard]] VE_API optional<MeshData> BuildShapeMeshData(const MeshSource& source);
 
     /// @brief Builds the active shape into a streaming Mesh and returns its pending handle.
     ///
@@ -28,6 +28,6 @@ namespace Veng
     /// @param manager  The asset manager the async mesh streams through.
     /// @param source   The mesh source; its active alternative selects the geometry.
     /// @return The pending mesh handle, or an empty handle for an empty source.
-    [[nodiscard]] AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager,
-                                                       const MeshSource& source);
+    [[nodiscard]] VE_API AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager,
+                                                              const MeshSource& source);
 }

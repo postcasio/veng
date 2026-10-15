@@ -23,8 +23,8 @@ namespace Veng
     /// @param intent     The desired move and look this tick.
     /// @param mover      The per-pawn speed tuning.
     /// @param delta      Time in seconds since the previous tick.
-    void IntegrateMovement(Transform& transform, const Intent& intent, const Mover& mover,
-                           f32 delta);
+    VE_API void IntegrateMovement(Transform& transform, const Intent& intent, const Mover& mover,
+                                  f32 delta);
 
     /// @brief Generic gameplay system integrating each pawn's Intent into its Transform.
     ///
@@ -35,7 +35,7 @@ namespace Veng
     /// movement drives a player, an AI, or a remote producer that wrote the Intent. Ships
     /// with the engine; the game-specific Intent producer (the control mapping) lives in
     /// the game.
-    class MovementSystem final : public SceneSystem
+    class VE_API MovementSystem final : public SceneSystem
     {
     public:
         /// @brief Integrates every (Transform, Intent) pawn's Intent into its Transform.

@@ -11,7 +11,7 @@ namespace Veng
     ///
     /// glm-only value type (copied freely like vec3/mat4, no ownership rule),
     /// so it stays inside the public/backend include-hygiene split.
-    struct AABB
+    struct VE_API AABB
     {
         /// @brief Minimum corner.
         vec3 Min;
@@ -61,5 +61,5 @@ namespace Veng
     /// @brief Returns the union of two boxes, i.e. the smallest AABB containing both.
     ///
     /// Empty() is the identity: Union(Empty(), b) == b.
-    [[nodiscard]] AABB Union(const AABB& a, const AABB& b);
+    [[nodiscard]] VE_API AABB Union(const AABB& a, const AABB& b);
 }

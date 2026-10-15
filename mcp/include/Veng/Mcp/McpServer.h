@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Mcp/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Mcp/McpServerInfo.h>
 #include <Veng/Mcp/McpHost.h>
@@ -30,7 +31,7 @@ namespace Veng::Mcp
     ///
     /// It is Unique, single-owner: dropping the Unique stops the listener thread and
     /// closes the socket (RAII — that is the whole of cleanup).
-    class VE_API McpServer
+    class VE_MCP_API McpServer
     {
     public:
         /// @brief Constructs a server, binds the socket, and registers the built-in tools.

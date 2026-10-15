@@ -17,7 +17,7 @@ namespace Veng
     /// topology and moves the boxes, for a leaf set whose members moved but did not change;
     /// the tree records its surface-area cost at build so the owner can tell when refits have
     /// degraded it enough to rebuild.
-    class BVH
+    class VE_API BVH
     {
     public:
         /// @brief Centroid buckets the SAH split evaluation bins each node's leaves into.
@@ -148,7 +148,8 @@ namespace Veng
         /// @param boxes   The union of each bucket's leaf boxes.
         /// @param counts  The number of leaves in each bucket.
         /// @return The least-cost boundary, or Split -1 when every leaf is in one bucket.
-        [[nodiscard]] BucketSplit BestBucketSplit(std::span<const AABB, BVH::BucketCount> boxes,
-                                                  std::span<const u32, BVH::BucketCount> counts);
+        [[nodiscard]] VE_API BucketSplit
+        BestBucketSplit(std::span<const AABB, BVH::BucketCount> boxes,
+                        std::span<const u32, BVH::BucketCount> counts);
     }
 }

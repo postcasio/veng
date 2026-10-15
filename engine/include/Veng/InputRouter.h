@@ -148,7 +148,7 @@ namespace Veng
     /// A seat's focus stack decides where that seat's own devices route: split-screen seat A can
     /// hold UI focus (routing A's events to the consumers) while seat B stays in gameplay. A
     /// single-seat app is one stack — its behavior matches a single global stack exactly.
-    class InputRouter
+    class VE_API InputRouter
     {
     public:
         /// @brief Constructs the router over the borrowed services.

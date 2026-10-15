@@ -33,13 +33,14 @@ namespace Veng::Primitives
     /// 24 vertices (4 per face, hard normals), 36 indices, one submesh. Per-face UVs span [0,1],
     /// each side face upright (V down its -Y), the top and bottom with their image's top toward -Z
     /// and +Z respectively.
-    [[nodiscard]] MeshData Cube(f32 extent = 1.0f, AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Cube(f32 extent = 1.0f,
+                                       AssetHandle<MaterialInstance> material = {});
 
     /// @brief Flat XZ-plane quad (+Y normal) centered at the origin, tessellated into `subdivisions` quads per axis.
     ///
     /// UVs span [0,1] across the plane. Minimum 1 subdivision per axis.
-    [[nodiscard]] MeshData Plane(vec2 size = vec2(1.0f), uvec2 subdivisions = uvec2(1),
-                                 AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Plane(vec2 size = vec2(1.0f), uvec2 subdivisions = uvec2(1),
+                                        AssetHandle<MaterialInstance> material = {});
 
     /// @brief Perspective-true display shell: the spherical-cap section that reproduces a screen rect of a perspective projection.
     ///
@@ -80,9 +81,9 @@ namespace Veng::Primitives
     /// @param material      Material recorded on the produced submesh; empty leaves it unassigned.
     /// @pre `radius > 0`, `aspect > 0`, `0 < fovY < pi`, and both components of `rectSize` are > 0.
     /// @see ProjectionShellReprojectionBound
-    [[nodiscard]] MeshData ProjectionShell(f32 fovY, f32 aspect, vec2 rectCenter, vec2 rectSize,
-                                           f32 radius, uvec2 subdivisions,
-                                           AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData ProjectionShell(f32 fovY, f32 aspect, vec2 rectCenter,
+                                                  vec2 rectSize, f32 radius, uvec2 subdivisions,
+                                                  AssetHandle<MaterialInstance> material = {});
 
     /// @brief Worst-case reprojection displacement of a ProjectionShell at its reference pose, in logical points.
     ///
@@ -126,9 +127,9 @@ namespace Veng::Primitives
     ///         position and where the shell places it, viewed from the reference pose.
     /// @pre `aspect > 0`, `0 < fovY < pi`, and both components of `rectSize` and `windowExtent` are > 0.
     /// @see ProjectionShell
-    [[nodiscard]] f32 ProjectionShellReprojectionBound(f32 fovY, f32 aspect, vec2 rectCenter,
-                                                       vec2 rectSize, uvec2 subdivisions,
-                                                       vec2 windowExtent);
+    [[nodiscard]] VE_API f32 ProjectionShellReprojectionBound(f32 fovY, f32 aspect, vec2 rectCenter,
+                                                              vec2 rectSize, uvec2 subdivisions,
+                                                              vec2 windowExtent);
 
     /// @brief Cylindrical display panel: a rectangular sheet bent about its local +Y axis and flat along it.
     ///
@@ -176,8 +177,8 @@ namespace Veng::Primitives
     /// @param material         Material recorded on the produced submesh; empty leaves it unassigned.
     /// @pre `curvatureRadius > 0` and both components of `size` are > 0.
     /// @see CurvedPanelHit, CurvedPanelSizeForRect
-    [[nodiscard]] MeshData CurvedPanel(vec2 size, f32 curvatureRadius, uvec2 subdivisions,
-                                       AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData CurvedPanel(vec2 size, f32 curvatureRadius, uvec2 subdivisions,
+                                              AssetHandle<MaterialInstance> material = {});
 
     /// @brief Panel UV where a panel-space ray meets a curved panel's front face.
     ///
@@ -215,8 +216,8 @@ namespace Veng::Primitives
     ///          (`size.x <= 2·pi·curvatureRadius`). A wrapped panel's overlapping arcs share angles
     ///          about the axis, so the returned UV names the position within the first turn.
     /// @see CurvedPanel
-    [[nodiscard]] optional<vec2> CurvedPanelHit(vec2 size, f32 curvatureRadius, vec3 origin,
-                                                vec3 direction);
+    [[nodiscard]] VE_API optional<vec2> CurvedPanelHit(vec2 size, f32 curvatureRadius, vec3 origin,
+                                                       vec3 direction);
 
     /// @brief Curved-panel size whose edges land on the edge rays of a normalized screen rect.
     ///
@@ -268,14 +269,14 @@ namespace Veng::Primitives
     /// @pre `aspect > 0`, `0 < fovY < pi`, `distance > 0`, `curvatureRadius > 0`, and both components
     ///      of `rectSize` are > 0.
     /// @see CurvedPanel
-    [[nodiscard]] vec2 CurvedPanelSizeForRect(f32 fovY, f32 aspect, vec2 rectSize, f32 distance,
-                                              f32 curvatureRadius);
+    [[nodiscard]] VE_API vec2 CurvedPanelSizeForRect(f32 fovY, f32 aspect, vec2 rectSize,
+                                                     f32 distance, f32 curvatureRadius);
 
     /// @brief UV sphere of `radius` with `rings` latitude bands and `segments` longitude bands (min 3 each).
     ///
     /// Smooth normals; UVs are (longitude eastward, latitude down from the +Y pole). One submesh.
-    [[nodiscard]] MeshData Sphere(f32 radius = 0.5f, u32 rings = 16, u32 segments = 32,
-                                  AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Sphere(f32 radius = 0.5f, u32 rings = 16, u32 segments = 32,
+                                         AssetHandle<MaterialInstance> material = {});
 
     /// @brief Geodesic sphere of `radius` from a subdivided icosahedron.
     ///
@@ -284,8 +285,8 @@ namespace Veng::Primitives
     /// clustering. Smooth normals; equirectangular UVs (as Sphere's) with the wrap seam split to
     /// avoid smearing.
     /// One submesh.
-    [[nodiscard]] MeshData Icosphere(f32 radius = 0.5f, u32 subdivisions = 3,
-                                     AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Icosphere(f32 radius = 0.5f, u32 subdivisions = 3,
+                                            AssetHandle<MaterialInstance> material = {});
 
     /// @brief Capped cylinder about the Y axis, `radius` across and `height` tall, centered at the origin.
     ///
@@ -293,16 +294,16 @@ namespace Veng::Primitives
     /// each with its own hard +Y / -Y normal. Side normals point radially outward; side UVs are
     /// (longitude eastward, height down from the top rim); each cap's UVs are the disc as seen from
     /// its own side. One submesh.
-    [[nodiscard]] MeshData Cylinder(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
-                                    AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Cylinder(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                           AssetHandle<MaterialInstance> material = {});
 
     /// @brief Cone about the Y axis: a circular base of `radius` and an apex `height` above it, centered at the origin.
     ///
     /// A side band of `segments` longitude columns (min 3) whose apex ring duplicates the apex
     /// per segment so each side face carries its own slanted normal, plus a bottom cap fan with a
     /// hard -Y normal. Side UVs are (longitude eastward, slant down from the apex). One submesh.
-    [[nodiscard]] MeshData Cone(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
-                                AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Cone(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                       AssetHandle<MaterialInstance> material = {});
 
     /// @brief Torus in the XZ plane: a tube of `minorRadius` swept around `majorRadius`, centered at the origin.
     ///
@@ -310,9 +311,9 @@ namespace Veng::Primitives
     /// each); seam columns duplicate so UVs do not wrap. Smooth normals point away from the tube
     /// center circle; UVs are (major angle eastward, minor angle down the outer wall from its
     /// equator). One submesh.
-    [[nodiscard]] MeshData Torus(f32 majorRadius = 0.5f, f32 minorRadius = 0.2f,
-                                 u32 majorSegments = 32, u32 minorSegments = 16,
-                                 AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Torus(f32 majorRadius = 0.5f, f32 minorRadius = 0.2f,
+                                        u32 majorSegments = 32, u32 minorSegments = 16,
+                                        AssetHandle<MaterialInstance> material = {});
 
     /// @brief Flat annulus in the XZ plane (+Y normal): a ring of `innerRadius` to `outerRadius`, centered at the origin.
     ///
@@ -352,10 +353,10 @@ namespace Veng::Primitives
     /// @param angularSubmeshes  Equal angular sectors, one submesh each; clamped to at least 1.
     /// @param material          Material recorded on the produced submeshes; empty leaves them unassigned.
     /// @return CPU-side MeshData in the canonical vertex layout.
-    [[nodiscard]] MeshData Annulus(f32 innerRadius = 0.25f, f32 outerRadius = 0.5f,
-                                   u32 radialSegments = 1, u32 angularSegments = 32,
-                                   u32 angularSubmeshes = 1,
-                                   AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Annulus(f32 innerRadius = 0.25f, f32 outerRadius = 0.5f,
+                                          u32 radialSegments = 1, u32 angularSegments = 32,
+                                          u32 angularSubmeshes = 1,
+                                          AssetHandle<MaterialInstance> material = {});
 
     /// @brief Capsule about the Y axis: a cylinder of `height` capped by two hemispheres of `radius`, centered at the origin.
     ///
@@ -363,6 +364,7 @@ namespace Veng::Primitives
     /// `rings` latitude bands (min 1). The cylinder spans the central `height`; the hemisphere
     /// centers sit at ±height/2, so the full extent is height + 2*radius. Smooth normals; UVs as
     /// Sphere's (longitude eastward, latitude down from the top). One submesh.
-    [[nodiscard]] MeshData Capsule(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
-                                   u32 rings = 8, AssetHandle<MaterialInstance> material = {});
+    [[nodiscard]] VE_API MeshData Capsule(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                          u32 rings = 8,
+                                          AssetHandle<MaterialInstance> material = {});
 }

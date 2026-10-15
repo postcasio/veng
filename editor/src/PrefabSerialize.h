@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
@@ -48,7 +49,8 @@ namespace VengEditor
         /// @param registry   Type registry whose descriptors drive the per-component field walk.
         /// @param sourcePath  The .prefab.json file to round-trip.
         /// @return Empty on success; an error string on parse or I/O failure.
-        Veng::VoidResult Save(const Veng::Scene& scene, const Veng::TypeRegistry& registry,
-                              const Veng::path& sourcePath);
+        VE_EDITOR_API Veng::VoidResult Save(const Veng::Scene& scene,
+                                            const Veng::TypeRegistry& registry,
+                                            const Veng::path& sourcePath);
     }
 }

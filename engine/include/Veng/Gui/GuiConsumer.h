@@ -58,7 +58,7 @@ namespace Veng::Gui
     /// destruction). All four must outlive the consumer.
     ///
     /// @see Renderer::Viewport::GetInputDocuments
-    class GuiConsumer final : public InputConsumer
+    class VE_API GuiConsumer final : public InputConsumer
     {
     public:
         /// @brief Constructs the consumer over the borrowed router, snapshot, window, and viewport list.

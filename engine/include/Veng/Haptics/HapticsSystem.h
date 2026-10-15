@@ -20,7 +20,7 @@ namespace Veng
     /// world runs no View phase, so nothing advances and nothing is submitted, and it resumes from the
     /// same time; an unpresented scene's scope is Muted, so the mixer drops its layers while its
     /// sources keep time; a removed component or a destroyed entity simply stops being submitted.
-    class HapticsSystem final : public SceneSystem
+    class VE_API HapticsSystem final : public SceneSystem
     {
     public:
         /// @brief Returns Phase::View — rumble is presentation, derived from the frame's state.

@@ -171,13 +171,13 @@ namespace Veng::Capture
     /// @param codec     The picture codec.
     /// @param encoding  The encoding, resolved or Auto (which every codec supports).
     /// @return True when the pairing can be encoded.
-    [[nodiscard]] bool CodecSupportsEncoding(VideoCodec codec, CaptureEncoding encoding);
+    [[nodiscard]] VE_API bool CodecSupportsEncoding(VideoCodec codec, CaptureEncoding encoding);
 
     /// @brief Names @p codec at @p encoding the way the state reports it, e.g. "HEVC Main 10".
     /// @param codec     The picture codec.
     /// @param encoding  The resolved encoding.
     /// @return The codec and profile in words.
-    [[nodiscard]] string DescribeCodec(VideoCodec codec, CaptureEncoding encoding);
+    [[nodiscard]] VE_API string DescribeCodec(VideoCodec codec, CaptureEncoding encoding);
 
     /// @brief The host services the recorder reaches back into, supplied by whoever owns it.
     ///
@@ -211,7 +211,7 @@ namespace Veng::Capture
     ///
     /// @warning Available only where the platform has both an encoder and texture interop, and only
     ///          on a windowed run. IsAvailable() reports it and Start refuses with a reason.
-    class VideoRecorder final : public Renderer::CaptureSink
+    class VE_API VideoRecorder final : public Renderer::CaptureSink
     {
     public:
         /// @brief Constructs the recorder over the services it records from.

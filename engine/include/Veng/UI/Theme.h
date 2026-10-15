@@ -105,14 +105,14 @@ namespace Veng::UI
     /// A clean, cool-neutral dark palette with a single azure accent. This is the default
     /// the UI starts on and the fallback a future theme loader resets to.
     /// @return The built-in dark theme, a reference to a function-local static.
-    [[nodiscard]] const Theme& BuiltInDarkTheme();
+    [[nodiscard]] VE_API const Theme& BuiltInDarkTheme();
 
     /// @brief Returns the theme the UI layer currently reads from.
     ///
     /// Widget code that needs a semantic color reads it off this. Defaults to
     /// `BuiltInDarkTheme()` until `SetTheme` is called.
     /// @return The active theme.
-    [[nodiscard]] const Theme& GetTheme();
+    [[nodiscard]] VE_API const Theme& GetTheme();
 
     /// @brief Replaces the active theme.
     ///
@@ -120,7 +120,7 @@ namespace Veng::UI
     /// separately by `ImGuiLayer::ApplyTheme()` — a host that swaps the theme mid-run calls
     /// that afterward to push the change into the live style.
     /// @param theme  The new active theme.
-    void SetTheme(const Theme& theme);
+    VE_API void SetTheme(const Theme& theme);
 
     /// @brief Converts an sRGB-encoded color to linear, leaving alpha untouched.
     ///
@@ -131,5 +131,5 @@ namespace Veng::UI
     /// to its intended brightness. UI code computing a raw color to hand to ImGui uses this.
     /// @param color  An sRGB color (RGB encoded, A linear coverage).
     /// @return The color with its RGB linearized and its alpha preserved.
-    [[nodiscard]] vec4 SrgbToLinear(vec4 color);
+    [[nodiscard]] VE_API vec4 SrgbToLinear(vec4 color);
 }

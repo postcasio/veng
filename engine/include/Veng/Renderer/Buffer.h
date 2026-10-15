@@ -52,7 +52,7 @@ namespace Veng::Renderer
     /// Constructed only through Create(). enable_shared_from_this lets the async Upload
     /// capture an owning Ref<Buffer> into the worker job so the buffer cannot be destroyed
     /// before the job runs.
-    class Buffer : public std::enable_shared_from_this<Buffer>
+    class VE_API Buffer : public std::enable_shared_from_this<Buffer>
     {
     public:
         /// @brief Creates a buffer from the given parameters.

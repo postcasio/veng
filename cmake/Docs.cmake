@@ -37,13 +37,17 @@ function(veng_add_docs)
     set(DOXYGEN_WARN_IF_UNDOCUMENTED YES)
     set(DOXYGEN_QUIET YES)
 
-    # VE_API is a dllexport/visibility attribute that carries no documentation
-    # value; expanding it to nothing keeps it out of every signature. The module
+    # The export macros are dllexport/visibility attributes that carry no documentation
+    # value; expanding them to nothing keeps them out of every signature. The module
     # ABI macro likewise vanishes so the free-function parse stays clean.
     set(DOXYGEN_MACRO_EXPANSION YES)
     set(DOXYGEN_EXPAND_ONLY_PREDEF YES)
     set(DOXYGEN_PREDEFINED
             "VE_API="
+            "VE_EDITOR_API="
+            "VE_GRAPH_API="
+            "VE_MCP_API="
+            "VE_COOK_API="
             "VE_EXPORT_MODULE_ABI()=")
 
     # Exclude the backend-only headers: they expose vk::/VMA types and are not

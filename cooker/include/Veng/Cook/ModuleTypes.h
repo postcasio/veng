@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/Path.h>
 
 #include <Veng/Result.h>
@@ -38,7 +39,8 @@ namespace Veng::Cook
     /// builtins, present in both) are skipped rather than re-registered, which would abort.
     /// @param source       The loaded module's registry.
     /// @param destination  The host registry receiving the module's own types.
-    void MergeAssetTypes(const AssetTypeRegistry& source, AssetTypeRegistry& destination);
+    VE_COOK_API void MergeAssetTypes(const AssetTypeRegistry& source,
+                                     AssetTypeRegistry& destination);
 
     /// @brief Loads a game module and returns its reflected type registry paired with the live module handle.
     ///
@@ -48,7 +50,7 @@ namespace Veng::Cook
     /// GPU-free: no Context or Vulkan device is created.
     /// @param modulePath  Path to the game module shared library.
     /// @return Populated LoadedModuleTypes, or a located error on load or ABI failure.
-    [[nodiscard]] Result<LoadedModuleTypes> LoadModuleTypes(const path& modulePath);
+    [[nodiscard]] VE_COOK_API Result<LoadedModuleTypes> LoadModuleTypes(const path& modulePath);
 
     /// @brief Mints a fresh non-zero TypeId that collides with no id in the given registry.
     ///
@@ -56,5 +58,5 @@ namespace Veng::Cook
     /// (and the game's types when using `--module`) so the result is unique across all known ids.
     /// @param existing  Registry to check for collisions.
     /// @return A fresh, collision-free TypeId.
-    [[nodiscard]] TypeId GenerateTypeId(const TypeRegistry& existing);
+    [[nodiscard]] VE_COOK_API TypeId GenerateTypeId(const TypeRegistry& existing);
 }

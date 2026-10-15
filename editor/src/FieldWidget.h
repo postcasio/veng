@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/UI/Inspector.h>
@@ -25,7 +26,7 @@ namespace VengEditor
     /// concrete asset type.
     /// @param fieldPtr Pointer to the AssetHandle field bytes.
     /// @param chosen   The selected asset id to write.
-    void ApplyAssetPick(void* fieldPtr, Veng::AssetId chosen);
+    VE_EDITOR_API void ApplyAssetPick(void* fieldPtr, Veng::AssetId chosen);
 
     /// @brief Registers the inspector widget for a BehaviorTreeId field: a combo over @p trees.
     ///
@@ -56,7 +57,7 @@ namespace VengEditor
     /// @param editors   The registry consulted when no override claims the type.
     /// @param type      The field's TypeId.
     /// @return The widget to draw, or nullptr when neither supplies one.
-    [[nodiscard]] const Veng::FieldWidgetFn*
+    [[nodiscard]] VE_EDITOR_API const Veng::FieldWidgetFn*
     FindFieldWidget(std::span<const FieldWidgetOverride> overrides,
                     const Veng::EditorRegistry& editors, Veng::TypeId type);
 

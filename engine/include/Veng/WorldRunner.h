@@ -168,7 +168,7 @@ namespace Veng
     /// the world when it runs, so it lands on whatever simulation the world holds then (InstallScene
     /// carries the pause onto a replacement), and a scope outliving its world releases nothing.
     /// Move-only; a moved-from scope releases nothing.
-    class WorldPauseScope
+    class VE_API WorldPauseScope
     {
     public:
         /// @brief Constructs an inert scope holding no pause.
@@ -214,7 +214,7 @@ namespace Veng
     /// transport: a viewport names a world by handle and asks the runner to resolve a camera
     /// (ResolveCameraView, a pure query), and the runner holds no pointer back out. Device-free when
     /// given no asset manager or context, so empty-scene worlds can be built and driven without a GPU.
-    class WorldRunner
+    class VE_API WorldRunner
     {
     public:
         /// @brief Constructs a runner over the borrowed services.

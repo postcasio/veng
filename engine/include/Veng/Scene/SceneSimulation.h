@@ -17,7 +17,7 @@ namespace Veng
     /// the "all registered" convenience. It instantiates its systems at construction and
     /// holds them, then Start/Update/Stop each across a play session, honoring the
     /// Sim/View phase split each tick.
-    class SceneSimulation
+    class VE_API SceneSimulation
     {
     public:
         /// @brief Instantiates every registered system and holds it for the session.
@@ -35,6 +35,18 @@ namespace Veng
         /// @param registry  Host-owned catalog the ids resolve against.
         /// @param systemIds The active ordered SystemId set.
         SceneSimulation(const SystemRegistry& registry, const vector<SystemId>& systemIds);
+
+        // Declared explicitly so an exported class's copy is never instantiated: MSVC defines every
+        // non-deleted special member of a dllexport class, and the implicit copy of a vector of
+        // unique_ptr is declared but ill-formed.
+        /// @brief Not copyable: the simulation owns its system instances.
+        SceneSimulation(const SceneSimulation&) = delete;
+        /// @brief Not copy-assignable: the simulation owns its system instances.
+        SceneSimulation& operator=(const SceneSimulation&) = delete;
+        /// @brief Moves the system instances and their run state into a new simulation.
+        SceneSimulation(SceneSimulation&&) = default;
+        /// @brief Moves the system instances and their run state into this simulation.
+        SceneSimulation& operator=(SceneSimulation&&) = default;
 
         /// @brief Calls OnStart on each system, in registration order.
         /// @param scene    The scene the systems operate over.

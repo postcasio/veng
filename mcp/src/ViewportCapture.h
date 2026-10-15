@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Mcp/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
@@ -34,7 +35,7 @@ namespace Veng::Mcp
     /// @param viewport  The viewport to capture; must have an output image.
     /// @return The content-array JSON string on success, or a located error (no output image, an
     ///         unencodable download, or a PNG-encode failure).
-    Result<string> CaptureViewportContentBlocks(const Renderer::Viewport& viewport);
+    VE_MCP_API Result<string> CaptureViewportContentBlocks(const Renderer::Viewport& viewport);
 
     /// @brief Takes a composited frame off @p capture as an MCP image content-block array.
     ///

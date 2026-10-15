@@ -24,20 +24,20 @@ namespace Veng::Text
     /// @brief The simple upper-case mapping of a codepoint.
     /// @param c  The codepoint.
     /// @return Its capital, or @p c itself when it has none.
-    [[nodiscard]] char32_t UpperCase(char32_t c);
+    [[nodiscard]] VE_API char32_t UpperCase(char32_t c);
 
     /// @brief The simple lower-case mapping of a codepoint.
     /// @param c  The codepoint.
     /// @return Its small form, or @p c itself when it has none.
-    [[nodiscard]] char32_t LowerCase(char32_t c);
+    [[nodiscard]] VE_API char32_t LowerCase(char32_t c);
 
     /// @brief Upper-cases a UTF-8 string, expanding the letters with no single capital.
     /// @param text  UTF-8 text; ill-formed bytes are copied through unchanged.
     /// @return The upper-cased text, which may be longer than @p text.
-    [[nodiscard]] string UpperCase(string_view text);
+    [[nodiscard]] VE_API string UpperCase(string_view text);
 
     /// @brief Lower-cases a UTF-8 string, writing a word-final capital sigma as `ς`.
     /// @param text  UTF-8 text; ill-formed bytes are copied through unchanged.
     /// @return The lower-cased text.
-    [[nodiscard]] string LowerCase(string_view text);
+    [[nodiscard]] VE_API string LowerCase(string_view text);
 }

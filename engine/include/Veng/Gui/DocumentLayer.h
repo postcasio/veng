@@ -31,7 +31,7 @@ namespace Veng::Gui
     ///
     /// The layer borrows the host and must not outlive it. Thin by design: a host reference, a layer
     /// index, an interactivity flag, and the attach/detach bookkeeping.
-    class DocumentLayer
+    class VE_API DocumentLayer
     {
     public:
         /// @brief Constructs a layer presenting the host's document at the given stack index.

@@ -150,7 +150,7 @@ namespace Veng
     /// fallback-font id chain. There is no baked atlas or glyph table: every glyph the text path
     /// draws is rasterized on demand into the shared dynamic atlas. Built by FontLoader from a
     /// CookedFontHeader.
-    class Font
+    class VE_API Font
     {
     public:
         ~Font();

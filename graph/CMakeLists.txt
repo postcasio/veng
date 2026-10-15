@@ -34,15 +34,9 @@ target_link_libraries(veng_graph PUBLIC veng::veng)
 # Same -fno-exceptions enforcement as libveng: asserts are fatal, recoverable
 # operations return Veng::Result<T>.
 target_compile_options(veng_graph PRIVATE -fno-exceptions)
-target_compile_definitions(veng_graph PRIVATE VE_BUILD_SHARED)
+target_compile_definitions(veng_graph PRIVATE VE_GRAPH_BUILD_SHARED)
 
 target_precompile_headers(veng_graph PRIVATE <Veng/Veng.h>)
-
-# Auto-export all symbols on MSVC so consumers link against this shared library
-# without complete VE_API annotation — mirrors macOS/Linux default visibility.
-if (MSVC)
-    set_target_properties(veng_graph PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif ()
 
 # nlohmann/json — graph (de)serialization and the .vmat field-list write use it
 # directly in .cpp (never a VengGraph/ public header), so this library still names

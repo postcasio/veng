@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/Path.h>
 
 #include <Veng/Cook/Types.h>
@@ -17,5 +18,5 @@ namespace Veng::Cook
     /// @param file  The JSON file to read.
     /// @param what  The diagnostic noun locating the caller (e.g. "texture importer", "pack").
     /// @return The parsed object document, or the located error.
-    [[nodiscard]] Result<json> ReadJsonFile(const path& file, std::string_view what);
+    [[nodiscard]] VE_COOK_API Result<json> ReadJsonFile(const path& file, std::string_view what);
 }

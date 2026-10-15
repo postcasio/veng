@@ -70,7 +70,7 @@ namespace Veng::Renderer
     /// vertex-stage shader — the AssetId of the VertexLayout the shader was cooked
     /// against. nullopt VertexLayoutId means no vertex input state (no vertex stage,
     /// or vertex pulling).
-    struct ShaderInterface
+    struct VE_API ShaderInterface
     {
         /// @brief All reflected descriptor bindings.
         vector<ShaderBinding> Bindings;

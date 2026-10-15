@@ -107,7 +107,8 @@ namespace Veng
     /// Pure CPU: no render context, no allocation beyond the returned list.
     /// @param cooked  The cooked AssetTypes::Mesh blob, as the archive stores it (inflated).
     /// @return The sockets, sorted by name as cooked, or an error naming what is malformed.
-    [[nodiscard]] Result<vector<MeshSocket>> ParseCookedMeshSockets(std::span<const u8> cooked);
+    [[nodiscard]] VE_API Result<vector<MeshSocket>>
+    ParseCookedMeshSockets(std::span<const u8> cooked);
 
     /// @brief One interleaved vertex in the canonical layout (48 bytes).
     ///
@@ -192,7 +193,7 @@ namespace Veng
     /// (position/normal/tangent/uv, all 32-bit float, 48-byte stride), plus a submesh table.
     /// Each submesh is a (index range, material index) draw range. The mesh owns a list of
     /// resident material instances and each submesh indexes into it.
-    class Mesh
+    class VE_API Mesh
     {
     public:
         /// @brief Well-known AssetId of the canonical VertexLayout asset in the embedded core pack.

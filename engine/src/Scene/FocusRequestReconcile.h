@@ -40,9 +40,9 @@ namespace Veng
     /// @param request  The request to reconcile.
     /// @param error    Unused; the reconcile has no failure path.
     /// @return RequestResult::Handled always.
-    RequestResult ReconcileFocusRequest(InputRouter& router, FocusRequestTokens& tokens,
-                                        WorldInstanceId world, const FocusRequest& request,
-                                        string& error);
+    VE_API RequestResult ReconcileFocusRequest(InputRouter& router, FocusRequestTokens& tokens,
+                                               WorldInstanceId world, const FocusRequest& request,
+                                               string& error);
 
     /// @brief Drops a closed world's focus from the router and the engine-held request tokens.
     ///
@@ -52,5 +52,6 @@ namespace Veng
     /// @param router  The router whose per-seat state names the world.
     /// @param tokens  The engine-owned held tokens, updated in place.
     /// @param world   The world that closed.
-    void ForgetWorldFocus(InputRouter& router, FocusRequestTokens& tokens, WorldInstanceId world);
+    VE_API void ForgetWorldFocus(InputRouter& router, FocusRequestTokens& tokens,
+                                 WorldInstanceId world);
 }

@@ -31,7 +31,7 @@ namespace Veng
     /// agent built in code (BehaviorAgent::Source Null) is never touched by this step. At stop,
     /// every agent with a run in progress is aborted, so a run ends in exactly one of OnExit or
     /// OnAbort however the simulation ends.
-    class BehaviorSystem final : public SceneSystem
+    class VE_API BehaviorSystem final : public SceneSystem
     {
     public:
         /// @brief Gives each authored BehaviorTreeRef its agent before the first tick.

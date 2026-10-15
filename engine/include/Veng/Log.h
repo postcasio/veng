@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Export.h>
+
 #include <string_view>
 #include <string>
 #include <utility>
@@ -24,16 +26,16 @@ namespace Veng::Log
 
     /// @brief Replaces the active log sink. Passing nullptr restores the default stdout sink.
     /// @param sink  New sink, or nullptr to restore the default.
-    void SetSink(Sink sink);
+    VE_API void SetSink(Sink sink);
 
     /// @brief Sets the minimum level; messages below it are dropped. Defaults to Level::Info.
     /// @param level  Minimum level to forward to the sink.
-    void SetMinimumLevel(Level level);
+    VE_API void SetMinimumLevel(Level level);
 
     /// @brief Filters by minimum level, then forwards to the active sink.
     /// @param level    Severity of the message.
     /// @param message  Pre-formatted message body.
-    void LogMessage(Level level, std::string_view message);
+    VE_API void LogMessage(Level level, std::string_view message);
 
     /// @brief Logs a formatted Info message. Only enabled when at least one argument is provided.
     template <typename... Args>

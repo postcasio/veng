@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Scene/Camera.h>
 
@@ -57,7 +58,7 @@ namespace VengEditor
     /// and feeds GetView() to the scene renderer. RMB drives fly mode (mouse-look + WASDQE),
     /// LMB dolly+turn, MMB pan, Alt+LMB orbit, and the wheel dolly-zooms (or adjusts fly speed
     /// while flying). Frame() recenters the pivot and distance onto a world-space bounds.
-    class EditorCamera
+    class VE_EDITOR_API EditorCamera
     {
     public:
         /// @brief Constructs the camera at a default pose looking at the origin.

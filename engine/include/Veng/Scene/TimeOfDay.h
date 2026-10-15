@@ -15,7 +15,7 @@ namespace Veng
     /// no TimeOfDay or no directional light it is a no-op — the light keeps its authored direction.
     /// Ships with the engine; selected per level through the SystemRegistry like any other builtin
     /// system.
-    class TimeOfDaySystem final : public SceneSystem
+    class VE_API TimeOfDaySystem final : public SceneSystem
     {
     public:
         /// @brief Derives the sun once at simulation start, so a paused scene has its sun set.

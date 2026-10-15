@@ -18,5 +18,5 @@ namespace Veng::UI
     /// per-frame push), and places the widgets inside whatever window or section it draws.
     /// @param state  The view state edited in place.
     /// @return True the frame any value changed.
-    [[nodiscard]] bool DrawViewStateSettings(Renderer::ViewState& state);
+    [[nodiscard]] VE_API bool DrawViewStateSettings(Renderer::ViewState& state);
 }

@@ -18,7 +18,7 @@ namespace Veng
     /// resolve reads it. It is a Sim system, not an InputRouter responsibility, because it needs
     /// Scene access to walk the seats and mutate their SeatInput; in headless the connected set is
     /// empty, so it is a no-op.
-    class DeviceAssignmentSystem final : public SceneSystem
+    class VE_API DeviceAssignmentSystem final : public SceneSystem
     {
     public:
         /// @brief Reconciles every seat's SeatInput::Gamepad against the connected pads this tick.

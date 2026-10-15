@@ -50,6 +50,7 @@ namespace Veng::Renderer::Backend
     /// @param keys       Per-transient size-class keys (parallel to lifetimes).
     /// @return One slot index per input transient (parallel array, same indexing).
     /// @pre lifetimes and keys must have equal length.
-    [[nodiscard]] vector<u32> AssignTransientSlots(const vector<TransientLifetime>& lifetimes,
-                                                   const vector<AllocationKey>& keys);
+    [[nodiscard]] VE_API vector<u32>
+    AssignTransientSlots(const vector<TransientLifetime>& lifetimes,
+                         const vector<AllocationKey>& keys);
 }

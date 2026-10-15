@@ -48,7 +48,7 @@ namespace Veng
     ///
     /// A scene's own pool is installed through Scene::SetEffectPool (SpawnTransientEffect installs
     /// a default one), and FlipbookSystem calls its Update each frame.
-    class EffectPool
+    class VE_API EffectPool
     {
     public:
         /// @brief Constructs an empty pool.

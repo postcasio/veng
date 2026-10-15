@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Cook/Export.h>
 #include <Veng/Asset/Archive.h>
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/CookCache.h>
@@ -29,8 +30,8 @@ namespace Veng::Cook
     /// @param packJson  Path to the pack JSON file.
     /// @param types     Registry each entry's `"type"` name is resolved through; a name it does
     ///                  not carry is a located error.
-    [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson,
-                                                   const AssetTypeRegistry& types);
+    [[nodiscard]] VE_COOK_API Result<AssetPack> ParseAssetPack(const path& packJson,
+                                                               const AssetTypeRegistry& types);
 
     /// @brief Mints a collision-free AssetId checked against the packs at the given manifest paths.
     ///
@@ -40,8 +41,8 @@ namespace Veng::Cook
     /// @param referencePackPaths  Pack manifest paths whose ids the minted id must avoid.
     /// @param types               Registry the reference manifests' type names resolve through.
     /// @return A fresh, collision-free AssetId, or a located parse error.
-    [[nodiscard]] Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths,
-                                                  const AssetTypeRegistry& types);
+    [[nodiscard]] VE_COOK_API Result<AssetId>
+    GenerateAssetId(std::span<const path> referencePackPaths, const AssetTypeRegistry& types);
 
     /// @brief Hand-parses a `*.buildcfg` JSON authoring file into a BuildConfiguration.
     ///
@@ -53,7 +54,8 @@ namespace Veng::Cook
     /// `"config '<path>': <reason>"`.
     /// @param configFile  Path to the `*.buildcfg` JSON file.
     /// @return The parsed configuration, or a located error.
-    [[nodiscard]] Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile);
+    [[nodiscard]] VE_COOK_API Result<BuildConfiguration>
+    ParseBuildConfiguration(const path& configFile);
 
     /// @brief A `project.veng` authoring file parsed into the cook's project inputs.
     ///
@@ -89,7 +91,7 @@ namespace Veng::Cook
     /// Errors are located: `"project '<path>': <reason>"`.
     /// @param projectFile  Path to the `project.veng` JSON file.
     /// @return The parsed project on success, or a located error.
-    [[nodiscard]] Result<CookProject> ParseProject(const path& projectFile);
+    [[nodiscard]] VE_COOK_API Result<CookProject> ParseProject(const path& projectFile);
 
     /// @brief Writes a GCC-style depfile declaring `target` as depending on every path in `dependencies`.
     ///
@@ -99,11 +101,11 @@ namespace Veng::Cook
     /// @param depfilePath   Output depfile path.
     /// @param target        The build target (left-hand side of the depfile rule).
     /// @param dependencies  Every source path the cook read.
-    [[nodiscard]] VoidResult WriteDepfile(const path& depfilePath, const path& target,
-                                          std::span<const path> dependencies);
+    [[nodiscard]] VE_COOK_API VoidResult WriteDepfile(const path& depfilePath, const path& target,
+                                                      std::span<const path> dependencies);
 
     /// @brief Owns the importer table and turns a pack JSON into a .vengpack archive.
-    class Cooker
+    class VE_COOK_API Cooker
     {
     public:
         /// @brief Constructs a cooker whose asset-type registry carries the engine builtins.

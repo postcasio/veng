@@ -23,7 +23,7 @@ namespace Veng::Gui
     /// @param bounds  The size of the containing rect, whose top-left is the origin.
     /// @param margin  The inset kept clear on every edge of `bounds`.
     /// @return The clamped top-left.
-    [[nodiscard]] vec2 ClampIntoBounds(vec2 pos, vec2 size, vec2 bounds, f32 margin);
+    [[nodiscard]] VE_API vec2 ClampIntoBounds(vec2 pos, vec2 size, vec2 bounds, f32 margin);
 
     /// @brief Places a rect beside an anchor point, then clamps it fully inside the bounds.
     ///
@@ -37,5 +37,6 @@ namespace Veng::Gui
     /// @param margin  The inset kept clear on every edge of `bounds`.
     /// @return The clamped top-left.
     /// @see ClampIntoBounds
-    [[nodiscard]] vec2 AnchorBeside(vec2 anchor, vec2 size, vec2 offset, vec2 bounds, f32 margin);
+    [[nodiscard]] VE_API vec2 AnchorBeside(vec2 anchor, vec2 size, vec2 offset, vec2 bounds,
+                                           f32 margin);
 }

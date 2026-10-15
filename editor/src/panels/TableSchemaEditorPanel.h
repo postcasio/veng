@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/DataTable.h>
 #include <Veng/Result.h>
@@ -27,7 +28,7 @@ namespace VengEditor
     /// the preserve-unknown-keys merge write, then the recook, in that order — so a schema edit
     /// that breaks a table cooked against it leaves the saved source on disk and reports the cook
     /// failure in-panel rather than silently reverting.
-    class TableSchemaEditorPanel final : public AssetEditorPanel
+    class VE_EDITOR_API TableSchemaEditorPanel final : public AssetEditorPanel
     {
     public:
         /// @brief Opens the editor for the schema at @p id / @p sourcePath.

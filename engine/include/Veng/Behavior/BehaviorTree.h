@@ -139,7 +139,7 @@ namespace Veng
     /// any finish to Success, Repeat re-runs a child n times or forever, Until re-runs while the
     /// child returns a given status, Cooldown blocks a child for a time after it succeeds), and
     /// **leaves** (a consumer BehaviorTask, a Wait/WaitRandom dwell timer, a Condition predicate over the ECS).
-    class BehaviorTree
+    class VE_API BehaviorTree
     {
     public:
         /// @brief Returns the number of nodes, which is the size an agent's slot vector must have.
@@ -275,7 +275,7 @@ namespace Veng
     /// @endcode
     ///
     /// A builder builds one tree: @ref Build consumes its node array, so it is not reused afterward.
-    class BehaviorTreeBuilder
+    class VE_API BehaviorTreeBuilder
     {
     public:
         /// @brief Opens a Sequence: ticks children in order, stopping at the first Failure.

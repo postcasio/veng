@@ -14,7 +14,7 @@ namespace Veng
     /// stops publishing does not keep drifting. Because the producing AnimationSystem runs in the
     /// View phase after Sim, the delta consumed here is one tick old; this is the deterministic,
     /// replicable application point a net layer predicts.
-    class RootMotionDriveSystem final : public SceneSystem
+    class VE_API RootMotionDriveSystem final : public SceneSystem
     {
     public:
         /// @brief Applies and clears each entity's RootMotionDelta into its Transform.

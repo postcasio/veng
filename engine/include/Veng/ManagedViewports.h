@@ -200,7 +200,7 @@ namespace Veng
     /// The viewports self-unregister from the compositor on drop, so clearing the set (or destroying
     /// it) is the whole of cleanup. It borrows the context, asset manager, compositor, and router; all
     /// must outlive it, and it must be destroyed before any of them.
-    class ManagedViewportSet
+    class VE_API ManagedViewportSet
     {
     public:
         /// @brief Constructs an empty set over the borrowed services.

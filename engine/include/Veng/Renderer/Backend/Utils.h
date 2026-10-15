@@ -1,11 +1,12 @@
 #pragma once
 
+#include <Veng/Export.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
 {
     /// @brief Stateless format and layout query helpers used by the backend.
-    class Utils
+    class VE_API Utils
     {
     public:
         /// @brief Returns true if @p format has a depth component.

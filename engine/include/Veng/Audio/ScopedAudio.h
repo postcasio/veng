@@ -29,7 +29,7 @@ namespace Veng::Audio
     /// Cheap to copy: it borrows the engine, which outlives every context it rides on. Bus gains, bus
     /// DSP and the master reverb are device-wide settings, not a scene's sound, so they stay on the
     /// engine and are not reached through here.
-    class ScopedAudio
+    class VE_API ScopedAudio
     {
     public:
         /// @brief Returns a facade over nothing: every start returns an invalid handle.

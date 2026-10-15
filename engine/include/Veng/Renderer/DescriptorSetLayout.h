@@ -44,7 +44,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A Vulkan descriptor set layout describing the shape of a descriptor set.
-    class DescriptorSetLayout
+    class VE_API DescriptorSetLayout
     {
     public:
         /// @brief Creates a descriptor set layout from the given parameters.

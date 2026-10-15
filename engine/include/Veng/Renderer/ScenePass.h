@@ -260,7 +260,7 @@ namespace Veng::Renderer
     /// pass samples, the bindless slots for that source, the material field names to
     /// write them into, and the output id/format. One PostProcessScenePass type drives
     /// any PostProcess material.
-    class PostProcessScenePass final : public ScenePass
+    class VE_API PostProcessScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs the pass and builds the fullscreen pipeline from the material.

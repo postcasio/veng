@@ -42,7 +42,7 @@ namespace Veng
     /// reads the published snapshot through Application::GetSystemStats() rather than sampling its
     /// own. Every reading is best-effort: an unimplemented or failing platform query leaves the
     /// corresponding field zero rather than failing.
-    class SystemStatsSampler
+    class VE_API SystemStatsSampler
     {
     public:
         /// @brief Constructs a sampler with no prior interval; caches the host memory total.

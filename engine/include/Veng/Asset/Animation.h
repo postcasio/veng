@@ -68,8 +68,8 @@ namespace Veng
     /// @param animation  The clip to inspect.
     /// @param boneLimit  Channels targeting a bone index at or past this are ignored.
     /// @return The bone index, or -1 when no in-range channel's position varies.
-    [[nodiscard]] i32 FindAnimatedRootBone(const Animation& animation,
-                                           usize boneLimit = static_cast<usize>(-1));
+    [[nodiscard]] VE_API i32 FindAnimatedRootBone(const Animation& animation,
+                                                  usize boneLimit = static_cast<usize>(-1));
 
     /// @brief AssetTypeTrait specialization mapping Animation to AssetTypes::Animation.
     template <>

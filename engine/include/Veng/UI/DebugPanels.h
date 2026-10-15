@@ -37,14 +37,14 @@ namespace Veng::UI
     /// read-out — it draws text only and edits nothing, so it returns void. Draws into the
     /// current window; a caller wraps it in its own `UI::Window`.
     /// @param viewport  The viewport whose renderer the stats are read from.
-    void RendererStatsPanel(const Renderer::Viewport& viewport);
+    VE_API void RendererStatsPanel(const Renderer::Viewport& viewport);
 
     /// @brief A fixed-capacity rolling ring of millisecond samples for the panel's history charts.
     ///
     /// Samples are appended head-first and the ring saturates at `Capacity`, overwriting the oldest
     /// once full; `PlotOffset()` reports the oldest sample's index so a `UI::PlotLines` draws it
     /// oldest-to-newest without a rotation. A plain value type with no imgui dependency.
-    struct PerformanceHistory
+    struct VE_API PerformanceHistory
     {
         /// @brief Fixed sample capacity of the ring.
         static constexpr usize Capacity = 240;
@@ -131,8 +131,8 @@ namespace Veng::UI
     /// @param count       The maximum number of phases to select.
     /// @param hysteresis  The relative margin (e.g. 0.25) a challenger must clear to displace an
     ///                    incumbent.
-    void SelectHeaviestPhases(std::span<const PhaseSample> candidates, vector<string>& selection,
-                              usize count, f32 hysteresis);
+    VE_API void SelectHeaviestPhases(std::span<const PhaseSample> candidates,
+                                     vector<string>& selection, usize count, f32 hysteresis);
 
     /// @brief Folds the frame's GPU passes into at most `maxBands` bands, the surplus summed as "Other".
     ///
@@ -144,7 +144,8 @@ namespace Veng::UI
     /// @param passes    The frame's grouped GPU passes.
     /// @param maxBands  The maximum number of bands to return (must be at least 1).
     /// @return The bounded band list, heaviest-first, with a trailing "Other" when folded.
-    [[nodiscard]] vector<GpuBand> FoldGpuBands(std::span<const GpuBand> passes, usize maxBands);
+    [[nodiscard]] VE_API vector<GpuBand> FoldGpuBands(std::span<const GpuBand> passes,
+                                                      usize maxBands);
 
     /// @brief Sorts the scope table's rows by one column, ascending or descending.
     ///
@@ -154,7 +155,7 @@ namespace Veng::UI
     /// @param rows       The rows to sort in place.
     /// @param column     The column to order by.
     /// @param ascending  True for ascending order, false for descending.
-    void SortScopeRows(vector<ScopeRow>& rows, ScopeSortColumn column, bool ascending);
+    VE_API void SortScopeRows(vector<ScopeRow>& rows, ScopeSortColumn column, bool ascending);
 
     /// @brief Returns the notice the panel draws in place of its profiler-sourced bands, or empty.
     ///
@@ -163,7 +164,7 @@ namespace Veng::UI
     /// line explaining why — never empty, so the panel never degrades to a silent empty table that
     /// reads as "nothing is running". When the data is available it returns an empty view.
     /// @return The disabled-notice line, or an empty view when per-scope data is available.
-    [[nodiscard]] string_view PerformanceProfilerNotice();
+    [[nodiscard]] VE_API string_view PerformanceProfilerNotice();
 
     /// @brief A compact, organized performance panel over the profiler's live per-frame scope data.
     ///
@@ -186,7 +187,7 @@ namespace Veng::UI
     /// totals draw regardless of build configuration. Under `VE_PROFILE=OFF` — or with no profiler
     /// installed — the phase series and the scope table are replaced by a single stated line
     /// (`PerformanceProfilerNotice`); the panel always builds and always draws.
-    class PerformancePanel
+    class VE_API PerformancePanel
     {
     public:
         /// @brief Constructs an empty panel with zeroed history rings and no selection.
@@ -236,7 +237,7 @@ namespace Veng::UI
     /// (Renderer::ViewportDebugOverrides) so a look resolve does not undo it.
     /// @param mode  The debug-view arm edited in place.
     /// @return True the frame the selection changed.
-    [[nodiscard]] bool DebugViewCombo(Renderer::DebugView& mode);
+    [[nodiscard]] VE_API bool DebugViewCombo(Renderer::DebugView& mode);
 
     /// @brief Draws a viewport's render settings as its debug override layer: every topology field,
     ///        every per-frame view knob, and the render scale.
@@ -265,6 +266,7 @@ namespace Veng::UI
     /// @param types            The type registry the fields' enums are drawn through.
     /// @param drawAssetHandle  Draws and edits an AssetHandle field's value; may be empty.
     /// @return True the frame the override layer changed.
-    [[nodiscard]] bool RenderSettingsEditor(Renderer::Viewport& viewport, const TypeRegistry& types,
-                                            const FieldValueFn& drawAssetHandle = {});
+    [[nodiscard]] VE_API bool RenderSettingsEditor(Renderer::Viewport& viewport,
+                                                   const TypeRegistry& types,
+                                                   const FieldValueFn& drawAssetHandle = {});
 }

@@ -4,8 +4,8 @@
 // and the fuzzy comparator every Gui golden checks itself with. One copy, so the tolerance is one
 // number rather than one per case and a new capture cannot quietly widen it.
 //
-// stb_image's implementation is already compiled into libveng_cook (which the gpu target links), so
-// this header includes only the declarations.
+// stb_image's implementation is compiled once into the gpu target (stb_image.cpp), so this header
+// includes only the declarations.
 
 #include <cstdlib>
 #include <filesystem>

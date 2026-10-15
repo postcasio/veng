@@ -59,7 +59,7 @@ namespace Veng::Renderer
     };
 
     /// @brief A compiled Vulkan graphics pipeline.
-    class GraphicsPipeline
+    class VE_API GraphicsPipeline
     {
     public:
         /// @brief Creates a graphics pipeline from the given parameters.

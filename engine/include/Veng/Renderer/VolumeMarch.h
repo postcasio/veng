@@ -42,7 +42,7 @@ namespace Veng::Renderer
     /// @param maxDistance Ray parameter of the nearest opaque surface along the ray (scene depth),
     ///                    or a large value (the far plane) for the cleared background.
     /// @return The [Enter, Exit] segment, or nullopt on a miss / empty segment.
-    [[nodiscard]] std::optional<MarchSegment>
+    [[nodiscard]] VE_API std::optional<MarchSegment>
     ComputeMarchSegment(vec3 origin, vec3 dir, const AABB& bounds, f32 maxDistance);
 
     /// @brief Orders two fields far-to-near by camera distance to their bounds centers.
@@ -55,7 +55,7 @@ namespace Veng::Renderer
     /// @param a         The first field's world-space AABB.
     /// @param b         The second field's world-space AABB.
     /// @return True if a is farther from the camera than b.
-    [[nodiscard]] bool VolumeFieldFartherFirst(vec3 cameraPos, const AABB& a, const AABB& b);
+    [[nodiscard]] VE_API bool VolumeFieldFartherFirst(vec3 cameraPos, const AABB& a, const AABB& b);
 
     /// @brief One live volume field resolved for a frame: the built resource plus its authored knobs.
     ///

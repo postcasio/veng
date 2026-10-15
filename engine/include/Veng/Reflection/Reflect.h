@@ -65,7 +65,7 @@ namespace Veng::Detail
     }
 
     /// @brief Sink that the describe-block drives once to collect a type's fields.
-    struct FieldCollector
+    struct VE_API FieldCollector
     {
         /// @brief Accumulated field descriptors.
         vector<FieldDescriptor> Fields;

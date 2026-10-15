@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 
@@ -11,7 +12,7 @@ namespace VengEditor
     /// once that one lands — dropping it would leave the mounted asset behind the file on disk.
     /// Only the most recent queued request is kept: two queued requests would cook the same
     /// source twice, so the later supersedes the earlier.
-    class CookGate
+    class VE_EDITOR_API CookGate
     {
     public:
         /// @brief Submits a recook now, or holds it until the cook in flight completes.
@@ -44,7 +45,7 @@ namespace VengEditor
     /// @param dirty   The panel's unsaved-changes flag, cleared only once the write succeeds.
     /// @param recook  Submits the recook of the written source.
     /// @return Empty on success; the write's error otherwise.
-    [[nodiscard]] Veng::VoidResult SaveAssetSource(const Veng::function<Veng::VoidResult()>& write,
-                                                   bool& dirty,
-                                                   const Veng::function<void()>& recook);
+    [[nodiscard]] VE_EDITOR_API Veng::VoidResult
+    SaveAssetSource(const Veng::function<Veng::VoidResult()>& write, bool& dirty,
+                    const Veng::function<void()>& recook);
 }

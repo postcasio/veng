@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Mcp/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
@@ -33,8 +34,8 @@ namespace Veng::Mcp
     /// @param type      TypeInfo carrying the field descriptors.
     /// @param registry  Registry used to resolve nested/leaf/element types.
     /// @return A JSON object of { <field name>: <value> }.
-    nlohmann::json FieldsToJson(const void* obj, const TypeInfo& type,
-                                const TypeRegistry& registry);
+    VE_MCP_API nlohmann::json FieldsToJson(const void* obj, const TypeInfo& type,
+                                           const TypeRegistry& registry);
 
     /// @brief Writes a JSON object's fields into a reflected value's bytes, keyed by serialization name.
     ///
@@ -63,6 +64,6 @@ namespace Veng::Mcp
     /// @param type      TypeInfo carrying the field descriptors.
     /// @param registry  Registry used to resolve nested/leaf/element/variant types.
     /// @return Empty on success; a located error string on a type mismatch or an unresolvable type.
-    VoidResult JsonToFields(const nlohmann::json& source, void* obj, const TypeInfo& type,
-                            const TypeRegistry& registry);
+    VE_MCP_API VoidResult JsonToFields(const nlohmann::json& source, void* obj,
+                                       const TypeInfo& type, const TypeRegistry& registry);
 }

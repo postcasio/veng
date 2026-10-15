@@ -56,7 +56,7 @@ namespace Veng::Renderer
     /// Single-owner (Unique); Create is the factory. Owns the UI image, the composite target, the
     /// ring-buffered geometry, and the two gui pipelines. OutputFormat fixes the pipelines' color
     /// format, so a RenderToTarget target must carry that same format.
-    class GuiScenePass
+    class VE_API GuiScenePass
     {
     public:
         /// @brief Creates the pass and builds its pipelines, images, and ring buffers.

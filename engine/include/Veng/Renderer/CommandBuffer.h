@@ -125,7 +125,7 @@ namespace Veng::Renderer
     };
 
     /// @brief Records Vulkan commands on behalf of the render graph and direct callers.
-    class CommandBuffer
+    class VE_API CommandBuffer
     {
     public:
         /// @brief Creates a command buffer at the given level.

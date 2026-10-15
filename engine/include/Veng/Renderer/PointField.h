@@ -279,7 +279,7 @@ namespace Veng::Renderer
     /// re-uploaded per frame. Updates are explicit — a sub-range Write, or a full rebuild by
     /// constructing a new field. Single-owner (Unique); Create is the factory. Points are an
     /// unlit emissive primitive, drawn by their own lightweight pass, not a Material/g-buffer path.
-    class PointField
+    class VE_API PointField
     {
     public:
         /// @brief Maximum resident point count.

@@ -57,10 +57,8 @@ if (VE_PROFILE)
 endif ()
 # See the matching veng block below: the dynamic-dispatcher storage lives in
 # Context.cpp, which compiles here.
-if (WIN32)
-    target_compile_definitions(veng_backend_objs PRIVATE
-            VULKAN_HPP_STORAGE_SHARED VULKAN_HPP_STORAGE_SHARED_EXPORT)
-endif ()
+target_compile_definitions(veng_backend_objs PRIVATE
+        VULKAN_HPP_STORAGE_SHARED VULKAN_HPP_STORAGE_SHARED_EXPORT)
 # Compile-time usage requirements only — the object library is never installed or
 # exported, so these links stay out of the SDK export set.
 target_link_libraries(veng_backend_objs PRIVATE
@@ -447,22 +445,14 @@ if (NOT WIN32 AND Vulkan_LIBRARY)
     set_target_properties(veng PROPERTIES INSTALL_RPATH "${VENG_VULKAN_LIBDIR}")
 endif ()
 
-# The VE_API dllexport annotations cover only part of the public surface (the Windows
-# port is in progress), while macOS/Linux export everything via default visibility. On
-# MSVC, auto-export every symbol so the shared library matches that behaviour and its
-# consumers (game modules, vengc, the editor) link without the annotation being complete.
-if (MSVC)
-    set_target_properties(veng PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif ()
-
 # vulkan-hpp's dynamic dispatcher (VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1) keeps its
-# storage (defaultDispatchLoaderDynamic) in one TU, here in veng.dll (Context.cpp). It
-# is a data symbol, so sharing it across the DLL boundary on Windows needs explicit
-# dllexport/dllimport: STORAGE_SHARED everywhere, STORAGE_SHARED_EXPORT only where the
-# storage lives. Default visibility already handles this on macOS/Linux.
+# storage (defaultDispatchLoaderDynamic) in one TU, here in libveng (Context.cpp). It is
+# a data symbol, so sharing it across the image boundary needs explicit export/import
+# under hidden visibility: STORAGE_SHARED everywhere, STORAGE_SHARED_EXPORT only where
+# the storage lives.
+target_compile_definitions(veng PUBLIC VULKAN_HPP_STORAGE_SHARED)
+target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
 if (WIN32)
-    target_compile_definitions(veng PUBLIC VULKAN_HPP_STORAGE_SHARED)
-    target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
     # The crash reporter's symbol resolution (Veng/Platform/CrashReport.h); ships with Windows.
     target_link_libraries(veng PRIVATE dbghelp)
     # GetProcessMemoryInfo for the process-memory reading in Veng/SystemStats.h; ships with Windows.

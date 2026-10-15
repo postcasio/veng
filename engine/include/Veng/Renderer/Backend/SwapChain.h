@@ -31,7 +31,7 @@ namespace Veng::Renderer
     };
 
     /// @brief Owns the Vulkan swapchain and its per-image resources.
-    class SwapChain
+    class VE_API SwapChain
     {
     public:
         /// @brief Pipeline stage at which the image-available semaphore
@@ -64,6 +64,13 @@ namespace Veng::Renderer
         void Initialize();
         SwapChain(Context& context, const SwapChainInfo& info);
         ~SwapChain();
+        // Deleted explicitly so the exported class's copy is never instantiated: MSVC defines every
+        // non-deleted special member of a dllexport class, and this one holds a vector of
+        // unique_ptr, whose copy is declared but ill-formed.
+        /// @brief Not copyable: the swapchain owns its images and semaphores.
+        SwapChain(const SwapChain&) = delete;
+        /// @brief Not copy-assignable: the swapchain owns its images and semaphores.
+        SwapChain& operator=(const SwapChain&) = delete;
 
         /// @brief Destroys and recreates the swapchain after a resize or surface change.
         ///

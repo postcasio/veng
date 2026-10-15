@@ -19,7 +19,7 @@ namespace Veng::Audio
     /// allocation and no lock** at every quality. @ref ReverbParams::Quality selects the density/CPU
     /// trade — the banks are sized to the maximum in @ref Prepare and only the active count is
     /// processed, so switching quality between blocks never allocates.
-    class Reverb
+    class VE_API Reverb
     {
     public:
         /// @brief Allocates the maximum comb / all-pass banks for a sample rate.

@@ -66,7 +66,7 @@ namespace Veng
     /// and that closure is what ends everything the scope owns. Nothing else holds a pointer to it.
     /// Obtained only from PresentationScopes::Open; neither copyable nor movable, since the registry
     /// it closes into is borrowed for its life.
-    class PresentationScope
+    class VE_API PresentationScope
     {
     public:
         /// @brief Closes the scope in its registry; its id reads Closed from here on.
@@ -113,7 +113,7 @@ namespace Veng
     /// Every handle Open returns borrows the registry, so the registry must outlive them all — an
     /// owner declares it ahead of whatever holds the scenes. Destroying it while a scope it handed out
     /// is still open asserts.
-    class PresentationScopes
+    class VE_API PresentationScopes
     {
     public:
         /// @brief Constructs the registry holding only the application scope.

@@ -143,7 +143,7 @@ namespace Veng::Renderer
     /// Teardown is the exact inverse of the bind: the component's destruction clears the slots it
     /// filled (see Unbind), so the material stops naming a bindless slot the capture's release has
     /// handed back to the free list.
-    struct CaptureSurface
+    struct VE_API CaptureSurface
     {
         /// @brief Default-constructs an unmaterialized capture (its runtime is empty until Drive).
         CaptureSurface();

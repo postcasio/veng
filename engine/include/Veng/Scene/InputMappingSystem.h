@@ -56,7 +56,7 @@ namespace Veng
     /// NeutralActionState, unless its SeatInput sets ReceivesInputWhileUnpresented. Registered
     /// first in RegisterBuiltinSystems so it runs ahead of any control system; in headless the
     /// neutral snapshot resolves to all-None with no guard.
-    class InputMappingSystem final : public SceneSystem
+    class VE_API InputMappingSystem final : public SceneSystem
     {
     public:
         /// @brief Resolves every (Viewer, InputContextStack, PlayerInput, SeatInput) seat this tick.

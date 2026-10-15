@@ -130,7 +130,7 @@ namespace Veng
     /// family file holds them: no migration has run, because no registration is in play, so
     /// StoredVersion says which format they are in and a reader whose own version differs runs
     /// its migration itself (the function it would register as StoreFamily::Migrate).
-    struct StoreFamilyRecords
+    struct VE_API StoreFamilyRecords
     {
         /// @brief The family the records belong to.
         StoreFamilyId Id;

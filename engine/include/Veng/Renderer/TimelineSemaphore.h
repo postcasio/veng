@@ -11,7 +11,7 @@ namespace Veng::Renderer
     /// The asset loader signals a value as an upload completes; the render thread waits the
     /// value a resource depends on. Distinct from the binary Semaphore used for present/acquire
     /// synchronization. Single-owner (Unique) — nothing else holds a reference.
-    class TimelineSemaphore
+    class VE_API TimelineSemaphore
     {
     public:
         /// @brief Creates a timeline semaphore with an initial counter value.

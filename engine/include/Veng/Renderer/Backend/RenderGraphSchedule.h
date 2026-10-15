@@ -124,7 +124,7 @@ namespace Veng::Renderer::Backend
     /// @param passes      The passes, in declaration order.
     /// @return One ScheduledPass per input pass, in the same order.
     /// @pre Every access's ResourceId::Index is in range of @p resources.
-    [[nodiscard]] vector<ScheduledPass>
+    [[nodiscard]] VE_API vector<ScheduledPass>
     DeriveRenderGraphSchedule(std::span<const ScheduleResource> resources,
                               std::span<const SchedulePass> passes);
 }

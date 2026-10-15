@@ -11,7 +11,7 @@ namespace Veng
     ///
     /// glm-only value type (copied freely like AABB/mat4, no ownership rule),
     /// so it stays inside the public/backend include-hygiene split.
-    struct Frustum
+    struct VE_API Frustum
     {
         /// @brief The six clip planes — left, right, bottom, top, near, far.
         ///
@@ -40,5 +40,5 @@ namespace Veng
     /// the box corner farthest along the plane's normal is still behind it). A box straddling
     /// a plane, or just outside a frustum corner, returns true — a false positive that draws,
     /// never a false negative that culls a visible box.
-    [[nodiscard]] bool Intersects(const Frustum& frustum, const AABB& box);
+    [[nodiscard]] VE_API bool Intersects(const Frustum& frustum, const AABB& box);
 }

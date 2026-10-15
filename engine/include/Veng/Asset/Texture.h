@@ -63,7 +63,7 @@ namespace Veng
     /// in that same step — it is shared across every texture asking for the same settings, out of
     /// the registry's cache, which is reached only from the thread that drives the registry.
     /// GetSampler()/GetHandle()/GetSamplerHandle() are valid only after Finalize().
-    class Texture
+    class VE_API Texture
     {
     public:
         ~Texture();

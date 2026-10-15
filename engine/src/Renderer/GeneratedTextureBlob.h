@@ -85,33 +85,34 @@ namespace Veng::Renderer
     /// @param shape     The image shape.
     /// @param mipLevel  The mip level.
     /// @return The tightly-packed byte size, or 0 for a format with no known size.
-    [[nodiscard]] usize GeneratedTextureLayerBytes(const GeneratedTextureBlobShape& shape,
-                                                   u32 mipLevel);
+    [[nodiscard]] VE_API usize GeneratedTextureLayerBytes(const GeneratedTextureBlobShape& shape,
+                                                          u32 mipLevel);
 
     /// @brief Bytes a shape's whole mip chain across every layer occupies.
     /// @param shape  The image shape.
     /// @return The tightly-packed byte size, or 0 for a format with no known size.
-    [[nodiscard]] usize GeneratedTextureShapeBytes(const GeneratedTextureBlobShape& shape);
+    [[nodiscard]] VE_API usize GeneratedTextureShapeBytes(const GeneratedTextureBlobShape& shape);
 
     /// @brief Byte offset of one mip level's first layer within a shape's texels.
     /// @param shape     The image shape.
     /// @param mipLevel  The mip level.
     /// @return The offset from the start of that shape's texels.
-    [[nodiscard]] usize GeneratedTextureMipOffset(const GeneratedTextureBlobShape& shape,
-                                                  u32 mipLevel);
+    [[nodiscard]] VE_API usize GeneratedTextureMipOffset(const GeneratedTextureBlobShape& shape,
+                                                         u32 mipLevel);
 
     /// @brief Byte offset of one shape's texels within a payload's texel region.
     /// @param shapes  The payload's shapes, in declaration order.
     /// @param index   The shape whose base is wanted.
     /// @return The offset from the start of the texel region, aligned to
     ///         GeneratedTextureShapeAlignment.
-    [[nodiscard]] usize GeneratedTextureShapeOffset(const vector<GeneratedTextureBlobShape>& shapes,
-                                                    usize index);
+    [[nodiscard]] VE_API usize
+    GeneratedTextureShapeOffset(const vector<GeneratedTextureBlobShape>& shapes, usize index);
 
     /// @brief Bytes a payload's whole texel region occupies, alignment padding included.
     /// @param shapes  The payload's shapes, in declaration order.
     /// @return The padded byte size, or 0 when any shape's format has no known size.
-    [[nodiscard]] usize GeneratedTextureTexelBytes(const vector<GeneratedTextureBlobShape>& shapes);
+    [[nodiscard]] VE_API usize
+    GeneratedTextureTexelBytes(const vector<GeneratedTextureBlobShape>& shapes);
 
     /// @brief Begins a payload: the header for @p shapes, in a buffer sized for the texels too.
     ///
@@ -121,7 +122,7 @@ namespace Veng::Renderer
     /// @param shapes      One shape per target, in the order the job declared them.
     /// @param texelBytes  Bytes of texels that will follow; must equal what the shapes describe.
     /// @return The header bytes, or an empty buffer when the shapes and the byte count disagree.
-    [[nodiscard]] vector<u8>
+    [[nodiscard]] VE_API vector<u8>
     BeginGeneratedTextureBlob(const vector<GeneratedTextureBlobShape>& shapes, usize texelBytes);
 
     /// @brief Encodes shapes and texels into one cache payload.
@@ -131,7 +132,7 @@ namespace Veng::Renderer
     /// into the wrong texels.
     /// @param blob  The shapes and their texels.
     /// @return The payload bytes, or an empty buffer when the blob is inconsistent.
-    [[nodiscard]] vector<u8> EncodeGeneratedTextureBlob(const GeneratedTextureBlob& blob);
+    [[nodiscard]] VE_API vector<u8> EncodeGeneratedTextureBlob(const GeneratedTextureBlob& blob);
 
     /// @brief Reads a cache payload's header, leaving its texels where they are.
     ///
@@ -139,7 +140,7 @@ namespace Veng::Renderer
     /// nullopt rather than past its end.
     /// @param payload  The bytes a cache read returned.
     /// @return The shapes and where their texels begin, or nullopt when the payload is not one.
-    [[nodiscard]] optional<GeneratedTextureBlobLayout>
+    [[nodiscard]] VE_API optional<GeneratedTextureBlobLayout>
     ReadGeneratedTextureBlobHeader(std::span<const u8> payload);
 
     /// @brief Reads a payload's header out of a prefix of it, the texels not needing to be present.
@@ -151,7 +152,7 @@ namespace Veng::Renderer
     /// MaxGeneratedTextureBlobHeaderBytes is a prefix that always suffices.
     /// @param prefix  The payload's leading bytes.
     /// @return The shapes and where their texels begin, or nullopt when the prefix is not a header.
-    [[nodiscard]] optional<GeneratedTextureBlobLayout>
+    [[nodiscard]] VE_API optional<GeneratedTextureBlobLayout>
     ReadGeneratedTextureBlobPrefix(std::span<const u8> prefix);
 
     /// @brief Decodes a cache payload back into shapes and texels.
@@ -160,6 +161,6 @@ namespace Veng::Renderer
     /// as a vector rather than in place.
     /// @param payload  The bytes a cache read returned.
     /// @return The decoded blob, or nullopt when the payload is not one.
-    [[nodiscard]] optional<GeneratedTextureBlob>
+    [[nodiscard]] VE_API optional<GeneratedTextureBlob>
     DecodeGeneratedTextureBlob(std::span<const u8> payload);
 }

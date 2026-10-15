@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VengEditor/Export.h>
 #include <Veng/Veng.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
@@ -61,7 +62,7 @@ namespace VengEditor
     /// RemapComponentReferences to re-resolve AssetHandle fields through the AssetManager and keep
     /// Reference fields pointing at the live entity) — never a raw memcpy, so a handle/reference
     /// field round-trips safely. A MeshRenderer re-runs ResolveEntity so its derived mesh re-streams.
-    class EditField final : public EditorCommand
+    class VE_EDITOR_API EditField final : public EditorCommand
     {
     public:
         /// @brief Constructs the field-edit command from the before/after component byte snapshots.
@@ -103,7 +104,7 @@ namespace VengEditor
     };
 
     /// @brief Removes a component from an entity, snapshotting its bytes so Revert restores it exactly.
-    class RemoveComponentCommand final : public EditorCommand
+    class VE_EDITOR_API RemoveComponentCommand final : public EditorCommand
     {
     public:
         /// @brief Constructs the remove command, snapshotting the live component's bytes.

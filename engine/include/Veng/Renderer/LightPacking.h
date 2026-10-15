@@ -272,9 +272,9 @@ namespace Veng::Renderer
     /// @param viewpoint                The camera position the cap's ranking is measured from;
     ///                                 null (the default) ranks by radiance alone.
     /// @return The packed lights, shadow records, and cascade-set selection for this frame.
-    [[nodiscard]] PackedSceneLights PackSceneLights(const Scene& world, bool punctualShadows,
-                                                    u32 punctualShadowResolution,
-                                                    const AABB& sceneBounds = AABB::Empty(),
-                                                    const Frustum* cameraFrustum = nullptr,
-                                                    const vec3* viewpoint = nullptr);
+    [[nodiscard]] VE_API PackedSceneLights PackSceneLights(const Scene& world, bool punctualShadows,
+                                                           u32 punctualShadowResolution,
+                                                           const AABB& sceneBounds = AABB::Empty(),
+                                                           const Frustum* cameraFrustum = nullptr,
+                                                           const vec3* viewpoint = nullptr);
 }

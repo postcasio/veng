@@ -7,7 +7,7 @@ namespace Veng::Renderer
     class Context;
 
     /// @brief A single-owner GPU fence for CPU–GPU synchronization.
-    class Fence
+    class VE_API Fence
     {
     public:
         /// @brief Creates a fence.
