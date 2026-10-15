@@ -21,10 +21,37 @@
 
 namespace Veng::Renderer
 {
+    TranslucentScenePass::TranslucentScenePass(
+        Context& context, const uvec2 extent, const TranslucentDrawPlan* plan,
+        const ResourceId targetId, const ResourceId depthId, const ResourceId sceneColorId,
+        const ResourceId sceneDepthId, const Format targetFormat, const ResourceId maskId,
+        const Format maskFormat, const TranslucentPassKind kind, const u32 segment,
+        ForwardLightingSets forward, Ref<PipelineCache> pipelines)
+        : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
+          m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
+          m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat), m_Kind(kind),
+          m_Segment(segment), m_HalfResolution(kind == TranslucentPassKind::HalfLayer),
+          m_Forward(std::move(forward)),
+          m_Pipelines(pipelines ? std::move(pipelines) : std::make_shared<PipelineCache>())
+    {
+    }
+
+    Ref<TranslucentScenePass::PipelineCache> TranslucentScenePass::CreatePipelineCache()
+    {
+        return std::make_shared<PipelineCache>();
+    }
+
     void TranslucentScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
-        RenderGraph::PassBuilder builder =
-            graph.AddPass(m_HalfResolution ? "Scene Translucent Half" : "Scene Translucent");
+        // Segment 0 keeps the names a single-segment frame always had.
+        const string name = [this]
+        {
+            const char* base = m_HalfResolution ? "Scene Translucent Half" : "Scene Translucent";
+            const u32 index =
+                m_Kind == TranslucentPassKind::Continuation ? m_Segment + 1 : m_Segment;
+            return index == 0 ? string{base} : fmt::format("{} {}", base, index);
+        }();
+        RenderGraph::PassBuilder builder = graph.AddPass(name);
         if (m_HalfResolution)
         {
             // The layer target accumulates over nothing: cleared to transparent, the straight
@@ -46,19 +73,23 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
             });
         }
-        if (m_MaskId.IsValid())
+        if (m_MaskId.IsValid() && m_Kind == TranslucentPassKind::First)
         {
-            // This pass is the only writer of the scene-side mask, so it clears the target at begin
-            // rather than costing the frame a separate clear: a pixel no declaring material covers
-            // reads 0 and leaves the bloom bright-pass to decide the glow there on its own. The
-            // clear covers the whole render allocation, so the area outside this frame's rendered
-            // sub-rect carries no amplitude into the promotion.
+            // The first translucent pass is the first writer of the scene-side mask, so it clears
+            // the target at begin rather than costing the frame a separate clear: a pixel no
+            // declaring material covers reads 0 and leaves the bloom bright-pass to decide the glow
+            // there on its own. The clear covers the whole render allocation, so the area outside
+            // this frame's rendered sub-rect carries no amplitude into the promotion.
             builder.Color({
                 .Resource = m_MaskId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             });
+        }
+        else if (m_MaskId.IsValid())
+        {
+            builder.Color({.Resource = m_MaskId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
         builder.Depth({
             // The opaque depth bound read-only (the pipeline disables depth writes):
@@ -90,6 +121,11 @@ namespace Veng::Renderer
             // The layer is read only by its composite, which skips an idle frame with it, so the
             // cleared target goes unread.
             builder.SkipWhenUnread([this] { return m_Plan->Draws.empty(); });
+        }
+        else if (m_Kind == TranslucentPassKind::Continuation)
+        {
+            // Every attachment loads and stores, so a frame whose segment drew nothing here skips.
+            builder.SkipWhen([this] { return m_Plan->Draws.empty(); });
         }
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
@@ -131,8 +167,8 @@ namespace Veng::Renderer
     TranslucentScenePass::PipelineFor(const MaterialInstance& material) const
     {
         const Material* parent = material.GetParent().Get();
-        const auto it = m_Pipelines.find(parent);
-        if (it != m_Pipelines.end())
+        const auto it = m_Pipelines->Pipelines.find(parent);
+        if (it != m_Pipelines->Pipelines.end())
         {
             return it->second;
         }
@@ -189,7 +225,7 @@ namespace Veng::Renderer
                 .DepthCompareOp = CompareOp::GreaterOrEqual,
             });
 
-        return m_Pipelines
+        return m_Pipelines->Pipelines
             .emplace(parent,
                      CachedPipeline{.Pipeline = std::move(pipeline), .ForwardLit = forwardLit})
             .first->second;

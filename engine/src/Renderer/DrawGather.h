@@ -180,4 +180,34 @@ namespace Veng::Renderer
     /// @param into The plan that receives the draws (re-sorted after the append).
     /// @param from The plan whose draws move; cleared.
     void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from);
+
+    /// @brief The translucent back-to-front order: ascending priority groups, farthest first
+    ///        within a group, and a half-resolution draw ahead of a full-resolution one at an equal
+    ///        depth.
+    ///
+    /// The tie-break is deterministic so a planet's ring and its own atmosphere shell, sorted by
+    /// the one centre they share, always composite the same way round: the shell's layer first
+    /// and the ring over it.
+    /// @param a  The first draw.
+    /// @param b  The second draw.
+    /// @return True when @p a draws before @p b.
+    [[nodiscard]] bool TranslucentDrawsBefore(const TranslucentDraw& a, const TranslucentDraw& b);
+
+    /// @brief Cuts a frame's sorted translucent draws into the segments they composite in.
+    ///
+    /// The two plans are merged in TranslucentDrawsBefore order and walked back to front. Each run
+    /// of consecutive half-resolution draws becomes a segment of its own, composited over every
+    /// draw before it. A full-resolution draw after a run whose screen rectangle does not overlap
+    /// the run's (each grown by @p marginUv) draws ahead of that run's composite instead, so a
+    /// segment begins only where a full-resolution draw and a half-resolution run overlap and
+    /// alternate in depth. Past MaxHalfResSegments the remaining runs fold into the last segment,
+    /// counted in TranslucentSegments::MergedRuns. Every plan's Draws is replaced; nothing else is
+    /// written.
+    /// @param full      The full-resolution draws, sorted.
+    /// @param half      The half-resolution draws, sorted.
+    /// @param marginUv  How far each rectangle is grown before an overlap test, in UV per axis.
+    /// @param out       Receives the segments.
+    void SegmentTranslucentDraws(std::span<const TranslucentDraw> full,
+                                 std::span<const TranslucentDraw> half, vec2 marginUv,
+                                 TranslucentSegments& out);
 }

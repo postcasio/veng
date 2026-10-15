@@ -54,6 +54,20 @@ namespace Veng::Renderer
         u32 PunctualRingStride = 0;
     };
 
+    /// @brief Which of a frame's translucent passes an instance is.
+    ///
+    /// A frame's translucents composite as Full[0], then for each segment its half-resolution
+    /// layer and the full-resolution pass after it (see TranslucentSegments).
+    enum class TranslucentPassKind : u8
+    {
+        /// @brief The first full-resolution pass: records every frame and clears the bloom mask.
+        First,
+        /// @brief A later full-resolution pass: loads the mask and skips a frame with no draws.
+        Continuation,
+        /// @brief A segment's half-resolution layer, cleared to transparent and composited later.
+        HalfLayer,
+    };
+
     /// @brief The forward translucent pass.
     ///
     /// Draws the gathered translucent submeshes back-to-front into the lit HDR scene-color
@@ -82,6 +96,10 @@ namespace Veng::Renderer
     class TranslucentScenePass final : public ScenePass
     {
     public:
+        /// @brief A per-parent pipeline cache, shared by the passes of one target and mask
+        ///        configuration.
+        struct PipelineCache;
+
         /// @brief Constructs the pass.
         /// @param context      Renderer context for pipeline and bindless access.
         /// @param extent       Initial render extent; updated via Resize.
@@ -93,20 +111,22 @@ namespace Veng::Renderer
         /// @param targetFormat Color format the per-parent pipelines target.
         /// @param maskId       The bloom-mask target, or invalid when the frame wires none.
         /// @param maskFormat   Color format of the bloom-mask attachment.
-        /// @param halfResolution Renders the reduced-resolution layer: the viewport is the half
-        ///                     valid sub-rect and the target is cleared to transparent at pass
-        ///                     begin (the layer accumulates over nothing and composites later).
+        /// @param kind         Which pass this is. A HalfLayer instance renders the
+        ///                     reduced-resolution layer: the viewport is the half valid sub-rect and
+        ///                     the target is cleared to transparent at pass begin.
+        /// @param segment      The segment the pass belongs to, which names it.
         /// @param forward      The IBL and shadow sets a forward-lit material's draws bind.
+        /// @param pipelines    The per-parent pipeline cache, shared by passes of one target and
+        ///                     mask configuration so a material drawn in several segments is built
+        ///                     once; null gives the pass a cache of its own.
         TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
                              ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
                              ResourceId sceneDepthId, Format targetFormat, ResourceId maskId,
-                             Format maskFormat, bool halfResolution, ForwardLightingSets forward)
-            : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
-              m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
-              m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat),
-              m_HalfResolution(halfResolution), m_Forward(std::move(forward))
-        {
-        }
+                             Format maskFormat, TranslucentPassKind kind, u32 segment,
+                             ForwardLightingSets forward, Ref<PipelineCache> pipelines = {});
+
+        /// @brief Creates a pipeline cache passes of one target and mask configuration share.
+        [[nodiscard]] static Ref<PipelineCache> CreatePipelineCache();
 
         /// @brief Whether a material's fragment runs the forward light loop.
         ///
@@ -130,6 +150,15 @@ namespace Veng::Renderer
             bool ForwardLit = false;
         };
 
+    public:
+        /// @brief The cache's contents: one pipeline per parent material.
+        struct PipelineCache
+        {
+            /// @brief The cached pipelines, keyed by parent material.
+            std::unordered_map<const Material*, CachedPipeline> Pipelines;
+        };
+
+    private:
         /// @brief Returns the per-parent pipeline (blended per the material's TranslucentBlend),
         ///        building and caching it on first use.
         const CachedPipeline& PipelineFor(const MaterialInstance& material) const;
@@ -161,12 +190,16 @@ namespace Veng::Renderer
         ResourceId m_MaskId;
         /// @brief Color format of the bloom-mask attachment.
         Format m_MaskFormat;
+        /// @brief Which of the frame's translucent passes this is.
+        TranslucentPassKind m_Kind;
+        /// @brief The segment the pass belongs to.
+        u32 m_Segment;
         /// @brief Whether this instance renders the reduced-resolution layer.
         bool m_HalfResolution;
         /// @brief The IBL and shadow sets a forward-lit material's draws bind.
         ForwardLightingSets m_Forward;
-        // Per-parent pipeline cache; mutable so PipelineFor can lazily populate it from the
-        // const record callback.
-        mutable std::unordered_map<const Material*, CachedPipeline> m_Pipelines;
+        /// @brief The per-parent pipeline cache, possibly shared with the frame's other passes of
+        ///        this configuration; populated lazily from the const record callback.
+        Ref<PipelineCache> m_Pipelines;
     };
 }

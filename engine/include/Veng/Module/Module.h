@@ -529,10 +529,12 @@ extern "C"
 /// 800 → 816 bytes) carries it. A module spawns looks and builds views, and its shaders index view
 /// regions by the stride, so a stale one lays the structs out short and reads every region past the
 /// first at the wrong offset.
+/// Version 128 composites the half-resolution translucent layer at its depth: SceneRenderer grows
+/// the TranslucentSegmentStats it reports, and a module owns renderers.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 127u
+#define VENG_MODULE_ABI_VERSION 128u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

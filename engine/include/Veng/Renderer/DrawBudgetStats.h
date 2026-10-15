@@ -41,4 +41,15 @@ namespace Veng::Renderer
         /// gathering, since a later instance with fewer bones may still fit.
         u32 PaletteDropped = 0;
     };
+
+    /// @brief How a frame's half-resolution translucent draws were interleaved with the
+    ///        full-resolution ones. Reached through SceneRenderer::GetTranslucentSegmentStats().
+    struct TranslucentSegmentStats
+    {
+        /// @brief Segments that composited a half-resolution run this frame.
+        u32 HalfResSegments = 0;
+        /// @brief Half-resolution runs folded into the last segment past the segment cap, so the
+        ///        full-resolution draws between them drew over them.
+        u32 MergedRuns = 0;
+    };
 }

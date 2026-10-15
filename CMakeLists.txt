@@ -1135,6 +1135,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/fluid_sim_config.cpp
             tests/unit/flow_field.cpp
             tests/unit/draw_grouping.cpp
+            tests/unit/translucent_segments.cpp
             tests/unit/depth_caster_grouping.cpp
             tests/unit/lod_selection.cpp
             tests/unit/instanced_mesh.cpp

@@ -200,9 +200,11 @@ namespace Veng::Renderer
         // the translucent pass reads at record time.
         TranslucentDrawPlan TranslucentPlan;
         // The reduced-resolution layer's own plan: the draws of materials that opted into
-        // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
-        // whole under the full-resolution draws).
+        // half-resolution rendering, sorted back-to-front on their own.
         TranslucentDrawPlan HalfResTranslucentPlan;
+        // The two plans cut into the order they composite in, which the translucent passes, the
+        // half-res layer passes and their composites read.
+        TranslucentSegments Segments;
         // Which of the grab's passes record this frame: set by PrepareDraws from what the drawn
         // materials read, and read by those passes, each of which skips every frame its flag is
         // clear.
@@ -755,6 +757,42 @@ namespace Veng::Renderer
             .PunctualRingStride = m_Shadows->GetPunctualRingStride(),
         };
 
+        // The forward translucent composite at the position an arm lays its translucents: the
+        // first full-resolution pass, then — while the half-res layer is wired — each segment's
+        // layer and composite with the full-resolution pass after it, so every run of half-res
+        // draws lands at its place in the back-to-front order rather than under all of them.
+        const auto DeclareTranslucents =
+            [&](const ResourceId litId, const ResourceId depthTargetId, const uvec2 extent)
+        {
+            TranslucentSegments& segments = m_Internal->Segments;
+            const Ref<TranslucentScenePass::PipelineCache> fullPipelines =
+                TranslucentScenePass::CreatePipelineCache();
+            m_Passes.push_back(CreateUnique<TranslucentScenePass>(
+                m_Context, extent, &segments.Full[0], litId, depthTargetId, m_RefractionSceneId,
+                m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
+                TranslucentPassKind::First, 0, forwardSets, fullPipelines));
+            if (!m_HalfResTranslucentActive)
+            {
+                return;
+            }
+            m_HalfResTranslucent->DeclareDepthReduce(
+                m_Passes, m_HalfResDepthReducedId, depthTargetId, m_DepthHandle, &segments.Half[0]);
+            const Ref<TranslucentScenePass::PipelineCache> halfPipelines =
+                TranslucentScenePass::CreatePipelineCache();
+            for (u32 segment = 0; segment < MaxHalfResSegments; ++segment)
+            {
+                m_HalfResTranslucent->DeclareSegment(
+                    m_Passes, segment, m_HalfResLayerId, m_HalfResDepthReducedId, depthTargetId,
+                    m_DepthHandle, litId, &segments.Half[segment], &segments.HalfRect[segment],
+                    m_RefractionSceneId, m_RefractionDepthId, extent, forwardSets, halfPipelines);
+                m_Passes.push_back(CreateUnique<TranslucentScenePass>(
+                    m_Context, extent, &segments.Full[segment + 1], litId, depthTargetId,
+                    m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
+                    BloomMaskFormat, TranslucentPassKind::Continuation, segment, forwardSets,
+                    fullPipelines));
+            }
+        };
+
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
         // graph-derived buffer barrier.
@@ -883,20 +921,7 @@ namespace Veng::Renderer
             // with Refraction on the lit scene color, first so a translucent fragment can sample
             // the scene behind it.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            // The reduced-resolution layer draws and composites immediately ahead of the
-            // full-resolution translucent pass, so its result lies under every full-res
-            // translucent draw (a cockpit pane over an atmosphere shell).
-            if (m_HalfResTranslucentActive)
-            {
-                m_HalfResTranslucent->Declare(
-                    m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
-                    lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
-                    m_RefractionDepthId, renderExtent, forwardSets);
-            }
-            m_Passes.push_back(CreateUnique<TranslucentScenePass>(
-                m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
-                /*halfResolution=*/false, forwardSets));
+            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
             // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
             // those, into the same target and bloom mask, while the scene carries any.
             if (m_Internal->RibbonActive)
@@ -1236,20 +1261,7 @@ namespace Veng::Renderer
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            // The reduced-resolution layer draws and composites immediately ahead of the
-            // full-resolution translucent pass, so its result lies under every full-res
-            // translucent draw (a cockpit pane over an atmosphere shell).
-            if (m_HalfResTranslucentActive)
-            {
-                m_HalfResTranslucent->Declare(
-                    m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
-                    lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
-                    m_RefractionDepthId, renderExtent, forwardSets);
-            }
-            m_Passes.push_back(CreateUnique<TranslucentScenePass>(
-                m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
-                /*halfResolution=*/false, forwardSets));
+            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
             // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
             // those, into the same target and bloom mask, while the scene carries any.
             if (m_Internal->RibbonActive)
@@ -2111,6 +2123,33 @@ namespace Veng::Renderer
             m_HalfResTranslucentIdleFrames = 0;
             m_HalfResTranslucent->Recreate(false, m_RenderAllocExtent);
             Rebuild();
+        }
+
+        // The plans cut into the order they composite in. The overlap margin is the composite's own
+        // reach past its draws, so a full-res draw beside a run but clear of it stays ahead of it.
+        {
+            TranslucentSegments& segments = m_Internal->Segments;
+            const vec2 marginUv = vec2(static_cast<f32>(HalfResCompositeMarginPixels)) /
+                                  glm::max(vec2(view.RenderExtent), vec2(1.0f));
+            SegmentTranslucentDraws(translucentPlan.Draws, halfResPlan.Draws, marginUv, segments);
+            for (TranslucentDrawPlan& segment : segments.Full)
+            {
+                segment.Push = translucentPlan.Push;
+                segment.DrawDataSet = m_DrawDataSet;
+                segment.CandidateIdBuffer = m_CandidateIdBuffer;
+            }
+            u32 halfSegments = 0;
+            for (TranslucentDrawPlan& segment : segments.Half)
+            {
+                segment.Push = halfResPlan.Push;
+                segment.DrawDataSet = m_DrawDataSet;
+                segment.CandidateIdBuffer = m_CandidateIdBuffer;
+                halfSegments += segment.Draws.empty() ? 0u : 1u;
+            }
+            m_TranslucentSegmentStats = TranslucentSegmentStats{
+                .HalfResSegments = halfSegments,
+                .MergedRuns = segments.MergedRuns,
+            };
         }
 
         // The grab's copies are read only by a translucent draw whose material samples them, so a

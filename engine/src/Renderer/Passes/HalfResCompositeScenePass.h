@@ -26,13 +26,14 @@ namespace Veng::Renderer
         vec2 HalfValid;
     };
 
-    /// @brief Composites the half-res translucent layer into the lit scene color.
+    /// @brief Composites one segment's half-res translucent layer into the lit scene color.
     ///
-    /// A fullscreen draw over the full valid sub-rect: the fragment upsamples the layer's
+    /// A fullscreen draw over the full valid sub-rect, scissored to the segment's rectangle: the
+    /// fragment upsamples the layer's
     /// (premultiplied color, coverage) depth-aware — each 2x2 tap's bilinear weight collapses
     /// in proportion to how far its reduced depth sits from the pixel's own opaque depth, so
     /// the layer hugs geometry edges — and the pipeline's (One, OneMinusSrcAlpha) blend lays
-    /// it under whatever the full-resolution translucent pass draws after it.
+    /// it under whatever the full-resolution translucent passes draw after it.
     class HalfResCompositeScenePass final : public ScenePass
     {
     public:
@@ -46,16 +47,19 @@ namespace Veng::Renderer
         /// @param depthId     Full-res opaque depth id (declared sampled).
         /// @param depthHandle Bindless slot for the full-res opaque depth.
         /// @param targetId    The lit scene-color target the composite blends into.
-        /// @param plan        The layer's draw plan — a frame that routed nothing skips the draw.
+        /// @param plan        The segment's draw plan — a frame that routed nothing skips the draw.
+        /// @param rect        The segment's screen rectangle in UV, which the draw is scissored to.
+        /// @param segment     The segment's index, which names the pass.
         HalfResCompositeScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                   ResourceId layerId, TextureHandle layerHandle,
                                   ResourceId halfDepthId, TextureHandle halfDepthHandle,
                                   ResourceId depthId, TextureHandle depthHandle,
-                                  ResourceId targetId, const TranslucentDrawPlan* plan)
+                                  ResourceId targetId, const TranslucentDrawPlan* plan,
+                                  const vec4* rect, u32 segment)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_LayerId(layerId),
               m_LayerHandle(layerHandle), m_HalfDepthId(halfDepthId),
               m_HalfDepthHandle(halfDepthHandle), m_DepthId(depthId), m_DepthHandle(depthHandle),
-              m_TargetId(targetId), m_Plan(plan)
+              m_TargetId(targetId), m_Plan(plan), m_Rect(rect), m_Segment(segment)
         {
         }
 
@@ -85,5 +89,9 @@ namespace Veng::Renderer
         ResourceId m_TargetId;
         /// @brief Borrowed per-frame half-res draw plan (only its emptiness is read).
         const TranslucentDrawPlan* m_Plan = nullptr;
+        /// @brief Borrowed per-frame screen rectangle of the segment's draws, in UV.
+        const vec4* m_Rect = nullptr;
+        /// @brief The segment's index.
+        u32 m_Segment = 0;
     };
 }

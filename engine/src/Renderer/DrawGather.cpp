@@ -58,6 +58,39 @@ namespace Veng::Renderer
             return input.MeshLods.empty() ? 0u : input.MeshLods[meshCandidate];
         }
 
+        // The UV rectangle a box's eight corners project to through viewProj, clamped to the
+        // screen; the whole screen when any corner lies at or behind the eye, where the projection
+        // folds and no finite rectangle bounds what the box covers.
+        vec4 ProjectScreenRect(const mat4& viewProj, const mat4& toWorld, const vec3& min,
+                               const vec3& max)
+        {
+            vec2 lo{1.0f};
+            vec2 hi{0.0f};
+            for (u32 corner = 0; corner < 8; ++corner)
+            {
+                const vec3 local{(corner & 1u) != 0 ? max.x : min.x,
+                                 (corner & 2u) != 0 ? max.y : min.y,
+                                 (corner & 4u) != 0 ? max.z : min.z};
+                const vec4 clip = viewProj * (toWorld * vec4(local, 1.0f));
+                if (!(clip.w > 1.0e-5f))
+                {
+                    return {0.0f, 0.0f, 1.0f, 1.0f};
+                }
+                const vec2 uv = vec2(clip) / clip.w * 0.5f + 0.5f;
+                lo = glm::min(lo, uv);
+                hi = glm::max(hi, uv);
+            }
+            return {glm::clamp(lo, vec2(0.0f), vec2(1.0f)), glm::clamp(hi, vec2(0.0f), vec2(1.0f))};
+        }
+
+        // Whether two UV rectangles, each grown by marginUv, overlap.
+        bool ScreenRectsOverlap(const vec4& a, const vec4& b, const vec2 marginUv)
+        {
+            const vec2 reach = 2.0f * marginUv;
+            return a.x < b.z + reach.x && b.x < a.z + reach.x && a.y < b.w + reach.y &&
+                   b.y < a.w + reach.y;
+        }
+
         // Whether two adjacent slots draw the same index range with consecutive candidate ids, so
         // one instanced draw covers both.
         bool ExtendsRun(const DrawSlot& previous, const DrawSlot& next)
@@ -355,6 +388,7 @@ namespace Veng::Renderer
                            DrawBudget& budget)
     {
         const mat4 viewMatrix = input.View.Camera.View();
+        const mat4 viewProj = input.View.Camera.ViewProjection();
         for (usize index = 0; index < translucent.size(); ++index)
         {
             const u32 id = translucent[index];
@@ -400,11 +434,17 @@ namespace Veng::Renderer
                                     : vec3(item.World * vec4(subMesh.Bounds.Center(), 1.0f));
             const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
 
-            // A material that opted into the reduced-resolution layer routes to its own plan;
-            // the layer composites under every full-resolution translucent, so the split is a
-            // sort statement as much as a cost one.
+            // A material that opted into the reduced-resolution layer routes to its own plan, and
+            // the screen rectangle is what segmenting tests a full-res draw against a run by.
             const Material* parent = material.GetParent().Get();
-            TranslucentDrawPlan& destination = parent->IsHalfResolution() ? halfResPlan : plan;
+            const bool halfResolution = parent->IsHalfResolution();
+            TranslucentDrawPlan& destination = halfResolution ? halfResPlan : plan;
+            const vec4 screenRect =
+                subMesh.Bounds.IsEmpty()
+                    ? ProjectScreenRect(viewProj, mat4(1.0f), item.WorldBounds.Min,
+                                        item.WorldBounds.Max)
+                    : ProjectScreenRect(viewProj, item.World, subMesh.Bounds.Min,
+                                        subMesh.Bounds.Max);
             destination.Draws.push_back(TranslucentDraw{
                 .Material = &material,
                 .SourceMesh = &mesh,
@@ -413,37 +453,107 @@ namespace Veng::Renderer
                 .CandidateId = slot,
                 .ViewDepth = viewDepth,
                 .SortPriority = parent->GetSortPriority() + item.SortPriority,
+                .ScreenRect = screenRect,
+                .HalfResolution = halfResolution,
             });
         }
 
-        // Ascending priority groups, back-to-front (most negative view-space z first) within
-        // each: a higher priority — the material's, plus its entity's MeshRenderer::SortPriority —
-        // draws over every lower-priority draw regardless of depth. Each plan sorts on its own, since the layer composites as a
-        // whole under the full-resolution draws.
-        const auto backToFront = [](const TranslucentDraw& a, const TranslucentDraw& b)
+        // Each plan sorts on its own; SegmentTranslucentDraws merges the two in the same order.
+        std::ranges::sort(plan.Draws, TranslucentDrawsBefore);
+        std::ranges::sort(halfResPlan.Draws, TranslucentDrawsBefore);
+    }
+
+    bool TranslucentDrawsBefore(const TranslucentDraw& a, const TranslucentDraw& b)
+    {
+        // A higher priority — the material's, plus its entity's MeshRenderer::SortPriority — draws
+        // over every lower-priority draw regardless of depth; within a group the most negative
+        // view-space z draws first.
+        if (a.SortPriority != b.SortPriority)
         {
-            if (a.SortPriority != b.SortPriority)
-            {
-                return a.SortPriority < b.SortPriority;
-            }
+            return a.SortPriority < b.SortPriority;
+        }
+        if (a.ViewDepth != b.ViewDepth)
+        {
             return a.ViewDepth < b.ViewDepth;
-        };
-        std::ranges::sort(plan.Draws, backToFront);
-        std::ranges::sort(halfResPlan.Draws, backToFront);
+        }
+        return a.HalfResolution && !b.HalfResolution;
+    }
+
+    void SegmentTranslucentDraws(const std::span<const TranslucentDraw> full,
+                                 const std::span<const TranslucentDraw> half, const vec2 marginUv,
+                                 TranslucentSegments& out)
+    {
+        for (TranslucentDrawPlan& plan : out.Full)
+        {
+            plan.Draws.clear();
+        }
+        for (TranslucentDrawPlan& plan : out.Half)
+        {
+            plan.Draws.clear();
+        }
+        out.HalfRect.fill(vec4{0.0f});
+        out.MergedRuns = 0;
+
+        constexpr u32 LastSegment = MaxHalfResSegments - 1;
+        u32 segment = 0;
+        // Past the last segment every further run folds into it, and every full-resolution draw
+        // after that point draws in the final pass.
+        bool overflowed = false;
+        bool previousWasHalf = false;
+        usize f = 0;
+        usize h = 0;
+        while (f < full.size() || h < half.size())
+        {
+            const bool takeHalf =
+                h < half.size() && (f >= full.size() || TranslucentDrawsBefore(half[h], full[f]));
+            if (takeHalf)
+            {
+                const TranslucentDraw& draw = half[h++];
+                const u32 into = overflowed ? LastSegment : segment;
+                if (overflowed && !previousWasHalf)
+                {
+                    ++out.MergedRuns;
+                }
+                vec4& rect = out.HalfRect[into];
+                rect = out.Half[into].Draws.empty()
+                           ? draw.ScreenRect
+                           : vec4{glm::min(vec2(rect), vec2(draw.ScreenRect)),
+                                  glm::max(vec2(rect.z, rect.w),
+                                           vec2(draw.ScreenRect.z, draw.ScreenRect.w))};
+                out.Half[into].Draws.push_back(draw);
+                previousWasHalf = true;
+                continue;
+            }
+
+            const TranslucentDraw& draw = full[f++];
+            previousWasHalf = false;
+            if (overflowed)
+            {
+                out.Full[MaxHalfResSegments].Draws.push_back(draw);
+            }
+            else if (out.Half[segment].Draws.empty() ||
+                     !ScreenRectsOverlap(draw.ScreenRect, out.HalfRect[segment], marginUv))
+            {
+                // Nothing in this segment's run lies under it, so it may draw ahead of the run's
+                // composite; every draw it must cover is already in an earlier pass.
+                out.Full[segment].Draws.push_back(draw);
+            }
+            else if (segment < LastSegment)
+            {
+                out.Full[++segment].Draws.push_back(draw);
+            }
+            else
+            {
+                overflowed = true;
+                out.Full[MaxHalfResSegments].Draws.push_back(draw);
+            }
+        }
     }
 
     void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from)
     {
         into.Draws.insert(into.Draws.end(), from.Draws.begin(), from.Draws.end());
         from.Draws.clear();
-        std::ranges::sort(into.Draws,
-                          [](const TranslucentDraw& a, const TranslucentDraw& b)
-                          {
-                              if (a.SortPriority != b.SortPriority)
-                              {
-                                  return a.SortPriority < b.SortPriority;
-                              }
-                              return a.ViewDepth < b.ViewDepth;
-                          });
+        std::ranges::sort(into.Draws, TranslucentDrawsBefore);
     }
 }

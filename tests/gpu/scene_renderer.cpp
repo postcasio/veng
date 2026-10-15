@@ -6452,6 +6452,98 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The half-resolution layer composites at its place among the full-resolution translucents: a
+// near half-res cube lays over a far full-res one, a far one lies under a near one, and a full-res
+// draw beside the layer rather than over it opens no segment of its own.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the half-resolution layer composites at its depth")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_halfres_depth.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The half-res fixture is red at half coverage, the full-res one blue at half coverage.
+    const AssetResult<AssetHandle<MaterialInstance>> half =
+        assets.LoadSync<MaterialInstance>(AssetId{0x797C4B094FC6AC13ULL});
+    REQUIRE(half.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> full =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896001});
+    REQUIRE(full.has_value());
+    const Ref<Mesh> halfCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *half), "Half-Res Depth Red Cube");
+    const Ref<Mesh> fullCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *full), "Half-Res Depth Blue Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity halfEntity = scene->CreateEntity();
+    scene->Add<Transform>(halfEntity);
+    scene->Add<MeshRenderer>(halfEntity).Mesh = assets.Adopt(halfCube);
+    const Entity fullEntity = scene->CreateEntity();
+    scene->Add<Transform>(fullEntity);
+    scene->Add<MeshRenderer>(fullEntity).Mesh = assets.Adopt(fullCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const uvec2 extent{64, 64};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+    // Places the two cubes and renders twice: the layer wires on the first frame a draw routes to
+    // it, and the second draws it at half resolution.
+    const auto RenderAt = [&](const vec3 halfAt, const vec3 fullAt)
+    {
+        scene->Get<Transform>(halfEntity).Position = halfAt;
+        scene->Get<Transform>(fullEntity).Position = fullAt;
+        for (u32 frame = 0; frame < 2; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(
+                        cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+                });
+        }
+        return DecodeTexel(renderer->GetOutput()->GetImage()->Download(), extent.x, extent.x / 2,
+                           extent.y / 2);
+    };
+
+    // The half-res cube nearer: its red lies over the blue behind it.
+    const vec3 halfNear = RenderAt(vec3(0.0f, 0.0f, 1.5f), vec3(0.0f, 0.0f, -1.5f));
+    CHECK(halfNear.r > halfNear.b);
+    CHECK(renderer->GetTranslucentSegmentStats().HalfResSegments == 1);
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("Scene Translucent 1"));
+
+    // The full-res cube nearer: its blue lies over the layer, through a pass after the composite.
+    const vec3 fullNear = RenderAt(vec3(0.0f, 0.0f, -1.5f), vec3(0.0f, 0.0f, 1.5f));
+    CHECK(fullNear.b > fullNear.r);
+    CHECK(renderer->DidRecordPassLastFrame("Scene Translucent 1"));
+
+    // The full-res cube nearer but off to the side: nothing of the layer lies under it, so it draws
+    // ahead of the composite and the frame records no second full-res pass.
+    RenderAt(vec3(-1.6f, 0.0f, -1.5f), vec3(2.2f, 0.0f, 1.5f));
+    CHECK(renderer->GetTranslucentSegmentStats().HalfResSegments == 1);
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("Scene Translucent 1"));
+
+    std::filesystem::remove(outArchive);
+}
+
 // The draw-budget overflow case: the only one in the suite whose scene exceeds the per-frame
 // draw-slot budget, so it is the only end-to-end cover of the clamp path. It is cooker-gated
 // (like the albedo oracle) because the slot claim runs only for a material-resident submesh —

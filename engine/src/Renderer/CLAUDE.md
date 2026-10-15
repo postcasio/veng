@@ -967,23 +967,49 @@ renderer that never sees an opted-in material carries no targets and no passes. 
 (`src/Renderer/HalfResTranslucency.h`) owns the vertical slice; `HalfResExtent` is the one
 rounding rule every consumer derives the half extent through.
 
-Three passes, wired immediately ahead of the full translucent pass in both compositing arms so
-the layer composites **under** every full-resolution translucent draw (a cockpit pane over an
-atmosphere shell):
+**The layer composites at its place in the back-to-front order, in segments.** Every translucent
+draw sorts in one order — priority, then depth, then a half-res draw ahead of a full-res one at an
+equal depth (`TranslucentDrawsBefore`), so a planet's ring and its own shell, both sorted by the
+planet's centre, always draw shell first — and `SegmentTranslucentDraws` (`DrawGather.h`, pure)
+cuts that order into **segments**. Each run of consecutive half-res draws is one segment: drawn
+into the layer and composited over everything before it, so a near atmosphere lies over a far
+ring and a cockpit pane over an atmosphere. A full-res draw after a run whose screen rectangle
+(its submesh bounds projected, `TranslucentDraw::ScreenRect`; the whole screen when a corner is
+behind the eye) does not overlap the run's draws **ahead of** the run's composite, so a segment
+begins only where a full-res draw and a half-res run genuinely overlap and alternate in depth. A
+frame has at most `MaxHalfResSegments` (4); further runs fold into the last, and the full-res
+draws between them draw over them (`SceneRenderer::GetTranslucentSegmentStats`). The order is
+object-level, as the full-res pass's always was: each draw sorts by its centre.
 
-1. **A depth reduce** writes a half-res D32 target as the farthest (reverse-Z minimum) of each
-   texel's 2×2 full-res opaque depths, so the layer's draws depth-test conservatively — a
-   fragment survives wherever any of its four full-res pixels would show it.
-2. **The layer's own `TranslucentScenePass`** (the same class, its half-resolution option):
-   half-extent viewport into a half-res HDR target cleared to transparent, the same back-to-front
-   sort, per-parent pipelines, and straight alpha blend — which over a transparent clear leaves
-   exactly (premultiplied color, coverage). No bloom-mask attachment: the layer lands in the lit
-   color ahead of the bloom bright-pass, so its glow rides the scene like an unmasked
-   translucent's.
-3. **A depth-aware composite** upsamples the layer to full resolution — each 2×2 tap's bilinear
-   weight collapsed in proportion to its reduced depth's distance from the pixel's own opaque
-   depth, so the layer hugs geometry edges instead of haloing across them — and blends it into
-   the lit scene color with `(One, OneMinusSrcAlpha)`.
+The passes, in both compositing arms (`DeclareTranslucents` in `Rebuild`):
+
+1. **The first full-resolution `TranslucentScenePass`** (`TranslucentPassKind::First`) — the draws
+   behind the first run, and those clear of it. It records every frame and clears the bloom mask.
+2. **A depth reduce**, once, while the layer is wired: a half-res D32 target as the farthest
+   (reverse-Z minimum) of each texel's 2×2 full-res opaque depths, so the layer's draws
+   depth-test conservatively — a fragment survives wherever any of its four full-res pixels would
+   show it.
+3. **Per segment, the layer's own `TranslucentScenePass`** (`HalfLayer`): half-extent viewport into
+   the half-res HDR target cleared to transparent, per-parent pipelines, and straight alpha blend —
+   which over a transparent clear leaves exactly (premultiplied color, coverage). No bloom-mask
+   attachment: the layer lands in the lit color ahead of the bloom bright-pass, so its glow rides
+   the scene like an unmasked translucent's.
+4. **Per segment, a depth-aware composite** upsamples the layer to full resolution — each 2×2
+   tap's bilinear weight collapsed in proportion to its reduced depth's distance from the pixel's
+   own opaque depth, so the layer hugs geometry edges instead of haloing across them — and blends
+   it into the lit scene color with `(One, OneMinusSrcAlpha)`, **scissored to the segment's
+   rectangle** grown by `HalfResCompositeMarginPixels` (`HalfResCompositeScissor`), so a far
+   planet's shell costs about its disc.
+5. **Per segment, a further full-resolution pass** (`Continuation`) — what lies over that run and
+   before the next. It loads the bloom mask and skips a frame it draws nothing in.
+
+Segment 0's passes keep their names; a later segment's carry its index ("Scene Translucent Half 1",
+"Half-Res Translucent Composite 1", and "Scene Translucent N" for the full-res pass after segment
+N − 1). The layer target is one image cleared per segment, and the full-res passes share one
+pipeline cache, so a material drawn in several segments builds once. A frame whose half-res draws
+all lie behind every full-res draw they overlap records the passes it did before — reduce, layer,
+composite, then a full-res pass — plus the first full-res pass, which records even when it has no
+draws because it clears the bloom mask.
 
 **The layer renders through a second view-constants region.** The one block field a half-res
 fragment must read differently is `ExtentParams`, which carries the half extents so an

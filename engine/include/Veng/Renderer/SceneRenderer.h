@@ -283,6 +283,18 @@ namespace Veng::Renderer
         /// @return The last Execute's draw-budget statistics.
         [[nodiscard]] DrawBudgetStats GetDrawBudgetStats() const;
 
+        /// @brief Returns how the last Execute interleaved its half-resolution translucent draws.
+        ///
+        /// Each run of half-resolution draws a full-resolution draw overlaps and follows composites
+        /// at its own place in the back-to-front order, up to four of them; a frame needing
+        /// more folds the rest into the last segment and counts them in MergedRuns. All zero before
+        /// the first Execute and on a frame with no half-resolution draw.
+        /// @return The last Execute's segment statistics.
+        [[nodiscard]] TranslucentSegmentStats GetTranslucentSegmentStats() const
+        {
+            return m_TranslucentSegmentStats;
+        }
+
         /// @brief Returns the aggregate point-field draw statistics from the last Execute.
         ///
         /// The point-field pass's per-frame counters — fields walked, cells in-frustum / measured,
@@ -1270,6 +1282,8 @@ namespace Veng::Renderer
 
         /// @brief The last Execute's draw-slot / palette budget accounting.
         DrawBudgetStats m_DrawBudgetStats;
+        /// @brief The last Execute's translucent segment statistics (GetTranslucentSegmentStats).
+        TranslucentSegmentStats m_TranslucentSegmentStats;
         /// @brief Set once the slot-budget clamp has logged, so the WARN fires only once.
         bool m_DrawSlotBudgetWarned = false;
         /// @brief Set once the palette-budget clamp has logged, so the WARN fires only once.

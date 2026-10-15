@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/SceneRenderer.h>
 
@@ -107,7 +109,8 @@ namespace Veng::Renderer
     // shared DrawData SSBO by CandidateId, exactly like a static surface draw, so it reuses the
     // renderer's DrawData / candidate-id buffers — its slots are allocated after the opaque and
     // skinned ones. Material is borrowed: the mesh's resident AssetHandle keeps it alive for
-    // this frame. ViewDepth is the sort key (larger = farther), draw large-first.
+    // this frame. ViewDepth is the sort key: the submesh centre's view-space z, more negative
+    // for a farther draw, which draws first.
     struct TranslucentDraw
     {
         const MaterialInstance* Material;
@@ -119,6 +122,12 @@ namespace Veng::Renderer
         // The parent material's authored draw-order priority: draws sort back-to-front
         // within ascending priority groups, so a higher priority draws over a lower one.
         i32 SortPriority;
+        // The screen rectangle the submesh's bounds project to, in UV (min xy, max xy), clamped
+        // to [0, 1]; the whole screen when any corner lies behind the eye. What the segmenting
+        // tests two draws' overlap by.
+        vec4 ScreenRect{0.0f, 0.0f, 1.0f, 1.0f};
+        // Whether the material opted into the reduced-resolution layer.
+        bool HalfResolution = false;
     };
 
     // The per-frame forward translucent submission plan SceneRenderer fills before each graph
@@ -131,5 +140,24 @@ namespace Veng::Renderer
         // Back-to-front by ViewDepth. Always CPU-direct (a DrawIndexed per entry) — translucent
         // geometry never enters the GPU-driven cull path (it sorts per-submesh, not per group).
         vector<TranslucentDraw> Draws;
+    };
+
+    // The most runs of half-resolution draws a frame interleaves with the full-resolution ones,
+    // each composited at its own place in the back-to-front order.
+    inline constexpr u32 MaxHalfResSegments = 4;
+
+    // A frame's translucent draws cut into the order they composite in: Full[0], then for each
+    // segment i its half-resolution run Half[i] composited over everything before it, then
+    // Full[i + 1]. HalfRect[i] is the union of Half[i]'s screen rectangles, which its composite is
+    // scissored to. Filled by SegmentTranslucentDraws; the plans' Push, DrawDataSet and
+    // CandidateIdBuffer are the caller's.
+    struct TranslucentSegments
+    {
+        std::array<TranslucentDrawPlan, MaxHalfResSegments + 1> Full;
+        std::array<TranslucentDrawPlan, MaxHalfResSegments> Half;
+        std::array<vec4, MaxHalfResSegments> HalfRect{};
+        // Half-resolution runs folded into the last segment because the frame had more than
+        // MaxHalfResSegments of them; the full-resolution draws between those runs draw over them.
+        u32 MergedRuns = 0;
     };
 }

@@ -39,7 +39,7 @@ namespace Veng::Renderer
     HalfResTranslucency::HalfResTranslucency(Context& context, AssetManager& assets)
         : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "HalfResTranslucency: {} shader load failed: {}", what,
@@ -159,24 +159,35 @@ namespace Veng::Renderer
         m_DepthHandle = bindless.Register(m_DepthView);
     }
 
-    void HalfResTranslucency::Declare(vector<Unique<ScenePass>>& passes, const ResourceId layerId,
-                                      const ResourceId halfDepthId, const ResourceId depthId,
-                                      const TextureHandle depthHandle, const ResourceId targetId,
-                                      const TranslucentDrawPlan* plan,
-                                      const ResourceId sceneColorId, const ResourceId sceneDepthId,
-                                      const uvec2 extent, const ForwardLightingSets& forward) const
+    void HalfResTranslucency::DeclareDepthReduce(vector<Unique<ScenePass>>& passes,
+                                                 const ResourceId halfDepthId,
+                                                 const ResourceId depthId,
+                                                 const TextureHandle depthHandle,
+                                                 const TranslucentDrawPlan* firstSegment) const
     {
+        // The first run of half-res draws always lands in the first segment, so its plan being
+        // empty is the frame having no half-res draw at all.
         passes.push_back(CreateUnique<HalfResDepthReduceScenePass>(
-            m_Context, m_ReducePipeline, depthId, depthHandle, halfDepthId, plan));
+            m_Context, m_ReducePipeline, depthId, depthHandle, halfDepthId, firstSegment));
+    }
+
+    void HalfResTranslucency::DeclareSegment(
+        vector<Unique<ScenePass>>& passes, const u32 segment, const ResourceId layerId,
+        const ResourceId halfDepthId, const ResourceId depthId, const TextureHandle depthHandle,
+        const ResourceId targetId, const TranslucentDrawPlan* plan, const vec4* rect,
+        const ResourceId sceneColorId, const ResourceId sceneDepthId, const uvec2 extent,
+        const ForwardLightingSets& forward,
+        const Ref<TranslucentScenePass::PipelineCache>& pipelines) const
+    {
         // The layer's own translucent pass: half viewport, transparent clear, no bloom mask —
         // the layer is composited into the lit color before the bloom bright-pass reads it, so
         // its glow rides the scene the way an unmasked full-res translucent's does.
         passes.push_back(CreateUnique<TranslucentScenePass>(
             m_Context, HalfResExtent(extent), plan, layerId, halfDepthId, sceneColorId,
-            sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined, /*halfResolution=*/true,
-            forward));
+            sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined,
+            TranslucentPassKind::HalfLayer, segment, forward, pipelines));
         passes.push_back(CreateUnique<HalfResCompositeScenePass>(
             m_Context, m_CompositePipeline, layerId, m_LayerHandle, halfDepthId, m_DepthHandle,
-            depthId, depthHandle, targetId, plan));
+            depthId, depthHandle, targetId, plan, rect, segment));
     }
 }
