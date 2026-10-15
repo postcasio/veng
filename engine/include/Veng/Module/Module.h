@@ -531,10 +531,12 @@ extern "C"
 /// first at the wrong offset.
 /// Version 128 composites the half-resolution translucent layer at its depth: SceneRenderer grows
 /// the TranslucentSegmentStats it reports, and a module owns renderers.
+/// Version 129 lets an impostor sort where it stands: MeshRenderer and VisibleMesh grow
+/// SortDistance. A module spawns renderers, so a stale one lays the component out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 128u
+#define VENG_MODULE_ABI_VERSION 129u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

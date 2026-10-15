@@ -206,8 +206,9 @@ as `parent.world * local` — see [World transforms](#world-transforms) for the 
 (the component whose FovY/Near/Far and world transform build a `CameraView`, the value type
 carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
-`(Transform, MeshRenderer)` and draws each submesh with its material — plus two independent
-switches and a layer: `CastsShadows` drops it from the shadow views alone, **`Visible`** drops it from
+`(Transform, MeshRenderer)` and draws each submesh with its material — plus two independent switches, a sort distance and a layer: `CastsShadows` drops it from the shadow views alone, **`SortDistance`** (zero by default) is the
+view depth its translucent submeshes sort at in place of their drawn one — an impostor drawn on a
+fixed-distance shell states where it stands — **`Visible`** drops it from
 the gather entirely, so it is neither drawn, nor a caster, nor part of the scene bound, and **`Layer`**
 (a `RenderLayer`, default `Default`) names the render-visibility layer it sits on — a view draws it
 only when the view's mask names the layer, so `RenderLayer::ViewAnchored` marks a camera-anchored mesh

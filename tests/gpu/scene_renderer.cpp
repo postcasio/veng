@@ -6453,8 +6453,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 // The half-resolution layer composites at its place among the full-resolution translucents: a
-// near half-res cube lays over a far full-res one, a far one lies under a near one, and a full-res
-// draw beside the layer rather than over it opens no segment of its own.
+// near half-res cube lays over a far full-res one, a far one lies under a near one, a full-res
+// draw beside the layer rather than over it opens no segment of its own, and a renderer's stated
+// sort distance places its draws in place of where they are drawn.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "scene renderer: the half-resolution layer composites at its depth")
 {
@@ -6540,6 +6541,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     RenderAt(vec3(-1.6f, 0.0f, -1.5f), vec3(2.2f, 0.0f, 1.5f));
     CHECK(renderer->GetTranslucentSegmentStats().HalfResSegments == 1);
     CHECK_FALSE(renderer->DidRecordPassLastFrame("Scene Translucent 1"));
+
+    // The half-res cube drawn farther but stating a nearer sort distance sorts where it says it
+    // stands, so its red lies over the blue drawn in front of it.
+    scene->Get<MeshRenderer>(halfEntity).SortDistance = 1.0f;
+    const vec3 statedNear = RenderAt(vec3(0.0f, 0.0f, -1.5f), vec3(0.0f, 0.0f, 1.5f));
+    CHECK(statedNear.r > statedNear.b);
 
     std::filesystem::remove(outArchive);
 }

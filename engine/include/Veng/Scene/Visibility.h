@@ -52,6 +52,9 @@ namespace Veng
         /// @brief Mirrors MeshRenderer::SortPriority: added to a Translucent submesh's material
         ///        priority when its draws are ordered.
         i32 SortPriority = 0;
+        /// @brief Mirrors MeshRenderer::SortDistance: the view depth a Translucent submesh sorts at
+        ///        in place of its drawn one, or zero to sort where it is drawn.
+        f32 SortDistance = 0.0f;
         /// @brief The level of detail every view draws this mesh at, or AutomaticLod to select one.
         ///
         /// Mirrors the entity's LodOverride::Level when it carries one; it wins over a view's own

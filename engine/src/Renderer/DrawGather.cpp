@@ -432,7 +432,9 @@ namespace Veng::Renderer
             const vec3 center = subMesh.Bounds.IsEmpty()
                                     ? (item.WorldBounds.Min + item.WorldBounds.Max) * 0.5f
                                     : vec3(item.World * vec4(subMesh.Bounds.Center(), 1.0f));
-            const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
+            // An entity that states where it stands sorts there, whatever its drawn depth.
+            const f32 viewDepth =
+                item.SortDistance > 0.0f ? -item.SortDistance : (viewMatrix * vec4(center, 1.0f)).z;
 
             // A material that opted into the reduced-resolution layer routes to its own plan, and
             // the screen rectangle is what segmenting tests a full-res draw against a run by.

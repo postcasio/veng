@@ -261,6 +261,17 @@ namespace Veng
         /// material need not be split into a second parent to order one use of it. Ignored by every
         /// other domain.
         i32 SortPriority = 0;
+        /// @brief The distance from the eye this entity's Translucent submeshes sort at, in place
+        ///        of where they are drawn; zero (the default) sorts them where they are drawn.
+        ///
+        /// Within a priority group translucent draws order back to front by their submeshes'
+        /// view-space depth. An impostor — a distant body drawn on a shell at a fixed distance and
+        /// scaled to hold its apparent size — is drawn nowhere near where it stands, so its drawn
+        /// depth says nothing about which of two such bodies is nearer; the caller that placed it
+        /// knows, and states it here as the view depth its draws sort at (world units, positive).
+        /// It orders the draws and nothing else: what they occlude and what occludes them is the
+        /// depth test's. Ignored by every other domain.
+        f32 SortDistance = 0.0f;
         /// @brief Whether this mesh is drawn at all.
         ///
         /// True (the default) draws it normally. False excludes it from the render gather
@@ -2059,6 +2070,10 @@ VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(SortPriority, .DisplayName = "Sort priority")
+VE_FIELD(
+    SortDistance, .DisplayName = "Sort distance",
+    .Tooltip = "The view depth translucent submeshes sort at; 0 sorts them where they are drawn",
+    .Display = {.Min = 0.0})
 VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_REFLECT_END();

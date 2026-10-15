@@ -74,6 +74,7 @@ namespace Veng
                 .Materials = materials,
                 .CastsShadows = renderer->CastsShadows,
                 .SortPriority = renderer->SortPriority,
+                .SortDistance = renderer->SortDistance,
             });
             if (anyLodOverride)
             {

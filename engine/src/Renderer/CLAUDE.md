@@ -979,7 +979,11 @@ behind the eye) does not overlap the run's draws **ahead of** the run's composit
 begins only where a full-res draw and a half-res run genuinely overlap and alternate in depth. A
 frame has at most `MaxHalfResSegments` (4); further runs fold into the last, and the full-res
 draws between them draw over them (`SceneRenderer::GetTranslucentSegmentStats`). The order is
-object-level, as the full-res pass's always was: each draw sorts by its centre.
+object-level, as the full-res pass's always was: each draw sorts by its centre — or, for an
+entity whose `MeshRenderer::SortDistance` is set, at that view depth. That is what an impostor
+states: a distant body drawn on a fixed-distance shell and scaled to hold its apparent size is drawn
+nowhere near where it stands, so its drawn depth cannot order it against another such body, and the
+system that placed it supplies the distance it does stand at.
 
 The passes, in both compositing arms (`DeclareTranslucents` in `Rebuild`):
 
