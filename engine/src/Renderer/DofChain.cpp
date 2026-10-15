@@ -112,7 +112,7 @@ namespace Veng::Renderer
                        const Format compositeFormat)
         : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "DofChain: {} shader load failed: {}", what,
@@ -348,7 +348,7 @@ namespace Veng::Renderer
         const uvec2 tiles = TileGridOf(half);
 
         // Allocates one half-resolution storage/sampled target and its view.
-        auto MakeHalfTarget =
+        const auto MakeHalfTarget =
             [&](const char* name, const Format format, Ref<Image>& image, Ref<ImageView>& view)
         {
             image = Image::Create(m_Context, {
@@ -389,7 +389,12 @@ namespace Veng::Renderer
                                .Name = "SceneRenderer DoF Scene",
                                .Extent = {m_Extent.x, m_Extent.y, 1},
                                .Format = DofFormat,
-                               .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                               // MetalFX's temporal scaler writes it when it is the resolve.
+                               .Usage = settings.UsesMetalFxTemporal()
+                                            ? ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                                  ImageUsage::Storage
+                                            : ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                               .PlatformExport = settings.UsesMetalFxTemporal(),
                            });
             m_SceneView = ImageView::Create(
                 m_Context, {.Name = "SceneRenderer DoF Scene View", .Image = m_SceneImage});
@@ -429,8 +434,8 @@ namespace Veng::Renderer
         m_TileSet->Write(2, m_TileView);
 
         // Builds one gather set: the layer to gather, the shared tile records, and the destination.
-        auto MakeGatherSet = [&](const char* name, const Ref<ImageView>& layer,
-                                 const Ref<ImageView>& dest) -> Ref<DescriptorSet>
+        const auto MakeGatherSet = [&](const char* name, const Ref<ImageView>& layer,
+                                       const Ref<ImageView>& dest) -> Ref<DescriptorSet>
         {
             Ref<DescriptorSet> set =
                 DescriptorSet::Create(m_Context, {.Name = name, .Layout = m_GatherSetLayout});
@@ -447,8 +452,8 @@ namespace Veng::Renderer
 
         // The fill sets ride the borrowed bloom down/up layout: sampled source, sampler, storage
         // destination — exactly a fill dispatch's shape.
-        auto MakeFillSet = [&](const char* name, const Ref<ImageView>& source,
-                               const Ref<ImageView>& dest) -> Ref<DescriptorSet>
+        const auto MakeFillSet = [&](const char* name, const Ref<ImageView>& source,
+                                     const Ref<ImageView>& dest) -> Ref<DescriptorSet>
         {
             Ref<DescriptorSet> set =
                 DescriptorSet::Create(m_Context, {.Name = name, .Layout = bloomDownUpLayout});

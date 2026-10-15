@@ -123,6 +123,16 @@ namespace Veng::Renderer
         /// ResolveTemporalUpscalePromotes); the scene-colour chain from the resolve onward is then
         /// allocation-resolution and no spatial promotion follows it.
         bool TaaUpscalePromotes = false;
+        /// @brief The temporal resolve is MetalFX's temporal scaler rather than the engine's own.
+        ///
+        /// A refinement of TaaActive: the jitter, lit target and velocity are wired as for any
+        /// temporal resolve, and the scaler replaces the resolve and history-copy passes, keeping
+        /// its own history.
+        bool MetalFxTemporal = false;
+        /// @brief The scene-colour promotion, when wired, is MetalFX's spatial scaler.
+        ///
+        /// The bloom mask still crosses the boundary bilinearly, in a pass of its own.
+        bool MetalFxSpatialPromotion = false;
         /// @brief The FXAA post-tonemap resolve is wired (reads the tonemapped LDR).
         bool FxaaActive = false;
         /// @brief The CMAA2 post-tonemap compute resolve is wired (reads the tonemapped LDR).
@@ -280,6 +290,26 @@ namespace Veng::Renderer
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @return True when the temporal resolve is the promotion.
     [[nodiscard]] bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings);
+
+    /// @brief What the device's MetalFX can run, as the settings resolution reads it.
+    struct MetalFxAvailability
+    {
+        /// @brief A temporal scaler can be created for the renderer's current allocations.
+        bool Temporal = false;
+        /// @brief A spatial scaler can be created on the device.
+        bool Spatial = false;
+    };
+
+    /// @brief Replaces every MetalFX choice the device cannot run with its engine counterpart.
+    ///
+    /// MetalFXTemporal falls back to TAAU, which wires the same inputs and allocations, and the
+    /// MetalFXSpatial filter to Bilinear. Everything else is returned unchanged, so a renderer on a
+    /// device without MetalFX renders exactly as if the engine choice had been made.
+    /// @param settings     The requested settings.
+    /// @param availability What MetalFX can run.
+    /// @return The settings the renderer runs.
+    [[nodiscard]] VE_API SceneRendererSettings
+    ResolveMetalFxSettings(const SceneRendererSettings& settings, MetalFxAvailability availability);
 
     /// @brief Whether the frame wires the bloom pyramid sweep (and so the bloom mask beside it).
     ///

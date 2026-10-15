@@ -14,6 +14,10 @@
 // an edge crosses is where the jitter sequence is being integrated, so it legitimately moves by a
 // fraction of the edge contrast each frame. What may not move is where that edge sits, which the
 // centroid checks hold.
+//
+// MetalFX's temporal scaler is held to the same claims on looser bounds, since its reconstruction
+// is the platform's rather than the engine's; and its spatial scaler, which keeps no history, to
+// placing a half-scale render where the native one lies.
 
 #include <algorithm>
 #include <cmath>
@@ -248,6 +252,38 @@ namespace
             return worst;
         }
 
+        // The settings a renderer runs when asked for these, after any engine fallback.
+        SceneRendererSettings Resolved(const SceneRendererSettings& settings)
+        {
+            const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+                .Context = Gpu.Context,
+                .Assets = Assets,
+                .OutputFormat = Gpu.Context.GetOutputFormat(),
+                .Extent = Extent,
+                .Settings = settings,
+            });
+            return renderer->GetSettings();
+        }
+
+        // The tonemapped output after a few frames under the given settings and render scale.
+        HdrFrame Output(const SceneRendererSettings& settings, const f32 renderScale)
+        {
+            const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+                .Context = Gpu.Context,
+                .Assets = Assets,
+                .OutputFormat = Gpu.Context.GetOutputFormat(),
+                .Extent = Extent,
+                .Settings = settings,
+            });
+            // The promotion is wired by the first frame rendering below the allocation; the frames
+            // after it run the promoted graph.
+            for (u32 frame = 0; frame < 3; ++frame)
+            {
+                Execute(*renderer, renderScale);
+            }
+            return Decode(renderer->GetOutput()->GetImage()->Download());
+        }
+
         Stability Measure(const AntiAliasingMode mode, const f32 renderScale,
                           const bool depthOfField = false)
         {
@@ -458,7 +494,21 @@ namespace
     // keeps its place to within that ripple rather than following the jitter.
     constexpr f32 MaxEdgeWander = 0.1f;
 
-    void CheckStill(const Stability& s)
+    // How still a converged resolve must hold.
+    struct StillnessBounds
+    {
+        f32 FrameDelta = MaxFrameDelta;
+        f32 StarWander = MaxStarWander;
+        f32 EdgeWander = MaxEdgeWander;
+    };
+
+    // MetalFX's own reconstruction leaves a residual the engine does not control: measured at
+    // landing, up to 6e-3 in the cube and 0.07 px on the star. A jitter the scaler is told wrongly
+    // and so leaves in the image moves the edge by a pixel and the star by more, so these bounds
+    // sit an order of magnitude under the failure they exist to catch.
+    constexpr StillnessBounds MetalFxBounds{.FrameDelta = 1.5e-2f, .StarWander = 0.15f};
+
+    void CheckStill(const Stability& s, const StillnessBounds& bounds = {})
     {
         CAPTURE(s.CubeDelta);
         CAPTURE(s.SkyDelta);
@@ -466,20 +516,69 @@ namespace
         CAPTURE(s.StarWander);
         REQUIRE(s.CubePixels > 50);
         REQUIRE(s.SkyPixels > 500);
-        CHECK(s.CubeDelta < MaxFrameDelta);
-        CHECK(s.SkyDelta < MaxFrameDelta);
-        CHECK(s.EdgeWander < MaxEdgeWander);
-        CHECK(s.StarWander < MaxStarWander);
+        CHECK(s.CubeDelta < bounds.FrameDelta);
+        CHECK(s.SkyDelta < bounds.FrameDelta);
+        CHECK(s.EdgeWander < bounds.EdgeWander);
+        CHECK(s.StarWander < bounds.StarWander);
     }
 
-    void CheckStatic(StabilityScene& scene, const AntiAliasingMode mode)
+    void CheckStatic(StabilityScene& scene, const AntiAliasingMode mode,
+                     const StillnessBounds& bounds = {})
     {
         CHECK(scene.MaxMotion(mode) == 0.0f);
         for (const f32 renderScale : {1.0f, 0.5f})
         {
             CAPTURE(renderScale);
-            CheckStill(scene.Measure(mode, renderScale));
+            CheckStill(scene.Measure(mode, renderScale), bounds);
         }
+    }
+
+    // The cube's left silhouette along the middle row band, as the luminance-rise-weighted mean of
+    // the pixel boundaries around the first cube pixel.
+    f32 LeftEdge(const HdrFrame& frame)
+    {
+        const i32 w = static_cast<i32>(Extent.x);
+        const i32 h = static_cast<i32>(Extent.y);
+        i32 edgeX = -1;
+        for (i32 x = 0; x < w && edgeX < 0; ++x)
+        {
+            if (frame.Luminance[Index(x, h / 2)] > CubeThreshold)
+            {
+                edgeX = x;
+            }
+        }
+        REQUIRE(edgeX > 6);
+        f64 sum = 0.0;
+        f64 weight = 0.0;
+        for (i32 y = h / 3; y <= 2 * h / 3; ++y)
+        {
+            for (i32 x = edgeX - 5; x < edgeX + 4; ++x)
+            {
+                const f32 rise =
+                    std::max(frame.Luminance[Index(x + 1, y)] - frame.Luminance[Index(x, y)], 0.0f);
+                sum += static_cast<f64>(rise) * (x + 1);
+                weight += rise;
+            }
+        }
+        REQUIRE(weight > 0.0);
+        return static_cast<f32>(sum / weight);
+    }
+
+    // The mean luminance of the sky in the output's bottom-right corner, the region a promotion
+    // reading the wrong part of its source would show something else in.
+    f32 CornerSky(const HdrFrame& frame)
+    {
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (u32 y = Extent.y - 10; y < Extent.y - BorderBand; ++y)
+        {
+            for (u32 x = Extent.x - 10; x < Extent.x - BorderBand; ++x)
+            {
+                sum += frame.Luminance[Index(static_cast<i32>(x), static_cast<i32>(y))];
+                ++count;
+            }
+        }
+        return static_cast<f32>(sum / count);
     }
 }
 
@@ -506,4 +605,55 @@ TEST_CASE_FIXTURE(
     // own target; the image the chain composites still converges like the plain resolve's.
     StabilityScene scene(*this);
     CheckStill(scene.Measure(AntiAliasingMode::TAA, 1.0f, true));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "taa stability: a static view converges to a still image under MetalFX temporal")
+{
+    StabilityScene scene(*this);
+    // The renderer keeps the choice exactly where the device readout says the scaler runs (at
+    // these allocations, well inside its scale range), and runs TAAU elsewhere.
+    const bool supported = Context.GetDeviceCapabilities().MetalFxTemporal;
+    CHECK((scene.Resolved({.AntiAliasing = AntiAliasingMode::MetalFXTemporal}).AntiAliasing ==
+           AntiAliasingMode::MetalFXTemporal) == supported);
+    if (!supported)
+    {
+        MESSAGE("MetalFX temporal scaling is unavailable on this device; nothing to measure");
+        return;
+    }
+    CheckStatic(scene, AntiAliasingMode::MetalFXTemporal, MetalFxBounds);
+    // With a composited depth of field the scaler reconstructs the chain's intermediate at the
+    // render allocation instead of promoting.
+    CheckStill(scene.Measure(AntiAliasingMode::MetalFXTemporal, 1.0f, true), MetalFxBounds);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "upscale: a MetalFX spatial promotion places a half-scale render where native lies")
+{
+    StabilityScene scene(*this);
+    const SceneRendererSettings settings{.Mode = DebugView::Final,
+                                         .Bloom = false,
+                                         .Upscale = UpscaleFilter::MetalFXSpatial,
+                                         .Shadows = false,
+                                         .PunctualShadows = false,
+                                         .AO = false};
+    const bool supported = Context.GetDeviceCapabilities().MetalFxSpatial;
+    CHECK((scene.Resolved(settings).Upscale == UpscaleFilter::MetalFXSpatial) == supported);
+    if (!supported)
+    {
+        MESSAGE("MetalFX spatial scaling is unavailable on this device; nothing to measure");
+        return;
+    }
+
+    const HdrFrame native = scene.Output(settings, 1.0f);
+    const HdrFrame half = scene.Output(settings, 0.5f);
+    // A half-scale render places an edge only to a render pixel, two output pixels wide, and an
+    // edge-adaptive filter sharpens it within that pixel (measured at landing: 0.7 output px from
+    // native, against 0.4 for the bilinear tap). A promotion reading the wrong part of its source
+    // moves it by many pixels; it must stay within half a render pixel.
+    CHECK(std::abs(LeftEdge(half) - LeftEdge(native)) < 1.0f);
+    // The sky is a smooth gradient, so the upscale reproduces it closely wherever it read the
+    // right part of the source.
+    CHECK(CornerSky(half) == doctest::Approx(CornerSky(native)).epsilon(0.05));
 }

@@ -35,7 +35,7 @@ namespace Veng::Renderer
 
     TaaResolve::TaaResolve(Context& context, AssetManager& assets) : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "TaaResolve: {} shader load failed: {}", what,
@@ -49,8 +49,8 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> copyFs =
             LoadShader(TaaHistoryCopyFragId, "TAA history-copy fragment");
 
-        auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
-                                const AssetHandle<Veng::Shader>& fs) -> Ref<GraphicsPipeline>
+        const auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
+                                      const AssetHandle<Veng::Shader>& fs) -> Ref<GraphicsPipeline>
         {
             return GraphicsPipeline::Create(
                 m_Context, {
@@ -94,7 +94,8 @@ namespace Veng::Renderer
         bindless.Release(m_HistoryHandle);
     }
 
-    void TaaResolve::Resize(const uvec2 litExtent, const uvec2 historyExtent, const bool enabled)
+    void TaaResolve::Resize(const uvec2 litExtent, const uvec2 historyExtent, const bool enabled,
+                            const bool platformResolve)
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
 
@@ -114,11 +115,21 @@ namespace Veng::Renderer
                                                       .Extent = {litExtent.x, litExtent.y, 1},
                                                       .Format = HdrFormat,
                                                       .Usage = HdrUsage,
+                                                      .PlatformExport = platformResolve,
                                                   });
             m_LitView = ImageView::Create(m_Context,
                                           {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
             m_LitHandle = bindless.Register(m_LitView);
+        }
+        else
+        {
+            // Drop the resolve targets when TAA is off so the memory is not held for an unused path.
+            m_LitImage.reset();
+            m_LitView.reset();
+        }
 
+        if (enabled && !platformResolve)
+        {
             m_HistoryImage =
                 Image::Create(m_Context, {
                                              .Name = "SceneRenderer TAA History",
@@ -132,9 +143,6 @@ namespace Veng::Renderer
         }
         else
         {
-            // Drop the resolve targets when TAA is off so the memory is not held for an unused path.
-            m_LitImage.reset();
-            m_LitView.reset();
             m_HistoryImage.reset();
             m_HistoryView.reset();
         }

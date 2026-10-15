@@ -165,6 +165,10 @@ namespace Veng::Renderer
     /// native image, with no second resample behind it. A TAAU frame that also wires a composited
     /// depth-of-field chain resolves like TAA instead (the chain reads render-resolution depth beside
     /// the scene colour), degrading the reconstruction to spatial and keeping everything else.
+    ///
+    /// MetalFXTemporal is TAAU with the platform's temporal scaler as the resolve: the same jitter,
+    /// lit target, velocity and allocations, with Apple's MetalFX reconstructing the output from
+    /// them and keeping its own history. Where the device has no MetalFX the renderer runs TAAU.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.
@@ -177,6 +181,8 @@ namespace Veng::Renderer
         CMAA2,
         /// @brief TAAU: the temporal resolve as an upscaler — render below native, reconstruct native.
         TAAU,
+        /// @brief MetalFX temporal: TAAU with Apple's MetalFX temporal scaler as the resolve.
+        MetalFXTemporal,
     };
 
     /// @brief Display names for the AntiAliasingMode arms, indexed by enum value.
@@ -184,11 +190,35 @@ namespace Veng::Renderer
     /// One source of truth for an AA-mode selector in a debug panel or editor viewport, the
     /// DebugViewNames precedent: entry N names AntiAliasingMode N, so a combo's selected index
     /// casts straight to the enum.
-    inline constexpr std::array<string_view, 5> AntiAliasingModeNames{"None", "FXAA", "TAA",
-                                                                      "CMAA2", "TAAU"};
+    inline constexpr std::array<string_view, 6> AntiAliasingModeNames{
+        "None", "FXAA", "TAA", "CMAA2", "TAAU", "MetalFX Temporal"};
     static_assert(
-        AntiAliasingModeNames.size() == static_cast<usize>(AntiAliasingMode::TAAU) + 1,
+        AntiAliasingModeNames.size() == static_cast<usize>(AntiAliasingMode::MetalFXTemporal) + 1,
         "AntiAliasingModeNames must list every AntiAliasingMode arm in declaration order.");
+
+    /// @brief Selects the filter that carries the scene colour up to the post-resolve allocation.
+    ///
+    /// The promotion runs on every frame whose scene colour is smaller than the post-resolve
+    /// allocation — a reduced render scale, a dynamic-resolution sub-rect, or both — and on no
+    /// other. A temporal-upscaling resolve (TAAU, MetalFXTemporal) is itself the promotion, so the
+    /// filter does nothing under one. Orthogonal to the anti-aliasing mode otherwise: it composes
+    /// with none, FXAA, CMAA2 and TAA.
+    enum class UpscaleFilter : u8
+    {
+        /// @brief One bilinear tap per output pixel.
+        Bilinear,
+        /// @brief Apple's MetalFX spatial scaler, on the linear HDR scene colour.
+        ///
+        /// An edge-adaptive single-frame upscale. Where the device has no MetalFX the renderer
+        /// filters bilinearly.
+        MetalFXSpatial,
+    };
+
+    /// @brief Display names for the UpscaleFilter arms, indexed by enum value.
+    inline constexpr std::array<string_view, 2> UpscaleFilterNames{"Bilinear", "MetalFX Spatial"};
+    static_assert(UpscaleFilterNames.size() ==
+                      static_cast<usize>(UpscaleFilter::MetalFXSpatial) + 1,
+                  "UpscaleFilterNames must list every UpscaleFilter arm in declaration order.");
 
     /// @brief Selects the renderer's top-level render path — the topology axis above DebugView.
     ///
@@ -287,6 +317,13 @@ namespace Veng::Renderer
         /// prepass and dynamic objects reproject correctly. Supersampling composes on top through
         /// the viewport's MaxAllocationScale — it is not one of these modes.
         AntiAliasingMode AntiAliasing = AntiAliasingMode::None;
+
+        /// @brief The filter carrying the scene colour up to the post-resolve allocation.
+        ///
+        /// A topology change through Configure: it selects which pass the promotion is, so it
+        /// matters only on a frame rendering below the post-resolve allocation whose resolve is
+        /// not itself the promotion (see the enum).
+        UpscaleFilter Upscale = UpscaleFilter::Bilinear;
 
         /// @brief Whether the directional light casts a shadow.
         ///
@@ -520,23 +557,41 @@ namespace Veng::Renderer
         /// and which resolve occupies the anchor — the temporal one, or the spatial promotion that
         /// stands in for it), so it earns a named predicate rather than a bare enum compare at each
         /// site. It does **not** gate the post-resolve chain's resolution: that chain runs at the
-        /// full allocation in every mode. Both TAA and TAAU run it; they share the whole temporal
-        /// machinery.
-        /// @return True for AntiAliasingMode::TAA and AntiAliasingMode::TAAU.
+        /// full allocation in every mode. TAA, TAAU and MetalFXTemporal run it; they share the
+        /// jitter, the lit target and the velocity, and differ only in the resolve.
+        /// @return True for AntiAliasingMode::TAA, TAAU and MetalFXTemporal.
         [[nodiscard]] bool UsesTaa() const
         {
-            return AntiAliasing == AntiAliasingMode::TAA || AntiAliasing == AntiAliasingMode::TAAU;
+            return AntiAliasing == AntiAliasingMode::TAA ||
+                   AntiAliasing == AntiAliasingMode::TAAU ||
+                   AntiAliasing == AntiAliasingMode::MetalFXTemporal;
         }
 
-        /// @brief Whether the temporal resolve is acting as an upscaler (render below native).
+        /// @brief Whether the temporal resolve reconstructs the post-resolve allocation.
         ///
-        /// TAAU-only: the viewport reads this to pin the allocation to native and route the render
-        /// scale into the rendered sub-rect, so the resolve reconstructs the native image. TAA leaves
-        /// the render scale an allocation scale, so it returns false there.
-        /// @return True only for AntiAliasingMode::TAAU.
+        /// The resolve is then the promotion (see ResolveTemporalUpscalePromotes for the one
+        /// frame shape that declines it). TAA resolves at the render allocation and returns false.
+        /// @return True for AntiAliasingMode::TAAU and MetalFXTemporal.
         [[nodiscard]] bool UsesTaaUpscaling() const
         {
-            return AntiAliasing == AntiAliasingMode::TAAU;
+            return AntiAliasing == AntiAliasingMode::TAAU ||
+                   AntiAliasing == AntiAliasingMode::MetalFXTemporal;
+        }
+
+        /// @brief Whether the temporal resolve is MetalFX's scaler rather than the engine's own.
+        /// @return True only for AntiAliasingMode::MetalFXTemporal.
+        [[nodiscard]] bool UsesMetalFxTemporal() const
+        {
+            return AntiAliasing == AntiAliasingMode::MetalFXTemporal;
+        }
+
+        /// @brief Whether any pass this configuration wires is a MetalFX scaler.
+        ///
+        /// Its inputs and outputs are then created exportable to Metal (ImageInfo::PlatformExport).
+        /// @return True under MetalFXTemporal or the MetalFXSpatial upscale filter.
+        [[nodiscard]] bool UsesMetalFx() const
+        {
+            return UsesMetalFxTemporal() || Upscale == UpscaleFilter::MetalFXSpatial;
         }
 
         /// @brief Compares two settings field-for-field for topology equivalence.
@@ -581,6 +636,12 @@ VE_ENUMERATOR(FXAA)
 VE_ENUMERATOR(TAA)
 VE_ENUMERATOR(CMAA2)
 VE_ENUMERATOR(TAAU)
+VE_ENUMERATOR(MetalFXTemporal)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Renderer::UpscaleFilter, 0x5B1D2C72C130D82DULL)
+VE_ENUMERATOR(Bilinear)
+VE_ENUMERATOR(MetalFXSpatial)
 VE_ENUM_END();
 
 VE_ENUM(::Veng::Renderer::RenderPath, 0xAA4082E0B2E08CFBULL)
@@ -606,6 +667,10 @@ VE_FIELD(GBufferShadingOverride, .DisplayName = "G-buffer shading override",
 VE_FIELD(Bloom, .DisplayName = "Bloom", .Category = "Bloom")
 VE_FIELD(Kernel, .DisplayName = "Bloom kernel", .Category = "Bloom")
 VE_FIELD(AntiAliasing, .DisplayName = "Anti-aliasing", .Category = "Anti-aliasing")
+VE_FIELD(Upscale, .DisplayName = "Upscale filter",
+         .Tooltip = "The filter carrying the scene up to native when it renders below it; a "
+                    "temporal-upscaling resolve is its own",
+         .Category = "Anti-aliasing")
 VE_FIELD(Shadows, .DisplayName = "Directional shadows", .Category = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual shadows", .Category = "Shadows")
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow resolution",

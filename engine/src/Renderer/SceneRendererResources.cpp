@@ -393,6 +393,8 @@ namespace Veng::Renderer
                            .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
                            .Format = GBuffer::DepthFormat,
                            .Usage = GBuffer::DepthUsage,
+                           // MetalFX's temporal scaler reads depth and velocity itself.
+                           .PlatformExport = m_Settings.UsesMetalFxTemporal(),
                        });
         m_DepthView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
@@ -406,6 +408,7 @@ namespace Veng::Renderer
                            .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
                            .Format = GBuffer::VelocityFormat,
                            .Usage = GBuffer::ColorUsage,
+                           .PlatformExport = m_Settings.UsesMetalFxTemporal(),
                        });
         m_VelocityView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Velocity View", .Image = m_VelocityImage});
@@ -582,8 +585,13 @@ namespace Veng::Renderer
                            .Name = "SceneRenderer HDR",
                            .Extent = {m_SceneColorAllocExtent.x, m_SceneColorAllocExtent.y, 1},
                            .Format = HdrFormat,
-                           // Transfer source so GetHdrView's tests and tooling can read it back.
-                           .Usage = HdrUsage | ImageUsage::TransferSrc,
+                           // Transfer source so GetHdrView's tests and tooling can read it back;
+                           // storage where MetalFX's temporal scaler writes it, and exportable
+                           // wherever a MetalFX scaler reads or writes it.
+                           .Usage = m_Settings.UsesMetalFx()
+                                        ? HdrUsage | ImageUsage::TransferSrc | ImageUsage::Storage
+                                        : HdrUsage | ImageUsage::TransferSrc,
+                           .PlatformExport = m_Settings.UsesMetalFx(),
                        });
         m_HdrView =
             ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});

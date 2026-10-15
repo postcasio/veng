@@ -343,14 +343,14 @@ unwidened).
 ### Anti-aliasing
 
 **`Settings.AntiAliasing` is one mutually-exclusive `AntiAliasingMode`** — `None` (default), `FXAA`,
-`TAA`, `CMAA2`, or `TAAU` — resolved by `FrameTopology` into at most one wired resolve. `TAA` and
-`TAAU` are the HDR-space temporal resolve below; `FXAA` and `CMAA2` are the post-tonemap **spatial**
+`TAA`, `CMAA2`, `TAAU`, or `MetalFXTemporal` — resolved by `FrameTopology` into at most one wired
+resolve. `TAA`, `TAAU` and `MetalFXTemporal` are the HDR-space temporal resolve below; `FXAA` and `CMAA2` are the post-tonemap **spatial**
 resolves under "Spatial anti-aliasing" further down. **Supersampling (SSAA) is not one of these
 modes** — it is orthogonal, driven by the viewport's `MaxAllocationScale` (see "Adaptive resolution"
 and the `Viewport` section), and composes with every mode. `Settings::UsesTaa()` is the named
 predicate the jitter, the history-reset, and which resolve occupies the temporal anchor key on (true
-for both temporal modes); the post-resolve tail runs at the post-resolve allocation in every mode and
-keys on nothing. `Settings::UsesTaaUpscaling()` is `TAAU` alone, read by
+for every temporal mode); the post-resolve tail runs at the post-resolve allocation in every mode and
+keys on nothing. `Settings::UsesTaaUpscaling()` is `TAAU` and `MetalFXTemporal`, read by
 `ResolveTemporalUpscalePromotes` to decide whether the temporal resolve is itself the promotion.
 
 #### TAA
@@ -468,7 +468,8 @@ post-resolve one; `SceneView::SceneColorExtent` is its valid extent this frame.
 
 **The promotion is the bridge, and it is a pass only when the two differ.** `SceneUpscaleScenePass`
 reads the finished HDR scene colour and writes a post-resolve-allocation copy the tail reads —
-one bilinear tap through the scene colour's own map, the same filter the terminal tonemap applied
+one bilinear tap through the scene colour's own map (or MetalFX's spatial scaler under
+`UpscaleFilter::MetalFXSpatial`, see "MetalFX"), the same filter the terminal tonemap applied
 when it carried this upscale, so the image is unchanged and the upscale is not performed twice. It
 is declared at the HDR tail anchor, **after** the depth-of-field composite and **before** the
 post-process effect chain, so every g-buffer-reading pass is upstream of it and the whole tail is
@@ -558,6 +559,51 @@ colour, so a resolve that promoted at the anchor would hand it allocation-resolu
 frame resolves at the render allocation like TAA and takes the spatial promotion instead. That
 degrades the reconstruction from temporal to spatial and keeps every other property, where the same
 combination previously gave up scaling altogether.
+
+#### MetalFX
+
+**`MetalFXTemporal` is TAAU with Apple's MetalFX temporal scaler as the resolve.** It sets
+`TaaActive` like the other temporal modes, so the jitter, the lit target, the stored velocity and
+both allocations are TAAU's unchanged, and `FrameTopology::MetalFxTemporal` swaps only the resolve:
+`MetalFxTemporalScenePass` takes the lit target, the g-buffer depth and the velocity channel and
+reconstructs the scene-colour allocation into the target the tail reads (the HDR target, or the
+depth-of-field intermediate behind a composited chain, where it resolves at the render allocation as
+TAAU does). The scaler keeps its own history, so no history target is allocated or imported and no
+history copy runs; the renderer's history-reset gate becomes the scaler's `reset`. The per-frame
+parameters are derived from what the frame already publishes: the content size is the rasterized
+sub-rect (`SceneView::RenderExtent`), the jitter is `JitterNdc / 2` of it in pixels with the same
+signs (measured — the opposite sign leaves the jitter in the image, a pixel of edge wander), the
+motion scale is minus the sub-rect, since velocity is current minus previous in viewport UV and the
+scaler wants the step back in content pixels, and depth is reversed. The scaler meters exposure
+itself (`autoExposureEnabled`) and returns linear HDR.
+
+**`UpscaleFilter::MetalFXSpatial` is the promotion as MetalFX's spatial scaler.**
+`Settings.Upscale` picks the filter that carries the scene colour across the boundary on a frame
+whose resolve is not itself the promotion; `FrameTopology::MetalFxSpatialPromotion` replaces the
+colour's bilinear pass with `MetalFxSpatialScenePass` (HDR colour processing over the scene colour's
+valid extent), and the bloom mask, which MetalFX does not carry, takes its own "Bloom Mask Upscale"
+pass. The filter does nothing under `TAAU`/`MetalFXTemporal`, and composes with every other mode.
+
+**Both are owned by `MetalFxUpscale`, and both fall back where MetalFX cannot run.** It reads the
+device's support once (`Backend::QueryMetalFxSupport`), holds each scaler only while its mode is
+wired, keeps one across a reconfigure that moved neither allocation, and records a shape MetalFX
+refused. `ClampSettings` runs every request through `ResolveMetalFxSettings`, so on a device without
+MetalFX — any non-Apple platform, a system without the framework, a device the scaler does not
+support, or allocations outside its scale range — `MetalFXTemporal` runs as `TAAU` and
+`MetalFXSpatial` as `Bilinear`, and `GetSettings()` reports what runs. `ResolveRenderScale` floors a
+dynamic-resolution frame's scale at what the temporal scaler's maximum content scale allows.
+
+**The scalers run outside Vulkan, between two submits of the frame.** Their inputs and outputs are
+created `ImageInfo::PlatformExport` (and storage-writable where a scaler writes them) only while a
+MetalFX choice is configured, so no other configuration pays for the usage. Each pass calls
+`Context::SplitFrame` (see "Splitting a frame for platform GPU work"), and its encoder commits a
+command buffer on the scaler's own `MTLCommandQueue` that waits the split's shared event, encodes the
+scaler, and signals it. The pass's declared accesses (sampled inputs, a storage-written output) place
+the graph's barriers on either side as for any compute pass. `Backend/MetalFx.{h,mm}` is the one
+translation unit that names MetalFX, which is weak-linked; its header is Vulkan- and Metal-free and
+compiles to inert stubs elsewhere. `tests/gpu/taa_stability.cpp` holds the temporal scaler to the
+TAA cases' stillness claims on bounds sized to the scaler's own residual, and the spatial scaler to
+placing a half-scale render where native lies.
 
 #### Spatial anti-aliasing — FXAA and CMAA2
 
@@ -2214,6 +2260,26 @@ own graph. The output is single-copy and unringed — the contract holds exactly
 record on the single graphics queue. The TAA resolve needs neither a ring nor a semaphore: its
 history is a renderer-owned persisted image written and read inside the renderer's own
 single-queue graph each frame, ordered by the graph's derived barriers.
+
+### Splitting a frame for platform GPU work
+
+**`Context::SplitFrame(encode)` lets work a platform API encodes outside Vulkan run inside a frame.**
+It ends the frame's command buffer, submits it as one segment signalling `FrameSplitPoint::WaitValue`
+on the context's interop timeline — a timeline semaphore created exportable on the first split, whose
+`MTLSharedEvent` is `FrameSplitPoint::SharedEvent` — calls `encode`, and resumes recording in a spare
+command buffer whose submit waits `SignalValue` at every stage. The resume swaps the spare's handle
+into the frame's own `CommandBuffer` object, so every caller holding it keeps recording unchanged,
+the frame's draw count carries over, and each handle in a slot's set is reused only once that slot's
+fence is waited. Only the first segment waits the swapchain acquire; every segment drains the pending
+transfer waits; only the last signals the present semaphore and the frame fence, whose first scope
+covers every earlier batch. A split inside an `ImmediateCommands` recording does the same into
+buffers its own fence frees, with a pending wait kept apart from the frame's.
+
+**The external work must be committed to a queue of its own.** Under asynchronous submission (below)
+the driver may not yet have encoded the segment the work waits on, so a wait committed to the frame's
+own Metal queue would hold that queue against a submit queued behind it; on a separate queue the
+shared-event waits order the three pieces on the GPU whatever order they were committed in.
+`IsFrameSplitSupported()` is the platform-object interop extension being enabled.
 
 ### Queue submission is asynchronous
 

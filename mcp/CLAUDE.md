@@ -327,7 +327,8 @@ family registers from the editor side.
   `Context::GetLastGpuPassTimings` — the per-pass breakdown of the single number `render.stats`
   reports as `gpu_frame_time_ms`, from the backend's timestamp queries so it is profiler-independent;
   `gpu_timing_supported` is false where the device has no timestamps; `render.stats`'
-  `render_features` also reports the light-tile cull and the g-buffer shading override), and the two
+  `render_features` also reports the light-tile cull, the g-buffer shading override and the
+  promotion's upscale filter), and the two
   bindless reads below. The PNG encode uses stb_image_write,
   vendored PRIVATE into `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown
   viewport reports "no viewport".

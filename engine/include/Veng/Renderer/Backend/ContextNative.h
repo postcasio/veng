@@ -278,6 +278,59 @@ namespace Veng::Renderer
         CommandBuffer* ActiveImmediateCommands = nullptr;
         bool Disposed = false;
 
+        /// @brief Per-slot spare command buffers a split frame resumes recording into.
+        ///
+        /// Indexed by frame slot. Each split swaps the frame command buffer's handle with the
+        /// next spare's, so every handle in a slot's set is reused only once that slot's fence has
+        /// been waited. Grown on demand, never shrunk.
+        vector<vector<Ref<CommandBuffer>>> SplitCommandBuffers;
+        /// @brief How many spares the recording frame has swapped in; reset at BeginFrame.
+        u32 FrameSplitCount = 0;
+        /// @brief Whether the recording frame has submitted a segment yet; reset at BeginFrame.
+        ///
+        /// The first segment carries the swapchain-acquire wait.
+        bool FrameSegmentSubmitted = false;
+        /// @brief The interop-timeline value the frame's next segment submit must wait, if any.
+        optional<u64> PendingInteropWait;
+        /// @brief The interop-timeline value the active one-shot recording's submit must wait.
+        ///
+        /// Kept apart from PendingInteropWait so a split inside an ImmediateCommands recording made
+        /// during a frame never consumes the frame's own wait.
+        optional<u64> ImmediateInteropWait;
+        /// @brief Command buffers a split one-shot recording has already submitted.
+        ///
+        /// Freed once an ImmediateCommands submit's fence is waited, whose first scope covers every
+        /// batch submitted ahead of it.
+        vector<Ref<CommandBuffer>> ImmediateSplitBuffers;
+        /// @brief The timeline semaphore external GPU work and split frames synchronize through.
+        ///
+        /// Created exportable on the first split; null until then.
+        vk::Semaphore InteropTimeline;
+        /// @brief The platform shared event backing InteropTimeline (an MTLSharedEvent), unowned.
+        void* InteropEvent = nullptr;
+        /// @brief The last value allocated on InteropTimeline.
+        u64 InteropValue = 0;
+
+        /// @brief Submits the frame command buffer's recorded work as one segment of the frame.
+        ///
+        /// The first segment waits the swapchain acquire; every segment drains the pending
+        /// transfer waits and waits PendingInteropWait. Only the final segment signals the
+        /// present semaphore and the frame's fence, whose first scope covers every earlier segment.
+        /// @param frame        The recording frame.
+        /// @param final        Whether this is the frame's last segment.
+        /// @param interopValue When set, the InteropTimeline value the segment signals.
+        void SubmitFrameSegment(const SynchronizationFrame& frame, bool final,
+                                optional<u64> interopValue);
+
+        /// @brief Submits a one-shot recording's work as one segment of it.
+        ///
+        /// Waits every pending transfer wait (leaving them pending) and ImmediateInteropWait.
+        /// @param commandBuffer The one-shot command buffer, ended.
+        /// @param interopValue  When set, the InteropTimeline value the segment signals.
+        /// @param fence         The fence the segment signals, or null.
+        void SubmitImmediateSegment(CommandBuffer& commandBuffer, optional<u64> interopValue,
+                                    vk::Fence fence);
+
         /// @brief The frame slot whose fence covers every command recorded so far.
         ///
         /// The recording slot while a frame records. Outside one — between EndFrame and the next

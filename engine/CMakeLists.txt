@@ -316,6 +316,7 @@ add_library(veng SHARED
         src/Renderer/Passes/TaaScenePass.cpp
         src/Renderer/Passes/SceneUpscaleScenePass.cpp
         src/Renderer/Passes/AaScenePasses.cpp
+        src/Renderer/Passes/MetalFxScenePasses.cpp
         src/Renderer/Passes/DebugBlitScenePasses.cpp
         src/Renderer/Passes/PerViewMaterial.cpp
         src/Renderer/Passes/PostProcessScenePass.cpp
@@ -374,6 +375,7 @@ add_library(veng SHARED
         src/Renderer/AutoExposureMeter.cpp
         src/Renderer/TaaResolve.cpp
         src/Renderer/PostResolveUpscale.cpp
+        src/Renderer/MetalFxUpscale.cpp
         src/Renderer/AaResolve.cpp
         src/Renderer/DofChain.cpp
         src/Renderer/HalfResTranslucency.cpp
@@ -709,14 +711,14 @@ if (APPLE)
     set_source_files_properties(src/WindowCocoa.mm PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(veng PRIVATE "-framework Cocoa")
 
-    # Importing an externally-owned MTLTexture as a VkImage is the one place the backend names
-    # Metal, so it lives in its own Objective-C++ TU beside the Cocoa one. Non-ARC (the default):
-    # the Vulkan implementation hands back unowned references, and the import retains and releases
-    # its texture by hand.
-    target_sources(veng PRIVATE src/Renderer/Backend/MetalInterop.mm)
-    set_source_files_properties(src/Renderer/Backend/MetalInterop.mm
+    # The backend names Metal only in its own Objective-C++ TUs beside the Cocoa one: the
+    # MTLTexture import and export, and the MetalFX upscalers. Non-ARC (the default): the Vulkan
+    # implementation hands back unowned references, and both retain and release by hand. MetalFX is
+    # weak-linked, so a system without it loads the engine and reports the scalers unsupported.
+    target_sources(veng PRIVATE src/Renderer/Backend/MetalInterop.mm src/Renderer/Backend/MetalFx.mm)
+    set_source_files_properties(src/Renderer/Backend/MetalInterop.mm src/Renderer/Backend/MetalFx.mm
             PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    target_link_libraries(veng PRIVATE "-framework Metal")
+    target_link_libraries(veng PRIVATE "-framework Metal" "-weak_framework MetalFX")
 
     # The video recorder's encoder backend: AVAssetWriter over VideoToolbox, writing the frames the
     # renderer composited into the writer's own IOSurface-backed buffers. Non-ARC like the TUs above.

@@ -743,6 +743,9 @@ namespace Veng::Mcp
                     {"render_features",
                      {{"aa", Veng::string(Renderer::AntiAliasingModeNames[static_cast<Veng::usize>(
                                  s.AntiAliasing)])},
+                      {"upscale",
+                       Veng::string(
+                           Renderer::UpscaleFilterNames[static_cast<Veng::usize>(s.Upscale)])},
                       {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},

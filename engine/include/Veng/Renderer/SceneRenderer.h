@@ -54,6 +54,7 @@ namespace Veng::Renderer
     class AutoExposureMeter;
     class TaaResolve;
     class PostResolveUpscale;
+    class MetalFxUpscale;
     class AaResolve;
     class DofChain;
     class RefractionGrab;
@@ -1166,6 +1167,10 @@ namespace Veng::Renderer
 
         /// @brief The non-temporal resolve-anchor promotion — the sub-rect scene target + upscale.
         Unique<PostResolveUpscale> m_Upscale;
+
+        /// @brief The MetalFX scalers — the temporal resolve and the spatial promotion — and the
+        ///        device's support for them.
+        Unique<MetalFxUpscale> m_MetalFx;
 
         /// @brief The post-tonemap spatial AA battery (FXAA/CMAA2) — the LDR intermediate + pipeline.
         Unique<AaResolve> m_Aa;

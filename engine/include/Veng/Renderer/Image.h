@@ -39,6 +39,13 @@ namespace Veng::Renderer
         ImageType Type = ImageType::Type2D;
         /// @brief How the image will be bound and accessed.
         ImageUsage Usage;
+        /// @brief Whether the platform texture behind the image may be read out for interop.
+        ///
+        /// On Apple the image is created exportable as an @c MTLTexture, which a platform API
+        /// working on the engine's images (a hardware upscaler) then reads and writes directly.
+        /// Ignored where the device enabled no platform-object interop, and on every other
+        /// platform.
+        bool PlatformExport = false;
     };
 
     /// @brief A GPU image with deferred destruction.

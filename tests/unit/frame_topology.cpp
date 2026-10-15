@@ -215,6 +215,8 @@ TEST_CASE("frame topology: the anti-aliasing mode wires exactly one resolve on F
         Case{.Mode = AntiAliasingMode::CMAA2, .Taa = false, .Fxaa = false, .Cmaa2 = true},
         // TAAU shares the temporal machinery with TAA, so it resolves the same TaaActive flag.
         Case{.Mode = AntiAliasingMode::TAAU, .Taa = true, .Fxaa = false, .Cmaa2 = false},
+        // So does MetalFX's temporal scaler, which replaces only the resolve.
+        Case{.Mode = AntiAliasingMode::MetalFXTemporal, .Taa = true, .Fxaa = false, .Cmaa2 = false},
     };
 
     for (const Case& c : cases)
@@ -240,8 +242,8 @@ TEST_CASE("frame topology: the anti-aliasing mode wires exactly one resolve on F
 
 TEST_CASE("frame topology: the temporal predicates separate TAA from its upscaling mode")
 {
-    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only the
-    // viewport's native-allocation routing (TAAU alone).
+    // UsesTaa gates the shared temporal machinery (every temporal mode); UsesTaaUpscaling gates
+    // the resolve reconstructing the post-resolve allocation (the two upscaling modes).
     SceneRendererSettings settings;
 
     settings.AntiAliasing = AntiAliasingMode::None;
@@ -255,6 +257,12 @@ TEST_CASE("frame topology: the temporal predicates separate TAA from its upscali
     settings.AntiAliasing = AntiAliasingMode::TAAU;
     CHECK(settings.UsesTaa());
     CHECK(settings.UsesTaaUpscaling());
+    CHECK_FALSE(settings.UsesMetalFxTemporal());
+
+    settings.AntiAliasing = AntiAliasingMode::MetalFXTemporal;
+    CHECK(settings.UsesTaa());
+    CHECK(settings.UsesTaaUpscaling());
+    CHECK(settings.UsesMetalFxTemporal());
 
     // A spatial mode drives neither.
     settings.AntiAliasing = AntiAliasingMode::FXAA;
@@ -394,13 +402,74 @@ TEST_CASE("frame topology: the resolve is stateless")
     CHECK(second.AutoExposureActive);
 }
 
+TEST_CASE("frame topology: MetalFX refines the temporal resolve and the promotion on Final only")
+{
+    SceneRendererSettings settings;
+    settings.AntiAliasing = AntiAliasingMode::MetalFXTemporal;
+    settings.Upscale = UpscaleFilter::MetalFXSpatial;
+    CHECK(settings.UsesMetalFx());
+    const FrameTopology final = ResolveFrameTopology(settings, NoSky);
+    CHECK(final.TaaActive);
+    CHECK(final.MetalFxTemporal);
+    CHECK(final.TaaUpscalePromotes);
+    CHECK(final.MetalFxSpatialPromotion);
+
+    // Behind a composited depth of field the scaler resolves at the render allocation, as TAAU
+    // does, and the promotion carries the result up.
+    settings.DepthOfField = true;
+    CHECK(ResolveFrameTopology(settings, NoSky).MetalFxTemporal);
+    CHECK_FALSE(ResolveFrameTopology(settings, NoSky).TaaUpscalePromotes);
+
+    // The engine's resolve and filter wire neither.
+    settings.AntiAliasing = AntiAliasingMode::TAAU;
+    settings.Upscale = UpscaleFilter::Bilinear;
+    CHECK_FALSE(settings.UsesMetalFx());
+    CHECK_FALSE(ResolveFrameTopology(settings, NoSky).MetalFxTemporal);
+    CHECK_FALSE(ResolveFrameTopology(settings, NoSky).MetalFxSpatialPromotion);
+
+    // A debug arm wires no resolve and no promotion of the scene colour.
+    settings.AntiAliasing = AntiAliasingMode::MetalFXTemporal;
+    settings.Upscale = UpscaleFilter::MetalFXSpatial;
+    settings.Mode = DebugView::Albedo;
+    CHECK_FALSE(ResolveFrameTopology(settings, NoSky).MetalFxTemporal);
+    CHECK_FALSE(ResolveFrameTopology(settings, NoSky).MetalFxSpatialPromotion);
+}
+
+TEST_CASE("frame topology: a MetalFX choice the device cannot run falls back to the engine's")
+{
+    SceneRendererSettings requested;
+    requested.AntiAliasing = AntiAliasingMode::MetalFXTemporal;
+    requested.Upscale = UpscaleFilter::MetalFXSpatial;
+
+    const SceneRendererSettings none = ResolveMetalFxSettings(requested, {});
+    CHECK(none.AntiAliasing == AntiAliasingMode::TAAU);
+    CHECK(none.Upscale == UpscaleFilter::Bilinear);
+    // Nothing but the two MetalFX choices moves.
+    SceneRendererSettings expected = requested;
+    expected.AntiAliasing = AntiAliasingMode::TAAU;
+    expected.Upscale = UpscaleFilter::Bilinear;
+    CHECK(none == expected);
+
+    // Each scaler falls back on its own availability alone.
+    const SceneRendererSettings spatialOnly =
+        ResolveMetalFxSettings(requested, {.Temporal = false, .Spatial = true});
+    CHECK(spatialOnly.AntiAliasing == AntiAliasingMode::TAAU);
+    CHECK(spatialOnly.Upscale == UpscaleFilter::MetalFXSpatial);
+    CHECK(ResolveMetalFxSettings(requested, {.Temporal = true, .Spatial = true}) == requested);
+
+    // An engine choice is never touched, whatever the device can do.
+    SceneRendererSettings engine;
+    engine.AntiAliasing = AntiAliasingMode::TAA;
+    CHECK(ResolveMetalFxSettings(engine, {}) == engine);
+}
+
 TEST_CASE("frame topology: velocity is stored only where something reads it")
 {
     // Velocity's readers are the temporal resolve, the motion-vector blit and the reflection
     // denoiser; every other colour channel is stored in every configuration.
     constexpr std::array modes{AntiAliasingMode::None, AntiAliasingMode::FXAA,
-                               AntiAliasingMode::TAA, AntiAliasingMode::CMAA2,
-                               AntiAliasingMode::TAAU};
+                               AntiAliasingMode::TAA,  AntiAliasingMode::CMAA2,
+                               AntiAliasingMode::TAAU, AntiAliasingMode::MetalFXTemporal};
     for (usize arm = 0; arm < ArmCount; ++arm)
     {
         for (const AntiAliasingMode aa : modes)

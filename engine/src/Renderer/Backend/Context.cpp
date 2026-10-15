@@ -22,6 +22,8 @@
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Window.h>
 
+#include "MetalFx.h"
+
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 // #define VE_VIEWPORTS 1
@@ -292,7 +294,6 @@ namespace Veng::Renderer
         m_Native->PhysicalDevice = m_Native->GetPhysicalDevice();
 
         m_Native->Device = m_Native->CreateDevice();
-        Log::Info("{}", DescribeDeviceCapabilities(m_Native->Capabilities));
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
 
@@ -309,6 +310,12 @@ namespace Veng::Renderer
                       m_Native->MetalDevice ? "exported" : "unavailable");
         }
 #endif
+
+        // The platform upscalers are read off the platform device, so only once it is exported.
+        const Backend::MetalFxSupport metalFx = Backend::QueryMetalFxSupport(*this);
+        m_Native->Capabilities.MetalFxTemporal = metalFx.Temporal;
+        m_Native->Capabilities.MetalFxSpatial = metalFx.Spatial;
+        Log::Info("{}", DescribeDeviceCapabilities(m_Native->Capabilities));
 
         m_Native->PipelineCachePath = info.PipelineCachePath;
 
@@ -524,6 +531,7 @@ namespace Veng::Renderer
         m_Native->DrainTransferRetireList();
 
         m_Native->SynchronizationFrames.clear();
+        m_Native->SplitCommandBuffers.clear();
     }
 
     void Context::DestroyDevice()
@@ -554,6 +562,12 @@ namespace Veng::Renderer
         m_Native->TransferPools.clear();
 
         m_Native->TransferTimeline.reset();
+        if (m_Native->InteropTimeline)
+        {
+            m_Native->Device.destroySemaphore(m_Native->InteropTimeline);
+            m_Native->InteropTimeline = nullptr;
+            m_Native->InteropEvent = nullptr;
+        }
         m_Native->DescriptorPool.reset();
         m_Native->CommandPool.reset();
         m_Native->SwapChain.reset();
@@ -1037,6 +1051,9 @@ namespace Veng::Renderer
         }
 
         frame.GetInFlightFence().Reset();
+        m_Native->FrameSplitCount = 0;
+        m_Native->FrameSegmentSubmitted = false;
+        m_Native->PendingInteropWait.reset();
 
         const auto commandBuffer = frame.GetCommandBuffer();
 
@@ -1350,6 +1367,101 @@ namespace Veng::Renderer
     void* Context::GetExternalDevice() const
     {
         return m_Native->MetalDevice;
+    }
+
+    bool Context::IsFrameSplitSupported() const
+    {
+#ifdef __APPLE__
+        return m_Native->MetalObjectsEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void Context::SplitFrame(const function<void(const FrameSplitPoint&)>& encode)
+    {
+        VE_ASSERT(IsFrameSplitSupported(),
+                  "SplitFrame: this device has no platform-object interop");
+        VE_ASSERT(
+            m_Native->FrameCommandsOpen || m_Native->ActiveImmediateCommands != nullptr,
+            "SplitFrame: called with neither a frame nor an ImmediateCommands recording open");
+
+#ifdef __APPLE__
+        if (!m_Native->InteropTimeline)
+        {
+            // MoltenVK backs a timeline semaphore with an MTLSharedEvent, which is what lets the
+            // external work wait and signal the same values the frame's submits do.
+            const vk::ExportMetalObjectCreateInfoEXT exportInfo{
+                .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalSharedEvent,
+            };
+            const vk::SemaphoreTypeCreateInfo typeInfo{
+                .pNext = &exportInfo,
+                .semaphoreType = vk::SemaphoreType::eTimeline,
+                .initialValue = 0,
+            };
+            m_Native->InteropTimeline =
+                m_Native->Device.createSemaphore(vk::SemaphoreCreateInfo{.pNext = &typeInfo}).value;
+            DebugMarkers::MarkSemaphore(m_Native->Device, m_Native->InteropTimeline,
+                                        "Frame Split Interop Timeline");
+
+            vk::ExportMetalSharedEventInfoEXT eventInfo{.semaphore = m_Native->InteropTimeline};
+            vk::ExportMetalObjectsInfoEXT objectsInfo{.pNext = &eventInfo};
+            m_Native->Device.exportMetalObjectsEXT(objectsInfo);
+            m_Native->InteropEvent = eventInfo.mtlSharedEvent;
+            VE_ASSERT(m_Native->InteropEvent != nullptr,
+                      "SplitFrame: the interop timeline exported no shared event");
+        }
+#endif
+
+        const FrameSplitPoint point{
+            .SharedEvent = m_Native->InteropEvent,
+            .WaitValue = m_Native->InteropValue + 1,
+            .SignalValue = m_Native->InteropValue + 2,
+        };
+        m_Native->InteropValue = point.SignalValue;
+
+        // A one-shot recording splits the same way, into buffers its own submit's fence frees.
+        if (CommandBuffer* const immediate = m_Native->ActiveImmediateCommands)
+        {
+            immediate->End();
+            m_Native->SubmitImmediateSegment(*immediate, point.WaitValue, vk::Fence{});
+            encode(point);
+            m_Native->ImmediateInteropWait = point.SignalValue;
+
+            const Ref<CommandBuffer> spare = CommandBuffer::Create(*this);
+            std::swap(immediate->GetNative().CommandBuffer, spare->GetNative().CommandBuffer);
+            m_Native->ImmediateSplitBuffers.push_back(spare);
+            VK_ASSERT(immediate->GetNative().CommandBuffer.begin(
+                          {.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}),
+                      "SplitFrame: failed to begin the resumed one-shot command buffer");
+            return;
+        }
+
+        const SynchronizationFrame& frame = GetCurrentFrame();
+        const Ref<CommandBuffer> commandBuffer = frame.GetCommandBuffer();
+        commandBuffer->End();
+        m_Native->SubmitFrameSegment(frame, false, point.WaitValue);
+        encode(point);
+        m_Native->PendingInteropWait = point.SignalValue;
+
+        // Resume in a spare: the submitted handle moves into the spare's wrapper, which keeps it
+        // alive until this slot's fence is waited. Begun directly rather than through
+        // CommandBuffer::Begin, which would restart the frame's draw count.
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        if (m_Native->SplitCommandBuffers.size() <= slot)
+        {
+            m_Native->SplitCommandBuffers.resize(m_Native->MaxFramesInFlight);
+        }
+        vector<Ref<CommandBuffer>>& spares = m_Native->SplitCommandBuffers[slot];
+        if (m_Native->FrameSplitCount == spares.size())
+        {
+            spares.push_back(CommandBuffer::Create(*this));
+        }
+        const CommandBuffer& spare = *spares[m_Native->FrameSplitCount++];
+        std::swap(commandBuffer->GetNative().CommandBuffer, spare.GetNative().CommandBuffer);
+        const vk::CommandBuffer resumed = commandBuffer->GetNative().CommandBuffer;
+        VK_ASSERT(resumed.reset(), "SplitFrame: failed to reset the resumed command buffer");
+        VK_ASSERT(resumed.begin({}), "SplitFrame: failed to begin the resumed command buffer");
     }
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
@@ -2279,17 +2391,35 @@ namespace Veng::Renderer
 
     void Context::SubmitFrame(const SynchronizationFrame& frame) const
     {
+        m_Native->SubmitFrameSegment(frame, true, std::nullopt);
+    }
+
+    void Context::Native::SubmitFrameSegment(const SynchronizationFrame& frame, const bool final,
+                                             const optional<u64> interopValue)
+    {
         const auto commandBuffer = frame.GetCommandBuffer()->GetNative().CommandBuffer;
 
-        // Drain accumulated transfer-timeline waits under SubmitMutex before
-        // LockedSubmit re-takes it. Cleared each frame — a satisfied wait must
-        // not re-block the next frame.
+        // The binary acquire semaphore leads the wait arrays when present; its slot in the
+        // timeline-values array is ignored by the driver but keeps the array lengths equal.
         vector<vk::Semaphore> waitSemaphores;
         vector<vk::PipelineStageFlags> waitStages;
         vector<u64> waitValues;
+        bool hasTimeline = false;
+
+        // The first segment is the frame's first use of the acquired image, so it is the one that
+        // waits for it. Its stage must match SwapChain::AcquireWaitStage.
+        if (!Headless && !FrameSegmentSubmitted)
         {
-            const std::scoped_lock lock(m_Native->SubmitMutex);
-            for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
+            waitSemaphores.push_back(frame.GetImageAvailableSemaphore().GetNative().Semaphore);
+            waitStages.push_back(Renderer::SwapChain::AcquireWaitStage);
+            waitValues.push_back(0);
+        }
+
+        // Drain accumulated transfer-timeline waits under SubmitMutex before LockedSubmit
+        // re-takes it. Cleared on drain — a satisfied wait must not re-block a later submit.
+        {
+            const std::scoped_lock lock(SubmitMutex);
+            for (const auto& [semaphore, value] : PendingFrameTransferWaits)
             {
                 waitSemaphores.push_back(semaphore);
                 // Block the whole graphics submit on the transfer copy. The first
@@ -2300,82 +2430,63 @@ namespace Veng::Renderer
                 // read the image's still-Undefined layout — before the copy lands.
                 waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
                 waitValues.push_back(value);
+                hasTimeline = true;
             }
-            m_Native->PendingFrameTransferWaits.clear();
+            PendingFrameTransferWaits.clear();
         }
 
-        const bool hasTransferWaits = !waitSemaphores.empty();
-
-        // Headless: no swapchain image to wait on or signal for present. The
-        // transfer waits, if any, are the only waits this branch carries.
-        if (m_Native->Headless)
+        // External work scheduled at a split writes images this segment's commands may touch
+        // anywhere, so the wait covers every stage.
+        if (PendingInteropWait)
         {
-            if (!hasTransferWaits)
-            {
-                const vk::SubmitInfo headlessSubmit{
-                    .commandBufferCount = 1,
-                    .pCommandBuffers = &commandBuffer,
-                };
-
-                m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit,
-                                       frame.GetInFlightFence().GetNative().Fence);
-                return;
-            }
-
-            // Headless has no binary semaphores; every wait here is a timeline wait.
-            const vk::TimelineSemaphoreSubmitInfo timelineInfo{
-                .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
-                .pWaitSemaphoreValues = waitValues.data(),
-            };
-
-            const vk::SubmitInfo headlessSubmit{
-                .pNext = &timelineInfo,
-                .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
-                .pWaitSemaphores = waitSemaphores.data(),
-                .pWaitDstStageMask = waitStages.data(),
-                .commandBufferCount = 1,
-                .pCommandBuffers = &commandBuffer,
-            };
-
-            m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit,
-                                   frame.GetInFlightFence().GetNative().Fence);
-            return;
+            waitSemaphores.push_back(InteropTimeline);
+            waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+            waitValues.push_back(*PendingInteropWait);
+            PendingInteropWait.reset();
+            hasTimeline = true;
         }
 
-        // Signal the present-wait semaphore owned by the image acquired this frame
-        // (not a per-frame-in-flight one), so the present's hold on it cannot collide
-        // with a later frame reusing the same semaphore.
-        const auto renderFinishedSemaphore =
-            m_Native->SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore;
-        const auto imageAvailableSemaphore =
-            frame.GetImageAvailableSemaphore().GetNative().Semaphore;
-
-        // The image-available binary semaphore leads the arrays; timeline waits
-        // follow. Its stage must match SwapChain::AcquireWaitStage. The binary
-        // semaphore's slot in the timeline-values array is ignored by the driver
-        // but must be present to keep the array lengths equal.
-        waitSemaphores.insert(waitSemaphores.begin(), imageAvailableSemaphore);
-        waitStages.insert(waitStages.begin(), SwapChain::AcquireWaitStage);
-        waitValues.insert(waitValues.begin(), 0);
+        vector<vk::Semaphore> signalSemaphores;
+        vector<u64> signalValues;
+        if (final && !Headless)
+        {
+            // Signal the present-wait semaphore owned by the image acquired this frame (not a
+            // per-frame-in-flight one), so the present's hold on it cannot collide with a later
+            // frame reusing the same semaphore.
+            signalSemaphores.push_back(
+                SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore);
+            signalValues.push_back(0);
+        }
+        if (interopValue)
+        {
+            signalSemaphores.push_back(InteropTimeline);
+            signalValues.push_back(*interopValue);
+            hasTimeline = true;
+        }
 
         const vk::TimelineSemaphoreSubmitInfo timelineInfo{
             .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
             .pWaitSemaphoreValues = waitValues.data(),
+            .signalSemaphoreValueCount = static_cast<u32>(signalValues.size()),
+            .pSignalSemaphoreValues = signalValues.data(),
         };
 
         const vk::SubmitInfo submitInfo{
-            .pNext = hasTransferWaits ? &timelineInfo : nullptr,
+            .pNext = hasTimeline ? &timelineInfo : nullptr,
             .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
             .pWaitSemaphores = waitSemaphores.data(),
             .pWaitDstStageMask = waitStages.data(),
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBuffer,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &renderFinishedSemaphore,
+            .signalSemaphoreCount = static_cast<u32>(signalSemaphores.size()),
+            .pSignalSemaphores = signalSemaphores.data(),
         };
 
-        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo,
-                               frame.GetInFlightFence().GetNative().Fence);
+        // The fence's first synchronization scope is every batch submitted to the queue before
+        // it, so fencing only the final segment still covers the whole frame.
+        LockedSubmit(GraphicsQueue, submitInfo,
+                     final ? frame.GetInFlightFence().GetNative().Fence : vk::Fence{});
+        FrameSegmentSubmitted = true;
     }
 
     void Context::PresentFrame()
@@ -2433,6 +2544,21 @@ namespace Veng::Renderer
 
     void Context::SubmitImmediateCommands(CommandBuffer& commandBuffer) const
     {
+        // Block on this submission's own fence, not the whole device: an immediate
+        // submit must outlive only its work, not drain every queue (a device-wide
+        // WaitIdle here stalls in-flight frame and transfer work too).
+        const Unique<Fence> fence = Fence::Create(const_cast<Context&>(*this), "Immediate Submit");
+        m_Native->SubmitImmediateSegment(commandBuffer, std::nullopt, fence->GetNative().Fence);
+        fence->Wait();
+        // The fence's first scope is every batch submitted ahead of it, so any segments a split
+        // submitted are complete too.
+        m_Native->ImmediateSplitBuffers.clear();
+    }
+
+    void Context::Native::SubmitImmediateSegment(CommandBuffer& commandBuffer,
+                                                 const optional<u64> interopValue,
+                                                 const vk::Fence fence)
+    {
         const auto commandBufferHandle = commandBuffer.GetNative().CommandBuffer;
 
         // A one-shot recording can be the first graphics use of an async upload (its acquire
@@ -2443,36 +2569,43 @@ namespace Veng::Renderer
         vector<vk::PipelineStageFlags> waitStages;
         vector<u64> waitValues;
         {
-            const std::scoped_lock lock(m_Native->SubmitMutex);
-            for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
+            const std::scoped_lock lock(SubmitMutex);
+            for (const auto& [semaphore, value] : PendingFrameTransferWaits)
             {
                 waitSemaphores.push_back(semaphore);
                 waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
                 waitValues.push_back(value);
             }
         }
+        if (ImmediateInteropWait)
+        {
+            waitSemaphores.push_back(InteropTimeline);
+            waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+            waitValues.push_back(*ImmediateInteropWait);
+            ImmediateInteropWait.reset();
+        }
+
+        const vk::Semaphore signalSemaphore = InteropTimeline;
+        const u64 signalValue = interopValue.value_or(0);
         const vk::TimelineSemaphoreSubmitInfo timelineInfo{
             .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
             .pWaitSemaphoreValues = waitValues.data(),
+            .signalSemaphoreValueCount = interopValue ? 1u : 0u,
+            .pSignalSemaphoreValues = interopValue ? &signalValue : nullptr,
         };
 
         const vk::SubmitInfo submitInfo = {
-            .pNext = waitSemaphores.empty() ? nullptr : &timelineInfo,
+            .pNext = waitSemaphores.empty() && !interopValue ? nullptr : &timelineInfo,
             .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
             .pWaitSemaphores = waitSemaphores.data(),
             .pWaitDstStageMask = waitStages.data(),
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBufferHandle,
+            .signalSemaphoreCount = interopValue ? 1u : 0u,
+            .pSignalSemaphores = interopValue ? &signalSemaphore : nullptr,
         };
 
-        // Block on this submission's own fence, not the whole device: an immediate
-        // submit must outlive only its work, not drain every queue (a device-wide
-        // WaitIdle here stalls in-flight frame and transfer work too).
-        const Unique<Fence> fence = Fence::Create(const_cast<Context&>(*this), "Immediate Submit");
-
-        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, fence->GetNative().Fence);
-
-        fence->Wait();
+        LockedSubmit(GraphicsQueue, submitInfo, fence);
     }
 
     void Context::UpdateRenderExtent()

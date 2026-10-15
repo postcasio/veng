@@ -53,9 +53,11 @@ namespace Veng::Renderer
         ///
         /// The target is the post-resolve allocation (HdrFormat) like every other scene-color
         /// intermediate on that side; the promotion pass writes all of it.
-        /// @param extent  The post-resolve allocation the target is sized to.
-        /// @param enabled Whether the promotion is wired (the target is allocated only then).
-        void Resize(uvec2 extent, bool enabled);
+        /// @param extent         The post-resolve allocation the target is sized to.
+        /// @param enabled        Whether the promotion is wired (the target is allocated only then).
+        /// @param platformScaler Whether a platform scaler writes the target rather than the
+        ///                       bilinear pass, so it is created exportable and storage-writable.
+        void Resize(uvec2 extent, bool enabled, bool platformScaler);
 
         /// @brief Recreates the promoted bloom-mask target at @p extent, or releases it when unwired.
         ///

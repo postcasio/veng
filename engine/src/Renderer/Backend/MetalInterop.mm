@@ -56,6 +56,23 @@ namespace Veng::Renderer::Backend
         };
     }
 
+    void* GetPlatformTexture(const Context& context, const Image& image)
+    {
+        if (!context.IsExternalTextureImportSupported())
+        {
+            return nullptr;
+        }
+
+        // A single-plane colour or depth image is plane 0.
+        vk::ExportMetalTextureInfoEXT textureInfo{
+            .image = image.GetNative().Image,
+            .plane = vk::ImageAspectFlagBits::ePlane0,
+        };
+        vk::ExportMetalObjectsInfoEXT objectsInfo{.pNext = &textureInfo};
+        GetVkDevice(context).exportMetalObjectsEXT(objectsInfo);
+        return (void*)textureInfo.mtlTexture;
+    }
+
     Ref<Image> ImportExternalTexture(Context& context, void* texture, const string_view name)
     {
         if (!context.IsExternalTextureImportSupported())

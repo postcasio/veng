@@ -132,6 +132,9 @@ namespace Veng::Renderer
         topology.RefractionBlurActive = topology.RefractionActive && settings.RefractionBlur;
 
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
+        topology.MetalFxTemporal = topology.TaaActive && settings.UsesMetalFxTemporal();
+        topology.MetalFxSpatialPromotion =
+            settings.Mode == DebugView::Final && settings.Upscale == UpscaleFilter::MetalFXSpatial;
 
         // The tile cull serves every lighting pass that shades direct light: the composited arms,
         // and the CoC arm, which force-wires lighting as the input it inspects.
@@ -165,6 +168,21 @@ namespace Veng::Renderer
     {
         return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() &&
                !settings.DepthOfField;
+    }
+
+    SceneRendererSettings ResolveMetalFxSettings(const SceneRendererSettings& settings,
+                                                 const MetalFxAvailability availability)
+    {
+        SceneRendererSettings resolved = settings;
+        if (resolved.AntiAliasing == AntiAliasingMode::MetalFXTemporal && !availability.Temporal)
+        {
+            resolved.AntiAliasing = AntiAliasingMode::TAAU;
+        }
+        if (resolved.Upscale == UpscaleFilter::MetalFXSpatial && !availability.Spatial)
+        {
+            resolved.Upscale = UpscaleFilter::Bilinear;
+        }
+        return resolved;
     }
 
     bool ResolveBloomActive(const SceneRendererSettings& settings)

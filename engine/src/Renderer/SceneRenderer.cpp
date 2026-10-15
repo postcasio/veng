@@ -35,6 +35,7 @@
 #include "Passes/SsaoScenePass.h"
 #include "Passes/SsrScenePass.h"
 #include "Passes/SceneUpscaleScenePass.h"
+#include "Passes/MetalFxScenePasses.h"
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
 #include "Passes/VolumeScenePass.h"
@@ -57,6 +58,7 @@
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
 #include "PostResolveUpscale.h"
+#include "MetalFxUpscale.h"
 #include "TaaResolve.h"
 
 #include <algorithm>
@@ -280,7 +282,9 @@ namespace Veng::Renderer
           m_Settings(info.Settings), m_Internal(CreateUnique<Internal>()),
           m_Topology(CreateUnique<FrameTopology>())
     {
-        ShadowSystem::ClampResolutions(m_Context, m_Settings);
+        // Which MetalFX modes run is part of the clamp, so the device's support is read first.
+        m_MetalFx = CreateUnique<MetalFxUpscale>(m_Context);
+        m_Settings = ClampSettings(m_Settings);
         // Frames-in-flight is spine — the renderer's own rings (draw data, palette) size from it,
         // so seed it before those are allocated below. Each subsystem derives its own ring depth
         // from the context independently.
@@ -467,6 +471,10 @@ namespace Veng::Renderer
         if (m_Topology->TaaActive)
         {
             litId = graph.Import("SceneRenderer Lit");
+        }
+        // MetalFX's scaler keeps its own history, so only the engine's resolve imports one.
+        if (m_Topology->TaaActive && !m_Topology->MetalFxTemporal)
+        {
             taaHistoryId = graph.Import("SceneRenderer TAA History");
         }
         // The velocity target (G3) is always imported — the g-buffer pass writes it on every
@@ -947,7 +955,13 @@ namespace Veng::Renderer
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
-            if (m_Topology->TaaActive)
+            if (m_Topology->MetalFxTemporal)
+            {
+                m_Passes.push_back(CreateUnique<MetalFxTemporalScenePass>(
+                    *m_MetalFx, litId, depthId, velocityId, dofTargetId,
+                    m_Taa->GetHistoryResetPointer()));
+            }
+            else if (m_Topology->TaaActive)
             {
                 // The resolve writes the scene-color intermediate a composited depth-of-field chain
                 // reads (the HDR target directly without one); the DoF composite then writes the
@@ -1010,7 +1024,22 @@ namespace Veng::Renderer
                 .SourceExtent = renderExtent,
                 .Source = PromotionSource::BloomMask,
             };
-            if (m_UpscaleWired && m_BloomMaskPromotionWired)
+            const bool spatialScaler =
+                m_Topology->MetalFxSpatialPromotion && m_MetalFx->GetSpatial() != nullptr;
+            if (m_UpscaleWired && spatialScaler)
+            {
+                // MetalFX carries the colour; the mask, which it cannot, crosses in a pass of its
+                // own.
+                m_ScenePromotionPass =
+                    CreateUnique<MetalFxSpatialScenePass>(*m_MetalFx, m_HdrId, m_UpscaleSceneId);
+                if (m_BloomMaskPromotionWired)
+                {
+                    m_BloomMaskPromotionPass = CreateUnique<SceneUpscaleScenePass>(
+                        m_Context, m_Upscale->GetMaskPipeline(), maskPromotion, std::nullopt,
+                        m_SamplerHandle, tailExtent);
+                }
+            }
+            else if (m_UpscaleWired && m_BloomMaskPromotionWired)
             {
                 m_ScenePromotionPass = CreateUnique<SceneUpscaleScenePass>(
                     m_Context, m_Upscale->GetPairPipeline(), scenePromotion, maskPromotion,
@@ -2206,6 +2235,9 @@ namespace Veng::Renderer
     {
         m_Extent = extent;
         m_RequestedRenderAllocExtent = renderExtent;
+        // A MetalFX shape refused at the old allocations may be accepted at the new ones; the
+        // next Configure asks again.
+        m_MetalFx->ClearRefusals();
         ResolveAllocationExtents();
         // The scene renders the whole render allocation until the next Execute scales it; the prior
         // sub-rect mapping is moot (the TAA history resets on resize anyway).
@@ -2251,9 +2283,20 @@ namespace Veng::Renderer
         // than carrying a stale idle window across the recompile.
         DropPostResolveUpscale();
         (void)UpdatePostResolveUpscale(m_SceneColorAllocExtent, m_RenderAllocExtent);
+        // MetalFX's temporal scaler bridges the same two allocations the TAA history does. It is
+        // sized first: a shape MetalFX refuses falls the renderer back to TAAU, whose history the
+        // TAA resize below then allocates.
+        const bool metalFxTemporal =
+            m_Settings.Mode == DebugView::Final && m_Settings.UsesMetalFxTemporal();
+        if (!m_MetalFx->ResizeTemporal(m_RenderAllocExtent, m_SceneColorAllocExtent,
+                                       metalFxTemporal))
+        {
+            m_Settings = ResolveMetalFxSettings(m_Settings, m_MetalFx->GetAvailability());
+        }
         // The lit target is scene-side; the history is the resolve's own output, which under
         // temporal upscaling is the post-resolve allocation it reconstructs.
-        m_Taa->Resize(m_RenderAllocExtent, m_SceneColorAllocExtent, m_Settings.UsesTaa());
+        m_Taa->Resize(m_RenderAllocExtent, m_SceneColorAllocExtent, m_Settings.UsesTaa(),
+                      m_Settings.Mode == DebugView::Final && m_Settings.UsesMetalFxTemporal());
         m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
                                                                    : AntiAliasingMode::None);
         // The bright pass reads the scene colour and the mask at the post-resolve allocation — the
@@ -2309,7 +2352,7 @@ namespace Veng::Renderer
         ShadowSystem::ClampResolutions(m_Context, clamped);
         clamped.LodHysteresis = std::clamp(clamped.LodHysteresis, 0.0f, MaxLodHysteresis);
         clamped.ForcedLod = std::clamp(clamped.ForcedLod, AutomaticLod, CoarsestLod);
-        return clamped;
+        return ResolveMetalFxSettings(clamped, m_MetalFx->GetAvailability());
     }
 
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
@@ -2335,6 +2378,8 @@ namespace Veng::Renderer
             m_Settings = clamped;
             return;
         }
+        const bool priorMetalFx = m_Settings.UsesMetalFx();
+        const bool priorMetalFxTemporal = m_Settings.UsesMetalFxTemporal();
         m_Settings = clamped;
         if (!m_Settings.GBufferShadingOverride)
         {
@@ -2347,6 +2392,10 @@ namespace Veng::Renderer
         const uvec2 priorRenderAlloc = m_RenderAllocExtent;
         const uvec2 priorSceneColorAlloc = m_SceneColorAllocExtent;
         ResolveAllocationExtents();
+        // The targets a MetalFX scaler reads or writes are created exportable to it, so turning a
+        // scaler on or off recreates them even where neither allocation moved.
+        const bool metalFxMoved = priorMetalFx != m_Settings.UsesMetalFx() ||
+                                  priorMetalFxTemporal != m_Settings.UsesMetalFxTemporal();
         // The lean path carries only its depth + normal targets; recreate them at the (possibly
         // moved) render allocation and rebuild the single-pass graph. Path is a construction-time
         // selection, so this handles a same-path reconfigure, not a Shaded <-> lean switch.
@@ -2360,7 +2409,7 @@ namespace Veng::Renderer
         // The mode or the AA choice can move either allocation (a debug view pins the render side to
         // the tail's extent; temporal upscaling moves the scene colour to it), so the targets sized
         // to them are recreated before the subsystems rebind their views.
-        if (m_RenderAllocExtent != priorRenderAlloc)
+        if (m_RenderAllocExtent != priorRenderAlloc || metalFxMoved)
         {
             m_ValidExtent = m_RenderAllocExtent;
             CreateGBuffer();
@@ -2370,7 +2419,7 @@ namespace Veng::Renderer
         {
             m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_DepthView);
         }
-        if (m_SceneColorAllocExtent != priorSceneColorAlloc)
+        if (m_SceneColorAllocExtent != priorSceneColorAlloc || metalFxMoved)
         {
             CreateHdr();
         }
@@ -3042,7 +3091,15 @@ namespace Veng::Renderer
                                  m_PostResolveUpscaleIdleFrames);
         if (changed)
         {
-            m_Upscale->Resize(m_Extent, m_PostResolveUpscaleActive);
+            const bool spatial = m_PostResolveUpscaleActive &&
+                                 m_Settings.Mode == DebugView::Final &&
+                                 m_Settings.Upscale == UpscaleFilter::MetalFXSpatial;
+            if (!m_MetalFx->ResizeSpatial(m_SceneColorAllocExtent, m_Extent, spatial))
+            {
+                m_Settings = ResolveMetalFxSettings(m_Settings, m_MetalFx->GetAvailability());
+            }
+            m_Upscale->Resize(m_Extent, m_PostResolveUpscaleActive,
+                              m_MetalFx->GetSpatial() != nullptr);
         }
 
         // The mask asks a different question, and it is the rasterized sub-rect rather than the
@@ -3064,7 +3121,8 @@ namespace Veng::Renderer
     {
         m_PostResolveUpscaleActive = false;
         m_PostResolveUpscaleIdleFrames = 0;
-        m_Upscale->Resize(m_Extent, false);
+        m_Upscale->Resize(m_Extent, false, false);
+        (void)m_MetalFx->ResizeSpatial(m_SceneColorAllocExtent, m_Extent, false);
         m_BloomMaskPromotionActive = false;
         m_BloomMaskPromotionIdleFrames = 0;
         m_Upscale->ResizeMask(m_Extent, false);
@@ -3111,7 +3169,10 @@ namespace Veng::Renderer
             !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
               m_Settings.Occlusion) &&
             !(m_Topology->DofComposited() && m_Topology->TaaActive);
-        const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
+        // MetalFX's temporal scaler reads no sub-rect smaller than its maximum scale allows.
+        const f32 renderScale =
+            drsSupported ? glm::max(view.RenderScale, m_MetalFx->GetTemporalRenderScaleFloor())
+                         : 1.0f;
         const uvec2 validExtent =
             glm::clamp(uvec2(glm::round(vec2(m_RenderAllocExtent) * renderScale)), uvec2(1),
                        m_RenderAllocExtent);
@@ -3292,6 +3353,9 @@ namespace Veng::Renderer
         if (m_Topology->TaaActive)
         {
             bindings.push_back({.Id = m_LitId, .View = m_Taa->GetLitView()});
+        }
+        if (m_Topology->TaaActive && !m_Topology->MetalFxTemporal)
+        {
             bindings.push_back({.Id = m_TaaHistoryId, .View = m_Taa->GetHistoryView()});
         }
         // The promotion's sub-rect scene target: the scene chain writes it and the upscale reads it.

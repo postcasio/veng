@@ -52,10 +52,14 @@ namespace Veng::Renderer
         /// memory is not held for an unused path. Recreating (or releasing) invalidates the
         /// persisted history, so this sets the reset gate — the next resolve ignores history until
         /// a frame repopulates it.
-        /// @param litExtent     The render allocation the lit target is sized to.
-        /// @param historyExtent The scene-colour allocation the history is sized to.
-        /// @param enabled       Whether TAA is active (the targets are allocated only then).
-        void Resize(uvec2 litExtent, uvec2 historyExtent, bool enabled);
+        ///
+        /// Under a platform resolve (MetalFX's temporal scaler) the lit target is created
+        /// exportable for it and no history is held: the scaler keeps its own.
+        /// @param litExtent       The render allocation the lit target is sized to.
+        /// @param historyExtent   The scene-colour allocation the history is sized to.
+        /// @param enabled         Whether TAA is active (the targets are allocated only then).
+        /// @param platformResolve Whether a platform scaler is the resolve.
+        void Resize(uvec2 litExtent, uvec2 historyExtent, bool enabled, bool platformResolve);
 
         /// @brief Forces the next resolve to ignore history (used after a recreate or a reset).
         void InvalidateHistory() { m_HistoryReset = true; }
@@ -81,7 +85,7 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the lit target; the resolve samples the current frame through it.
         [[nodiscard]] TextureHandle GetLitHandle() const { return m_LitHandle; }
 
-        /// @brief The persisted history target; null when TAA is off.
+        /// @brief The persisted history target; null when TAA is off or a platform scaler resolves.
         [[nodiscard]] const Ref<ImageView>& GetHistoryView() const { return m_HistoryView; }
 
         /// @brief Bindless slot for the history target; the resolve samples it at the reprojected UV.

@@ -533,10 +533,14 @@ extern "C"
 /// the TranslucentSegmentStats it reports, and a module owns renderers.
 /// Version 129 lets an impostor sort where it stands: MeshRenderer and VisibleMesh grow
 /// SortDistance. A module spawns renderers, so a stale one lays the component out short.
+/// Version 130 adds the MetalFX upscalers: SceneRendererSettings grows Upscale (mid-struct, after
+/// AntiAliasing), ImageInfo grows PlatformExport, SceneRenderer grows the scalers' owner, and
+/// DeviceCapabilities (laid out in Context::Native) grows the two scalers' support. A module
+/// configures renderers, creates images and reads the readout, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 129u
+#define VENG_MODULE_ABI_VERSION 130u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

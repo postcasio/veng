@@ -32,7 +32,7 @@ namespace Veng::Renderer
     PostResolveUpscale::PostResolveUpscale(Context& context, AssetManager& assets)
         : m_Context(context)
     {
-        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "PostResolveUpscale: {} shader load failed: {}", what,
@@ -96,7 +96,8 @@ namespace Veng::Renderer
         bindless.Release(m_MaskHandle);
     }
 
-    void PostResolveUpscale::Resize(const uvec2 extent, const bool enabled)
+    void PostResolveUpscale::Resize(const uvec2 extent, const bool enabled,
+                                    const bool platformScaler)
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_SceneHandle);
@@ -109,12 +110,14 @@ namespace Veng::Renderer
             return;
         }
 
-        m_SceneImage = Image::Create(m_Context, {
-                                                    .Name = "SceneRenderer Promoted Scene",
-                                                    .Extent = {extent.x, extent.y, 1},
-                                                    .Format = HdrFormat,
-                                                    .Usage = HdrUsage,
-                                                });
+        m_SceneImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Promoted Scene",
+                           .Extent = {extent.x, extent.y, 1},
+                           .Format = HdrFormat,
+                           .Usage = platformScaler ? HdrUsage | ImageUsage::Storage : HdrUsage,
+                           .PlatformExport = platformScaler,
+                       });
         m_SceneView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer Promoted Scene View", .Image = m_SceneImage});
         m_SceneHandle = bindless.Register(m_SceneView);

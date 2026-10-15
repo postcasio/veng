@@ -62,6 +62,20 @@ namespace Veng::Renderer
     };
 
     /// @brief Creation parameters for a render context.
+    /// @brief Where Context::SplitFrame hands the frame to platform GPU work, and what it signals.
+    ///
+    /// Both values are on one timeline backed by a platform shared event, so the external work
+    /// waits and signals it with the platform's own event API.
+    struct FrameSplitPoint
+    {
+        /// @brief The platform shared event behind the timeline (an @c MTLSharedEvent on Apple).
+        void* SharedEvent = nullptr;
+        /// @brief The value the frame's work up to the split signals; the external work waits it.
+        u64 WaitValue = 0;
+        /// @brief The value the external work must signal; the rest of the frame waits it.
+        u64 SignalValue = 0;
+    };
+
     struct ContextInfo
     {
         /// @brief Application name for the Vulkan instance.
@@ -179,8 +193,9 @@ namespace Veng::Renderer
         ///
         /// The subgroup size, stages and operation classes, subgroup size control (enabled when
         /// present, with computeFullSubgroups), the 16-bit arithmetic and storage features, and the
-        /// storage-image support of the two HDR formats a compute pass is likeliest to write. Logged
-        /// as one line at Initialize (DescribeDeviceCapabilities). Valid from the end of Initialize.
+        /// storage-image support of the two HDR formats a compute pass is likeliest to write, and
+        /// whether the platform's upscalers can run. Logged as one line at Initialize
+        /// (DescribeDeviceCapabilities). Valid from the end of Initialize.
         [[nodiscard]] const DeviceCapabilities& GetDeviceCapabilities() const;
 
         /// @brief Returns true when the graphics queue can timestamp GPU work.
@@ -565,6 +580,27 @@ namespace Veng::Renderer
         /// @return The platform device handle, or null where there is none.
         /// @see IsExternalTextureImportSupported
         [[nodiscard]] void* GetExternalDevice() const;
+
+        /// @brief Whether platform GPU work can be scheduled inside a frame (SplitFrame).
+        ///
+        /// True on Apple when the Metal-object interop extension was enabled, false elsewhere.
+        [[nodiscard]] bool IsFrameSplitSupported() const;
+
+        /// @brief Submits the frame recorded so far, runs platform GPU work, then resumes the frame.
+        ///
+        /// For work a platform API encodes outside Vulkan — a hardware upscaler reading and
+        /// writing the engine's images. The frame's commands up to this point are submitted as
+        /// one segment signalling FrameSplitPoint::WaitValue; @p encode then schedules its work
+        /// to wait that value and signal FrameSplitPoint::SignalValue; and recording continues in
+        /// a fresh command buffer behind the same CommandBuffer object, whose submit waits the
+        /// signal. Callers holding the frame's CommandBuffer keep recording into it unchanged.
+        ///
+        /// The waits are GPU-side, so @p encode may commit its work before the driver has even
+        /// encoded the segment ahead of it: it must be scheduled on a queue of its own, never the
+        /// one the frame submits to, where waiting on a later submit would deadlock.
+        /// @param encode Schedules the external work; called once, synchronously.
+        /// @pre IsFrameSplitSupported(), a frame is recording, and no rendering scope is open.
+        void SplitFrame(const function<void(const FrameSplitPoint&)>& encode);
 
         /// @brief Records commands via a callback on a one-shot command buffer and waits for completion.
         ///

@@ -65,7 +65,23 @@ namespace Veng::Renderer::Backend
     [[nodiscard]] VE_API Ref<Image> ImportExternalTexture(Context& context, void* texture,
                                                           string_view name);
 
+    /// @brief Returns the platform texture behind an engine image, as an opaque handle.
+    ///
+    /// The handle is unowned — the Vulkan implementation keeps the reference, and it is valid
+    /// for as long as the image is. Null when the image was not created with
+    /// ImageInfo::PlatformExport, when the device enabled no platform-object interop, or on a
+    /// platform with none.
+    /// @param context  The context the image was created on.
+    /// @param image    The image to read the texture of.
+    /// @return The platform texture (an @c MTLTexture on Apple), or null.
+    [[nodiscard]] VE_API void* GetPlatformTexture(const Context& context, const Image& image);
+
 #ifndef __APPLE__
+    inline void* GetPlatformTexture(const Context&, const Image&)
+    {
+        return nullptr;
+    }
+
     inline optional<ExternalTextureDescription> DescribeExternalTexture(void*)
     {
         return std::nullopt;

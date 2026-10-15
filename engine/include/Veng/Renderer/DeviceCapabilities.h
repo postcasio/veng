@@ -93,6 +93,17 @@ namespace Veng::Renderer
         /// @brief True when Format::RGBA16Sfloat supports storage-image writes.
         bool RGBA16SfloatStorage = false;
 
+        /// @brief True when the platform's temporal upscaler (MetalFX) can run on the device.
+        ///
+        /// What AntiAliasingMode::MetalFXTemporal needs; without it a renderer runs TAAU. A
+        /// renderer whose allocations fall outside the scaler's scale range also runs TAAU, so this
+        /// is necessary rather than sufficient.
+        bool MetalFxTemporal = false;
+        /// @brief True when the platform's spatial upscaler (MetalFX) can run on the device.
+        ///
+        /// What UpscaleFilter::MetalFXSpatial needs; without it a renderer filters bilinearly.
+        bool MetalFxSpatial = false;
+
         /// @brief Returns true when every class in @p operations is legal in @p stage.
         /// @param stage       One shader stage.
         /// @param operations  The operation classes a shader relies on.

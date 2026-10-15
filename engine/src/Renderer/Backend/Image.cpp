@@ -61,8 +61,23 @@ namespace Veng::Renderer
             flags |= vk::ImageCreateFlagBits::eCubeCompatible;
         }
 
+#ifdef __APPLE__
+        // VK_EXT_metal_objects permits reading an image's MTLTexture out only when the image was
+        // created declaring that export.
+        const VkExportMetalObjectCreateInfoEXT exportInfo{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
+            .exportObjectType = VK_EXPORT_METAL_OBJECT_TYPE_METAL_TEXTURE_BIT_EXT,
+        };
+        const void* next = info.PlatformExport && m_Context.GetNative().MetalObjectsEnabled
+                               ? &exportInfo
+                               : nullptr;
+#else
+        const void* next = nullptr;
+#endif
+
         const VkImageCreateInfo imageCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = next,
             .flags = static_cast<VkImageCreateFlags>(flags),
             .imageType = static_cast<VkImageType>(ToVk(m_Type)),
             .format = static_cast<VkFormat>(ToVk(m_Format)),
