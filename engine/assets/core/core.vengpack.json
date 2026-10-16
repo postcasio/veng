@@ -267,6 +267,11 @@
       "source": "shaders/taa_history_copy.frag.shader.json"
     },
     {
+      "id": "0x580CD768F662625D",
+      "type": "Shader",
+      "source": "shaders/metalfx_motion.frag.shader.json"
+    },
+    {
       "id": "0xAF2455E4EE50909B",
       "type": "Shader",
       "source": "shaders/portrait_coverage.frag.shader.json"

@@ -22,6 +22,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+// CAPTURE streams an AntiAliasingModeNames entry, and string_view's operator<< needs a complete
+// basic_ostream — doctest only forward-declares it.
+#include <ostream>
 
 #include <glm/gtc/packing.hpp>
 
@@ -258,6 +261,88 @@ namespace
                 worst = std::max({worst, c.r, c.g, c.b});
             }
             return worst;
+        }
+
+        // How much of the star's light trails behind it under a camera turning so the star crosses
+        // the open sky leftward, relative to the light at the star itself: the energy above
+        // background over the twelve pixels to the star's right (where it has been) divided by its
+        // own 5x5 footprint's. The star is a point field and writes neither depth nor velocity, so
+        // what its history follows is whatever the background's motion is.
+        f32 TrailUnderTurn(const AntiAliasingMode mode)
+        {
+            const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+                .Context = Gpu.Context,
+                .Assets = Assets,
+                .OutputFormat = Gpu.Context.GetOutputFormat(),
+                .Extent = Extent,
+                .Settings = {.Mode = DebugView::Final,
+                             .Bloom = false,
+                             .AntiAliasing = mode,
+                             .Shadows = false,
+                             .PunctualShadows = false,
+                             .AO = false},
+            });
+            // Converge still, then yaw right a fixed step a frame, which carries the star from the
+            // right of the view toward its middle beneath the cube.
+            const auto Aim = [&](const f32 yawDegrees)
+            {
+                const f32 yaw = glm::radians(yawDegrees);
+                Camera.SetView(vec3(0.0f), vec3(std::sin(yaw), 0.0f, -std::cos(yaw)),
+                               vec3(0.0f, 1.0f, 0.0f));
+            };
+            Aim(0.0f);
+            for (u32 frame = 0; frame < SettleFrames; ++frame)
+            {
+                Execute(*renderer, 1.0f);
+            }
+            constexpr u32 TurnFrames = 12;
+            constexpr f32 TurnDegreesPerFrame = 2.5f;
+            for (u32 frame = 1; frame <= TurnFrames; ++frame)
+            {
+                Aim(TurnDegreesPerFrame * static_cast<f32>(frame));
+                Execute(*renderer, 1.0f);
+            }
+            Aim(0.0f);
+            const HdrFrame image = Decode(renderer->GetHdrView()->GetImage()->Download());
+
+            // The star is the brightest pixel in the band of rows below the cube.
+            const i32 w = static_cast<i32>(Extent.x);
+            ivec2 star{-1, -1};
+            f32 peak = 0.0f;
+            for (i32 y = 46; y < 58; ++y)
+            {
+                for (i32 x = BorderBand; x < w - 16; ++x)
+                {
+                    if (image.Luminance[Index(x, y)] > peak)
+                    {
+                        peak = image.Luminance[Index(x, y)];
+                        star = {x, y};
+                    }
+                }
+            }
+            REQUIRE(star.x >= 0);
+            // The sky's gradient cancels in the mean of the rows five above and below.
+            const auto Excess = [&](const i32 x, const i32 y)
+            {
+                const f32 background =
+                    0.5f * (image.Luminance[Index(x, y - 5)] + image.Luminance[Index(x, y + 5)]);
+                return std::max(image.Luminance[Index(x, y)] - background, 0.0f);
+            };
+            f64 core = 0.0;
+            f64 trail = 0.0;
+            for (i32 dy = -2; dy <= 2; ++dy)
+            {
+                for (i32 dx = -2; dx <= 2; ++dx)
+                {
+                    core += Excess(star.x + dx, star.y + dy);
+                }
+                for (i32 dx = 3; dx < 15; ++dx)
+                {
+                    trail += Excess(star.x + dx, star.y + dy);
+                }
+            }
+            REQUIRE(core > 0.0);
+            return static_cast<f32>(trail / core);
         }
 
         // The settings a renderer runs when asked for these, after any engine fallback.
@@ -639,6 +724,25 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Inside a frame the scaler splits the frame's own submit rather than a one-shot recording's.
     scene.InFrames = true;
     CheckStill(scene.Measure(AntiAliasingMode::MetalFXTemporal, 0.5f), MetalFxBounds);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "taa stability: a star over open sky leaves no trail under a turning camera")
+{
+    // A history that took the background's motion to be zero keeps the star's past positions
+    // (measured at landing: 0.064 of its own light under MetalFX, against none with the turn's
+    // motion); a hundredth sits well under that.
+    constexpr f32 MaxTrailShare = 0.01f;
+    StabilityScene scene(*this);
+    for (const AntiAliasingMode mode : {AntiAliasingMode::TAA, AntiAliasingMode::MetalFXTemporal})
+    {
+        if (scene.Resolved({.AntiAliasing = mode}).AntiAliasing != mode)
+        {
+            continue;
+        }
+        CAPTURE(AntiAliasingModeNames[static_cast<usize>(mode)]);
+        CHECK(scene.TrailUnderTurn(mode) < MaxTrailShare);
+    }
 }
 
 TEST_CASE_FIXTURE(

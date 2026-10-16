@@ -1,5 +1,7 @@
 #include "MetalFxScenePasses.h"
 
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneView.h>
@@ -8,6 +10,33 @@
 
 namespace Veng::Renderer
 {
+    void MetalFxMotionScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    {
+        const TextureHandle depthHandle = io.DepthHandle;
+        // Outside the rendered sub-rect the scaler reads nothing, so the target is not cleared.
+        graph.AddPass("MetalFX Motion")
+            .Color({.Resource = m_MotionId, .Load = LoadOp::DontCare, .Store = StoreOp::Store})
+            .Sample(m_DepthId)
+            .Sample(m_VelocityId)
+            .Execute(
+                [this, depthHandle](PassContext& inner)
+                {
+                    const SceneView& view = Wrap(inner).View();
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(m_Upscale.GetMotionPipeline());
+                    cmd.SetViewport({0, 0}, view.RenderExtent);
+                    cmd.SetScissor({0, 0}, view.RenderExtent);
+                    registry.Bind(cmd);
+                    cmd.PushConstants(MetalFxMotionPush{
+                        .DepthTexture = depthHandle.Index,
+                        .VelocityTexture = m_VelocityHandle.Index,
+                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                    });
+                    cmd.DrawFullscreenTriangle();
+                });
+    }
+
     void MetalFxTemporalScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
         graph.AddComputePass("MetalFX Temporal")

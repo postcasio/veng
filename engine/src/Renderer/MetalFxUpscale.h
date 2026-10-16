@@ -5,9 +5,29 @@
 #include "Backend/MetalFx.h"
 #include "FrameTopology.h"
 
+namespace Veng
+{
+    class AssetManager;
+}
+
 namespace Veng::Renderer
 {
     class Context;
+    class GraphicsPipeline;
+    class Image;
+    class ImageView;
+    class PipelineLayout;
+
+    /// @brief The motion pass's push block, matching metalfx_motion.frag PushConstants.
+    struct MetalFxMotionPush
+    {
+        /// @brief The g-buffer depth's bindless slot.
+        u32 DepthTexture;
+        /// @brief The g-buffer velocity channel's bindless slot.
+        u32 VelocityTexture;
+        /// @brief The current frame-in-flight's view-constants region.
+        u32 ViewConstantsIndex;
+    };
 
     /// @brief Owns the renderer's MetalFX scalers and what the device lets them do.
     ///
@@ -15,14 +35,24 @@ namespace Veng::Renderer
     /// once; the temporal scaler a MetalFXTemporal frame resolves through and the spatial one a
     /// MetalFXSpatial promotion upscales through, each sized to the allocations it bridges and
     /// held only while its mode is wired; and the record of a shape MetalFX refused, which the
-    /// settings resolution reads so the renderer falls back rather than renders nothing. The passes
-    /// are MetalFxTemporalScenePass and MetalFxSpatialScenePass.
+    /// settings resolution reads so the renderer falls back rather than renders nothing. Beside
+    /// the temporal scaler it holds the motion target the scaler reads — the velocity channel with
+    /// the background's motion filled in from the camera's turn — and the pipeline that writes it.
+    /// The passes are MetalFxMotionScenePass, MetalFxTemporalScenePass and MetalFxSpatialScenePass.
     class MetalFxUpscale
     {
     public:
-        /// @brief Reads the device's MetalFX support; creates no scaler.
+        /// @brief Reads the device's MetalFX support and builds the motion pipeline; creates no
+        ///        scaler.
         /// @param context The render context the scalers are created on.
-        explicit MetalFxUpscale(Context& context);
+        /// @param assets  Asset manager the motion pass's shaders load through.
+        MetalFxUpscale(Context& context, AssetManager& assets);
+
+        /// @brief Drops the scalers and the motion target; each retires through the frame bin.
+        ~MetalFxUpscale();
+
+        MetalFxUpscale(const MetalFxUpscale&) = delete;
+        MetalFxUpscale& operator=(const MetalFxUpscale&) = delete;
 
         /// @brief What MetalFX can run for the renderer's current allocations.
         /// @return Each scaler's support, less any shape it refused since the last ClearRefusals.
@@ -49,6 +79,7 @@ namespace Veng::Renderer
         /// @param input   The render allocation the jittered colour, depth and velocity fill.
         /// @param output  The scene-colour allocation the scaler reconstructs.
         /// @param enabled Whether the temporal scaler is wired.
+        /// The motion target follows it, sized to @p input and held only while a scaler is.
         /// @return False when the scaler was wanted and MetalFX refused the shape.
         bool ResizeTemporal(uvec2 input, uvec2 output, bool enabled);
 
@@ -77,6 +108,15 @@ namespace Veng::Renderer
         /// @brief The spatial scaler; null while not wired.
         [[nodiscard]] Backend::MetalFxSpatialScaler* GetSpatial() const { return m_Spatial.get(); }
 
+        /// @brief The motion pass's pipeline, writing the motion target's format.
+        [[nodiscard]] const Ref<GraphicsPipeline>& GetMotionPipeline() const
+        {
+            return m_MotionPipeline;
+        }
+
+        /// @brief The motion target the temporal scaler reads; null while no scaler is held.
+        [[nodiscard]] const Ref<ImageView>& GetMotionView() const { return m_MotionView; }
+
     private:
         Context& m_Context;
         /// @brief The device's MetalFX support, read at construction.
@@ -89,5 +129,17 @@ namespace Veng::Renderer
         bool m_TemporalRefused = false;
         /// @brief MetalFX refused the spatial shape last asked for.
         bool m_SpatialRefused = false;
+
+        /// @brief Recreates the motion target at @p extent, or releases it.
+        void ResizeMotion(uvec2 extent, bool enabled);
+
+        /// @brief Layout for the motion pipeline: the motion push block.
+        Ref<PipelineLayout> m_MotionLayout;
+        /// @brief The motion pass's pipeline.
+        Ref<GraphicsPipeline> m_MotionPipeline;
+        /// @brief The motion target, the render allocation in the velocity channel's format.
+        Ref<Image> m_MotionImage;
+        /// @brief View over m_MotionImage.
+        Ref<ImageView> m_MotionView;
     };
 }

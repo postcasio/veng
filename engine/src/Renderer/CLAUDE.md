@@ -565,7 +565,7 @@ combination previously gave up scaling altogether.
 **`MetalFXTemporal` is TAAU with Apple's MetalFX temporal scaler as the resolve.** It sets
 `TaaActive` like the other temporal modes, so the jitter, the lit target, the stored velocity and
 both allocations are TAAU's unchanged, and `FrameTopology::MetalFxTemporal` swaps only the resolve:
-`MetalFxTemporalScenePass` takes the lit target, the g-buffer depth and the velocity channel and
+`MetalFxTemporalScenePass` takes the lit target, the g-buffer depth and a motion target and
 reconstructs the scene-colour allocation into the target the tail reads (the HDR target, or the
 depth-of-field intermediate behind a composited chain, where it resolves at the render allocation as
 TAAU does). The scaler keeps its own history, so no history target is allocated or imported and no
@@ -576,6 +576,19 @@ signs (measured — the opposite sign leaves the jitter in the image, a pixel of
 motion scale is minus the sub-rect, since velocity is current minus previous in viewport UV and the
 scaler wants the step back in content pixels, and depth is reversed. The scaler meters exposure
 itself (`autoExposureEnabled`) and returns linear HDR.
+
+**The scaler reads a motion target, not the velocity channel.** The velocity channel is cleared to
+zero wherever the surface pass left the cleared depth, and the engine's resolve never reads it there:
+it reprojects the background as a direction through `PrevFromCurDirection`. Handed the raw channel,
+the scaler would take the sky — and everything drawn over it without writing motion, the
+translucents and point fields — to stand still on screen however the camera turned, and smear it.
+`MetalFxMotionScenePass` (`metalfx_motion.frag`) therefore writes a render-allocation target that
+copies the velocity where geometry stands and fills the cleared depth with the camera's turn, in the
+velocity channel's own convention, so the two temporal paths agree about the background. The
+velocity channel itself is untouched for its other readers. What the fill cannot give a draw over
+the background is its own motion — a translucent's parallax as the eye travels — which the camera's
+turn dominates at a distance. `tests/gpu/taa_stability.cpp` holds a point-field star over open sky
+under a turning camera to leaving no trail in either temporal resolve.
 
 **`UpscaleFilter::MetalFXSpatial` is the promotion as MetalFX's spatial scaler.**
 `Settings.Upscale` picks the filter that carries the scene colour across the boundary on a frame

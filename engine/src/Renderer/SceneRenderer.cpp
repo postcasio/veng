@@ -211,6 +211,8 @@ namespace Veng::Renderer
         // materials read, and read by those passes, each of which skips every frame its flag is
         // clear.
         SceneGrabRecording GrabRecording;
+        // The motion target MetalFX's temporal scaler reads, imported only while it is wired.
+        ResourceId MetalFxMotionId;
         // PrepareDraws' reused scratch: the static survivors' sort keys and the survivors the
         // static phase triages to the skinned and translucent phases. Held across frames so a
         // steady-state gather allocates nothing.
@@ -283,7 +285,7 @@ namespace Veng::Renderer
           m_Topology(CreateUnique<FrameTopology>())
     {
         // Which MetalFX modes run is part of the clamp, so the device's support is read first.
-        m_MetalFx = CreateUnique<MetalFxUpscale>(m_Context);
+        m_MetalFx = CreateUnique<MetalFxUpscale>(m_Context, m_Assets);
         m_Settings = ClampSettings(m_Settings);
         // Frames-in-flight is spine — the renderer's own rings (draw data, palette) size from it,
         // so seed it before those are allocated below. Each subsystem derives its own ring depth
@@ -957,8 +959,12 @@ namespace Veng::Renderer
             // between lighting and the bloom/tonemap tail.
             if (m_Topology->MetalFxTemporal)
             {
+                m_Internal->MetalFxMotionId = graph.Import("SceneRenderer MetalFX Motion");
+                m_Passes.push_back(CreateUnique<MetalFxMotionScenePass>(
+                    m_Context, *m_MetalFx, depthId, velocityId, m_Internal->MetalFxMotionId,
+                    m_VelocityHandle));
                 m_Passes.push_back(CreateUnique<MetalFxTemporalScenePass>(
-                    *m_MetalFx, litId, depthId, velocityId, dofTargetId,
+                    *m_MetalFx, litId, depthId, m_Internal->MetalFxMotionId, dofTargetId,
                     m_Taa->GetHistoryResetPointer()));
             }
             else if (m_Topology->TaaActive)
@@ -3357,6 +3363,11 @@ namespace Veng::Renderer
         if (m_Topology->TaaActive && !m_Topology->MetalFxTemporal)
         {
             bindings.push_back({.Id = m_TaaHistoryId, .View = m_Taa->GetHistoryView()});
+        }
+        if (m_Topology->MetalFxTemporal)
+        {
+            bindings.push_back(
+                {.Id = m_Internal->MetalFxMotionId, .View = m_MetalFx->GetMotionView()});
         }
         // The promotion's sub-rect scene target: the scene chain writes it and the upscale reads it.
         if (m_UpscaleWired)
