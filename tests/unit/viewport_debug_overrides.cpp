@@ -2,13 +2,16 @@
 // override layer built from two of them. Pure struct copies, no device: an empty set changes
 // nothing, a set field wins and nothing else moves, clearing returns the target's own value, the
 // index a reflected-field UI drives agrees with the member-pointer form, and the view layer clamps
-// the GPU loop bounds it can reach. Runs ICD-free.
+// the GPU loop bounds it can reach, and every enum field the surface draws names a registered type.
+// Runs ICD-free.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Reflection/FieldOverrides.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Scene/BuiltinTypes.h>
 
 using namespace Veng;
 using Renderer::SceneRendererSettings;
@@ -161,4 +164,25 @@ TEST_CASE("The view override layer wins over a resolved view and clamps its GPU 
     ViewState cleared = ResolvedView();
     overrides.ApplyTo(cleared);
     CHECK(cleared.BloomThreshold == ResolvedView().BloomThreshold);
+}
+
+TEST_CASE("viewport overrides: every enum field of the settings surface names a builtin type")
+{
+    // The surface draws an enum field as a combo of its registered enumerators, and resolving an
+    // unregistered type is fatal, so a new settings enum must join the builtin registration.
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    const auto CheckFields = [&](const vector<FieldDescriptor>& fields)
+    {
+        for (const FieldDescriptor& field : fields)
+        {
+            if (field.Class == FieldClass::Enum)
+            {
+                CAPTURE(field.Name);
+                CHECK(registry.IsRegistered(field.Type));
+            }
+        }
+    };
+    CheckFields(VengReflect<SceneRendererSettings>::Fields());
+    CheckFields(VengReflect<ViewState>::Fields());
 }

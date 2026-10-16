@@ -259,6 +259,7 @@ namespace Veng
         registry.Register<Renderer::DebugView>();
         registry.Register<Renderer::BloomKernel>();
         registry.Register<Renderer::AntiAliasingMode>();
+        registry.Register<Renderer::UpscaleFilter>();
         registry.Register<Renderer::RenderPath>();
         registry.Register<Renderer::SceneRendererSettings::CullMode>();
 
