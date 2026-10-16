@@ -1461,7 +1461,9 @@ namespace Veng::Renderer
         std::swap(commandBuffer->GetNative().CommandBuffer, spare.GetNative().CommandBuffer);
         const vk::CommandBuffer resumed = commandBuffer->GetNative().CommandBuffer;
         VK_ASSERT(resumed.reset(), "SplitFrame: failed to reset the resumed command buffer");
-        VK_ASSERT(resumed.begin({}), "SplitFrame: failed to begin the resumed command buffer");
+        // Named explicitly: a bare {} selects begin's pointer overload and passes a null begin info.
+        VK_ASSERT(resumed.begin(vk::CommandBufferBeginInfo{}),
+                  "SplitFrame: failed to begin the resumed command buffer");
     }
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const

@@ -210,19 +210,27 @@ namespace
 
         void Execute(SceneRenderer& renderer, const f32 renderScale)
         {
-            Gpu.Context.ImmediateCommands(
-                [&](CommandBuffer& cmd)
-                {
-                    // A zero aperture: a wired depth-of-field chain runs every stage and composites
-                    // without defocusing, so the case measures the resolve's routing through the
-                    // chain's intermediate rather than the blur.
-                    renderer.Execute(cmd, Renderer::SceneView{.World = *World,
-                                                              .Camera = Camera,
-                                                              .Delta = 0.0f,
-                                                              .RenderScale = renderScale,
-                                                              .Exposure = 1.0f,
-                                                              .DofAperture = 0.0f});
-                });
+            const auto Record = [&](CommandBuffer& cmd)
+            {
+                // A zero aperture: a wired depth-of-field chain runs every stage and composites
+                // without defocusing, so the case measures the resolve's routing through the
+                // chain's intermediate rather than the blur.
+                renderer.Execute(cmd, Renderer::SceneView{.World = *World,
+                                                          .Camera = Camera,
+                                                          .Delta = 0.0f,
+                                                          .RenderScale = renderScale,
+                                                          .Exposure = 1.0f,
+                                                          .DofAperture = 0.0f});
+            };
+            if (InFrames)
+            {
+                Record(Gpu.Context.BeginFrame());
+                Gpu.Context.EndFrame();
+            }
+            else
+            {
+                Gpu.Context.ImmediateCommands(Record);
+            }
         }
 
         // The largest motion-vector magnitude the debug arm shows for this scene: its blit is black
@@ -477,6 +485,9 @@ namespace
         }
 
         Test::GpuFixture& Gpu;
+        // Renders each Execute as a frame of its own rather than a one-shot recording, so a pass
+        // that splits its recording splits the frame.
+        bool InFrames = false;
         AssetManager Assets;
         path Archive;
         Unique<Scene> World;
@@ -625,6 +636,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // With a composited depth of field the scaler reconstructs the chain's intermediate at the
     // render allocation instead of promoting.
     CheckStill(scene.Measure(AntiAliasingMode::MetalFXTemporal, 1.0f, true), MetalFxBounds);
+    // Inside a frame the scaler splits the frame's own submit rather than a one-shot recording's.
+    scene.InFrames = true;
+    CheckStill(scene.Measure(AntiAliasingMode::MetalFXTemporal, 0.5f), MetalFxBounds);
 }
 
 TEST_CASE_FIXTURE(
