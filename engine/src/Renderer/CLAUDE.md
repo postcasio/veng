@@ -2281,6 +2281,18 @@ own Metal queue would hold that queue against a submit queued behind it; on a se
 shared-event waits order the three pieces on the GPU whatever order they were committed in.
 `IsFrameSplitSupported()` is the platform-object interop extension being enabled.
 
+**A validation build resolves the external signal on the host.** The validation layer models only
+signals made through Vulkan, so a segment waiting on the value the external work signals through the
+shared event is, to the layer, a wait nothing will ever resolve: it reports the frame's present as
+depending on an unsubmitted signal (`VUID-vkQueuePresentKHR-pWaitSemaphores-03268`), and
+synchronization validation parks every batch behind it, so each present after looks unsynchronized
+against the acquire. Under `VE_ENABLE_VALIDATION_LAYERS` the split therefore waits for the external
+value on the CPU (`vkWaitSemaphores`) and signals the next one from the host, which the rest of the
+frame waits instead (`Context::Native::ResolveExternalSignal`) — a Vulkan signal made before anything
+waits on it. That stalls the render thread until the GPU reaches the split, which only a validation
+build pays; every other build, the profiling tree included, keeps the GPU-side wait. The headless
+band cannot show the difference, since it presents nothing.
+
 ### Queue submission is asynchronous
 
 **`vkQueueSubmit` and `vkQueuePresentKHR` return before the driver has encoded the frame.**

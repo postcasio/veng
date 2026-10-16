@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <fstream>
 #include <set>
 #include <utility>
@@ -1426,7 +1427,7 @@ namespace Veng::Renderer
             immediate->End();
             m_Native->SubmitImmediateSegment(*immediate, point.WaitValue, vk::Fence{});
             encode(point);
-            m_Native->ImmediateInteropWait = point.SignalValue;
+            m_Native->ImmediateInteropWait = m_Native->ResolveExternalSignal(point.SignalValue);
 
             const Ref<CommandBuffer> spare = CommandBuffer::Create(*this);
             std::swap(immediate->GetNative().CommandBuffer, spare->GetNative().CommandBuffer);
@@ -1442,7 +1443,7 @@ namespace Veng::Renderer
         commandBuffer->End();
         m_Native->SubmitFrameSegment(frame, false, point.WaitValue);
         encode(point);
-        m_Native->PendingInteropWait = point.SignalValue;
+        m_Native->PendingInteropWait = m_Native->ResolveExternalSignal(point.SignalValue);
 
         // Resume in a spare: the submitted handle moves into the spare's wrapper, which keeps it
         // alive until this slot's fence is waited. Begun directly rather than through
@@ -2555,6 +2556,31 @@ namespace Veng::Renderer
         // The fence's first scope is every batch submitted ahead of it, so any segments a split
         // submitted are complete too.
         m_Native->ImmediateSplitBuffers.clear();
+    }
+
+    u64 Context::Native::ResolveExternalSignal(const u64 externalValue)
+    {
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        // The validation layer models only signals made through Vulkan, so a wait on the external
+        // work's signal is one it never sees resolved: it parks every later batch and reports each
+        // present as depending on an unsubmitted signal. Wait for the external work here and signal
+        // the next value from the host instead, a Vulkan signal made before anything waits on it.
+        // That stalls the CPU until the GPU reaches the split, which only a validation build pays.
+        const vk::SemaphoreWaitInfo waitInfo{
+            .semaphoreCount = 1,
+            .pSemaphores = &InteropTimeline,
+            .pValues = &externalValue,
+        };
+        VK_ASSERT(Device.waitSemaphores(waitInfo, std::numeric_limits<u64>::max()),
+                  "SplitFrame: failed to wait for the external work");
+        InteropValue = externalValue + 1;
+        VK_ASSERT(Device.signalSemaphore(
+                      vk::SemaphoreSignalInfo{.semaphore = InteropTimeline, .value = InteropValue}),
+                  "SplitFrame: failed to signal the interop timeline from the host");
+        return InteropValue;
+#else
+        return externalValue;
+#endif
     }
 
     void Context::Native::SubmitImmediateSegment(CommandBuffer& commandBuffer,

@@ -322,6 +322,15 @@ namespace Veng::Renderer
         void SubmitFrameSegment(const SynchronizationFrame& frame, bool final,
                                 optional<u64> interopValue);
 
+        /// @brief Returns the interop-timeline value the rest of a split frame waits on.
+        ///
+        /// The external work's own signal, except where the validation layer is compiled in: it
+        /// cannot see a signal made outside Vulkan, so there the host waits for the external value
+        /// and signals the next one itself, and that is the value returned.
+        /// @param externalValue The value the external work signals.
+        /// @return The value the next segment waits.
+        u64 ResolveExternalSignal(u64 externalValue);
+
         /// @brief Submits a one-shot recording's work as one segment of it.
         ///
         /// Waits every pending transfer wait (leaving them pending) and ImmediateInteropWait.
