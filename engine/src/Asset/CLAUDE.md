@@ -649,6 +649,12 @@ compose with it for free and a material can never widen or replace the shape.
 `Material::GetTranslucentBlend()` — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Additive
 translucent materials".
 
+**A Translucent material carries the layer it draws in**, `TranslucentLayer` (`Full` by default,
+`HalfResolution` from `"resolution": "half"`, `PostResolve` from `"placement": "postResolve"`), read
+as `Material::GetTranslucentLayer()` (with `IsHalfResolution` and `IsPostResolve`) — see
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The half-resolution translucent layer" and "The
+post-resolve translucent layer".
+
 **A Translucent material declares what it reads of the pre-translucent grab**, so the renderer
 records only what some drawn material samples: `"readsSceneColor": true` for the scene-colour copy
 (and the depth beside it; `Material::IsSceneColorReader`), `"readsSceneDepth": true` for the

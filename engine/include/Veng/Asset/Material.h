@@ -65,6 +65,23 @@ namespace Veng
         Additive = 1,
     };
 
+    /// @brief Which of the frame's translucent layers a Translucent material draws in.
+    ///
+    /// The underlying integer is the cooked header's Layer word (CookedMaterialHeader::Layer).
+    /// Full is 0 so a zero-initialized header defaults to it.
+    enum class TranslucentLayer : u32
+    {
+        /// @brief The full-resolution translucent pass, drawn with the scene: depth-tested against
+        ///        the opaque depth, resolved by TAA and resampled by any upscale.
+        Full = 0,
+        /// @brief The reduced-resolution layer, composited under the full-resolution translucents
+        ///        through a depth-aware upsample.
+        HalfResolution = 1,
+        /// @brief The post-resolve layer: drawn at the output resolution after the temporal resolve
+        ///        and the upscale, through the unjittered projection, with no depth test.
+        PostResolve = 2,
+    };
+
     /// @brief Push-constant offset of a GuiFill material's per-draw selector.
     ///
     /// A GuiFill pipeline reserves the GUI pass's own push block — the inverse screen size the gui
@@ -179,12 +196,13 @@ namespace Veng
         /// in the pass leaves the mask untouched. Ignored outside the Translucent domain.
         bool WritesBloomMask = false;
 
-        /// @brief Whether the material draws in the reduced-resolution translucent layer.
+        /// @brief Which translucent layer the material draws in.
         ///
-        /// An expensive per-pixel translucent opts into a half-resolution offscreen layer
-        /// composited under the full-resolution translucents through a depth-aware upsample.
-        /// Translucent domain only, and exclusive with the bloom mask (both cook-enforced).
-        bool HalfResolution = false;
+        /// An expensive per-pixel translucent opts into the half-resolution layer (exclusive with
+        /// the bloom mask); a translucent that must stay crisp opts into the post-resolve layer
+        /// (exclusive with the scene-colour and scene-depth reads). Ignored outside the Translucent
+        /// domain; every rule is cook-enforced.
+        TranslucentLayer Layer = TranslucentLayer::Full;
 
         /// @brief How the translucent pass composites the material's colour. Ignored outside the
         ///        Translucent domain.
@@ -282,8 +300,25 @@ namespace Veng
         /// write undefined values into the mask.
         [[nodiscard]] bool IsBloomMaskWriter() const { return m_WritesBloomMask; }
 
+        /// @brief Returns which translucent layer the material draws in.
+        [[nodiscard]] TranslucentLayer GetTranslucentLayer() const { return m_Layer; }
+
         /// @brief Whether the material draws in the reduced-resolution translucent layer.
-        [[nodiscard]] bool IsHalfResolution() const { return m_HalfResolution; }
+        [[nodiscard]] bool IsHalfResolution() const
+        {
+            return m_Layer == TranslucentLayer::HalfResolution;
+        }
+
+        /// @brief Whether the material draws in the post-resolve translucent layer.
+        ///
+        /// Its draws are routed to a translucent pass at the HDR tail, after the post-process
+        /// effects and the post-resolve ribbons: at the output resolution, through the unjittered
+        /// projection, with no depth test, so the surface stays as crisp as post-resolve linework
+        /// and draws over every scene surface.
+        [[nodiscard]] bool IsPostResolve() const
+        {
+            return m_Layer == TranslucentLayer::PostResolve;
+        }
 
         /// @brief Returns how the translucent pass composites the material's colour.
         [[nodiscard]] TranslucentBlend GetTranslucentBlend() const { return m_Blend; }
@@ -483,7 +518,7 @@ namespace Veng
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         i32 m_SortPriority = 0;
         bool m_WritesBloomMask = false;
-        bool m_HalfResolution = false;
+        TranslucentLayer m_Layer = TranslucentLayer::Full;
         TranslucentBlend m_Blend = TranslucentBlend::Alpha;
         bool m_ReadsSceneColor = false;
         bool m_ReadsSceneDepth = false;

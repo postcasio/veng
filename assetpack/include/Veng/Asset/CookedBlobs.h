@@ -402,7 +402,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 15u;
+    inline constexpr u32 CookedMaterialVersion = 16u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -460,14 +460,19 @@ namespace Veng
         /// this as 1, and the translucent pass enables the mask attachment's writes for its
         /// pipeline alone. Ignored outside the Translucent domain.
         u32 BloomMask = 0;
-        /// @brief Whether the material draws in the reduced-resolution translucent layer (the
-        ///        "resolution" key; 0 = full, 1 = half).
+        /// @brief Which translucent layer the material draws in: the underlying
+        ///        Veng::TranslucentLayer integer (0 = the full-resolution scene layer, 1 = the
+        ///        half-resolution layer from "resolution": "half", 2 = the post-resolve layer from
+        ///        "placement": "postResolve").
         ///
         /// An expensive per-pixel translucent — a ray-marched volumetric shell — opts into a
         /// half-resolution offscreen layer composited under the full-resolution translucents
-        /// through a depth-aware upsample. Translucent domain only, and exclusive with the bloom
-        /// mask, both enforced at cook.
-        u32 HalfResolution = 0;
+        /// through a depth-aware upsample; that layer is exclusive with the bloom mask. A
+        /// translucent that must stay crisp — a holographic instrument — opts into the post-resolve
+        /// layer, drawn at the output resolution after the temporal resolve; that layer is
+        /// exclusive with the scene-colour and scene-depth reads. Translucent domain only, every
+        /// rule enforced at cook.
+        u32 Layer = 0;
         /// @brief How the material's colour composites into the scene (the "blend" key; 0 = alpha
         ///        over, 1 = additive).
         ///

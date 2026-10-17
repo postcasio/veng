@@ -474,7 +474,8 @@ when it carried this upscale, so the image is unchanged and the upscale is not p
 is declared at the HDR tail anchor, **after** the depth-of-field composite and **before** the
 post-process effect chain, so every g-buffer-reading pass is upstream of it and the whole tail is
 downstream. Below it the tail composes in a fixed order: the post-process effects, the post-resolve
-ribbons (see "Ribbons and trails"), the pre-bloom GUI overlay, then bloom and the tonemap. It is wired only when the scene colour is not already the post-resolve allocation —
+ribbons (see "Ribbons and trails"), the post-resolve translucent layer (see "The post-resolve
+translucent layer"), the pre-bloom GUI overlay, then bloom and the tonemap. It is wired only when the scene colour is not already the post-resolve allocation —
 a reduced render allocation, a dynamic-resolution sub-rect, or both. The wiring is scale-driven with
 the `HalfResTranslucency` shape: activated at the top of the `Execute` that first renders below the
 post-resolve allocation (before the post-resolve extent is derived, so that frame runs the promoted
@@ -488,8 +489,9 @@ viewport at render scale 1 carries neither target and neither pass**.
 **The bloom mask is the scene colour's companion channel and crosses the same boundary — as its own
 step.** It has writers on each side: the translucent pass (and the scene-placed ribbon and sprite
 passes after it) rasterizes it into the render allocation beside the lit colour, and at the
-post-resolve allocation the post-resolve ribbons and a `SceneHdrPreBloom` overlay whose composite
-material declares `"bloomMask": true` add amplitudes to it. So the mask is resampled from the
+post-resolve allocation the post-resolve ribbons, a post-resolve translucent material declaring
+`"bloomMask": true`, and a `SceneHdrPreBloom` overlay whose composite material declares it add
+amplitudes to it. So the mask is resampled from the
 rasterized sub-rect across a promoted, post-resolve-sized mask at the same boundary
 (`PromotionSource::BloomMask`, the same shader); the post-resolve writers then load *that* and bloom
 reads it with an identity map, exactly like the scene colour beside it. The mask needs no content to
@@ -1082,6 +1084,44 @@ reads like `SampleSceneColor` work unchanged. The region is claimed **before** t
 slot, because every pass reading `GetCurrentViewConstantsIndex()` at record time must land on the
 full region; a frame whose view budget refuses the extra claim folds the layer's draws back into
 the full-res plan for that frame, the same fallback as the activation edge.
+
+### The post-resolve translucent layer
+
+**A Translucent material may draw after the temporal resolve instead of with the scene** —
+`"placement": "postResolve"` in its `.vmat.json` (default `"scene"`; Translucent-domain only, and
+exclusive with `"resolution": "half"`, `"readsSceneColor"` and `"readsSceneDepth"`, each a cook
+error). The cooked header's layer word carries it (`TranslucentLayer::PostResolve`), and
+`Material::IsPostResolve` reports it. It is the mesh counterpart of a post-resolve `RibbonPath`: a
+solid part of a holographic instrument, a gizmo's handle, anything drawn as geometry that must stay
+as crisp as the linework around it.
+
+- **Where it draws.** A `TranslucentScenePass` of kind `PostResolve`, **"Post-Resolve
+  Translucent"**, is declared at the HDR tail anchor immediately after the post-resolve ribbons and
+  before the pre-bloom GUI overlay, into the effect chain's output at the **post-resolve
+  allocation**, in the Final arm only. It loads the post-resolve bloom mask (promoted or not), so a
+  material declaring `"bloomMask": true` glows through it as a post-resolve ribbon does.
+- **How it projects.** It renders through a **view-constants region of its own**, claimed beside
+  the half-res layer's by the same rule (`ExtraViewRegionFits`: only while a slot remains for the
+  render's own region) — the render's block with `Proj` and both inverse view-projections
+  unjittered, `JitterNdc` zero, and the extents and UV maps the tail's own (an identity sub-rect).
+  The surface vertex stage therefore projects through the unjittered matrix with no shader change,
+  and a fragment mapping `sv_position` through `ExtentParams` lands on the output's UV.
+- **No depth.** The post-resolve allocation carries no depth buffer, so the pass binds none and
+  its pipelines test none: a post-resolve surface draws over every scene surface, sorted back to
+  front among its own kind by the ordinary translucent order. That is the layer's point — an
+  instrument reads whole inside the geometry it stands in — and a material wanting occlusion
+  belongs in the scene placement.
+- **Content-driven, with a transition frame.** The translucent gather routes a post-resolve
+  material's draws into a plan of their own; the pass is wired the first `Execute` that gathers one
+  and unwired after `RibbonIdleFrameLimit` empty ones. On the activation frame — and on any frame
+  the view budget refused the layer's region — the draws fold into the full-resolution plan
+  (`MergeTranslucentPlans`), drawn depth-tested and jittered for that one frame rather than
+  dropped.
+
+`tests/gpu/post_resolve_translucent.cpp` draws a post-resolve cube behind an opaque one and checks
+that the activation frame hides it in the scene pass and every later frame draws it, through its
+own pass, over the occluder at full and reduced render scale; `tests/cooker/material_cook.cpp`
+covers the key and its three exclusions.
 
 ### Additive translucent materials
 

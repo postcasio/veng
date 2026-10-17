@@ -38,11 +38,12 @@ namespace Veng::Renderer
         return viewportSlots + (captureDemand < spare / 2 ? captureDemand : spare / 2);
     }
 
-    /// @brief Whether a renderer may claim its half-res translucent region with this many view slots
-    ///        left this frame: only while one would remain for its full region after it.
+    /// @brief Whether a renderer may claim one of its translucent layers' extra view regions (the
+    ///        half-res layer's, the post-resolve layer's) with this many view slots left this
+    ///        frame: only while one would remain for its full region after it.
     /// @param remainingViews  Slots still claimable this frame (BindlessRegistry::GetRemainingViews).
     /// @return True when both regions fit.
-    [[nodiscard]] constexpr bool HalfResViewFits(const u32 remainingViews)
+    [[nodiscard]] constexpr bool ExtraViewRegionFits(const u32 remainingViews)
     {
         return remainingViews >= 2;
     }

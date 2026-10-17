@@ -204,6 +204,17 @@ namespace Veng::Renderer
         // The reduced-resolution layer's own plan: the draws of materials that opted into
         // half-resolution rendering, sorted back-to-front on their own.
         TranslucentDrawPlan HalfResTranslucentPlan;
+        // The post-resolve layer's own plan: the draws of materials that opted into the
+        // post-resolve placement, sorted back-to-front and drawn at the HDR tail.
+        TranslucentDrawPlan PostResolveTranslucentPlan;
+        // Whether the tail carries the post-resolve translucent pass, with the post-resolve ribbon
+        // pass's hysteresis on its own plan, so a scene with no such material never wires it.
+        bool PostResolveTranslucentActive = false;
+        // Consecutive Executes the post-resolve translucent plan has come back empty while wired.
+        u32 PostResolveTranslucentIdleFrames = 0;
+        // The post-resolve translucent pass, declared at the tail anchor rather than held in
+        // m_Passes.
+        Unique<TranslucentScenePass> PostResolveTranslucentPass;
         // The two plans cut into the order they composite in, which the translucent passes, the
         // half-res layer passes and their composites read.
         TranslucentSegments Segments;
@@ -705,6 +716,7 @@ namespace Veng::Renderer
         m_Passes.clear();
         m_PointFieldPass.reset();
         m_Internal->RibbonPostResolvePass.reset();
+        m_Internal->PostResolveTranslucentPass.reset();
         m_DofCompositePass.reset();
         m_ScenePromotionPass.reset();
         m_BloomMaskPromotionPass.reset();
@@ -1121,6 +1133,17 @@ namespace Veng::Renderer
                     });
             }
 
+            // Post-resolve translucent meshes draw right after the post-resolve ribbons, into the
+            // same target and mask: a hologram's solid parts composite over its linework, and a
+            // nearer overlay composites over both.
+            if (m_Internal->PostResolveTranslucentActive)
+            {
+                m_Internal->PostResolveTranslucentPass = CreateUnique<TranslucentScenePass>(
+                    m_Context, tailExtent, &m_Internal->PostResolveTranslucentPlan, ppEffectFinalId,
+                    ResourceId{}, ResourceId{}, ResourceId{}, HdrFormat, PostMaskId(),
+                    BloomMaskFormat, TranslucentPassKind::PostResolve, 0, forwardSets);
+            }
+
             // The HDR tail declares just before the tonemap — never after it, even when a
             // post-tonemap pass (DebugDraw) follows in the list.
             hdrTailAnchor = m_Passes.size();
@@ -1517,6 +1540,10 @@ namespace Veng::Renderer
                 {
                     m_Internal->RibbonPostResolvePass->Declare(graph, io);
                 }
+                if (m_Internal->PostResolveTranslucentPass != nullptr)
+                {
+                    m_Internal->PostResolveTranslucentPass->Declare(graph, io);
+                }
                 // The GUI-overlay slot: after the post-process effects, before bloom. It loads and
                 // stores the effect chain's output (ppEffectFinalId) in place, blending the overlays
                 // over it, so bloom and the bloom-off tonemap read the overlay's result.
@@ -1567,6 +1594,7 @@ namespace Veng::Renderer
         m_Passes.clear();
         m_PointFieldPass.reset();
         m_Internal->RibbonPostResolvePass.reset();
+        m_Internal->PostResolveTranslucentPass.reset();
         m_DofCompositePass.reset();
         m_ScenePromotionPass.reset();
         m_BloomMaskPromotionPass.reset();
@@ -1616,7 +1644,7 @@ namespace Veng::Renderer
         // Fill the skinning palette (and the per-entity bases) the prepass poses skinned meshes
         // through; the prepass does its own frustum cull, so the plan's slots are unread here. The
         // view-constants index is unused by the prepass (it reads no view block), hence 0.
-        PrepareDraws(resolvedView, 0, 0, false);
+        PrepareDraws(resolvedView, 0, {}, {});
         resolvedView.SkinningPalette = m_PaletteSet;
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
         resolvedView.MeshLods = m_Internal->MeshLods;
@@ -1988,8 +2016,8 @@ namespace Veng::Renderer
     }
 
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex,
-                                     const u32 halfResViewConstantsIndex,
-                                     const bool halfResViewReady)
+                                     const ExtraViewRegion halfResView,
+                                     const ExtraViewRegion postResolveView)
     {
         VE_PROFILE_SCOPE("Render/PrepareDraws");
         GBufferDrawPlan& plan = m_Internal->Plan;
@@ -2018,6 +2046,11 @@ namespace Veng::Renderer
         halfResPlan.CandidateIdBuffer = m_CandidateIdBuffer;
         halfResPlan.Draws.clear();
 
+        TranslucentDrawPlan& postResolvePlan = m_Internal->PostResolveTranslucentPlan;
+        postResolvePlan.DrawDataSet = m_DrawDataSet;
+        postResolvePlan.CandidateIdBuffer = m_CandidateIdBuffer;
+        postResolvePlan.Draws.clear();
+
         // The DrawData / candidate / indirect buffers are renderer-owned and framesInFlight-deep,
         // so they ring by the frame-in-flight index; only the shared view-constants push
         // (viewConstantsIndex) rings per viewport render.
@@ -2036,7 +2069,10 @@ namespace Veng::Renderer
         // the half target's — a fragment mapping sv_position through ExtentParams then lands on
         // the same UV a full-resolution draw would.
         halfResPlan.Push =
-            SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = halfResViewConstantsIndex};
+            SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = halfResView.Index};
+        // The post-resolve layer likewise reads its own region, whose projection is unjittered.
+        postResolvePlan.Push =
+            SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = postResolveView.Index};
         plan.IndirectRegionOffset =
             frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
 
@@ -2112,7 +2148,8 @@ namespace Veng::Renderer
         GatherStaticOpaque(gatherInput, m_CullScratch, plan, budget, skinnedScratch,
                            translucentScratch, m_Internal->DrawKeyScratch);
         GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, budget);
-        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, halfResPlan, budget);
+        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, halfResPlan,
+                          postResolvePlan, budget);
 
         // Each instanced set takes one slot, for its frame and material, after the entity phases;
         // its instances are culled and drawn outside the budget.
@@ -2137,7 +2174,7 @@ namespace Veng::Renderer
         // — every frame. An idle wired layer costs only its targets' memory (its passes skip a
         // frame with an empty plan), so the window is generous.
         const bool halfResGathered = !halfResPlan.Draws.empty();
-        if (halfResGathered && (!m_HalfResTranslucentActive || !halfResViewReady))
+        if (halfResGathered && (!m_HalfResTranslucentActive || !halfResView.Ready))
         {
             MergeTranslucentPlans(translucentPlan, halfResPlan);
         }
@@ -2157,6 +2194,33 @@ namespace Veng::Renderer
             m_HalfResTranslucentActive = false;
             m_HalfResTranslucentIdleFrames = 0;
             m_HalfResTranslucent->Recreate(false, m_RenderAllocExtent);
+            Rebuild();
+        }
+
+        // The post-resolve layer follows the same model: its draws wait on a wired pass and a
+        // written region, folding into the full-resolution plan for a transition frame (drawn
+        // depth-tested and jittered, never dropped), and its pass unwires after the ribbon idle
+        // window.
+        const bool postResolveGathered = !postResolvePlan.Draws.empty();
+        if (postResolveGathered &&
+            (!m_Internal->PostResolveTranslucentActive || !postResolveView.Ready))
+        {
+            MergeTranslucentPlans(translucentPlan, postResolvePlan);
+        }
+        if (postResolveGathered)
+        {
+            m_Internal->PostResolveTranslucentIdleFrames = 0;
+            if (!m_Internal->PostResolveTranslucentActive)
+            {
+                m_Internal->PostResolveTranslucentActive = true;
+                Rebuild();
+            }
+        }
+        else if (m_Internal->PostResolveTranslucentActive &&
+                 ++m_Internal->PostResolveTranslucentIdleFrames > RibbonIdleFrameLimit)
+        {
+            m_Internal->PostResolveTranslucentActive = false;
+            m_Internal->PostResolveTranslucentIdleFrames = 0;
             Rebuild();
         }
 
@@ -2211,7 +2275,8 @@ namespace Veng::Renderer
         // implicit in the three phases' call order.
         const u32 gatheredSlots =
             static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
-                             translucentPlan.Draws.size() + halfResPlan.Draws.size()) +
+                             translucentPlan.Draws.size() + halfResPlan.Draws.size() +
+                             postResolvePlan.Draws.size()) +
             setSlots;
         VE_ASSERT(gatheredSlots == slotCursor,
                   "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
@@ -2714,6 +2779,8 @@ namespace Veng::Renderer
         u32 viewConstantsIndex = 0;
         u32 halfResViewConstantsIndex = 0;
         bool halfResViewReady = false;
+        u32 postResolveViewConstantsIndex = 0;
+        bool postResolveViewReady = false;
         {
             VE_PROFILE_SCOPE("Render/ViewConstants");
             const mat4 renderProj = JitterProjection(view.Camera.Projection(), jitterNdc);
@@ -2800,7 +2867,7 @@ namespace Veng::Renderer
             // claim folds the layer's draws back into the full-res plan in PrepareDraws. It is taken
             // only while a slot would remain for the full claim after it: a half-res region taken
             // with the last slot would leave the full claim refused and the whole render skipped.
-            if (m_HalfResTranslucentActive && HalfResViewFits(registry.GetRemainingViews()) &&
+            if (m_HalfResTranslucentActive && ExtraViewRegionFits(registry.GetRemainingViews()) &&
                 registry.TryBeginView())
             {
                 registry.WriteLights(
@@ -2815,6 +2882,36 @@ namespace Veng::Renderer
                 registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
                 halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
                 halfResViewReady = true;
+            }
+
+            // The post-resolve translucent layer renders through a region of its own as well, for
+            // the same reason and claimed by the same rule: it rasterizes at the post-resolve
+            // allocation through the unjittered projection, so Proj and both inverses drop the
+            // jitter, and the extents and UV maps are the tail's own (an identity sub-rect).
+            if (m_Internal->PostResolveTranslucentActive &&
+                ExtraViewRegionFits(registry.GetRemainingViews()) && registry.TryBeginView())
+            {
+                registry.WriteLights(
+                    std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
+                registry.WriteAreaVertices(
+                    std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
+                const mat4 unjitteredProj = view.Camera.Projection();
+                ViewConstantsBlock postResolveConstants = viewConstants;
+                postResolveConstants.Proj = unjitteredProj;
+                postResolveConstants.InvViewProj =
+                    glm::inverse(unjitteredProj * view.Camera.View());
+                postResolveConstants.InvViewRotProj =
+                    glm::inverse(unjitteredProj * mat4(mat3(view.Camera.View())));
+                postResolveConstants.RenderScaleUV = vec4(postResolveScaleUV, postResolveScaleUV);
+                postResolveConstants.MaxValidUV = vec4(postResolveMaxUV, postResolveMaxUV);
+                postResolveConstants.ExtentParams =
+                    vec4(vec2(postResolveExtent), vec2(postResolveExtent));
+                postResolveConstants.JitterNdc = vec4(0.0f);
+                postResolveConstants.LightState.x = registry.GetCurrentLightBase();
+                postResolveConstants.LightState.z = registry.GetCurrentAreaVertexBase();
+                registry.WriteViewConstants(std::as_bytes(std::span(&postResolveConstants, 1)));
+                postResolveViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
+                postResolveViewReady = true;
             }
 
             // Claim this Execute's view slot before any further shared-buffer write: the
@@ -2837,6 +2934,10 @@ namespace Veng::Renderer
             if (!halfResViewReady)
             {
                 halfResViewConstantsIndex = viewConstantsIndex;
+            }
+            if (!postResolveViewReady)
+            {
+                postResolveViewConstantsIndex = viewConstantsIndex;
             }
 
             if (m_Topology->SsrActive)
@@ -2902,7 +3003,10 @@ namespace Veng::Renderer
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
         // The surface push's ViewConstantsIndex is the shared per-view slot, distinct from the
         // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
-        PrepareDraws(resolvedView, viewConstantsIndex, halfResViewConstantsIndex, halfResViewReady);
+        PrepareDraws(
+            resolvedView, viewConstantsIndex,
+            ExtraViewRegion{.Index = halfResViewConstantsIndex, .Ready = halfResViewReady},
+            ExtraViewRegion{.Index = postResolveViewConstantsIndex, .Ready = postResolveViewReady});
 
         // The view block went out claiming each wired copy, which only the gather can confirm: a
         // frame whose draws do not sample one skips it, so the block reads it as unavailable instead
@@ -2916,6 +3020,11 @@ namespace Veng::Renderer
             if (halfResViewConstantsIndex != viewConstantsIndex)
             {
                 registry.PatchViewConstants(halfResViewConstantsIndex, offset,
+                                            std::as_bytes(std::span(&unavailable, 1)));
+            }
+            if (postResolveViewConstantsIndex != viewConstantsIndex)
+            {
+                registry.PatchViewConstants(postResolveViewConstantsIndex, offset,
                                             std::as_bytes(std::span(&unavailable, 1)));
             }
         };

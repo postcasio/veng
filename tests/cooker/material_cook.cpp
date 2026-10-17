@@ -626,7 +626,7 @@ TEST_CASE("Cooker: a fragment writing SV_Depth beside its target cooks")
 TEST_CASE("Cooker: a half-resolution translucent material cooks with the flag set")
 {
     // "resolution": "half" opts a Translucent material into the reduced-resolution translucent
-    // layer; the cooked header carries the flag the loader threads to Material::IsHalfResolution.
+    // layer; the cooked header carries the layer the loader threads to Material::IsHalfResolution.
     const path packJson = FixtureDir / "material_translucent_half_pack.json";
     const path outArchive =
         Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_half.vengpack";
@@ -641,7 +641,7 @@ TEST_CASE("Cooker: a half-resolution translucent material cooks with the flag se
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.Domain == 3u); // Translucent
-    CHECK(header.HalfResolution == 1u);
+    CHECK(header.Layer == 1u);  // TranslucentLayer::HalfResolution
 
     std::filesystem::remove(outArchive);
 }
@@ -663,6 +663,42 @@ TEST_CASE("Cooker: 'resolution: half' outside the Translucent domain is a locate
     CHECK(result.error().find("requires the Translucent domain") != string::npos);
 
     std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a post-resolve translucent material cooks with its layer; the excluded "
+          "combinations are located cook errors")
+{
+    // "placement": "postResolve" puts a Translucent material in the post-resolve layer, which the
+    // loader threads to Material::IsPostResolve.
+    const Result<ArchiveReader> reader = CookMaterialPack(
+        FixtureDir / "material_translucent_post_resolve_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_post_resolve.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xB283EB8A15B8F7EAULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.Layer == 2u);  // TranslucentLayer::PostResolve
+
+    // Only the Translucent domain has the layer, a material draws in one layer, and the layer
+    // draws after the grab, so each of these is refused rather than silently inert.
+    const auto CookError = [](const char* pack)
+    {
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        const VoidResult result =
+            cooker.CookPack(FixtureDir / pack,
+                            Veng::TestSupport::TempDir() / "veng_cooker_material_pr_err.vengpack");
+        REQUIRE_FALSE(result.has_value());
+        return result.error();
+    };
+    CHECK(CookError("material_surface_post_resolve_pack.json")
+              .find("'placement: postResolve' requires the Translucent domain") != string::npos);
+    CHECK(CookError("material_translucent_post_resolve_half_pack.json")
+              .find("exclusive with 'resolution: half'") != string::npos);
+    CHECK(CookError("material_translucent_post_resolve_scene_color_pack.json")
+              .find("exclusive with 'readsSceneColor'") != string::npos);
 }
 
 TEST_CASE(

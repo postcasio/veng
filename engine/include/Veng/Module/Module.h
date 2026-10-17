@@ -537,10 +537,13 @@ extern "C"
 /// AntiAliasing), ImageInfo grows PlatformExport, SceneRenderer grows the scalers' owner, and
 /// DeviceCapabilities (laid out in Context::Native) grows the two scalers' support. A module
 /// configures renderers, creates images and reads the readout, so a stale one lays them out short.
+/// Version 131 adds the post-resolve translucent layer: MaterialInfo's HalfResolution flag becomes
+/// a TranslucentLayer, Material carries it, and SceneRenderer::PrepareDraws takes the layers'
+/// regions. A module builds materials, so a stale one fills the struct by the old field.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 130u
+#define VENG_MODULE_ABI_VERSION 131u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

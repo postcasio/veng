@@ -385,7 +385,7 @@ namespace Veng::Renderer
 
     void GatherTranslucent(const DrawGatherInput& input, const std::span<const u32> translucent,
                            TranslucentDrawPlan& plan, TranslucentDrawPlan& halfResPlan,
-                           DrawBudget& budget)
+                           TranslucentDrawPlan& postResolvePlan, DrawBudget& budget)
     {
         const mat4 viewMatrix = input.View.Camera.View();
         const mat4 viewProj = input.View.Camera.ViewProjection();
@@ -436,11 +436,14 @@ namespace Veng::Renderer
             const f32 viewDepth =
                 item.SortDistance > 0.0f ? -item.SortDistance : (viewMatrix * vec4(center, 1.0f)).z;
 
-            // A material that opted into the reduced-resolution layer routes to its own plan, and
-            // the screen rectangle is what segmenting tests a full-res draw against a run by.
+            // A material that opted into the reduced-resolution or the post-resolve layer routes
+            // to that layer's plan, and the screen rectangle is what segmenting tests a full-res
+            // draw against a run by.
             const Material* parent = material.GetParent().Get();
             const bool halfResolution = parent->IsHalfResolution();
-            TranslucentDrawPlan& destination = halfResolution ? halfResPlan : plan;
+            TranslucentDrawPlan& destination = halfResolution            ? halfResPlan
+                                               : parent->IsPostResolve() ? postResolvePlan
+                                                                         : plan;
             const vec4 screenRect =
                 subMesh.Bounds.IsEmpty()
                     ? ProjectScreenRect(viewProj, mat4(1.0f), item.WorldBounds.Min,
@@ -460,9 +463,11 @@ namespace Veng::Renderer
             });
         }
 
-        // Each plan sorts on its own; SegmentTranslucentDraws merges the two in the same order.
+        // Each plan sorts on its own; SegmentTranslucentDraws merges the first two in the same
+        // order, and the post-resolve plan draws alone after the resolve.
         std::ranges::sort(plan.Draws, TranslucentDrawsBefore);
         std::ranges::sort(halfResPlan.Draws, TranslucentDrawsBefore);
+        std::ranges::sort(postResolvePlan.Draws, TranslucentDrawsBefore);
     }
 
     bool TranslucentDrawsBefore(const TranslucentDraw& a, const TranslucentDraw& b)

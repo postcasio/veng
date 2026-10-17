@@ -31,7 +31,7 @@ namespace Veng::Renderer
           m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
           m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat), m_Kind(kind),
           m_Segment(segment), m_HalfResolution(kind == TranslucentPassKind::HalfLayer),
-          m_Forward(std::move(forward)),
+          m_PostResolve(kind == TranslucentPassKind::PostResolve), m_Forward(std::move(forward)),
           m_Pipelines(pipelines ? std::move(pipelines) : std::make_shared<PipelineCache>())
     {
     }
@@ -46,6 +46,10 @@ namespace Veng::Renderer
         // Segment 0 keeps the names a single-segment frame always had.
         const string name = [this]
         {
+            if (m_PostResolve)
+            {
+                return string{"Post-Resolve Translucent"};
+            }
             const char* base = m_HalfResolution ? "Scene Translucent Half" : "Scene Translucent";
             const u32 index =
                 m_Kind == TranslucentPassKind::Continuation ? m_Segment + 1 : m_Segment;
@@ -91,21 +95,26 @@ namespace Veng::Renderer
         {
             builder.Color({.Resource = m_MaskId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
-        builder.Depth({
-            // The opaque depth bound read-only (the pipeline disables depth writes):
-            // translucents depth-test against the resolved opaque scene so they are
-            // occluded correctly, without occluding one another.
-            .Resource = m_DepthId,
-            .Load = LoadOp::Load,
-            .Store = StoreOp::Store,
-        });
-        if (m_SceneColorId.IsValid())
+        // The post-resolve allocation has no depth buffer and the grab predates it, so that layer
+        // binds neither and draws over the scene.
+        if (!m_PostResolve)
         {
-            builder.Sample(m_SceneColorId);
-        }
-        if (m_SceneDepthId.IsValid())
-        {
-            builder.Sample(m_SceneDepthId);
+            builder.Depth({
+                // The opaque depth bound read-only (the pipeline disables depth writes):
+                // translucents depth-test against the resolved opaque scene so they are
+                // occluded correctly, without occluding one another.
+                .Resource = m_DepthId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            });
+            if (m_SceneColorId.IsValid())
+            {
+                builder.Sample(m_SceneColorId);
+            }
+            if (m_SceneDepthId.IsValid())
+            {
+                builder.Sample(m_SceneDepthId);
+            }
         }
         // A forward-lit material samples the shadow atlases, as the deferred lighting pass does.
         if (io.ShadowMap.IsValid())
@@ -122,7 +131,8 @@ namespace Veng::Renderer
             // cleared target goes unread.
             builder.SkipWhenUnread([this] { return m_Plan->Draws.empty(); });
         }
-        else if (m_Kind == TranslucentPassKind::Continuation)
+        else if (m_Kind == TranslucentPassKind::Continuation ||
+                 m_Kind == TranslucentPassKind::PostResolve)
         {
             // Every attachment loads and stores, so a frame whose segment drew nothing here skips.
             builder.SkipWhen([this] { return m_Plan->Draws.empty(); });
@@ -205,7 +215,7 @@ namespace Veng::Renderer
             {
                 .Name = fmt::format("Translucent Pipeline ({})", material.GetName()),
                 .ColorAttachments = std::move(attachments),
-                .DepthAttachmentFormat = GBuffer::DepthFormat,
+                .DepthAttachmentFormat = m_PostResolve ? Format::Undefined : GBuffer::DepthFormat,
                 .VertexBufferLayout = Mesh::CanonicalLayout(),
                 // The surface vertex stage reads the per-draw candidate id as an
                 // instance-rate attribute on binding 1 (fetched at firstInstance).
@@ -219,7 +229,7 @@ namespace Veng::Renderer
                 // The material's authored cull mode (Back when unauthored, the opaque
                 // surface convention) — a two-sided translucent surface authors None.
                 .CullMode = parent->GetCullMode(),
-                .DepthTestEnable = true,
+                .DepthTestEnable = !m_PostResolve,
                 .DepthWriteEnable = false,
                 // Reverse-Z: a nearer fragment has larger depth.
                 .DepthCompareOp = CompareOp::GreaterOrEqual,
@@ -238,7 +248,9 @@ namespace Veng::Renderer
         const TranslucentDrawPlan& plan = *m_Plan;
 
         const uvec2 fullExtent = ctx.View().RenderExtent;
-        const uvec2 renderExtent = m_HalfResolution ? HalfResExtent(fullExtent) : fullExtent;
+        const uvec2 renderExtent = m_PostResolve      ? ctx.View().PostResolveExtent
+                                   : m_HalfResolution ? HalfResExtent(fullExtent)
+                                                      : fullExtent;
         cmd.SetViewport({0, 0}, renderExtent);
         cmd.SetScissor({0, 0}, renderExtent);
 

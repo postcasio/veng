@@ -347,6 +347,62 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1k. Parse the optional translucent placement (default scene) ---
+
+        // "postResolve" draws a Translucent material at the HDR tail, at the output resolution
+        // after the temporal resolve and the upscale, so a holographic instrument stays as crisp as
+        // the post-resolve linework around it. That pass has no depth attachment and no grab, and
+        // renders through a view region whose UV maps are the output's own, so the half-resolution
+        // layer and both scene reads are excluded at cook rather than misbehaving at runtime.
+        bool postResolve = false;
+        if (vmat.contains("placement"))
+        {
+            if (!vmat["placement"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'placement' must be a string "
+                                "(\"scene\" or \"postResolve\")",
+                                vmatPath.string()));
+            }
+            const string placementStr = vmat["placement"].get<string>();
+            if (placementStr == "postResolve")
+            {
+                postResolve = true;
+            }
+            else if (placementStr != "scene")
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': unknown placement '{}' "
+                                "(expected \"scene\" or \"postResolve\")",
+                                vmatPath.string(), placementStr));
+            }
+            if (postResolve && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'placement: postResolve' requires the Translucent "
+                    "domain",
+                    vmatPath.string()));
+            }
+            if (postResolve && halfResolution)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'placement: postResolve' is exclusive with "
+                    "'resolution: half' — a material draws in one translucent layer",
+                    vmatPath.string()));
+            }
+            if (postResolve && (readsSceneColor || readsSceneDepth))
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'placement: postResolve' is exclusive with "
+                    "'readsSceneColor' and 'readsSceneDepth' — the post-resolve layer draws after "
+                    "the grab, through the output's own UV maps",
+                    vmatPath.string()));
+            }
+        }
+        const TranslucentLayer layer = postResolve      ? TranslucentLayer::PostResolve
+                                       : halfResolution ? TranslucentLayer::HalfResolution
+                                                        : TranslucentLayer::Full;
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -1045,7 +1101,7 @@ namespace Veng::Cook
         header.CullMode = cull;
         header.SortPriority = sortPriority;
         header.BloomMask = bloomMask ? 1u : 0u;
-        header.HalfResolution = halfResolution ? 1u : 0u;
+        header.Layer = static_cast<u32>(layer);
         header.Blend = blend;
         header.ReadsSceneColor = readsSceneColor ? 1u : 0u;
         header.ReadsSceneDepth = readsSceneDepth ? 1u : 0u;

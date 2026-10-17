@@ -741,6 +741,16 @@ namespace Veng::Renderer
         /// @param view  The scene view whose HdrOverlays span is resolved.
         void ResolveHdrOverlays(const SceneView& view);
 
+        /// @brief A translucent layer's own view-constants region for one Execute.
+        struct ExtraViewRegion
+        {
+            /// @brief The region's index; the render's own region when the layer claimed none.
+            u32 Index = 0;
+            /// @brief Whether the region was claimed and written this Execute; when not, the
+            ///        layer's gathered draws fold back into the full-resolution plan.
+            bool Ready = false;
+        };
+
         /// @brief Fills the per-draw DrawData buffer (and, under GPU mode, the candidate buffer + groups) for this Execute.
         ///
         /// Computes the camera-frustum survivors, writes the current frame's DrawData region, and
@@ -748,13 +758,11 @@ namespace Veng::Renderer
         /// the plan at record time.
         /// @param view                The frame's scene view (broadphase already synced).
         /// @param viewConstantsIndex  This frame's view-constants ring region.
-        /// @param halfResViewConstantsIndex The half-res layer's own view-constants region
-        ///                            (equal to viewConstantsIndex when the layer claimed none).
-        /// @param halfResViewReady    Whether the half-res layer's view region was claimed and
-        ///                            written this frame; when not, gathered half-res draws fold
-        ///                            back into the full-resolution plan.
+        /// @param halfResView         The half-res layer's own view-constants region.
+        /// @param postResolveView     The post-resolve translucent layer's own view-constants
+        ///                            region.
         void PrepareDraws(const SceneView& view, u32 viewConstantsIndex,
-                          u32 halfResViewConstantsIndex, bool halfResViewReady);
+                          ExtraViewRegion halfResView, ExtraViewRegion postResolveView);
 
         /// @brief Selects the camera view's level of detail for every visible mesh.
         ///

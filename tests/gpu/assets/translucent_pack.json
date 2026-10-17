@@ -65,6 +65,11 @@
       "id": "0xC66F784A6194F7B8",
       "type": "Material",
       "source": "materials/translucent_half.vmat.json"
+    },
+    {
+      "id": "0x5891E0BA639B092B",
+      "type": "Material",
+      "source": "materials/translucent_post_resolve.vmat.json"
     }
   ]
 }

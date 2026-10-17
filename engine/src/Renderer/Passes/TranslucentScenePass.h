@@ -57,7 +57,8 @@ namespace Veng::Renderer
     /// @brief Which of a frame's translucent passes an instance is.
     ///
     /// A frame's translucents composite as Full[0], then for each segment its half-resolution
-    /// layer and the full-resolution pass after it (see TranslucentSegments).
+    /// layer and the full-resolution pass after it (see TranslucentSegments). The post-resolve
+    /// layer is drawn apart from them, at the HDR tail.
     enum class TranslucentPassKind : u8
     {
         /// @brief The first full-resolution pass: records every frame and clears the bloom mask.
@@ -66,6 +67,10 @@ namespace Veng::Renderer
         Continuation,
         /// @brief A segment's half-resolution layer, cleared to transparent and composited later.
         HalfLayer,
+        /// @brief The post-resolve layer: drawn into the effect chain's output at the post-resolve
+        ///        allocation, with no depth attachment, loading the post-resolve bloom mask, and
+        ///        skipped on a frame with no draws.
+        PostResolve,
     };
 
     /// @brief The forward translucent pass.
@@ -113,7 +118,9 @@ namespace Veng::Renderer
         /// @param maskFormat   Color format of the bloom-mask attachment.
         /// @param kind         Which pass this is. A HalfLayer instance renders the
         ///                     reduced-resolution layer: the viewport is the half valid sub-rect and
-        ///                     the target is cleared to transparent at pass begin.
+        ///                     the target is cleared to transparent at pass begin. A PostResolve
+        ///                     instance renders over the post-resolve extent and binds no depth, so
+        ///                     @p depthId, @p sceneColorId and @p sceneDepthId are ignored.
         /// @param segment      The segment the pass belongs to, which names it.
         /// @param forward      The IBL and shadow sets a forward-lit material's draws bind.
         /// @param pipelines    The per-parent pipeline cache, shared by passes of one target and
@@ -196,6 +203,8 @@ namespace Veng::Renderer
         u32 m_Segment;
         /// @brief Whether this instance renders the reduced-resolution layer.
         bool m_HalfResolution;
+        /// @brief Whether this instance renders the post-resolve layer.
+        bool m_PostResolve;
         /// @brief The IBL and shadow sets a forward-lit material's draws bind.
         ForwardLightingSets m_Forward;
         /// @brief The per-parent pipeline cache, possibly shared with the frame's other passes of

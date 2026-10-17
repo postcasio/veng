@@ -356,6 +356,8 @@ namespace Veng
         VE_ASSERT(header.Blend <= static_cast<u32>(TranslucentBlend::Additive),
                   "material: header Blend {} is out of range for TranslucentBlend", header.Blend);
         const auto blend = static_cast<TranslucentBlend>(header.Blend);
+        VE_ASSERT(header.Layer <= static_cast<u32>(TranslucentLayer::PostResolve),
+                  "material: header Layer {} is out of range for TranslucentLayer", header.Layer);
 
         // The single block must fit the registry's per-material bound.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaxMaterialBlockBytes)
@@ -517,12 +519,12 @@ namespace Veng
         });
         const auto sortPriority = header.SortPriority;
         const bool bloomMask = header.BloomMask != 0;
-        const bool halfResolution = header.HalfResolution != 0;
+        const auto layer = static_cast<TranslucentLayer>(header.Layer);
         const bool readsSceneColor = header.ReadsSceneColor != 0;
         const bool readsSceneDepth = header.ReadsSceneDepth != 0;
         const bool instancedSets = header.InstancedSets != 0;
-        parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask,
-                           halfResolution, readsSceneColor, readsSceneDepth,
+        parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask, layer,
+                           readsSceneColor, readsSceneDepth,
                            instancedSets](AssetManager& manager,
                                           std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
@@ -547,7 +549,7 @@ namespace Veng
                 .CullMode = cullMode,
                 .SortPriority = sortPriority,
                 .WritesBloomMask = bloomMask,
-                .HalfResolution = halfResolution,
+                .Layer = layer,
                 .Blend = blend,
                 .ReadsSceneColor = readsSceneColor,
                 .ReadsSceneDepth = readsSceneDepth,
