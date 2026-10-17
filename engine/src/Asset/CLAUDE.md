@@ -84,20 +84,31 @@ engine *mounts* archives and resolves assets against them.
   Tables are sized for full residency — 10 MB is a normal large table, 100 MB the working extreme
   — so an asset-handle cell yields a bare `AssetId` (`GetAssetIdColumn`) and the table **never**
   loads what it references; the consumer decides.
-- **`AssetTypes::Flipbook` — a grid-packed sprite-sheet atlas with its timing** (`Veng/Asset/Flipbook.h`).
-  Its source is a flipbook-atlas manifest (schema v1) as a sprite-sheet tool exports it — the pack
-  entry's `"source"` names the `*.atlas.json` directly, no wrapper file — and the cook embeds the
-  atlas image as a complete cooked texture (see [cooker/CLAUDE.md](../../../cooker/CLAUDE.md)).
-  `FlipbookLoader` decodes the grid and timing and hands the embedded texture to `TextureLoader`, so
-  the atlas takes exactly a standalone texture's path — codec gate, texture-quality mip cap, async
-  upload — and the flipbook's finalize is the texture's. The asset is data with no playback state:
-  `GetClip()` is its `FlipbookClip` (frame count, fps, loop), `GetFrameRect(frame)` the frame's atlas
-  rectangle (inset half a texel so bilinear taps never read a neighbour), `GetAnchor()` where the
-  authored pivot sits within a frame, and `GetBlend()` / `GetAlphaMode()` the recommended compositing
-  and alpha convention. The timing is pure and device-free — `ResolveFlipbookRate` (the authored rate
-  times a playback rate, or a duration override fitting the whole sequence to a length of its own),
-  `FlipbookFrameAt` (`floor(t · rate)` wrapped or clamped), `IsFlipbookFinished` — and
-  `Flipbook::Create` builds one over a runtime texture. `FlipbookSprite` plays one
+- **`AssetTypes::Flipbook` — a grid-packed sprite sheet with its timing** (`Veng/Asset/Flipbook.h`).
+  Its source is a flipbook-atlas manifest as a sprite-sheet tool exports it — the pack entry's
+  `"source"` names the `*.atlas.json` directly, no wrapper file — and the cook embeds each image it
+  names as a complete cooked texture (the format is
+  [cooker/FLIPBOOK_ATLAS_SCHEMA.md](../../../cooker/FLIPBOOK_ATLAS_SCHEMA.md), the cook
+  [cooker/CLAUDE.md](../../../cooker/CLAUDE.md)). `FlipbookLoader` decodes the header and hands each
+  embedded texture to `TextureLoader`, so every one takes exactly a standalone texture's path —
+  codec gate, texture-quality mip cap, async upload — and the flipbook's finalize runs each
+  texture's in turn. **`GetAtlas()` is the primary texture**: the colour sheet of an unlit
+  flipbook, or the +X/+Y/−Z lightmap (coverage in alpha) of a six-way one, so a player that knows
+  only colour sheets draws a six-way flipbook's coverage correctly. The rest is what a six-way
+  flipbook carries for the renderer to shade: `GetShading()`, `GetLightB()` (the −X/−Y/+Z
+  lightmap), `GetTemperatureTexture()` with `GetTemperatureChannel()` (its own texture's red, else
+  `LightB`'s alpha) and `GetTemperatureEncoding()`, and `GetEmission()` (the default ramp and its
+  ignition); and either kind may carry `GetMotion()` with `GetMotionScale()`. `GetFrameBlend()` is
+  the cook's recommendation (step, crossfade or motion warp), and `GetFrameScale(frame)` a frame's
+  extent as a fraction of the world extent (1 when the source records none). The asset is data with
+  no playback state: `GetClip()` is its `FlipbookClip` (frame count, fps, loop),
+  `GetFrameRect(frame)` the frame's rectangle (inset half a texel so bilinear taps never read a
+  neighbour; every texture shares the grid), `GetAnchor()` where the authored pivot sits within a
+  frame, and `GetBlend()` / `GetAlphaMode()` the recommended compositing and alpha convention. The
+  timing is pure and device-free — `ResolveFlipbookRate` (the authored rate times a playback rate,
+  or a duration override fitting the whole sequence to a length of its own), `FlipbookFrameAt`
+  (`floor(t · rate)` wrapped or clamped), `IsFlipbookFinished` — and `Flipbook::Create` builds one
+  over runtime textures, asserting the invariants the loader checks. `FlipbookSprite` plays one
   ([../Scene/CLAUDE.md](../Scene/CLAUDE.md)); the renderer draws it
   ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).
 - **Load is by opaque `u64` `AssetId`** through mounted archives.

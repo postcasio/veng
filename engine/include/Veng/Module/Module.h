@@ -540,10 +540,14 @@ extern "C"
 /// Version 131 adds the post-resolve translucent layer: MaterialInfo's HalfResolution flag becomes
 /// a TranslucentLayer, Material carries it, and SceneRenderer::PrepareDraws takes the layers'
 /// regions. A module builds materials, so a stale one fills the struct by the old field.
+/// Version 132 lets a flipbook carry lighting, temperature and motion: FlipbookInfo grows Shading,
+/// LightB, Motion, Temperature, MotionScale, TemperatureEncoding, Emission, FrameBlend and
+/// FrameScale, and the CompressionRole enum and RoleToFormat grow Vector. A module builds flipbooks
+/// through Flipbook::Create and reads build configurations, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 131u
+#define VENG_MODULE_ABI_VERSION 132u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

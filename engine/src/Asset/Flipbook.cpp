@@ -55,7 +55,50 @@ namespace Veng
                   info.Clip.FrameCount, info.Columns, info.Rows);
         VE_ASSERT(info.FrameSize.x > 0 && info.FrameSize.y > 0,
                   "Flipbook::Create: '{}' has an empty frame", info.Name);
+
+        const bool sixWay = info.Shading == FlipbookShading::SixWay;
+        VE_ASSERT(sixWay == (info.LightB != nullptr),
+                  "Flipbook::Create: '{}' has a second lightmap exactly when it is six-way",
+                  info.Name);
+        VE_ASSERT(sixWay || info.Temperature == nullptr,
+                  "Flipbook::Create: '{}' is unlit and has a temperature texture", info.Name);
+        VE_ASSERT(
+            (info.Motion != nullptr) == (info.MotionScale > 0.0f),
+            "Flipbook::Create: '{}' has a motion sheet exactly when its MotionScale is positive",
+            info.Name);
+        const uvec2 extent = info.Atlas->GetExtent();
+        for (const Ref<Texture>* texture : {&info.LightB, &info.Motion, &info.Temperature})
+        {
+            VE_ASSERT(*texture == nullptr || (*texture)->GetExtent() == extent,
+                      "Flipbook::Create: '{}' has a texture whose extent is not the atlas's",
+                      info.Name);
+        }
+        VE_ASSERT(info.Emission.Ramp.size() <= MaxFlipbookEmissionKeys,
+                  "Flipbook::Create: '{}' has {} emission keys", info.Name,
+                  info.Emission.Ramp.size());
+        for (usize key = 1; key < info.Emission.Ramp.size(); ++key)
+        {
+            VE_ASSERT(info.Emission.Ramp[key].T > info.Emission.Ramp[key - 1].T,
+                      "Flipbook::Create: '{}' has emission keys out of order", info.Name);
+        }
+        VE_ASSERT(info.FrameScale.empty() || info.FrameScale.size() == info.Clip.FrameCount,
+                  "Flipbook::Create: '{}' has {} frame scales for {} frames", info.Name,
+                  info.FrameScale.size(), info.Clip.FrameCount);
+        for (const f32 scale : info.FrameScale)
+        {
+            VE_ASSERT(scale > 0.0f && scale <= 1.0f,
+                      "Flipbook::Create: '{}' has a frame scale outside (0, 1]", info.Name);
+        }
         return Ref<Flipbook>(new Flipbook(info));
+    }
+
+    f32 Flipbook::GetFrameScale(const u32 frame) const
+    {
+        if (m_Info.FrameScale.empty())
+        {
+            return 1.0f;
+        }
+        return m_Info.FrameScale[std::min<usize>(frame, m_Info.FrameScale.size() - 1)];
     }
 
     f32 Flipbook::GetAspect() const

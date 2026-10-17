@@ -6,7 +6,8 @@
         "Mask": "BC4Unorm",
         "Normal": "BC5Unorm",
         "UI": "BC7Unorm",
-        "Packed": "BC7Unorm"
+        "Packed": "BC7Unorm",
+        "Vector": "BC5Unorm"
     },
     "name": "windows",
     "outputSuffix": "-windows",

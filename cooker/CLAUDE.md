@@ -384,6 +384,19 @@ at cook time:
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
+- **`"alpha"` says what an eight-bit texture's fourth channel means**, which selects how the
+  downscale and every mip level filter it: `"straight"` (the default; colour is alpha-weighted, so
+  every texture that does not say cooks as it always did), `"premultiplied"` (colour is already
+  weighted by coverage and filters as stored), `"data"` (an unrelated quantity; no channel weights
+  another), or `"discard"` (written opaque before the cook, so a BC7 block may use its opaque modes).
+  Alpha is never pushed through the sRGB transfer under any of them. **`"source_channel"`**
+  (`"r"` | `"g"` | `"b"` | `"a"`) cooks one channel of the image, replicated into RGB with alpha
+  255, at the **Mask** role. Both apply to eight-bit sources; on a float source, and
+  `"source_channel"` at any other role, they are located errors.
+- **BC7's channel weights follow the role.** `Color` and `UI` — images meant to be looked at —
+  keep the encoder's perceptual weights (R 128, G 64, B 16, A 32, error in YCbCr). Every other
+  role that reaches BC7 (`Packed`, or a raw `"compression": "BC7"` on a data role) takes equal
+  weights, since every channel of a data texture matters as much as red.
 - **A `Normal`-role texture with a mip chain cooks a normal-variance companion.** The importer
   decodes the source's normals as `UnpackNormal` reads them (X/Y unsigned, Z reconstructed),
   builds a chain of per-texel **moments** in `f32` — the mean normal and the spread about it — by a
@@ -422,19 +435,32 @@ at cook time:
   [assetpack/CLAUDE.md](../assetpack/CLAUDE.md); the runtime half in
   [engine/src/Physics/CLAUDE.md](../engine/src/Physics/CLAUDE.md).
 - **Flipbooks** cook a sprite-sheet tool's own export: the pack entry's `"source"` names a
-  flipbook-atlas manifest (schema v1, `*.atlas.json`) directly, and the **`FlipbookImporter`** reads
-  its core fields — the grid (`columns`, `rows`, `frames`, `frame.width`/`height`, checked against
-  `atlas.width`/`height` and against the image), the timing (`fps`, `loop`), the recommended `blend`
-  (`alpha` | `additive`) and `alpha` convention (`premultiplied` | `coverage` | `luminance` |
-  `opaque`), `colorSpace` (`srgb` | `linear`) — plus the optional `worldExtent` and `pivot`, and
-  ignores every other field (`source`, `technique`, `name`, `provenance`). The image named by
-  `atlas.file` cooks through the texture cook in memory (`CookTextureDescriptor`, the body of
-  `TextureImporter::Cook` over a descriptor object) at the **Color** role for an sRGB atlas and the
-  **Packed** role for a linear one — not Mask, which a desktop configuration maps to single-channel
-  BC4 — mipped, with a linear clamp-to-edge sampler, and is embedded whole behind the
-  `CookedFlipbookHeader`. A **frame-sequence export** (no `atlas.file`) is refused with a message
-  saying so, as is a wrong schema version or type, an unknown enumerated value, and a grid that does
-  not tile the atlas. The importer is `Parallel`: its only library is the texture cook.
+  flipbook-atlas manifest (`*.atlas.json`) directly, and the **`FlipbookImporter`** cooks it as it
+  stands. **The format is [FLIPBOOK_ATLAS_SCHEMA.md](FLIPBOOK_ATLAS_SCHEMA.md)**, beside the
+  importer: both schema versions, the six-way, temperature and motion conventions a baker follows,
+  and every refusal. A **schema-1** manifest names one `atlas` image with a declared `alpha`
+  convention and `colorSpace`; it cooks at the **Color** role for an sRGB atlas and **Packed** for a
+  linear one (not Mask, which a desktop configuration maps to single-channel BC4), its texture
+  filtering mips by its declared alpha. A **schema-2** manifest names a `shading` mode and the
+  `textures` sharing its grid, and each one cooks at the role its data needs:
+  - `color` and `lightA` at **Color** / **Packed**, filtered as premultiplied;
+  - `lightB` at **Color** / **Packed** with `"alpha": "discard"`, so its blocks spend every bit on
+    RGB;
+  - `motion` at the **Vector** role (BC5 on the desktop configurations), with no normal-variance
+    companion and no reconstructed Z;
+  - **the temperature in `lightB`'s alpha as a texture of its own**, at **Mask** with
+    `"source_channel": "a"` (BC4 on the desktop configurations). This is measured, not assumed: on
+    a 256×256 √t field with a steep front, BC7 alpha erred by up to 10 stored units in the front
+    (6 under linear weights) and ASTC alpha by 8, against 3 for BC4 and 1 for single-channel ASTC.
+    The decision is the `SplitTemperature` constant; the source schema is the same either way.
+
+  Every texture cooks mipped with a linear clamp-to-edge sampler through the texture cook in memory
+  (`CookTextureDescriptor`, the body of `TextureImporter::Cook` over a descriptor object), and its
+  decoded size is checked against the grid. The cook **derives** the recommended frame blend rather
+  than reading it: a schema-1 sheet steps, a schema-2 sheet without `motion` crossfades, and one
+  with `motion` warps along it. The blob layout and its slot rule are in
+  [assetpack/CLAUDE.md](../assetpack/CLAUDE.md). The importer is `Parallel`: its only library is
+  the texture cook.
 - **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
   decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs
@@ -456,7 +482,7 @@ shared `ToString`/`Parse` tables, never ordinal. The runtime carries no JSON par
   `vengc cook … --config <file>` parses one `*.buildcfg` and threads it through. With no
   `--config` the field is null.
 - **The `TextureImporter` resolves `role → format` through it.** A `*.tex.json` declares a
-  `role` (the intent — Color / Normal / Mask / HDR / UI / Packed); the importer reads the config's
+  `role` (the intent — Color / Normal / Mask / HDR / UI / Packed / Vector); the importer reads the config's
   `RoleToFormat` table for that role and lowers the resulting `CompressionFormat` to the
   cook's encode-path codec. The resolution chain is **raw `"compression"` (the escape
   hatch — `"ASTC"`, `"BC7"`, `"None"`, or `"RGBA16F"`) wins, else the config's role table, else

@@ -820,7 +820,7 @@ blobs stay binary (the runtime load path parses no JSON).
   `RoleToFormat` codec table (a fixed record, one `CompressionFormat` field per role — the role
   set is closed), a zstd `CompressionLevel`, a `Target` label, and an `OutputSuffix` (the single
   source of truth for the per-config pack name).
-- **`CompressionRole`** (Color / Normal / Mask / HDR / UI / Packed) is a texture's **intent**, the stable
+- **`CompressionRole`** (Color / Normal / Mask / HDR / UI / Packed / Vector) is a texture's **intent**, the stable
   authoring surface; **`CompressionFormat`** is the closed set of codec outputs a role table may
   name (uncompressed unorm/sRGB, BC7, ASTC 4×4, the HDR float). Both are
   `VE_LEAF(FieldClass::Enum)` so the editor draws a combo, serialized **by name** (never ordinal)
@@ -829,7 +829,9 @@ blobs stay binary (the runtime load path parses no JSON).
   codec); a free `ToRendererFormat()` switch lowers it to the engine format at cook time. A
   configuration may map a role to a **channel-specialized** codec — the desktop configurations
   map `Normal`→BC5 (two channels) and `Mask`→BC4 (red only) — so a texture carrying several
-  independent channels declares `Packed`, which every configuration maps full-channel.
+  independent channels declares `Packed`, which every configuration maps full-channel, and two
+  channels of linear data that are not a normal (a motion field) declare `Vector`, BC5 without the
+  normal's variance companion or reconstructed Z.
 
 The cooker's `ParseBuildConfiguration`/`ParseProject` (`Cooker.cpp`) and the editor's
 `ProjectSettingsPanel` hand-parse the authoring JSON into these structs — the one reflected model

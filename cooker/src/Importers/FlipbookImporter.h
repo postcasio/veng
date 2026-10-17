@@ -4,20 +4,26 @@
 
 namespace Veng::Cook
 {
-    /// @brief Cooks a flipbook-atlas manifest (schema v1, `*.atlas.json`) and its image into a
-    ///        CookedFlipbookHeader plus an embedded cooked texture.
+    /// @brief Cooks a flipbook-atlas manifest (`*.atlas.json`) and the images it names into a
+    ///        CookedFlipbookHeader plus its embedded cooked textures.
     ///
-    /// The pack entry's "source" names the manifest itself, so an atlas exported by a sprite-sheet
-    /// tool is cooked as it stands with no wrapper file. The importer reads the core fields — the
-    /// grid (`columns`, `rows`, `frames`, `frame`), the timing (`fps`, `loop`), the recommended
-    /// `blend` and `alpha` mode, and `colorSpace` — plus the optional `worldExtent` and `pivot`, and
-    /// ignores every other field (`source`, `technique`, `name`, `provenance`, ...). The image named
-    /// by `atlas.file`, relative to the manifest, is cooked as a mipped texture at the Color role
-    /// for an sRGB atlas and the Packed role for a linear one, with a linear clamp-to-edge sampler.
+    /// The pack entry's "source" names the manifest itself, so a sprite sheet exported by a tool
+    /// is cooked as it stands with no wrapper file. The format, both schema versions and every
+    /// refusal are documented in `cooker/FLIPBOOK_ATLAS_SCHEMA.md`.
     ///
-    /// A frame-sequence export — a manifest with no `atlas.file` — is refused, as is a manifest
-    /// whose version, type, grid, or enumerated fields do not match the schema, and an image whose
-    /// size is not the manifest's grid.
+    /// A schema-1 manifest names one `atlas` image with a declared `alpha` convention and
+    /// `colorSpace`. A schema-2 manifest names a `shading` mode and the `textures` sharing its grid:
+    /// an unlit premultiplied `color` sheet, or the six-way lightmaps `lightA` and `lightB` (whose
+    /// alpha carries a temperature), either with an optional `motion` sheet; a six-way manifest may
+    /// add a default emission ramp. Each image cooks through the ordinary texture path, mipped with
+    /// a linear clamp-to-edge sampler, at the role its data needs: Color for an sRGB sheet, Packed
+    /// for a linear one, Vector for motion, and Mask for the temperature, which cooks as a
+    /// single-channel texture of its own.
+    ///
+    /// The grid (`columns`, `rows`, `frames`, `frame`), the timing (`fps`, `loop`), the recommended
+    /// `blend`, and the optional `worldExtent` and `pivot` are read from either version; every other
+    /// top-level field a manifest carries (`source`, `technique`, `name`, `provenance`, ...) is
+    /// ignored. A frame-sequence export — a schema-1 manifest with no `atlas.file` — is refused.
     class FlipbookImporter final : public AssetImporter
     {
     public:

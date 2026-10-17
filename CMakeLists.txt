@@ -2235,6 +2235,9 @@ if (VENG_BUILD_TESTS)
             # set stays outside the draw-candidate cap, partial writes land, sets cast shadows,
             # and the host fallback agrees with the GPU cull.
             tests/gpu/instanced_mesh_set.cpp
+            # A cooked flipbook loads every texture it carries and the shading, motion and emission
+            # its header records; a header whose slots disagree with it is refused.
+            tests/gpu/flipbook_loader.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE
@@ -2434,6 +2437,16 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
     # by the editor framework). editor/src is on the include path for its headers.
     target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
     target_precompile_headers(veng_test_cooker PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
+    # The flipbook cook test decodes what the block encoders wrote, through the decoders that ship
+    # beside them in the fetched bc7enc_rdo sources. They are third-party code: no PCH, no warnings.
+    FetchContent_GetProperties(bc7enc_rdo)
+    set(VENG_TEST_BLOCK_DECODERS
+            ${bc7enc_rdo_SOURCE_DIR}/bc7decomp.cpp
+            ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp)
+    target_sources(veng_test_cooker PRIVATE ${VENG_TEST_BLOCK_DECODERS})
+    set_source_files_properties(${VENG_TEST_BLOCK_DECODERS} PROPERTIES
+            SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS "-w")
+    target_include_directories(veng_test_cooker PRIVATE ${bc7enc_rdo_SOURCE_DIR})
     # engine/src is on the include path so the stylesheet cook test can reach the private
     # StyleSheetLoader.h decode entry point (DecodeStyleSheet), exercising the runtime variable
     # table end-to-end from a cooked blob; veng::cook already links veng::veng transitively.

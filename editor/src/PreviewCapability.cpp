@@ -83,6 +83,7 @@ namespace VengEditor
             .HDR = CompressionFormat::RGBA16Sfloat,
             .UI = CompressionFormat::RGBA8Unorm,
             .Packed = CompressionFormat::RGBA8Unorm,
+            .Vector = CompressionFormat::RGBA8Unorm,
         };
     }
 

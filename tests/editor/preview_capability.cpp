@@ -53,6 +53,8 @@ namespace
             return table.UI;
         case CompressionRole::Packed:
             return table.Packed;
+        case CompressionRole::Vector:
+            return table.Vector;
         }
         return table.Color;
     }

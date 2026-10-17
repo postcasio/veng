@@ -151,14 +151,25 @@ the format and its serialization — neither importer nor loader.
   vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown `Mode` or
   child kind, an index count that is not a multiple of three, a child slice out of range, and an
   index addressing past its points.
-- **`AssetTypes::Flipbook` carries a sprite-sheet atlas and an embedded texture.** A
-  **`CookedFlipbookHeader`** (`CookedFlipbookVersion`, currently **1**) — the grid (`Columns`,
-  `Rows`, `FrameCount`, `FrameWidth`/`FrameHeight`), the timing (`Fps`, `Loop`), the `Blend` and
-  `AlphaMode` ordinals, and the optional `WorldExtent`/`Pivot` triples behind `Has*` flags — is
-  followed by `TextureBytes` of a **complete cooked texture blob** (its own `CookedTextureHeader`
-  and mips), so the runtime hands that span to the texture loader unchanged. Frame `f` is the tile at
-  `(f % Columns, f / Columns)` from the top-left. The loader rejects a `Version` mismatch, an empty or
-  overfull grid, an unknown ordinal, and a blob shorter than its declared texture.
+- **`AssetTypes::Flipbook` carries a sprite sheet's grid and the textures sharing it.** A
+  **`CookedFlipbookHeader`** (`CookedFlipbookVersion`, currently **2**; its size is pinned by a
+  `static_assert`) holds the grid (`Columns`, `Rows`, `FrameCount`, `FrameWidth`/`FrameHeight`),
+  the timing (`Fps`, `Loop`), the `Blend` and `AlphaMode` ordinals, the optional
+  `WorldExtent`/`Pivot` triples behind `Has*` flags, then the `Shading`, `FrameBlend` and
+  `TemperatureEncoding` ordinals, `MotionScale`, `Ignition`, up to
+  `CookedFlipbookMaxEmissionKeys` (8) emission keys of `(t, r, g, b)`, one `TextureBytes` per slot,
+  and `HasFrameScale`. The blob is the header, then `FrameCount` `f32` frame scales when
+  `HasFrameScale` is set, then each present slot's **complete cooked texture blob** (its own
+  `CookedTextureHeader` and mips) in slot order, so the runtime hands each span to the texture
+  loader unchanged. **The slots** (`CookedFlipbookTextureSlots`, 4): 0 is the primary texture
+  (always present), 1 the second six-way lightmap (present exactly when six-way), 2 the motion
+  sheet (present exactly when `MotionScale > 0`), and 3 a temperature texture of its own (six-way
+  only). A six-way blob with slot 3 absent reads its temperature from slot 1's alpha, and with it
+  present from slot 3's red, so the cook's choice needs no format change. Frame `f` is the tile at
+  `(f % Columns, f / Columns)` from the top-left of every texture. The loader rejects a `Version`
+  mismatch, an empty or overfull grid, an unknown ordinal, more than 8 emission keys or keys out of
+  order, slots that disagree with the shading or the motion scale, a frame scale outside (0, 1], a
+  texture whose extent is not the primary's, and a blob shorter than its declared contents.
 - **`AssetTypes::Environment` carries an equirectangular HDR panorama for image-based lighting.**
   A **`CookedEnvironmentHeader`** (`CookedEnvironmentVersion`) is a `Format` (always the
   `RGBA16Sfloat` ordinal), `Width`, and `Height`, followed by `Width * Height` half-float texels

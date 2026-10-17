@@ -90,15 +90,15 @@ namespace Veng::Cook
         // codec + header Format ordinal + channel layout, for an eight-bit source. RGBA16Sfloat
         // carries more than eight bits a channel, so an eight-bit source resolving to it is an
         // error here; a float source never reaches this function. @p role carries the channel
-        // intent the format alone cannot: an ASTC (RGBA) codec resolving from a Normal role stores
-        // X/Y and reconstructs Z, so it reports the NormalXY layout; BC5 is a native two-channel
-        // normal codec and always reports it.
+        // intent the format alone cannot: a Normal role stores X/Y and reconstructs Z, so its ASTC
+        // or BC5 cook reports the NormalXY layout, while any other role (a Vector's motion field)
+        // reads its channels as stored.
         Result<ResolvedFormat> ResolveCompressionFormat(CompressionFormat format,
                                                         CompressionRole role)
         {
-            const CookedChannelLayout astcLayout = role == CompressionRole::Normal
-                                                       ? CookedChannelLayout::NormalXY
-                                                       : CookedChannelLayout::Direct;
+            const CookedChannelLayout normalLayout = role == CompressionRole::Normal
+                                                         ? CookedChannelLayout::NormalXY
+                                                         : CookedChannelLayout::Direct;
             const Renderer::Format rendererFormat = ToRendererFormat(format);
             switch (format)
             {
@@ -111,14 +111,14 @@ namespace Veng::Cook
             case CompressionFormat::BC5Unorm:
                 return ResolvedFormat{.Codec = TextureCodec::BC5,
                                       .Format = rendererFormat,
-                                      .ChannelLayout = CookedChannelLayout::NormalXY};
+                                      .ChannelLayout = normalLayout};
             case CompressionFormat::BC4Unorm:
                 return ResolvedFormat{.Codec = TextureCodec::BC4, .Format = rendererFormat};
             case CompressionFormat::ASTC4x4Unorm:
             case CompressionFormat::ASTC4x4Srgb:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
                                       .Format = rendererFormat,
-                                      .ChannelLayout = astcLayout};
+                                      .ChannelLayout = normalLayout};
             case CompressionFormat::RGBA16Sfloat:
                 return std::unexpected(
                     string("an LDR source cannot fill an HDR role; author the source as EXR or "
@@ -185,8 +185,8 @@ namespace Veng::Cook
 
         // BC7 quality preset. Golden stability depends on this preset staying fixed: a higher
         // uber level or partition count would re-encode every block and move any golden capture.
-        // Defaults (perceptual weights, all modes, 64 partitions) at uber level 1 — a balanced
-        // quality/speed point above the level-0 default.
+        // Defaults (all modes, 64 partitions) at uber level 1 — a balanced quality/speed point
+        // above the level-0 default. The channel weights follow the role (see the encode setup).
         constexpr u32 BC7UberLevel = 1;
 
         // ASTC 4x4 quality preset, expressed as an astcenc effort level in [0, 100]. The encode is
@@ -806,6 +806,81 @@ namespace Veng::Cook
             return result;
         }
 
+        // What a texture's fourth channel means, which decides how the resize filters it.
+        enum class AlphaMeaning
+        {
+            // Straight coverage: colour is alpha-weighted while filtering.
+            Straight,
+            // Colour is already weighted by coverage, so it filters as stored.
+            Premultiplied,
+            // An unrelated quantity: no channel weights another.
+            Data,
+            // Ignored: written opaque before the cook, so a block codec spends no bits on it.
+            Discard,
+        };
+
+        optional<AlphaMeaning> ParseAlphaMeaning(const string& name)
+        {
+            if (name == "straight")
+            {
+                return AlphaMeaning::Straight;
+            }
+            if (name == "premultiplied")
+            {
+                return AlphaMeaning::Premultiplied;
+            }
+            if (name == "data")
+            {
+                return AlphaMeaning::Data;
+            }
+            if (name == "discard")
+            {
+                return AlphaMeaning::Discard;
+            }
+            return std::nullopt;
+        }
+
+        // The stb_image_resize2 layout filtering an eight-bit level whose alpha means @p alpha.
+        // Only straight alpha weights the colour. The _PM layout keeps alpha out of the sRGB
+        // transfer, which STBIR_4CHANNEL would push it through, so it also serves data alpha under
+        // an sRGB encode; in a linear resize the two layouts are the same filter.
+        stbir_pixel_layout ResizeLayout(AlphaMeaning alpha, bool srgbEncode)
+        {
+            switch (alpha)
+            {
+            case AlphaMeaning::Straight:
+                return STBIR_RGBA;
+            case AlphaMeaning::Premultiplied:
+                return STBIR_RGBA_PM;
+            case AlphaMeaning::Data:
+            case AlphaMeaning::Discard:
+                return srgbEncode ? STBIR_RGBA_PM : STBIR_4CHANNEL;
+            }
+            return STBIR_RGBA;
+        }
+
+        // The RGBA8 channel index a "source_channel" name selects.
+        optional<u32> ParseSourceChannel(const string& name)
+        {
+            if (name == "r")
+            {
+                return 0u;
+            }
+            if (name == "g")
+            {
+                return 1u;
+            }
+            if (name == "b")
+            {
+                return 2u;
+            }
+            if (name == "a")
+            {
+                return 3u;
+            }
+            return std::nullopt;
+        }
+
         // Thin ordinal adapters over the shared authoring-name tables
         // (Renderer/TypeNames.h): CookedTextureHeader stores the enum ordinals as u32.
 
@@ -894,7 +969,7 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("texture importer: '{}': invalid role '{}' (expected "
-                                "'Color', 'Normal', 'Mask', 'HDR', 'UI', or 'Packed')",
+                                "'Color', 'Normal', 'Mask', 'HDR', 'UI', 'Packed', or 'Vector')",
                                 sourcePath.string(), roleName));
             }
             role = *parsed;
@@ -917,6 +992,45 @@ namespace Veng::Cook
             pinnedChannels = value;
         }
 
+        AlphaMeaning alphaMeaning = AlphaMeaning::Straight;
+        if (texJson.contains("alpha"))
+        {
+            const optional<AlphaMeaning> parsed =
+                texJson["alpha"].is_string() ? ParseAlphaMeaning(texJson["alpha"].get<string>())
+                                             : std::nullopt;
+            if (!parsed)
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': invalid alpha {} (expected "
+                                "\"straight\", \"premultiplied\", \"data\", or \"discard\")",
+                                sourcePath.string(), texJson["alpha"].dump()));
+            }
+            alphaMeaning = *parsed;
+        }
+
+        // "source_channel" cooks one channel of the image as single-channel data.
+        optional<u32> sourceChannel;
+        if (texJson.contains("source_channel"))
+        {
+            sourceChannel = texJson["source_channel"].is_string()
+                                ? ParseSourceChannel(texJson["source_channel"].get<string>())
+                                : std::nullopt;
+            if (!sourceChannel)
+            {
+                return std::unexpected(fmt::format(
+                    "texture importer: '{}': invalid source_channel {} (expected \"r\", \"g\", "
+                    "\"b\", or \"a\")",
+                    sourcePath.string(), texJson["source_channel"].dump()));
+            }
+            if (role != CompressionRole::Mask)
+            {
+                return std::unexpected(fmt::format(
+                    "texture importer: '{}': \"source_channel\" applies to a Mask-role texture, "
+                    "and this one's role is '{}'",
+                    sourcePath.string(), ToString(role)));
+            }
+        }
+
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
         context.RecordDependency(imagePath);
 
@@ -935,6 +1049,18 @@ namespace Veng::Cook
         u32 storedChannels = 4;
         if (decoded.Float)
         {
+            // The float path filters its mips with an unweighted box and stores the channels the
+            // source carries, so neither key has anything to select there.
+            for (const char* key : {"alpha", "source_channel"})
+            {
+                if (texJson.contains(key))
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: '{}': \"{}\" applies to an 8-bit "
+                                    "source, and '{}' decodes as float",
+                                    sourcePath.string(), key, imagePath.string()));
+                }
+            }
             if (srgb)
             {
                 return std::unexpected(
@@ -1043,6 +1169,28 @@ namespace Veng::Cook
         const usize targetTexels =
             static_cast<usize>(targetWidth) * static_cast<usize>(targetHeight);
 
+        // The eight-bit source the resize and encode read: as decoded, or rewritten when "alpha":
+        // "discard" or "source_channel" says the stored channels are not what the cook keeps.
+        vector<u8> rewritten;
+        const u8* sourceBytes = decoded.Bytes.data();
+        if (!decoded.Float && (sourceChannel || alphaMeaning == AlphaMeaning::Discard))
+        {
+            rewritten = decoded.Bytes;
+            for (usize texel = 0; texel < rewritten.size(); texel += 4)
+            {
+                if (sourceChannel)
+                {
+                    const u8 value = rewritten[texel + *sourceChannel];
+                    rewritten[texel + 0] = value;
+                    rewritten[texel + 1] = value;
+                    rewritten[texel + 2] = value;
+                }
+                rewritten[texel + 3] = 255;
+            }
+            sourceBytes = rewritten.data();
+        }
+        const stbir_pixel_layout resizeLayout = ResizeLayout(alphaMeaning, srgbEncode);
+
         vector<u8> pixelData;
         vector<f32> floatPixels;
         if (decoded.Float)
@@ -1069,14 +1217,12 @@ namespace Veng::Cook
             pixelData.assign(targetTexels * 4, 0);
             if (resizing)
             {
-                const stbir_pixel_layout layout = STBIR_RGBA;
                 const unsigned char* resized =
-                    srgbEncode ? stbir_resize_uint8_srgb(decoded.Bytes.data(), width, height, 0,
-                                                         pixelData.data(), targetWidth,
-                                                         targetHeight, 0, layout)
-                               : stbir_resize_uint8_linear(decoded.Bytes.data(), width, height, 0,
-                                                           pixelData.data(), targetWidth,
-                                                           targetHeight, 0, layout);
+                    srgbEncode
+                        ? stbir_resize_uint8_srgb(sourceBytes, width, height, 0, pixelData.data(),
+                                                  targetWidth, targetHeight, 0, resizeLayout)
+                        : stbir_resize_uint8_linear(sourceBytes, width, height, 0, pixelData.data(),
+                                                    targetWidth, targetHeight, 0, resizeLayout);
                 if (resized == nullptr)
                 {
                     return std::unexpected(
@@ -1086,7 +1232,7 @@ namespace Veng::Cook
             }
             else
             {
-                std::memcpy(pixelData.data(), decoded.Bytes.data(), targetTexels * 4);
+                std::memcpy(pixelData.data(), sourceBytes, targetTexels * 4);
             }
         }
 
@@ -1268,6 +1414,12 @@ namespace Veng::Cook
             // params_init writes only the local struct.
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
+            // Perceptual weights favour red and green as an eye does; every channel of a data
+            // texture matters equally, so only an image meant to be looked at keeps them.
+            if (role != CompressionRole::Color && role != CompressionRole::UI)
+            {
+                bc7enc_compress_block_params_init_linear_weights(&params);
+            }
         }
         if (codec == TextureCodec::BC5 || codec == TextureCodec::BC4 ||
             variance.Codec == TextureCodec::BC4)
@@ -1393,15 +1545,14 @@ namespace Veng::Cook
 
                 vector<u8> levelRgba(static_cast<usize>(levelWidth) * levelHeight * 4);
 
-                const stbir_pixel_layout layout = STBIR_RGBA;
                 const unsigned char* resized =
                     srgbEncode
                         ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
                                                   levelRgba.data(), static_cast<int>(levelWidth),
-                                                  static_cast<int>(levelHeight), 0, layout)
+                                                  static_cast<int>(levelHeight), 0, resizeLayout)
                         : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
                                                     levelRgba.data(), static_cast<int>(levelWidth),
-                                                    static_cast<int>(levelHeight), 0, layout);
+                                                    static_cast<int>(levelHeight), 0, resizeLayout);
                 if (resized == nullptr)
                 {
                     return std::unexpected(

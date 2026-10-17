@@ -127,17 +127,37 @@ namespace Veng
     ///
     /// Bumped on any CookedFlipbookHeader layout change; the loader rejects a blob whose
     /// Version != this.
-    inline constexpr u32 CookedFlipbookVersion = 1u;
+    inline constexpr u32 CookedFlipbookVersion = 2u;
 
-    /// @brief Cooked header for a flipbook asset: a grid-packed sprite-sheet atlas and its timing.
+    /// @brief How many texture slots a cooked flipbook carries.
+    ///
+    /// Slot 0 is the primary texture (the unlit colour sheet, or the first six-way lightmap), slot 1
+    /// the second six-way lightmap, slot 2 the motion-vector sheet, and slot 3 a temperature
+    /// texture of its own.
+    inline constexpr u32 CookedFlipbookTextureSlots = 4;
+
+    /// @brief The most emission-ramp keys a cooked flipbook carries.
+    inline constexpr u32 CookedFlipbookMaxEmissionKeys = 8;
+
+    /// @brief Cooked header for a flipbook asset: a grid-packed sprite sheet, its timing, and the
+    ///        textures sharing its grid.
     ///
     /// The blob is, in order:
     ///   CookedFlipbookHeader
-    ///   a complete cooked texture blob (TextureBytes bytes: a CookedTextureHeader and its mips)
+    ///   FrameCount f32 per-frame scales, when HasFrameScale is 1
+    ///   one complete cooked texture blob (a CookedTextureHeader and its mips) per present slot,
+    ///   in slot order, TextureBytes[slot] bytes each
+    ///
+    /// A slot whose TextureBytes is 0 is absent. Slot 0 is always present. Slot 1 is present
+    /// exactly when Shading is six-way, and slot 3 only then. A six-way blob with slot 3 absent
+    /// reads its temperature from slot 1's alpha; with slot 3 present it reads it from slot 3's
+    /// red channel. Slot 2 is present exactly when MotionScale is positive.
     ///
     /// Frame f sits at tile (f % Columns, f / Columns), counted from the atlas's top-left, and the
-    /// populated frames run row-major. Blend and AlphaMode are the underlying integers of the
-    /// engine's FlipbookBlend and FlipbookAlpha enums (cycle-avoidance rule above).
+    /// populated frames run row-major. Blend, AlphaMode, Shading, FrameBlend and
+    /// TemperatureEncoding are the underlying integers of the engine's FlipbookBlend,
+    /// FlipbookAlpha, FlipbookShading, FlipbookFrameBlend and FlipbookTemperatureEncoding enums
+    /// (cycle-avoidance rule above).
     struct CookedFlipbookHeader
     {
         /// @brief Must equal CookedFlipbookVersion; the loader rejects a mismatch.
@@ -168,9 +188,28 @@ namespace Veng
         u32 HasPivot = 0;
         /// @brief The effect's anchor inside WorldExtent, in world units from its minimum corner.
         f32 Pivot[3] = {};
-        /// @brief Byte count of the embedded cooked texture blob following this header.
-        u32 TextureBytes = 0;
+        /// @brief What the textures hold; 0 = an unlit colour sheet, 1 = six-way lightmaps.
+        u32 Shading = 0;
+        /// @brief How a player recommends blending between frames; 0 = step, 1 = crossfade,
+        ///        2 = motion-vector warp.
+        u32 FrameBlend = 0;
+        /// @brief The transfer the stored temperature is under; 0 = linear, 1 = square root.
+        u32 TemperatureEncoding = 0;
+        /// @brief The largest motion offset the motion sheet represents; 0 without one.
+        f32 MotionScale = 0.0f;
+        /// @brief The normalised temperature below which the emission ramp emits nothing.
+        f32 Ignition = 0.0f;
+        /// @brief How many EmissionKeys are populated, in [0, CookedFlipbookMaxEmissionKeys].
+        u32 EmissionKeyCount = 0;
+        /// @brief The default emission ramp's keys, each (t, r, g, b), ascending in t.
+        f32 EmissionKeys[CookedFlipbookMaxEmissionKeys][4] = {};
+        /// @brief Byte count of each slot's embedded cooked texture blob; 0 when the slot is absent.
+        u32 TextureBytes[CookedFlipbookTextureSlots] = {};
+        /// @brief Whether per-frame scales follow the header (stored as u32 bool).
+        u32 HasFrameScale = 0;
     };
+    static_assert(sizeof(CookedFlipbookHeader) == 244,
+                  "CookedFlipbookHeader layout changed: bump CookedFlipbookVersion");
 
     /// @brief The current mesh-format version.
     ///

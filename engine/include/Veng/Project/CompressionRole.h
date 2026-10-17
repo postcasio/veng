@@ -34,12 +34,17 @@ namespace Veng
         ///        and metallic in one map. Resolves to a full-channel unorm block codec, so no channel
         ///        is dropped where a single-channel role's codec would drop all but red.
         Packed,
+        /// @brief Two-channel linear data that is not a normal — a 2D vector field such as motion.
+        ///        Resolves to the two-channel unorm block codec (BC5 on desktop targets), with no
+        ///        normal-variance companion and no reconstructed Z.
+        Vector,
     };
 
     /// @brief The ordered list of every CompressionRole, for enumeration and name-table lookup.
-    inline constexpr std::array<CompressionRole, 6> CompressionRoles = {
+    inline constexpr std::array<CompressionRole, 7> CompressionRoles = {
         CompressionRole::Color, CompressionRole::Normal, CompressionRole::Mask,
-        CompressionRole::HDR,   CompressionRole::UI,     CompressionRole::Packed};
+        CompressionRole::HDR,   CompressionRole::UI,     CompressionRole::Packed,
+        CompressionRole::Vector};
 
     /// @brief The canonical authoring name of a compression role (e.g. "Color").
     ///
@@ -65,6 +70,8 @@ namespace Veng
             return "UI";
         case CompressionRole::Packed:
             return "Packed";
+        case CompressionRole::Vector:
+            return "Vector";
         }
         return {};
     }
@@ -95,4 +102,5 @@ VE_ENUMERATOR(Mask)
 VE_ENUMERATOR(HDR)
 VE_ENUMERATOR(UI)
 VE_ENUMERATOR(Packed)
+VE_ENUMERATOR(Vector)
 VE_ENUM_END();
