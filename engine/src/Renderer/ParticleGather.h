@@ -75,7 +75,7 @@ namespace Veng::Renderer
     };
     static_assert(sizeof(GpuParticle) == 48, "GpuParticle must match particle_types.slang");
 
-    /// @brief One playing instance (std430, 64 bytes); mirrors particle_types.slang.
+    /// @brief One playing instance (std430, 96 bytes); mirrors particle_types.slang.
     struct GpuParticleInstance
     {
         /// @brief The anchor relative to the eye, along render-space axes.
@@ -96,8 +96,16 @@ namespace Veng::Renderer
         u32 EmitterCount = 0;
         /// @brief Multiplies every length the effect authors.
         f32 Scale = 1.0f;
+        /// @brief A world-space emitter's offset from the anchor at Time; zero otherwise.
+        vec3 Emitter{0.0f};
+        /// @brief The update before Time.
+        f32 PreviousTime = 0.0f;
+        /// @brief Emitter at PreviousTime.
+        vec3 PreviousEmitter{0.0f};
+        /// @brief Pads the record to 96 bytes.
+        u32 Pad = 0;
     };
-    static_assert(sizeof(GpuParticleInstance) == 64,
+    static_assert(sizeof(GpuParticleInstance) == 96,
                   "GpuParticleInstance must match particle_types.slang");
 
     /// @brief One emitter of an effect drawn this frame (std430, 1408 bytes); mirrors

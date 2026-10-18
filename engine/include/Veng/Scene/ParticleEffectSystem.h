@@ -15,8 +15,8 @@ namespace Veng
     ///
     /// Sets Anchor to the entity's world position plus the scene's FloatingOrigin position (so the
     /// anchor is in the stable frame, or world space for a scene without one), Orientation to its
-    /// world rotation, Anchored to true, and — when Seed is 0 — derives a seed from the entity and
-    /// the playback counter.
+    /// world rotation, the emitter offsets to zero at the current Time, Anchored to true, and —
+    /// when Seed is 0 — derives a seed from the entity and the playback counter.
     /// @param scene     The scene the entity lives in.
     /// @param entity    The instance's entity.
     /// @param instance  The instance to anchor.
@@ -47,7 +47,10 @@ namespace Veng
     /// Per instance whose effect is resident it latches an unanchored instance, records StopTime
     /// the first update after Emitting goes false, advances Time by the frame delta, and sets
     /// Finished once Time reaches ParticleEffectEndTime — the CPU's exact knowledge that every
-    /// particle has died, so a scene simulated with no renderer still retires its effects. An
+    /// particle has died, so a scene simulated with no renderer still retires its effects. A
+    /// WorldSpace instance's Emitter is moved to the entity's offset from the anchor at the new
+    /// Time, the old one kept as PreviousEmitter at PreviousTime, which is the span the renderer
+    /// interpolates each particle's spawn point across. An
     /// instance whose effect is still loading holds at its start, as a sprite does.
     ///
     /// An effect with light flashes owns its entity's Light: while a flash is live the system

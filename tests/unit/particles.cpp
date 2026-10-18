@@ -538,6 +538,56 @@ TEST_CASE("An anchor latches in the stable frame and holds against a moving orig
     CHECK(worst <= glm::length(base) * 1e-6f);
 }
 
+TEST_CASE("A world-space instance follows its entity, and spawns each particle where it stood then")
+{
+    ParticleScene fixture;
+    Scene& scene = *fixture.World;
+    const dvec3 origin(5.0e6, 0.0, -3.0e6);
+    scene.Add<FloatingOrigin>(scene.CreateEntity(), FloatingOrigin{.Position = origin});
+    ParticleEmitterDesc rate = Streak();
+    rate.RatePerSecond = 10.0f;
+    const AssetHandle<ParticleEffect> effect = MakeEffect({rate});
+
+    const vec3 start(1.0f, 2.0f, 3.0f);
+    const Entity moving = scene.CreateEntity();
+    scene.Add<Transform>(moving, Transform{.Position = start});
+    scene.Add<ParticleEffectInstance>(moving,
+                                      ParticleEffectInstance{.Effect = effect, .WorldSpace = true});
+    const Entity still = scene.CreateEntity();
+    scene.Add<Transform>(still, Transform{.Position = start});
+    scene.Add<ParticleEffectInstance>(still, ParticleEffectInstance{.Effect = effect});
+
+    ParticleEffectSystem system;
+    TestSupport::TestServices services;
+    const SystemContext context = services.Make();
+    system.OnUpdate(scene, 0.1f, context);
+    const vec3 step(4.0f, 0.0f, -2.0f);
+    scene.Get<Transform>(moving).Position = start + step;
+    scene.Get<Transform>(still).Position = start + step;
+    system.OnUpdate(scene, 0.1f, context);
+
+    const ParticleEffectInstance& a = scene.Get<ParticleEffectInstance>(moving);
+    CHECK(a.Anchor == dvec3(start) + origin);
+    CHECK(glm::length(a.Emitter - step) < 1.0e-4f);
+    CHECK(glm::length(a.PreviousEmitter) < 1.0e-4f);
+    CHECK(a.PreviousTime == doctest::Approx(0.1f));
+    CHECK(a.Time == doctest::Approx(0.2f));
+    // A particle spawning midway through the update stands midway along it, and the span's ends
+    // hold outside it.
+    CHECK(
+        glm::length(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.15f) -
+                    0.5f * step) < 1.0e-4f);
+    CHECK(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.05f) ==
+          a.PreviousEmitter);
+    CHECK(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.3f) ==
+          a.Emitter);
+
+    // An instance that is not world-space moves nothing.
+    const ParticleEffectInstance& b = scene.Get<ParticleEffectInstance>(still);
+    CHECK(b.Emitter == vec3(0.0f));
+    CHECK(b.PreviousEmitter == vec3(0.0f));
+}
+
 TEST_CASE("The baked over-life tables keep their curves' ends and shape")
 {
     ParticleEmitterDesc emitter = Streak();

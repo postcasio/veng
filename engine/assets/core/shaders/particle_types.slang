@@ -77,7 +77,7 @@ struct GpuParticle
     float Spin;      // roll rate, radians per second
 };
 
-// One playing instance (64 bytes).
+// One playing instance (96 bytes).
 struct GpuParticleInstance
 {
     float3 AnchorEye;       // the anchor's position relative to the eye, render-space axes
@@ -89,6 +89,10 @@ struct GpuParticleInstance
     uint EmitterBase;       // the effect's first emitter in the emitter table
     uint EmitterCount;
     float Scale;            // multiplies every length the effect authors
+    float3 Emitter;         // a world-space emitter's offset from the anchor at Time; else zero
+    float PreviousTime;     // the update before Time
+    float3 PreviousEmitter; // Emitter at PreviousTime
+    uint Pad;
 };
 
 // One emitter's record for one of its flipbooks, drawn this frame (1424 bytes).

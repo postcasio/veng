@@ -392,6 +392,9 @@ namespace Veng::Renderer
             record.EmitterBase = drawn ? base : 0u;
             record.EmitterCount = drawn ? emitterCount : 0u;
             record.Scale = instance->Scale;
+            record.Emitter = instance->Emitter;
+            record.PreviousTime = instance->PreviousTime;
+            record.PreviousEmitter = instance->PreviousEmitter;
 
             for (u32 e = 0; e < emitterCount; ++e)
             {

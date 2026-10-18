@@ -1344,7 +1344,7 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   particles (48-byte `GpuParticle`), the dead list, two halves of live list, the additive list, the
   alpha sort keys (`max(N, 1024)` `uvec2`s), the 112-byte draw records, the counters and the
   argument buffer. Per-frame host-mapped rings — one region per frame in flight — carry the instance
-  table (`MaxParticleInstances`, 1,024 × 64 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
+  table (`MaxParticleInstances`, 1,024 × 96 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
   256 × 1,424 bytes, each holding the emitter's parameters, one flipbook's handles, grid and
   shading, the ramp in the sprite pass's form and its two 32-sample over-life tables), the spawn
   ranges (`MaxParticleSpawnRanges`, 4,096), a frame-extent table and a stats region. About 12 MB at
@@ -1356,7 +1356,8 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   particles**: an environment capture executing every few frames, a second viewport, or a renderer
   created mid-effect shows each particle where it is. The math is twinned line for line in
   `ParticleMath.h` and `particle_math.slang` (the PCG hash, a particle's key and random streams, the
-  hashed value noise, `MakeParticleSpawnState` and the trajectory), the `InstancedCull.h` precedent,
+  hashed value noise, `MakeParticleSpawnState`, a world-space emitter's `ParticleEmitterAt` and the
+  trajectory), the `InstancedCull.h` precedent,
   so the unit band pins what the GPU computes. A force neither constant nor linear in velocity would
   need a stepped state, which this does not have.
 - **The gather is device-free** (`ParticleGather.{h,cpp}`, run each `Execute` after the sprite

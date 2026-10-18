@@ -559,10 +559,13 @@ extern "C"
 /// Version 137 lets a translucent material write the temporal resolve's reactive mask: Material and
 /// MaterialInfo grow WritesReactive, and SceneRenderer the GetReactiveMaskView accessor. A module
 /// builds materials, so a stale one lays them out short.
+/// Version 138 lets a particle effect instance emit in world space: ParticleEffectInstance grows
+/// WorldSpace, Emitter, PreviousEmitter and PreviousTime. A module plays effects, so a stale one
+/// lays the component out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 137u
+#define VENG_MODULE_ABI_VERSION 138u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

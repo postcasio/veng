@@ -134,6 +134,24 @@ namespace Veng::Renderer
         vec2 Spin{0.0f};
     };
 
+    /// @brief Where a world-space instance's emitter stood at a particle's spawn time: its offset
+    ///        from the anchor, linear across the update spanning the time and held at either end
+    ///        outside it. An instance that is not world-space carries zero for both, so this is zero.
+    /// @param previous      The emitter at @p previousTime.
+    /// @param current       The emitter at @p time.
+    /// @param previousTime  The update before the latest.
+    /// @param time          The latest update.
+    /// @param spawnTime     The particle's spawn time.
+    /// @return The offset its spawn point moves by.
+    inline vec3 ParticleEmitterAt(const vec3& previous, const vec3& current, const f32 previousTime,
+                                  const f32 time, const f32 spawnTime)
+    {
+        const f32 span = time - previousTime;
+        const f32 t =
+            span > 0.0f ? std::clamp((spawnTime - previousTime) / span, 0.0f, 1.0f) : 1.0f;
+        return previous + (current - previous) * t;
+    }
+
     /// @brief What a particle's spawn reads of its instance.
     struct ParticleSpawnInstance
     {

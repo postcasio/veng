@@ -28,6 +28,9 @@ namespace Veng
             const u64 bits = (static_cast<u64>(entity.Generation) << 32) | entity.Index;
             instance.Seed = static_cast<u32>(Hash64(bits ^ instance.Playback));
         }
+        instance.Emitter = vec3(0.0f);
+        instance.PreviousEmitter = vec3(0.0f);
+        instance.PreviousTime = instance.Time;
         instance.Anchored = true;
     }
 
@@ -97,7 +100,17 @@ namespace Veng
                 {
                     instance.StopTime = instance.Time;
                 }
+                const f32 before = instance.Time;
                 instance.Time += delta;
+                if (instance.WorldSpace)
+                {
+                    const auto* origin = scene.TryGetFirst<FloatingOrigin>();
+                    const dvec3 originPosition = origin != nullptr ? origin->Position : dvec3(0.0);
+                    instance.PreviousEmitter = instance.Emitter;
+                    instance.PreviousTime = before;
+                    instance.Emitter = vec3(dvec3(vec3(WorldMatrix(scene, entity)[3])) +
+                                            originPosition - instance.Anchor);
+                }
                 instance.Finished =
                     instance.Time >= ParticleEffectEndTime(*effect, instance.StopTime);
             }
