@@ -90,6 +90,23 @@ namespace Veng::Renderer
         inline constexpr u32 Size = 7;
         /// @brief The random start frame.
         inline constexpr u32 StartFrame = 8;
+        /// @brief The flipbook variant.
+        inline constexpr u32 Variant = 9;
+    }
+
+    /// @brief Returns which of an emitter's flipbooks a particle plays, uniform over them.
+    /// @param key    The particle's key (ParticleSpawnState::Random).
+    /// @param count  How many flipbooks the emitter picks from; 0 and 1 both pick 0.
+    /// @return The variant, in [0, max(count, 1)).
+    [[nodiscard]] inline u32 ParticleVariantOf(const u32 key, const u32 count)
+    {
+        if (count <= 1u)
+        {
+            return 0u;
+        }
+        const auto pick =
+            static_cast<u32>(ParticleRandom(key, ParticleDraw::Variant) * static_cast<f32>(count));
+        return std::min(pick, count - 1u);
     }
 
     /// @brief What a particle's spawn reads of its emitter.

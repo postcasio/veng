@@ -79,8 +79,9 @@ namespace Veng
             static_cast<usize>(header.EmitterCount) * sizeof(CookedParticleEmitter);
         const usize flashBytes =
             static_cast<usize>(header.FlashCount) * sizeof(CookedParticleFlash);
+        const usize flipbookBytes = static_cast<usize>(header.FlipbookIds) * sizeof(u64);
         const usize keyBytes = static_cast<usize>(header.KeyFloats) * sizeof(f32);
-        if (cooked.size() < sizeof(header) + emitterBytes + flashBytes + keyBytes)
+        if (cooked.size() < sizeof(header) + emitterBytes + flashBytes + flipbookBytes + keyBytes)
         {
             return std::unexpected(Corrupt(id, "particle effect: cooked blob truncated"));
         }
@@ -92,14 +93,17 @@ namespace Veng
         vector<CookedParticleFlash> flashes(header.FlashCount);
         std::memcpy(flashes.data(), cooked.data() + offset, flashBytes);
         offset += flashBytes;
+        vector<u64> flipbooks(header.FlipbookIds);
+        std::memcpy(flipbooks.data(), cooked.data() + offset, flipbookBytes);
+        offset += flipbookBytes;
         vector<f32> pool(header.KeyFloats);
         std::memcpy(pool.data(), cooked.data() + offset, keyBytes);
 
         const auto info = CreateRef<ParticleEffectInfo>();
         info->Name = fmt::format("ParticleEffect {}", id.Value);
         Detail::ParsedAsset parsed;
-        // The dependency each billboard emitter takes its flipbook from, or none for a streak.
-        vector<optional<usize>> flipbookDependency;
+        // The dependencies each emitter takes its flipbooks from, in order; none for a streak.
+        vector<vector<usize>> flipbookDependencies;
         for (const CookedParticleEmitter& source : emitters)
         {
             if (source.Render > static_cast<u32>(ParticleRender::Streak) ||
@@ -175,26 +179,34 @@ namespace Veng
             }
 
             const bool billboard = emitter.Render == ParticleRender::Billboard;
-            if (billboard != (source.Flipbook != 0) ||
+            const bool runValid =
+                source.FlipbookCount <= MaxParticleFlipbookVariants &&
+                static_cast<u64>(source.FlipbookOffset) + source.FlipbookCount <= flipbooks.size();
+            if (!runValid || billboard != (source.FlipbookCount != 0) ||
                 (!billboard && emitter.Blend == ParticleBlend::Asset))
             {
                 return std::unexpected(Corrupt(
-                    id, "particle effect: a billboard without a flipbook, or a streak with one"));
+                    id, "particle effect: a billboard without a flipbook, a streak with one, or a "
+                        "flipbook run outside the pool"));
             }
-            if (!billboard)
+            vector<usize>& dependencies = flipbookDependencies.emplace_back();
+            for (u32 v = 0; v < source.FlipbookCount; ++v)
             {
-                flipbookDependency.emplace_back();
-                continue;
-            }
-            const auto existing = std::ranges::find_if(
-                parsed.Dependencies, [&source](const Detail::AssetDependency& dependency)
-                { return dependency.Id.Value == source.Flipbook; });
-            flipbookDependency.emplace_back(
-                static_cast<usize>(existing - parsed.Dependencies.begin()));
-            if (existing == parsed.Dependencies.end())
-            {
-                parsed.Dependencies.push_back(
-                    {.Type = AssetTypes::Flipbook, .Id = AssetId{source.Flipbook}});
+                const u64 flipbook = flipbooks[source.FlipbookOffset + v];
+                if (flipbook == 0)
+                {
+                    return std::unexpected(
+                        Corrupt(id, "particle effect: a billboard names the null flipbook id"));
+                }
+                const auto existing = std::ranges::find_if(
+                    parsed.Dependencies, [flipbook](const Detail::AssetDependency& dependency)
+                    { return dependency.Id.Value == flipbook; });
+                dependencies.push_back(static_cast<usize>(existing - parsed.Dependencies.begin()));
+                if (existing == parsed.Dependencies.end())
+                {
+                    parsed.Dependencies.push_back(
+                        {.Type = AssetTypes::Flipbook, .Id = AssetId{flipbook}});
+                }
             }
         }
 
@@ -214,17 +226,17 @@ namespace Veng
             }
         }
 
-        parsed.Complete = [info, flipbookDependency = std::move(flipbookDependency)](
+        parsed.Complete = [info, flipbookDependencies = std::move(flipbookDependencies)](
                               AssetManager& /*manager*/,
                               const std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
-            for (usize e = 0; e < flipbookDependency.size(); ++e)
+            for (usize e = 0; e < flipbookDependencies.size(); ++e)
             {
-                if (flipbookDependency[e])
+                for (const usize dependency : flipbookDependencies[e])
                 {
-                    info->Emitters[e].Flipbook =
-                        AssetManager::HandleOf<Flipbook>(resolved[*flipbookDependency[e]]);
+                    info->Emitters[e].Flipbooks.push_back(
+                        AssetManager::HandleOf<Flipbook>(resolved[dependency]));
                 }
             }
             return Detail::LoadJob{

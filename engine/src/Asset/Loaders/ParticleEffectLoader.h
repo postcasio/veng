@@ -7,10 +7,10 @@ namespace Veng
 {
     /// @brief AssetTypes::ParticleEffect loader.
     ///
-    /// Decodes a CookedParticleEffectHeader, its emitters, flashes and key pool into the effect's
-    /// descriptions, and names each billboard emitter's flipbook as a hard dependency (once per
-    /// distinct flipbook), so every flipbook an effect draws is resident before any instance plays
-    /// it. The effect holds no GPU resource of its own, so nothing is finalized.
+    /// Decodes a CookedParticleEffectHeader, its emitters, flashes, flipbook pool and key pool into
+    /// the effect's descriptions, and names every flipbook a billboard emitter picks from as a hard
+    /// dependency (once per distinct flipbook), so every flipbook an effect draws is resident before
+    /// any instance plays it. The effect holds no GPU resource of its own, so nothing is finalized.
     class ParticleEffectLoader final : public AssetLoader
     {
     public:

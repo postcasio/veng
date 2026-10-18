@@ -464,8 +464,9 @@ at cook time:
 - **Particle effects** (`*.particles.json`) cook through the **`ParticleEffectImporter`**: the pack
   entry's `"source"` names the effect file, and **the format is
   [PARTICLE_EFFECT_SCHEMA.md](PARTICLE_EFFECT_SCHEMA.md)** — every field, its default and its
-  validation. A billboard emitter's `"flipbook"` must resolve through `CookContext::Resolve` to a
-  `Flipbook`, which puts it in the cooked dependency graph; every refusal is a located error naming
+  validation. A billboard emitter's `"flipbook"` — one id, or a list of up to eight its particles
+  pick among — must resolve through `CookContext::Resolve` to a `Flipbook`, each entry, which puts
+  them in the cooked dependency graph; every refusal is a located error naming
   the file and the field's path (`emitters[1].velocity.cone.angle`), and an effect whose particles
   can outnumber a renderer's default capacity at once cooks with a warning. The importer is
   `Parallel`: its work is a JSON parse and id resolution.

@@ -72,7 +72,7 @@ struct GpuParticle
     float3 Velocity; // at spawn, world units per second
     float Lifetime;  // seconds
     uint Instance;   // instance slot in the low 16 bits, its generation in the high 16
-    uint Emitter;    // the emitter's index within its effect
+    uint Emitter;    // the effect-relative record of the emitter's flipbook this particle plays
     uint Random;     // the particle's key, every further random draw's root
     float Spin;      // roll rate, radians per second
 };
@@ -91,13 +91,15 @@ struct GpuParticleInstance
     float Scale;            // multiplies every length the effect authors
 };
 
-// One emitter of an effect drawn this frame (1408 bytes).
+// One emitter's record for one of its flipbooks, drawn this frame (1424 bytes).
 struct GpuParticleEmitter
 {
     uint4 Mode;            // x render, y 1 when additive, z shape, w ParticleFlag bits
     uint4 Textures;        // x the colour sheet or lightA, y lightB, z motion, w temperature
     uint4 Grid;            // x columns, y rows, z frame count, w the sampler
     uint4 Counts;          // x burst count, y rate total, z alpha mode, w frame-scale base
+    uint4 Variants;        // x flipbooks the emitter picks from, y the effect-relative record of
+                           // its second (the rest follow); read from its first record
     float4 Spawn;          // x burst time, y rate start, z rate per second
     float4 LifetimeSize;   // xy lifetime range, zw size range
     float4 Speed;          // xy speed range, z speed-by-radius exponent, w shape radius

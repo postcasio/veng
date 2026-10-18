@@ -67,6 +67,9 @@ namespace Veng
     /// @brief The most light flashes one particle effect holds.
     inline constexpr u32 MaxParticleFlashes = 4;
 
+    /// @brief The most flipbooks one billboard emitter picks its particles' flipbook from.
+    inline constexpr u32 MaxParticleFlipbookVariants = 8;
+
     /// @brief The most keys one over-life curve holds.
     inline constexpr u32 MaxParticleCurveKeys = 16;
 
@@ -103,8 +106,12 @@ namespace Veng
         string Name;
         /// @brief How the particles draw.
         ParticleRender Render = ParticleRender::Billboard;
-        /// @brief The flipbook a billboard plays; unused by a streak.
-        AssetHandle<Flipbook> Flipbook;
+        /// @brief The flipbooks a billboard plays, at most MaxParticleFlipbookVariants; empty for a
+        ///        streak.
+        ///
+        /// Each particle plays one, picked uniformly from its own random stream, so a burst mixes
+        /// them and the same particle picks the same one on every renderer.
+        vector<AssetHandle<Flipbook>> Flipbooks;
         /// @brief How the particles composite.
         ParticleBlend Blend = ParticleBlend::Asset;
         /// @brief Particles spawned at once at BurstTime; 0 for no burst.
@@ -219,7 +226,8 @@ namespace Veng
         /// @param info  The emitters and flashes.
         /// @pre At most MaxParticleEmitters emitters and MaxParticleFlashes flashes; every curve
         ///      holds at most MaxParticleCurveKeys keys with strictly ascending T in [0, 1]; a
-        ///      billboard names a flipbook and a streak does not; every range has min <= max.
+        ///      billboard names between 1 and MaxParticleFlipbookVariants flipbooks and a streak
+        ///      names none; every range has min <= max.
         /// @return The effect.
         [[nodiscard]] static Ref<ParticleEffect> Create(const ParticleEffectInfo& info);
 

@@ -1,6 +1,7 @@
 // Particle Spawn: one thread per index the frame's spawn ranges issue. A thread finds its range by
 // a binary search over the ranges' prefixes, derives its particle's spawn state from the index
-// alone, pops a free slot, writes the state and appends the slot to the live list. A particle
+// alone, picks which of its emitter's flipbooks it plays, pops a free slot, writes the state and
+// appends the slot to the live list. A particle
 // already past its lifetime at this frame's time takes no slot and is not counted; a spawn finding
 // no free slot is dropped and counted.
 #include "particle_compute.slang"
@@ -80,7 +81,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
     particle.Velocity = state.Velocity;
     particle.Lifetime = state.Lifetime;
     particle.Instance = slot | ((instance.Generation & 0xFFFFu) << 16);
-    particle.Emitter = emitterIndex;
+    uint variant = ParticleVariantOf(state.Random, emitter.Variants.x);
+    particle.Emitter = variant == 0u ? emitterIndex : emitter.Variants.y + variant - 1u;
     particle.Random = state.Random;
     particle.Spin = state.Spin;
     g_Particles[particleSlot] = particle;

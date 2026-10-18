@@ -72,6 +72,18 @@ static const uint ParticleDrawSpin = 5;
 static const uint ParticleDrawRotation = 6;
 static const uint ParticleDrawSize = 7;
 static const uint ParticleDrawStartFrame = 8;
+static const uint ParticleDrawVariant = 9;
+
+// Which of an emitter's flipbooks a particle plays, uniform over them; 0 and 1 both pick 0.
+uint ParticleVariantOf(uint key, uint count)
+{
+    if (count <= 1u)
+    {
+        return 0u;
+    }
+    uint pick = uint(ParticleRandom(key, ParticleDrawVariant) * float(count));
+    return min(pick, count - 1u);
+}
 
 // What a particle's spawn reads of its emitter.
 struct ParticleSpawnParams

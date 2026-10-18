@@ -66,7 +66,7 @@ namespace Veng::Renderer
         f32 Lifetime = 0.0f;
         /// @brief Instance slot in the low 16 bits, its generation in the high 16.
         u32 Instance = 0;
-        /// @brief The emitter's index within its effect.
+        /// @brief The effect-relative record of the emitter's flipbook it plays.
         u32 Emitter = 0;
         /// @brief The particle's key.
         u32 Random = 0;
@@ -112,6 +112,10 @@ namespace Veng::Renderer
         uvec4 Grid{1u, 1u, 1u, 0u};
         /// @brief x burst count, y rate total, z the FlipbookAlpha, w the frame-scale base.
         uvec4 Counts{0u, 0u, 0u, ParticleNoFrameScales};
+        /// @brief x how many flipbooks the emitter picks from, y the effect-relative index of the
+        ///        record for its second (the rest follow it in order); read from the emitter's own
+        ///        record, which plays its first.
+        uvec4 Variants{1u, 0u, 0u, 0u};
         /// @brief x burst time, y rate start, z rate per second.
         vec4 Spawn{0.0f};
         /// @brief xy the lifetime range, zw the size range.
@@ -140,7 +144,7 @@ namespace Veng::Renderer
         /// @brief The over-life tables, ParticleEffect::GetEmitterLut's layout.
         std::array<vec4, 2 * ParticleLutSamples> Lut{};
     };
-    static_assert(sizeof(GpuParticleEmitter) == 1408,
+    static_assert(sizeof(GpuParticleEmitter) == 1424,
                   "GpuParticleEmitter must match particle_types.slang");
 
     /// @brief One run of particle indices to spawn (std430, 16 bytes); mirrors particle_types.slang.
@@ -199,7 +203,8 @@ namespace Veng::Renderer
     {
         /// @brief The instance table, every slot up to the highest in use.
         vector<GpuParticleInstance> Instances;
-        /// @brief The emitters of every effect an instance drawn this frame plays.
+        /// @brief The emitter records of every effect an instance drawn this frame plays: each
+        ///        effect's emitters in order, then the records for their further flipbooks.
         vector<GpuParticleEmitter> Emitters;
         /// @brief This frame's spawn ranges, in prefix order.
         vector<GpuParticleSpawnRange> Ranges;
@@ -226,14 +231,19 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsEmpty() const { return InstanceCount == 0; }
     };
 
-    /// @brief Builds an emitter's record from its effect, resolving its flipbook's shading.
+    /// @brief Builds the record an emitter draws one of its flipbooks with, resolving its shading.
+    ///
+    /// The record's Variants is left at one flipbook; the gather fills it in on the emitter's first
+    /// record once it has laid out the rest.
     /// @param effect        The effect.
     /// @param emitter       The emitter's index in the effect.
+    /// @param variant       Which of the emitter's flipbooks; 0 for a streak.
     /// @param frameScales   The frame's extent table, which a flipbook with per-frame extents is
     ///                      appended to (when it fits MaxParticleFrameScalesPerFrame).
     /// @return The record, or nullopt when a billboard's flipbook or its textures are not resident.
     [[nodiscard]] VE_API optional<GpuParticleEmitter>
-    BuildParticleEmitter(const ParticleEffect& effect, u32 emitter, vector<f32>& frameScales);
+    BuildParticleEmitter(const ParticleEffect& effect, u32 emitter, u32 variant,
+                         vector<f32>& frameScales);
 
     /// @brief The renderer's view of the scene's particle effect instances, frame to frame.
     ///

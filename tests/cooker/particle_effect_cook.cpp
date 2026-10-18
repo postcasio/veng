@@ -12,6 +12,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/ParticleEffect.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
@@ -151,19 +152,28 @@ TEST_CASE("particle effect cook: two emitters and a flash cook to the stated cou
     CHECK(header.FlashCount == 1);
     // Two size keys (t, v) and two tint keys (t, r, g, b).
     CHECK(header.KeyFloats == 2 * 2 + 2 * 4);
+    CHECK(header.FlipbookIds == 1);
     CHECK(cooked.Blob.size() == sizeof(header) + 2 * sizeof(CookedParticleEmitter) +
-                                    sizeof(CookedParticleFlash) + header.KeyFloats * sizeof(f32));
+                                    sizeof(CookedParticleFlash) + sizeof(u64) +
+                                    header.KeyFloats * sizeof(f32));
 
     CookedParticleEmitter smoke;
     CookedParticleEmitter sparks;
     std::memcpy(&smoke, cooked.Blob.data() + sizeof(header), sizeof(smoke));
     std::memcpy(&sparks, cooked.Blob.data() + sizeof(header) + sizeof(smoke), sizeof(sparks));
-    CHECK(smoke.Flipbook == FlipbookId.Value);
+    CHECK(smoke.FlipbookOffset == 0);
+    CHECK(smoke.FlipbookCount == 1);
+    u64 pooled = 0;
+    std::memcpy(&pooled,
+                cooked.Blob.data() + sizeof(header) + 2 * sizeof(CookedParticleEmitter) +
+                    sizeof(CookedParticleFlash),
+                sizeof(pooled));
+    CHECK(pooled == FlipbookId.Value);
     CHECK(smoke.BurstCount == 48);
     CHECK(smoke.Shape == 1);
     CHECK(smoke.SizeCurve.KeyCount == 2);
     CHECK(smoke.TintCurve.KeyCount == 2);
-    CHECK(sparks.Flipbook == 0);
+    CHECK(sparks.FlipbookCount == 0);
     CHECK(sparks.Render == 1);
     CHECK(sparks.Blend == 2);
     CHECK(sparks.RatePerSecond == 120.0f);
@@ -171,8 +181,42 @@ TEST_CASE("particle effect cook: two emitters and a flash cook to the stated cou
     CHECK(sparks.ConeAngle == 60.0f);
 }
 
+TEST_CASE("particle effect cook: a billboard's flipbook list cooks to a run of the pool")
+{
+    nlohmann::json effect = Effect();
+    effect["emitters"][0]["flipbook"] = {FlipbookHex, FlipbookHex, FlipbookHex};
+    const Cooked cooked = CookEffect("variants", effect);
+    REQUIRE(cooked.Status.has_value());
+    CookedParticleEffectHeader header;
+    std::memcpy(&header, cooked.Blob.data(), sizeof(header));
+    CHECK(header.FlipbookIds == 3);
+    CookedParticleEmitter smoke;
+    std::memcpy(&smoke, cooked.Blob.data() + sizeof(header), sizeof(smoke));
+    CHECK(smoke.FlipbookOffset == 0);
+    CHECK(smoke.FlipbookCount == 3);
+}
+
 TEST_CASE("particle effect cook: a malformed effect is refused naming the field")
 {
+    {
+        nlohmann::json effect = Effect();
+        effect["emitters"][0]["flipbook"] = nlohmann::json::array();
+        CHECK(Refusal("emptylist", effect).find("emitters[0].flipbook") != string::npos);
+    }
+    {
+        nlohmann::json effect = Effect();
+        effect["emitters"][0]["flipbook"] = nlohmann::json::array();
+        for (u32 i = 0; i <= MaxParticleFlipbookVariants; ++i)
+        {
+            effect["emitters"][0]["flipbook"].push_back(FlipbookHex);
+        }
+        CHECK(Refusal("longlist", effect).find("emitters[0].flipbook") != string::npos);
+    }
+    {
+        nlohmann::json effect = Effect();
+        effect["emitters"][0]["flipbook"] = {FlipbookHex, fmt::format("0x{:016X}", EffectId.Value)};
+        CHECK(Refusal("listentry", effect).find("emitters[0].flipbook[1]") != string::npos);
+    }
     {
         nlohmann::json effect = Effect();
         effect["version"] = 2;

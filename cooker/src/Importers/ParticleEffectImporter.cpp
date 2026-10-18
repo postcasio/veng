@@ -247,7 +247,7 @@ namespace Veng::Cook
 
         Result<CookedParticleEmitter> ReadEmitter(const CookContext& context, const Reader& reader,
                                                   const json& source, const string& field,
-                                                  KeyPool& pool)
+                                                  KeyPool& pool, vector<u64>& flipbooks)
         {
             if (!source.is_object())
             {
@@ -274,32 +274,53 @@ namespace Veng::Cook
             }
             if (billboard)
             {
-                if (!hasFlipbook || !source["flipbook"].is_string())
+                const json& authored = hasFlipbook ? source["flipbook"] : json();
+                const bool listed = authored.is_array();
+                if (!(authored.is_string() || (listed && !authored.empty())))
                 {
-                    return std::unexpected(reader.Error(
-                        field + ".flipbook", "a billboard needs a flipbook id hex string"));
+                    return std::unexpected(reader.Error(field + ".flipbook",
+                                                        "a billboard needs a flipbook id hex "
+                                                        "string, or a non-empty array of them"));
                 }
-                const optional<AssetId> id = ParseAssetId(source["flipbook"].get<string>());
-                if (!id || !id->IsValid())
+                if (listed && authored.size() > MaxParticleFlipbookVariants)
                 {
-                    return std::unexpected(reader.Error(
-                        field + ".flipbook",
-                        fmt::format("malformed id '{}'", source["flipbook"].get<string>())));
+                    return std::unexpected(
+                        reader.Error(field + ".flipbook",
+                                     fmt::format("{} flipbooks exceed the {} an emitter "
+                                                 "picks from",
+                                                 authored.size(), MaxParticleFlipbookVariants)));
                 }
-                optional<ResolvedSource> resolved;
-                if (context.Resolve)
+                emitter.FlipbookOffset = static_cast<u32>(flipbooks.size());
+                for (usize i = 0; i < (listed ? authored.size() : 1); ++i)
                 {
-                    resolved = context.Resolve(*id);
+                    const json& entry = listed ? authored[i] : authored;
+                    const string path =
+                        listed ? fmt::format("{}.flipbook[{}]", field, i) : field + ".flipbook";
+                    if (!entry.is_string())
+                    {
+                        return std::unexpected(reader.Error(path, "must be an id hex string"));
+                    }
+                    const optional<AssetId> id = ParseAssetId(entry.get<string>());
+                    if (!id || !id->IsValid())
+                    {
+                        return std::unexpected(reader.Error(
+                            path, fmt::format("malformed id '{}'", entry.get<string>())));
+                    }
+                    optional<ResolvedSource> resolved;
+                    if (context.Resolve)
+                    {
+                        resolved = context.Resolve(*id);
+                    }
+                    if (!resolved || resolved->Type != AssetTypes::Flipbook)
+                    {
+                        return std::unexpected(reader.Error(
+                            path, fmt::format("{} does not resolve to a Flipbook in this pack or a "
+                                              "reference pack",
+                                              entry.get<string>())));
+                    }
+                    flipbooks.push_back(id->Value);
                 }
-                if (!resolved || resolved->Type != AssetTypes::Flipbook)
-                {
-                    return std::unexpected(reader.Error(
-                        field + ".flipbook",
-                        fmt::format("{} does not resolve to a Flipbook in this pack or a reference "
-                                    "pack",
-                                    source["flipbook"].get<string>())));
-                }
-                emitter.Flipbook = id->Value;
+                emitter.FlipbookCount = static_cast<u32>(flipbooks.size()) - emitter.FlipbookOffset;
             }
 
             const json* spawn = nullptr;
@@ -558,12 +579,13 @@ namespace Veng::Cook
         }
 
         KeyPool pool;
+        vector<u64> flipbooks;
         vector<CookedParticleEmitter> cookedEmitters;
         u64 maxAlive = 0;
         for (usize e = 0; e < emitters.size(); ++e)
         {
-            Result<CookedParticleEmitter> emitter =
-                ReadEmitter(context, reader, emitters[e], fmt::format("emitters[{}]", e), pool);
+            Result<CookedParticleEmitter> emitter = ReadEmitter(
+                context, reader, emitters[e], fmt::format("emitters[{}]", e), pool, flipbooks);
             if (!emitter)
             {
                 return std::unexpected(emitter.error());
@@ -597,11 +619,12 @@ namespace Veng::Cook
             .EmitterCount = static_cast<u32>(cookedEmitters.size()),
             .FlashCount = static_cast<u32>(cookedFlashes.size()),
             .KeyFloats = static_cast<u32>(pool.Floats.size()),
+            .FlipbookIds = static_cast<u32>(flipbooks.size()),
         };
         vector<u8> blob;
         blob.reserve(sizeof(header) + cookedEmitters.size() * sizeof(CookedParticleEmitter) +
                      cookedFlashes.size() * sizeof(CookedParticleFlash) +
-                     pool.Floats.size() * sizeof(f32));
+                     flipbooks.size() * sizeof(u64) + pool.Floats.size() * sizeof(f32));
         Append(blob, header);
         for (const CookedParticleEmitter& emitter : cookedEmitters)
         {
@@ -610,6 +633,10 @@ namespace Veng::Cook
         for (const CookedParticleFlash& flash : cookedFlashes)
         {
             Append(blob, flash);
+        }
+        for (const u64 flipbook : flipbooks)
+        {
+            Append(blob, flipbook);
         }
         for (const f32 key : pool.Floats)
         {

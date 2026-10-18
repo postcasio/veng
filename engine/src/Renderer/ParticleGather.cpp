@@ -43,16 +43,24 @@ namespace Veng::Renderer
         {
             return cursor > first ? cursor - first : 0u;
         }
+
+        // The flipbooks an emitter's particles pick from; one record for a streak.
+        u32 VariantCount(const ParticleEmitterDesc& emitter)
+        {
+            return std::max(static_cast<u32>(emitter.Flipbooks.size()), 1u);
+        }
     }
 
     optional<GpuParticleEmitter> BuildParticleEmitter(const ParticleEffect& effect,
-                                                      const u32 emitterIndex,
+                                                      const u32 emitterIndex, const u32 variant,
                                                       vector<f32>& frameScales)
     {
         const ParticleEmitterDesc& emitter = effect.GetEmitters()[emitterIndex];
         const ParticleSpawnParams spawn = MakeParticleSpawnParams(emitter);
         const bool billboard = emitter.Render == ParticleRender::Billboard;
-        const Flipbook* flipbook = billboard ? emitter.Flipbook.Get() : nullptr;
+        const Flipbook* flipbook = billboard && variant < emitter.Flipbooks.size()
+                                       ? emitter.Flipbooks[variant].Get()
+                                       : nullptr;
         if (billboard && (flipbook == nullptr || flipbook->GetAtlas() == nullptr))
         {
             return std::nullopt;
@@ -319,24 +327,47 @@ namespace Veng::Renderer
                 base = found->second;
                 drawn = base != std::numeric_limits<u32>::max();
             }
-            else if (plan.Emitters.size() + emitterCount > MaxParticleEmittersPerFrame)
-            {
-                drawn = false;
-                effectBase.emplace(&effect, std::numeric_limits<u32>::max());
-            }
             else
             {
+                // Each emitter's own record plays its first flipbook; the records for its further
+                // flipbooks follow every emitter's own, so an emitter's index is its record's.
+                u32 recordCount = emitterCount;
+                for (const ParticleEmitterDesc& emitter : effect.GetEmitters())
+                {
+                    recordCount += VariantCount(emitter) - 1u;
+                }
+                if (plan.Emitters.size() + recordCount > MaxParticleEmittersPerFrame)
+                {
+                    drawn = false;
+                }
                 base = static_cast<u32>(plan.Emitters.size());
                 for (u32 e = 0; e < emitterCount && drawn; ++e)
                 {
                     const optional<GpuParticleEmitter> record =
-                        BuildParticleEmitter(effect, e, plan.FrameScales);
+                        BuildParticleEmitter(effect, e, 0u, plan.FrameScales);
                     if (!record)
                     {
                         drawn = false;
                         break;
                     }
                     plan.Emitters.push_back(*record);
+                }
+                for (u32 e = 0; e < emitterCount && drawn; ++e)
+                {
+                    const u32 variants = VariantCount(effect.GetEmitters()[e]);
+                    plan.Emitters[base + e].Variants =
+                        uvec4(variants, static_cast<u32>(plan.Emitters.size()) - base, 0u, 0u);
+                    for (u32 v = 1; v < variants && drawn; ++v)
+                    {
+                        const optional<GpuParticleEmitter> record =
+                            BuildParticleEmitter(effect, e, v, plan.FrameScales);
+                        if (!record)
+                        {
+                            drawn = false;
+                            break;
+                        }
+                        plan.Emitters.push_back(*record);
+                    }
                 }
                 if (!drawn)
                 {
@@ -409,11 +440,26 @@ namespace Veng::Renderer
                 const u64 live = static_cast<u64>(CountsBetween(cursor.Burst, first.Burst)) +
                                  CountsBetween(cursor.Rate, first.Rate);
                 alive += live;
-                if (drawn && plan.Emitters[base + e].Mode.y == 0u)
+                if (!drawn)
+                {
+                    continue;
+                }
+                // A particle may play any of the emitter's flipbooks, so its records are bounded
+                // together: alpha when any is, depth-reading when any is.
+                const GpuParticleEmitter& own = plan.Emitters[base + e];
+                bool alpha = own.Mode.y == 0u;
+                bool soft = own.Noise.z != 0.0f;
+                for (u32 v = 1; v < own.Variants.x; ++v)
+                {
+                    const GpuParticleEmitter& other = plan.Emitters[base + own.Variants.y + v - 1u];
+                    alpha = alpha || other.Mode.y == 0u;
+                    soft = soft || other.Noise.z != 0.0f;
+                }
+                if (alpha)
                 {
                     alphaAlive += live;
                 }
-                if (drawn && plan.Emitters[base + e].Noise.z != 0.0f)
+                if (soft)
                 {
                     plan.ReadsSceneDepth = true;
                 }

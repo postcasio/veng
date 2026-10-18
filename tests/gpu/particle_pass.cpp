@@ -1,8 +1,9 @@
 // The particle chain on a real device, at a pool of 64: a particle drawn from the closed form lands
 // where the CPU twin puts it, a burst spawns exactly its count, a burst past the pool is clamped and
 // counted, death and an early retire empty the pool and idle the chain, alpha particles sort back to
-// front whichever spawned first, and a streak lights the span between its tail and its head. A
-// white premultiplied flipbook makes a billboard's pixel its tint.
+// front whichever spawned first, each particle plays the flipbook variant its key picks, and a
+// streak lights the span between its tail and its head. A white premultiplied flipbook makes a
+// billboard's pixel its tint.
 
 #include <array>
 #include <vector>
@@ -42,11 +43,18 @@ namespace
     constexpr uvec2 Extent{64, 64};
     constexpr u32 Capacity = 64;
 
-    // A 2x2 grid of 4x4 white, fully covered frames: sampled anywhere it reads (1, 1, 1, 1).
-    AssetHandle<Flipbook> WhiteFlipbook(Context& context)
+    // A 2x2 grid of 4x4 fully covered frames of one premultiplied colour: sampled anywhere it reads
+    // (r, g, b, 1).
+    AssetHandle<Flipbook> SolidFlipbook(Context& context, const u8 r, const u8 g, const u8 b)
     {
         std::array<u8, 8 * 8 * 4> pixels{};
-        pixels.fill(255);
+        for (usize texel = 0; texel < 64; ++texel)
+        {
+            pixels[texel * 4] = r;
+            pixels[texel * 4 + 1] = g;
+            pixels[texel * 4 + 2] = b;
+            pixels[texel * 4 + 3] = 255;
+        }
         const Ref<Texture> atlas = Veng::Detail::BuildAssetSync(
             context, TextureData{
                          .Name = "Particle Atlas",
@@ -66,6 +74,12 @@ namespace
             .Clip = {.FrameCount = 4, .Fps = 10.0f, .Loop = true},
             .AlphaMode = FlipbookAlpha::Premultiplied,
         }));
+    }
+
+    // White: a billboard's pixel is its tint.
+    AssetHandle<Flipbook> WhiteFlipbook(Context& context)
+    {
+        return SolidFlipbook(context, 255, 255, 255);
     }
 
     // A one-frame six-way flipbook lit only through lightA's +X map, fully covered, cold.
@@ -162,7 +176,7 @@ namespace
     ParticleEmitterDesc Billboard(const AssetHandle<Flipbook>& flipbook, const ParticleBlend blend)
     {
         return ParticleEmitterDesc{
-            .Flipbook = flipbook,
+            .Flipbooks = {flipbook},
             .Blend = blend,
             .BurstCount = 1,
             .Lifetime = vec2(10.0f),
@@ -222,6 +236,39 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(render.At(expected).x > 0.8f);
         CHECK(render.At(vec3(0.0f)).x < 0.05f);
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "particle pass: each particle plays the flipbook variant its key picks")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    ParticleView render = MakeRenderer(Context, assets);
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    // Every particle rests on the anchor and adds a 32nd of its variant's colour there (the output
+    // holds no more than 1), so the pixel counts the particles that picked each.
+    constexpr u32 Count = 24;
+    constexpr f32 Share = 1.0f / 32.0f;
+    ParticleEmitterDesc emitter =
+        Billboard(SolidFlipbook(Context, 255, 0, 0), ParticleBlend::Additive);
+    emitter.Flipbooks.push_back(SolidFlipbook(Context, 0, 255, 0));
+    emitter.BurstCount = Count;
+    emitter.IntensityCurve = {{.T = 0.0f, .Value = Share}};
+    const Entity entity = Play(*scene, Effect({emitter}), vec3(0.0f), 0.0f);
+    SetTime(*scene, entity, 0.1f);
+    render.Render(Context, *scene);
+
+    u32 green = 0;
+    for (u32 index = 0; index < Count; ++index)
+    {
+        green += ParticleVariantOf(ParticleKey(3, 0, index), 2);
+    }
+    REQUIRE(green > 0);
+    REQUIRE(green < Count);
+    const vec3 sum = render.At(vec3(0.0f));
+    CHECK(sum.x == doctest::Approx(Share * static_cast<f32>(Count - green)).epsilon(0.02));
+    CHECK(sum.y == doctest::Approx(Share * static_cast<f32>(green)).epsilon(0.02));
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

@@ -1300,7 +1300,7 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   alpha sort keys (`max(N, 1024)` `uvec2`s), the 112-byte draw records, the counters and the
   argument buffer. Per-frame host-mapped rings — one region per frame in flight — carry the instance
   table (`MaxParticleInstances`, 1,024 × 64 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
-  256 × 1,408 bytes, each holding the emitter's parameters, its flipbook's handles, grid and
+  256 × 1,424 bytes, each holding the emitter's parameters, one flipbook's handles, grid and
   shading, the ramp in the sprite pass's form and its two 32-sample over-life tables), the spawn
   ranges (`MaxParticleSpawnRanges`, 4,096), a frame-extent table and a stats region. About 12 MB at
   the default capacity, allocated only while the chain is wired.
@@ -1323,7 +1323,17 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   `ParticleFirstPossiblyAlive`), so each renderer issues every index exactly once whatever its
   cadence, and one meeting an effect late issues only what can still be alive, each at its exact
   spawn time. The emitter table holds each effect's emitters once per frame; an instance whose
-  emitters do not fit keeps its particles alive but undrawn and spawns nothing. The CPU knows
+  emitters do not fit keeps its particles alive but undrawn and spawns nothing.
+- **An emitter with several flipbooks takes a record per flipbook.** A billboard's
+  `ParticleEmitterDesc::Flipbooks` may list up to `MaxParticleFlipbookVariants`; an effect's
+  records are its emitters' own, in order (each playing its first flipbook, so an emitter's index
+  is its record's), then the records for their further flipbooks, which the own record's
+  `Variants` (count, first record) names. Spawn picks one with `ParticleVariantOf` — draw 9 of the
+  particle's key, twinned with the rest of the math — and stores that record's index in the
+  particle, so update and draw read only the record of the flipbook it plays, and every renderer
+  picks the same. The records carry the same spawn parameters; only the flipbook's shading
+  differs. An emitter's live particles count as alpha, and as reading scene depth, when any of its
+  records does. The CPU knows
   `SpawnTotal`, `AliveBound` and `AlphaBound` exactly; spawns past the capacity or the range table
   are trimmed and counted, never deferred.
 - **Precision under a floating origin.** An instance's anchor is a `dvec3` in the stable frame; the

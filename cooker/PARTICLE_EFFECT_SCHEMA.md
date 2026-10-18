@@ -60,7 +60,7 @@ leaves every time alone. Every key the cook does not name here is ignored.
 |---|---|---|---|
 | `name` | string | `""` | A label for diagnostics. |
 | `render` | `"billboard"` \| `"streak"` | `"billboard"` | A billboard draws a flipbook, schema 1 or 2. A streak is a quad stretched along the particle's velocity in one HDR colour, for sparks. |
-| `flipbook` | hex id string | — | A billboard's `Flipbook`, in this pack or a reference pack. Required for a billboard; refused on a streak. |
+| `flipbook` | hex id string, or an array of 1 to 8 | — | A billboard's `Flipbook`, in this pack or a reference pack, or a list of them: each particle plays one, picked uniformly from its own random stream, so a burst mixes them. Required for a billboard; refused on a streak. |
 | `blend` | `"asset"` \| `"alpha"` \| `"additive"` | `"asset"` | `asset` takes the flipbook's recommendation, so a streak must choose `alpha` or `additive`. Alpha particles sort back to front; additive ones do not. |
 | `spawn.burst.count` | int ≥ 0 | 0 | Particles spawned at once. |
 | `spawn.burst.time` | number ≥ 0 | 0 | When the burst spawns. |
@@ -136,7 +136,9 @@ Each is a located cook error naming the file and the field (`emitters[1].velocit
 
 - a `type` other than `"particle-effect"`, or a `version` other than 1;
 - an unknown `render`, `blend`, `shape.kind` or `playback.mode`;
-- a billboard whose `flipbook` is missing, malformed, or resolves to anything but a `Flipbook`;
+- a billboard whose `flipbook` is missing, malformed, or resolves to anything but a `Flipbook`, or
+  a list of them that is empty or longer than 8 (an entry is named by its index,
+  `emitters[0].flipbook[1]`);
 - a streak naming a `flipbook`, an `emission`, or `blend: "asset"`;
 - a `[min, max]` with `min > max`; a negative lifetime, size, radius, drag, rate or time;
 - a cone axis of zero, or a cone angle outside (0, 180];
@@ -151,5 +153,6 @@ warning: past the capacity a renderer drops spawns and counts them.
 ## The cooked blob
 
 `CookedParticleEffectHeader`, then `CookedParticleEmitter[EmitterCount]`, then
-`CookedParticleFlash[FlashCount]`, then the `f32` key pool every curve indexes (`Veng/Asset/
-CookedBlobs.h`). The format version is `CookedParticleEffectVersion`; a mismatch is refused at load.
+`CookedParticleFlash[FlashCount]`, then the `u64` flipbook-id pool each billboard's
+`{FlipbookOffset, FlipbookCount}` run indexes, then the `f32` key pool every curve indexes
+(`Veng/Asset/CookedBlobs.h`). The format version is `CookedParticleEffectVersion`; a mismatch is refused at load.

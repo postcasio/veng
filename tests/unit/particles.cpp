@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <set>
@@ -260,6 +261,34 @@ TEST_CASE("A particle's spawn state is a pure function of its seed, emitter and 
     const AssetHandle<ParticleEffect> effect = MakeEffect({rate});
     CHECK(IssueAcross(effect, {0.0f, 0.016f, 0.4f, 0.41f, 1.0f, 2.0f}) ==
           IssueAcross(effect, {0.25f, 0.75f, 2.0f}));
+}
+
+TEST_CASE("A particle picks among its emitter's flipbooks uniformly, and always 0 from one")
+{
+    constexpr u32 Keys = 4096;
+    for (u32 count = 0; count <= MaxParticleFlipbookVariants; ++count)
+    {
+        std::array<u32, MaxParticleFlipbookVariants> picks{};
+        u32 outOfRange = 0;
+        for (u32 index = 0; index < Keys; ++index)
+        {
+            const u32 variant = ParticleVariantOf(ParticleKey(7, 2, index), count);
+            outOfRange += variant >= std::max(count, 1u) ? 1u : 0u;
+            ++picks[std::min(variant, MaxParticleFlipbookVariants - 1u)];
+        }
+        CHECK(outOfRange == 0);
+        const u32 buckets = std::max(count, 1u);
+        const f32 expected = static_cast<f32>(Keys) / static_cast<f32>(buckets);
+        u32 leastPicked = Keys;
+        u32 mostPicked = 0;
+        for (u32 v = 0; v < buckets; ++v)
+        {
+            leastPicked = std::min(leastPicked, picks[v]);
+            mostPicked = std::max(mostPicked, picks[v]);
+        }
+        CHECK(static_cast<f32>(leastPicked) > 0.85f * expected);
+        CHECK(static_cast<f32>(mostPicked) < 1.15f * expected);
+    }
 }
 
 TEST_CASE("Spawn shapes, the cone and the self-similar speed hold")

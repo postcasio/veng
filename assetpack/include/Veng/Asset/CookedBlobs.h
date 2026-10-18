@@ -1139,7 +1139,7 @@ namespace Veng
     ///
     /// Bumped on any CookedParticleEffectHeader, CookedParticleEmitter or CookedParticleFlash
     /// layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedParticleEffectVersion = 1u;
+    inline constexpr u32 CookedParticleEffectVersion = 2u;
 
     /// @brief One piecewise-linear curve of a cooked particle effect: a run of the key pool.
     ///
@@ -1160,8 +1160,10 @@ namespace Veng
     /// rule above); each [min, max] range is two floats; angles are in degrees.
     struct CookedParticleEmitter
     {
-        /// @brief The billboard's Flipbook id; 0 for a streak.
-        u64 Flipbook = 0;
+        /// @brief The first of the billboard's Flipbook ids in the flipbook pool.
+        u32 FlipbookOffset = 0;
+        /// @brief How many Flipbook ids the billboard picks from; 0 for a streak.
+        u32 FlipbookCount = 0;
         /// @brief 0 = billboard, 1 = streak.
         u32 Render = 0;
         /// @brief 0 = the flipbook's recommendation, 1 = alpha, 2 = additive.
@@ -1267,6 +1269,7 @@ namespace Veng
     ///   CookedParticleEffectHeader
     ///   CookedParticleEmitter[EmitterCount]
     ///   CookedParticleFlash[FlashCount]
+    ///   u64 Flipbooks[FlipbookIds] — the Flipbook id pool every emitter's run indexes
     ///   f32 Keys[KeyFloats] — the key pool every CookedParticleCurve indexes
     struct CookedParticleEffectHeader
     {
@@ -1278,6 +1281,10 @@ namespace Veng
         u32 FlashCount = 0;
         /// @brief How many floats the key pool holds.
         u32 KeyFloats = 0;
+        /// @brief How many ids the flipbook pool holds.
+        u32 FlipbookIds = 0;
+        /// @brief Pads the header to the flipbook pool's 8-byte alignment with a determined byte.
+        u32 Pad = 0;
     };
 
     /// @brief The current font-format version.

@@ -171,16 +171,18 @@ the format and its serialization — neither importer nor loader.
   order, slots that disagree with the shading or the motion scale, a frame scale outside (0, 1], a
   texture whose extent is not the primary's, and a blob shorter than its declared contents.
 - **`AssetTypes::ParticleEffect` carries layered emitters and light flashes.** A
-  **`CookedParticleEffectHeader`** (`CookedParticleEffectVersion`, currently **1**) holds
-  `EmitterCount`, `FlashCount` and `KeyFloats`; the blob is the header, then
+  **`CookedParticleEffectHeader`** (`CookedParticleEffectVersion`, currently **2**) holds
+  `EmitterCount`, `FlashCount`, `KeyFloats` and `FlipbookIds`; the blob is the header, then
   `CookedParticleEmitter[EmitterCount]` (224 bytes each, pinned by a `static_assert`: the billboard's
-  `Flipbook` id first — 0 for a streak — then the render, blend, shape and playback ordinals, the
+  `{FlipbookOffset, FlipbookCount}` run of the flipbook pool first — a count of 0 for a streak, at
+  most `MaxParticleFlipbookVariants` — then the render, blend, shape and playback ordinals, the
   spawn, the `[min, max]` ranges as `f32[2]`, the vectors as `f32[3]`, and each over-life curve and
   the emission override as a `CookedParticleCurve` `{KeyOffset, KeyCount}` run of the key pool), then
-  `CookedParticleFlash[FlashCount]` (40 bytes), then the `f32` key pool — scalar keys as `(t, v)`
-  pairs, colour keys as `(t, r, g, b)`. The loader rejects a `Version` mismatch, more than 16 emitters
-  or 4 flashes, an unknown ordinal, a curve overrunning the pool or out of order, a range with min
-  above max, a billboard without a flipbook or a streak with one, and a truncated blob.
+  `CookedParticleFlash[FlashCount]` (40 bytes), then the `u64` flipbook-id pool, then the `f32` key
+  pool — scalar keys as `(t, v)` pairs, colour keys as `(t, r, g, b)`. The loader rejects a `Version`
+  mismatch, more than 16 emitters or 4 flashes, an unknown ordinal, a curve overrunning the pool or
+  out of order, a range with min above max, a billboard without a flipbook or a streak with one, a
+  flipbook run outside its pool or naming the null id, and a truncated blob.
 - **`AssetTypes::Environment` carries an equirectangular HDR panorama for image-based lighting.**
   A **`CookedEnvironmentHeader`** (`CookedEnvironmentVersion`) is a `Format` (always the
   `RGBA16Sfloat` ordinal), `Width`, and `Height`, followed by `Width * Height` half-float texels

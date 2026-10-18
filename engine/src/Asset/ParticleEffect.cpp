@@ -150,6 +150,12 @@ namespace Veng
                           emitter.Blend != ParticleBlend::Asset,
                       "ParticleEffect '{}': streak emitter '{}' must choose alpha or additive",
                       info.Name, emitter.Name);
+            VE_ASSERT(
+                emitter.Flipbooks.size() <= MaxParticleFlipbookVariants &&
+                    (emitter.Render == ParticleRender::Billboard || emitter.Flipbooks.empty()),
+                "ParticleEffect '{}': emitter '{}' names {} flipbooks; a billboard names at "
+                "most {} and a streak none",
+                info.Name, emitter.Name, emitter.Flipbooks.size(), MaxParticleFlipbookVariants);
         }
         for (const ParticleFlashDesc& flash : info.Flashes)
         {

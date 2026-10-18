@@ -116,7 +116,8 @@ frames), `IsFlipbookFinished` — and `Flipbook::Create` builds one
 - **`AssetTypes::ParticleEffect` — layered particle emitters and light flashes**
   (`Veng/Asset/ParticleEffect.h`). Its source is a `*.particles.json` the pack entry names directly
   (the format is [cooker/PARTICLE_EFFECT_SCHEMA.md](../../../cooker/PARTICLE_EFFECT_SCHEMA.md)). Each
-  `ParticleEmitterDesc` is a render mode (a billboard over an `AssetHandle<Flipbook>`, or a streak),
+  `ParticleEmitterDesc` is a render mode (a billboard over one to `MaxParticleFlipbookVariants`
+  flipbooks, each particle playing one its key picks, or a streak),
   a blend, a burst and a rate, `[min, max]` lifetime, size, roll and spin, a spawn shape, a radial
   speed with a cone, a speed-by-radius exponent and a speed noise, a constant acceleration and a
   linear drag (both zero by default), a flipbook playback, a soft distance, an emission override and
