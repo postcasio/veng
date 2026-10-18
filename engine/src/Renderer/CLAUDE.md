@@ -107,7 +107,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `LightTileCuller`, `SsrChain`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `LightTileCuller`, `SsrChain`, `ParticleSimulation`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -151,7 +151,8 @@ separates *deciding* from *wiring*:
   `DofStages { None, CocOnly, Full }` makes "composited without the stages wired" unrepresentable
   rather than merely unreachable.
 - **The per-frame content-active flags are not topology.** The sprite and both ribbon passes'
-  (`SpriteActive`, `RibbonActive` and `RibbonPostResolveActive`, each with its idle counter) live in
+  (`SpriteActive`, `RibbonActive`, `RibbonPostResolveActive` and `ParticleActive`, each with its
+  idle counter) live in
   `SceneRenderer::Internal` beside the plans they gate.
 - **The three per-frame field-active flags are not topology and stay loose members.**
   `m_PointFieldActive`, `m_ScenePointFieldActive`, and `m_VolumeFieldActive` are resolved from
@@ -1259,6 +1260,108 @@ sprite is unaffected by a light, stepped and hard-edged; and a six-way flipbook 
 `E/π` from a light along its lit axis and nothing from the opposite one, its baseline behind an
 opaque caster (the vertex-stage shadow path), its ramp only above ignition, and a fade that rises
 into a wall. `tests/gpu/sprite_shading.cpp` evaluates the core's functions in one dispatch.
+
+### Particles
+
+**A `ParticleEffectInstance` plays a `ParticleEffect` as many sprites and streaks flying out from one
+anchor, simulated and drawn on the GPU** (the component, `ParticleEffectSystem` and the pool's
+`EffectDesc::Particles` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md); the asset in
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md)). The battery is `ParticleSimulation`
+(`ParticleSimulation.{h,cpp}`), drawn by `ParticleScenePass` (`Passes/ParticleScenePass.h`), wired
+**immediately after the sprite pass** in both compositing arms, into the same lit target and bloom
+mask — so alpha particles composite over sprites, and resolve, bloom and tonemap with the scene.
+
+- **One pool per renderer, of fixed capacity.** `SceneRendererSettings::ParticleCapacity` (default
+  `DefaultParticleCapacity`, 65,536; a power of two, rounded down by the settings clamp; 0 disables
+  particles, for a capture or a portrait). The pool's buffers are device-local and imported into the
+  graph, so every barrier between the chain's passes is derived from their declared uses: the
+  particles (48-byte `GpuParticle`), the dead list, two halves of live list, the additive list, the
+  alpha sort keys (`max(N, 1024)` `uvec2`s), the 112-byte draw records, the counters and the
+  argument buffer. Per-frame host-mapped rings — one region per frame in flight — carry the instance
+  table (`MaxParticleInstances`, 1,024 × 64 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
+  256 × 1,408 bytes, each holding the emitter's parameters, its flipbook's handles, grid and
+  shading, the ramp in the sprite pass's form and its two 32-sample over-life tables), the spawn
+  ranges (`MaxParticleSpawnRanges`, 4,096), a frame-extent table and a stats region. About 12 MB at
+  the default capacity, allocated only while the chain is wired.
+- **Each particle's state is written once, at spawn.** Its position at any age is the closed form
+  of constant acceleration plus linear drag (`ParticleOffsetAt`, below a `k·t` of 1e-3 a third-order
+  series), so `p₀ + v₀·t` is exact with neither, the path does not depend on the frame rate, the
+  update writes nothing back to the pool, and **any number of renderers reproduce the same
+  particles**: an environment capture executing every few frames, a second viewport, or a renderer
+  created mid-effect shows each particle where it is. The math is twinned line for line in
+  `ParticleMath.h` and `particle_math.slang` (the PCG hash, a particle's key and random streams, the
+  hashed value noise, `MakeParticleSpawnState` and the trajectory), the `InstancedCull.h` precedent,
+  so the unit band pins what the GPU computes. A force neither constant nor linear in velocity would
+  need a stepped state, which this does not have.
+- **The gather is device-free** (`ParticleGather.{h,cpp}`, run each `Execute` after the sprite
+  gather). Its instance table is keyed by `(entity, playback)`: a new key claims a slot and bumps
+  its generation, a vanished key frees the slot and bumps it again, so its particles die at the next
+  update by generation mismatch; the table resets on a new scene. **Spawns come from cursors, not a
+  queue**: each slot keeps, per emitter, the burst and rate indices it has issued, and issues
+  `[max(cursor, first possibly alive), spawned by now)` per stream (`ParticleSpawnedBy`,
+  `ParticleFirstPossiblyAlive`), so each renderer issues every index exactly once whatever its
+  cadence, and one meeting an effect late issues only what can still be alive, each at its exact
+  spawn time. The emitter table holds each effect's emitters once per frame; an instance whose
+  emitters do not fit keeps its particles alive but undrawn and spawns nothing. The CPU knows
+  `SpawnTotal`, `AliveBound` and `AlphaBound` exactly; spawns past the capacity or the range table
+  are trimmed and counted, never deferred.
+- **Precision under a floating origin.** An instance's anchor is a `dvec3` in the stable frame; the
+  gather sends `AnchorEye = Anchor − FloatingOrigin::Position − camera` per instance per frame, in
+  double, and the shaders work in eye-relative f32 from there (the ribbon precedent), so a
+  particle's error is the f32 rounding of its offset from its anchor and a moving origin adds
+  nothing. Particles need no offset hook beside `OffsetRibbons`.
+- **The chain, in declaration order**, each a compute pass but the last: **Particle Reset** (the
+  first frame after allocation: the dead list and counters), **Particle Spawn** (one thread per
+  issued index, finding its range by binary search over the prefixes, deriving its state from the
+  index, popping a slot with an atomic decrement that a failed pop restores and counts as dropped,
+  and skipping a particle already past its lifetime), **Particle Prepare** (the update's dispatch
+  arguments, and zeroed append counters), **Particle Update** (dispatched indirectly: kill by
+  generation or age onto the dead list, else append to the other live half and write the draw
+  record — closed-form position and velocity, the curves read from the emitter's tables, the
+  flipbook frame, and for a six-way flipbook the scene's light gathered once with
+  `EvaluateSpriteLighting` — then push to the additive list or the alpha keys), **Particle Sort**,
+  **Particle Finalize** (the two draws' vertex counts, and the stats region) and **Scene
+  Particles** (two `DrawIndirect` calls: alpha, then additive). The update binds the IBL and shadow
+  sets at 4 and 5 with the frame-slot dynamic offsets and declares the shadow atlases
+  `SampleCompute`.
+- **Idle gating, decided on the CPU.** A frame that spawns marks the GPU as possibly holding live
+  particles; a frame whose update ran with `AliveBound == 0` clears it, since that update killed
+  everything left. Prepare, update, finalize and the draw skip while neither holds, the live halves
+  swap only on a frame whose update ran, and a wired but idle chain records no dispatch and no render
+  pass. Wiring has the sprite pass's hysteresis (`ParticleIdleFrameLimit`, 256 gathers tracking no
+  instance), and the battery is created and destroyed with it.
+- **The sort is a bitonic sort** of `(complement of the view distance's float bits, draw index)`
+  keys, ascending — so back to front — over `P = max(1024, nextpow2(AlphaBound))`, in one source
+  with three entries: `csSortLocal` sorts 1,024-key blocks in groupshared memory, reading an index
+  past the frame's alpha count as the sentinel `0xFFFFFFFF` so no padding pass is needed;
+  `csSortGlobal` is one compare-exchange step for `j ≥ 1024`; `csSortMergeLocal` finishes a stage's
+  `j < 1024` steps in groupshared memory. `1 + Σ_{s=11}^{log₂P} (s − 9)` dispatches, 28 at 65,536,
+  separated by compute-to-compute barriers the pass records itself. Additive particles are not
+  sorted.
+- **Drawing goes through the sprite shading core.** The vertex stage indexes the sorted keys or the
+  additive list by `VertexIndex / 6`, rotates the eye-relative centre by the View matrix's rotation
+  alone and projects through the jittered `Proj`. A billboard places its corners about the
+  flipbook's anchor, rolled and sized by the blended frame extent, exactly as a sprite does; its
+  fragment runs the sprite pass's arithmetic — the unlit path, the frame blend by crossfade or
+  motion, `ShadeSixWay` over the gather the update packed into the record as halves, the emission
+  ramp, the soft edge against the opaque-depth copy — so a lit flipbook looks the same as one sprite
+  or as a thousand particles. A streak spans tail to head with its width across the projected axis,
+  floored at 1.5 px with its coverage scaled by the ratio, falling back to a disc when its axis is
+  shorter than its width, shaded `(1 − v²)²` across and soft at its ends. A frame drawing a soft
+  particle records the depth copy (`ParticleFramePlan::ReadsSceneDepth`), as a soft sprite does.
+- **Budgets and stats.** `SceneRenderer::GetParticleStats()` reports the capacity, the live,
+  spawned and dropped counts (read back frames-in-flight late, as the point field's are), the last
+  sort length, and the instances tracked and dropped; the renderer warns once for its lifetime on the
+  first drop of each kind.
+
+`tests/unit/particles.cpp` pins the closed form, the cursors (a burst issues exactly its particles
+whatever the partition, a rate its window, a late renderer only the living), the spawn state's
+determinism and shapes, the CPU end time, the pool's retire and flash light, the anchor under a
+moving origin, the baked tables and the budgets; `tests/gpu/particle_pass.cpp` that a particle draws
+where the twin puts it, a burst spawns exactly its count and an overflow is clamped and counted,
+death and a retire empty the pool and idle the chain, alpha particles sort back to front across a
+device-memory sort stage, a streak lights its span, and a six-way particle reads `E/π` from a light
+along its lit axis.
 
 ### Ribbons and trails
 

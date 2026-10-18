@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <Veng/Scene/ParticleEffectSystem.h>
 #include <Veng/Scene/Scene.h>
 
 namespace Veng
@@ -73,11 +74,22 @@ namespace Veng
         {
             Put(scene, slot->Id, *desc.Light);
         }
+        const u64 serial = m_NextSerial++;
+        if (desc.Particles)
+        {
+            ParticleEffectInstance particles = *desc.Particles;
+            particles.Emitting = true;
+            particles.StopTime = -1.0f;
+            particles.Finished = false;
+            particles.Playback = static_cast<u32>(serial);
+            LatchParticleEffect(scene, slot->Id, particles);
+            Put(scene, slot->Id, particles);
+        }
 
         slot->Live = true;
         slot->Age = 0.0f;
         slot->Lifetime = lifetime;
-        slot->Serial = m_NextSerial++;
+        slot->Serial = serial;
         return slot->Id;
     }
 
@@ -93,11 +105,13 @@ namespace Veng
             slot.Age += delta;
             const FlipbookSprite* sprite = scene.TryGet<FlipbookSprite>(slot.Id);
             const Ribbon* ribbon = scene.TryGet<Ribbon>(slot.Id);
+            const auto* particles = scene.TryGet<ParticleEffectInstance>(slot.Id);
             const bool expired = slot.Lifetime > 0.0f && slot.Age >= slot.Lifetime;
             const bool spriteDone = sprite == nullptr || sprite->Finished;
             const bool ribbonDone =
                 ribbon == nullptr || (ribbon->Lifetime > 0.0f && ribbon->Age >= ribbon->Lifetime);
-            if (expired || (spriteDone && ribbonDone))
+            const bool particlesDone = particles == nullptr || particles->Finished;
+            if (expired || (spriteDone && ribbonDone && particlesDone))
             {
                 RetireSlot(scene, slot);
             }
@@ -139,6 +153,10 @@ namespace Veng
         if (scene.Has<Ribbon>(slot.Id))
         {
             (void)scene.Remove<Ribbon>(slot.Id);
+        }
+        if (scene.Has<ParticleEffectInstance>(slot.Id))
+        {
+            (void)scene.Remove<ParticleEffectInstance>(slot.Id);
         }
         if (scene.Has<Light>(slot.Id))
         {

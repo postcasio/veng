@@ -537,6 +537,61 @@
       "source": "shaders/sprite_masked.frag.shader.json"
     },
     {
+      "id": "0xBC3E1DD216A0CD28",
+      "type": "Shader",
+      "source": "shaders/particle_reset.comp.shader.json"
+    },
+    {
+      "id": "0xD688E7DB5F9AA705",
+      "type": "Shader",
+      "source": "shaders/particle_spawn.comp.shader.json"
+    },
+    {
+      "id": "0x1D104E5182C281DE",
+      "type": "Shader",
+      "source": "shaders/particle_prepare.comp.shader.json"
+    },
+    {
+      "id": "0x355C303B51430ABC",
+      "type": "Shader",
+      "source": "shaders/particle_update.comp.shader.json"
+    },
+    {
+      "id": "0x4215BED2C3F1ED41",
+      "type": "Shader",
+      "source": "shaders/particle_sort_local.comp.shader.json"
+    },
+    {
+      "id": "0xF0329881A7EF4B75",
+      "type": "Shader",
+      "source": "shaders/particle_sort_global.comp.shader.json"
+    },
+    {
+      "id": "0xFCCA6A43EBEF6E7C",
+      "type": "Shader",
+      "source": "shaders/particle_sort_merge.comp.shader.json"
+    },
+    {
+      "id": "0x7C4E5BF79D2F956D",
+      "type": "Shader",
+      "source": "shaders/particle_finalize.comp.shader.json"
+    },
+    {
+      "id": "0x20AF46B44DED5CA8",
+      "type": "Shader",
+      "source": "shaders/particle.vert.shader.json"
+    },
+    {
+      "id": "0x63F035907DD5EEA6",
+      "type": "Shader",
+      "source": "shaders/particle.frag.shader.json"
+    },
+    {
+      "id": "0xC58EA21E7F99F47B",
+      "type": "Shader",
+      "source": "shaders/particle_masked.frag.shader.json"
+    },
+    {
       "id": "0xF6BFB05FF0406BA1",
       "type": "Shader",
       "source": "shaders/ribbon.vert.shader.json"

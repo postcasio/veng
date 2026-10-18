@@ -461,6 +461,14 @@ at cook time:
   with `motion` warps along it. The blob layout and its slot rule are in
   [assetpack/CLAUDE.md](../assetpack/CLAUDE.md). The importer is `Parallel`: its only library is
   the texture cook.
+- **Particle effects** (`*.particles.json`) cook through the **`ParticleEffectImporter`**: the pack
+  entry's `"source"` names the effect file, and **the format is
+  [PARTICLE_EFFECT_SCHEMA.md](PARTICLE_EFFECT_SCHEMA.md)** — every field, its default and its
+  validation. A billboard emitter's `"flipbook"` must resolve through `CookContext::Resolve` to a
+  `Flipbook`, which puts it in the cooked dependency graph; every refusal is a located error naming
+  the file and the field's path (`emitters[1].velocity.cone.angle`), and an effect whose particles
+  can outnumber a renderer's default capacity at once cooks with a warning. The importer is
+  `Parallel`: its work is a JSON parse and id resolution.
 - **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
   decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs
@@ -664,6 +672,7 @@ through"**.
 |---|---|---|
 | Texture | **Parallel** | `stb_image`'s failure reason is `thread_local`; `stb_image_resize2`'s tables are read-only; tinyexr's decode holds no process-global mutable state and spawns no threads (`TINYEXR_USE_THREAD` off); the block encoders' process-global tables are now ordered (below) |
 | Raw | **Parallel** | a file read into a fresh buffer, driving no library |
+| Flipbook, ParticleEffect | **Parallel** | a JSON parse, then the reentrant texture cook (a flipbook) or id resolution (a particle effect) |
 | Mesh, Skeleton, Animation, CollisionShape | Serialized | assimp — per-call `Importer` instances are the documented pattern, but the `DefaultLogger` singleton and per-format loader state were not established |
 | Shader, Material, MaterialInstance | Serialized | Slang — `createGlobalSession` per call, reentrancy not established |
 | Font | Serialized | FreeType / msdfgen |

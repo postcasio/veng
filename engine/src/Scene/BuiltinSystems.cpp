@@ -18,6 +18,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/FlipbookSystem.h>
+#include <Veng/Scene/ParticleEffectSystem.h>
 #include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -93,6 +94,10 @@ namespace Veng
         // Ages every Ribbon and records every Trail's head. View-phase — presentation only, on every
         // peer; ahead of FlipbookSystem so a pooled beam's fade is current when the pool retires it.
         registry.Register<RibbonSystem>();
+
+        // Plays every ParticleEffectInstance and drives its flashes. View-phase — presentation only,
+        // on every peer; ahead of FlipbookSystem so Finished is current when the pool retires.
+        registry.Register<ParticleEffectSystem>();
 
         // Plays every FlipbookSprite and retires the scene's finished transient effects. View-phase
         // — presentation only, on every peer. Idles with no sprites.

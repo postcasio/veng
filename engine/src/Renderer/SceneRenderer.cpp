@@ -55,6 +55,9 @@
 #include "Passes/DofCompositeScenePass.h"
 #include "Passes/RibbonScenePass.h"
 #include "Passes/SpriteScenePass.h"
+#include "Passes/ParticleScenePass.h"
+#include "ParticleGather.h"
+#include "ParticleSimulation.h"
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
 #include "PostResolveUpscale.h"
@@ -171,6 +174,10 @@ namespace Veng::Renderer
         // unwired, for the sprite pass's reason: transient beams come and go in bursts.
         constexpr u32 RibbonIdleFrameLimit = 256;
 
+        // How many consecutive instance-less gathers wired particles survive before the chain is
+        // unwired and the pool released, for the sprite pass's reason.
+        constexpr u32 ParticleIdleFrameLimit = 256;
+
         // Executes at the full allocation before the non-temporal resolve-anchor promotion is
         // unwired. Deactivation hysteresis, the half-res-translucency reason: a dynamic-resolution
         // controller sitting on its ceiling dips below it and recovers within a few frames, and
@@ -250,6 +257,26 @@ namespace Veng::Renderer
         bool SpriteBudgetWarned = false;
         // Whether the over-long emission-ramp warning has been logged; once per renderer.
         bool SpriteRampWarned = false;
+        // The renderer's view of the scene's particle effect instances: slots, generations and the
+        // spawn cursors each emitter has issued.
+        ParticleGather ParticleTable;
+        // The frame's particle gather, which the battery uploads and the chain runs.
+        ParticleFramePlan ParticlePlan;
+        // Whether the pass set carries the particle chain, with the sprite pass's hysteresis
+        // (ParticleIdleFrameLimit); the battery exists exactly while it does.
+        bool ParticleActive = false;
+        // Consecutive Executes the particle gather has tracked no instance while wired.
+        u32 ParticleIdleFrames = 0;
+        // Spawns the gather trimmed since the battery was allocated.
+        u32 ParticleSpawnsDropped = 0;
+        // Whether the compiled graph declares the particle chain: the battery exists and an arm
+        // that composites sprites wired it.
+        bool ParticleWired = false;
+        // Whether each kind of particle drop has been warned about; once per renderer each.
+        bool ParticleSpawnDropWarned = false;
+        bool ParticleSlotDropWarned = false;
+        bool ParticleInstanceDropWarned = false;
+        bool ParticleEmitterDropWarned = false;
         // The frame's gathered scene-placed ribbon, trail and path records, which the ribbon pass
         // uploads and draws.
         RibbonDrawPlan RibbonPlan;
@@ -781,6 +808,32 @@ namespace Veng::Renderer
             .PunctualRingStride = m_Shadows->GetPunctualRingStride(),
         };
 
+        m_Internal->ParticleWired = false;
+        // The particle battery exists exactly while the chain is wired, at the configured capacity;
+        // a new pool starts empty, so the instance table issues what can still be alive afresh.
+        // The table is forgotten with the pool it issued into, never when a pool is created: an
+        // activating frame's gather has already issued what that pool spawns.
+        if (m_Internal->ParticleActive && m_Settings.ParticleCapacity > 0)
+        {
+            if (m_Particles != nullptr && m_Particles->GetCapacity() != m_Settings.ParticleCapacity)
+            {
+                m_Particles.reset();
+                m_Internal->ParticleTable.Reset();
+            }
+            if (m_Particles == nullptr)
+            {
+                m_Particles = ParticleSimulation::Create(m_Context, m_Assets,
+                                                         m_Settings.ParticleCapacity, forwardSets);
+                m_Internal->ParticleSpawnsDropped = 0;
+            }
+        }
+        else if (m_Particles != nullptr)
+        {
+            m_Particles.reset();
+            m_Internal->ParticleTable.Reset();
+            m_ParticleStats = ParticleStats{};
+        }
+
         // The forward translucent composite at the position an arm lays its translucents: the
         // first full-resolution pass, then — while the half-res layer is wired — each segment's
         // layer and composite with the full-resolution pass after it, so every run of half-res
@@ -977,6 +1030,23 @@ namespace Veng::Renderer
                         .MaskFormat = BloomMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
+            }
+            // Particles composite over sprites, into the same target and bloom mask.
+            if (m_Particles != nullptr)
+            {
+                m_Internal->ParticleWired = true;
+                m_Passes.push_back(
+                    CreateUnique<ParticleScenePass>(m_Context, m_Assets,
+                                                    ParticleScenePassInfo{
+                                                        .Simulation = m_Particles.get(),
+                                                        .Target = lightingTargetId,
+                                                        .Depth = depthId,
+                                                        .Mask = m_BloomMaskId,
+                                                        .SceneDepthCopy = m_RefractionDepthId,
+                                                        .Forward = forwardSets,
+                                                        .TargetFormat = HdrFormat,
+                                                        .MaskFormat = BloomMaskFormat,
+                                                    }));
             }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
@@ -1363,6 +1433,23 @@ namespace Veng::Renderer
                         .MaskFormat = BloomMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
+            }
+            // Particles composite over sprites, into the same target and bloom mask.
+            if (m_Particles != nullptr)
+            {
+                m_Internal->ParticleWired = true;
+                m_Passes.push_back(
+                    CreateUnique<ParticleScenePass>(m_Context, m_Assets,
+                                                    ParticleScenePassInfo{
+                                                        .Simulation = m_Particles.get(),
+                                                        .Target = lightingTargetId,
+                                                        .Depth = depthId,
+                                                        .Mask = m_BloomMaskId,
+                                                        .SceneDepthCopy = m_RefractionDepthId,
+                                                        .Forward = forwardSets,
+                                                        .TargetFormat = HdrFormat,
+                                                        .MaskFormat = BloomMaskFormat,
+                                                    }));
             }
             if (m_Settings.Mode == DebugView::Bloom)
             {
@@ -2286,7 +2373,8 @@ namespace Veng::Renderer
                                       std::ranges::any_of(halfResPlan.Draws, readsColor),
                              .Depth = std::ranges::any_of(translucentPlan.Draws, readsDepth) ||
                                       std::ranges::any_of(halfResPlan.Draws, readsDepth) ||
-                                      m_Internal->SpritePlan.ReadsSceneDepth,
+                                      m_Internal->SpritePlan.ReadsSceneDepth ||
+                                      m_Internal->ParticlePlan.ReadsSceneDepth,
                          });
 
         m_DrawBudgetStats = budget.GetStats();
@@ -2447,6 +2535,10 @@ namespace Veng::Renderer
         ShadowSystem::ClampResolutions(m_Context, clamped);
         clamped.LodHysteresis = std::clamp(clamped.LodHysteresis, 0.0f, MaxLodHysteresis);
         clamped.ForcedLod = std::clamp(clamped.ForcedLod, AutomaticLod, CoarsestLod);
+        // The pool is a power of two for the sort; a request between two rounds down, so a
+        // settings surface dragging the value never configures an invalid pool.
+        clamped.ParticleCapacity =
+            std::bit_floor(std::min(clamped.ParticleCapacity, DefaultParticleCapacity));
         return ResolveMetalFxSettings(clamped, m_MetalFx->GetAvailability());
     }
 
@@ -3162,6 +3254,12 @@ namespace Veng::Renderer
             });
         }
 
+        // Hand the particle gather to the battery: this frame's rings, and what the chain records.
+        if (m_Internal->ParticleWired)
+        {
+            m_Particles->Prepare(m_Internal->ParticlePlan);
+        }
+
         // Assemble this frame's graph import bindings — the always-bound targets plus the
         // conditionally-declared battery imports, matched to the compiled graph's declared imports.
         const vector<RenderGraph::ImportBinding> bindings = BuildImportBindings();
@@ -3182,6 +3280,11 @@ namespace Veng::Renderer
         if (m_Topology->SsrActive)
         {
             m_Ssr->AdvanceFrame();
+        }
+        if (m_Internal->ParticleWired)
+        {
+            m_Particles->Commit();
+            UpdateParticleStats();
         }
 
         // Service a pending pick: the picking subsystem transitions the EntityId target to
@@ -3407,6 +3510,26 @@ namespace Veng::Renderer
                       MaxFlipbookEmissionKeys);
             m_Internal->SpriteRampWarned = true;
         }
+        // Gather the scene's particle effect instances the same way: the chain is wired on the first
+        // gather tracking one and unwired after ParticleIdleFrameLimit gathers tracking none. A
+        // renderer with no capacity tracks nothing.
+        if (m_Settings.ParticleCapacity > 0)
+        {
+            m_Internal->ParticleTable.Gather(resolvedView.World,
+                                             dvec3(resolvedView.Camera.GetPosition()),
+                                             m_Settings.ParticleCapacity, m_Internal->ParticlePlan);
+        }
+        else
+        {
+            m_Internal->ParticlePlan = ParticleFramePlan{};
+        }
+        const bool particlesPresent = !m_Internal->ParticlePlan.IsEmpty();
+        m_Internal->ParticleIdleFrames = particlesPresent ? 0 : m_Internal->ParticleIdleFrames + 1;
+        const bool particlesWanted =
+            m_Settings.ParticleCapacity > 0 &&
+            (particlesPresent || (m_Internal->ParticleActive &&
+                                  m_Internal->ParticleIdleFrames < ParticleIdleFrameLimit));
+
         // The same for ribbons and trails, with their own hysteresis — one per placement, so each
         // pass is wired only while its own plan carries records.
         GatherRibbons(resolvedView.World, resolvedView.Camera, resolvedView.Alpha,
@@ -3442,8 +3565,10 @@ namespace Veng::Renderer
             (m_Internal->SpriteActive && m_Internal->SpriteIdleFrames < SpriteIdleFrameLimit);
         if (spritesWanted != m_Internal->SpriteActive ||
             ribbonsWanted != m_Internal->RibbonActive ||
-            postResolveRibbonsWanted != m_Internal->RibbonPostResolveActive)
+            postResolveRibbonsWanted != m_Internal->RibbonPostResolveActive ||
+            particlesWanted != m_Internal->ParticleActive)
         {
+            m_Internal->ParticleActive = particlesWanted;
             m_Internal->SpriteActive = spritesWanted;
             m_Internal->RibbonActive = ribbonsWanted;
             m_Internal->RibbonPostResolveActive = postResolveRibbonsWanted;
@@ -3488,6 +3613,63 @@ namespace Veng::Renderer
                                             /*enabled=*/true);
             }
         }
+    }
+
+    void SceneRenderer::UpdateParticleStats()
+    {
+        const ParticleFramePlan& plan = m_Internal->ParticlePlan;
+        const ParticleGpuStats& gpu = m_Particles->GetStats();
+        m_Internal->ParticleSpawnsDropped += plan.SpawnsDropped;
+        m_ParticleStats = ParticleStats{
+            .Capacity = m_Particles->GetCapacity(),
+            .Live = gpu.Live,
+            .Spawned = gpu.Spawned,
+            .Dropped = gpu.Dropped + m_Internal->ParticleSpawnsDropped,
+            .AlphaSorted = gpu.AlphaSorted,
+            .Instances = plan.InstanceCount,
+            .InstancesDropped = plan.InstancesDropped,
+        };
+
+        const auto warnOnce = [](bool& warned, const bool dropped, const auto& report)
+        {
+            if (dropped && !warned)
+            {
+                report();
+                warned = true;
+            }
+        };
+        warnOnce(m_Internal->ParticleSpawnDropWarned, plan.SpawnsDropped > 0,
+                 [&]
+                 {
+                     Log::Warn("SceneRenderer: {} particle spawns exceed the capacity of {} or the "
+                               "spawn-range budget of {} and were dropped; later drops are counted "
+                               "without warning again.",
+                               plan.SpawnsDropped, m_Particles->GetCapacity(),
+                               MaxParticleSpawnRanges);
+                 });
+        warnOnce(m_Internal->ParticleSlotDropWarned, gpu.Dropped > 0,
+                 [&]
+                 {
+                     Log::Warn(
+                         "SceneRenderer: {} particle spawns found no free slot in the pool of "
+                         "{} and were dropped; later drops are counted without warning again.",
+                         gpu.Dropped, m_Particles->GetCapacity());
+                 });
+        warnOnce(m_Internal->ParticleInstanceDropWarned, plan.InstancesDropped > 0,
+                 [&]
+                 {
+                     Log::Warn("SceneRenderer: {} particle effect instances exceed the table of {} "
+                               "and were not drawn; later frames drop without warning again.",
+                               plan.InstancesDropped, MaxParticleInstances);
+                 });
+        warnOnce(m_Internal->ParticleEmitterDropWarned, plan.EmittersDropped > 0,
+                 [&]
+                 {
+                     Log::Warn("SceneRenderer: {} particle effect instances' emitters exceed the "
+                               "per-frame budget of {} and were not drawn; later frames drop "
+                               "without warning again.",
+                               plan.EmittersDropped, MaxParticleEmittersPerFrame);
+                 });
     }
 
     vector<RenderGraph::ImportBinding> SceneRenderer::BuildImportBindings()
@@ -3569,6 +3751,10 @@ namespace Veng::Renderer
         if (m_Topology->SsrActive)
         {
             m_Ssr->AppendImportBindings(bindings);
+        }
+        if (m_Internal->ParticleWired)
+        {
+            m_Particles->AppendImportBindings(bindings);
         }
         if (m_Topology->SsaoActive && m_SsaoPass != nullptr)
         {

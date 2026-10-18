@@ -331,6 +331,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/ImportOrientation.cpp
         src/Importers/EnvironmentImporter.cpp
         src/Importers/FlipbookImporter.cpp
+        src/Importers/ParticleEffectImporter.cpp
         src/Importers/FontImporter.cpp
         src/Importers/LocaleSource.cpp
         src/Importers/LocaleCatalogImporter.cpp

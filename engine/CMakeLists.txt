@@ -105,6 +105,7 @@ add_library(veng SHARED
         src/Asset/Mesh.cpp
         src/Asset/Environment.cpp
         src/Asset/Flipbook.cpp
+        src/Asset/ParticleEffect.cpp
         src/Asset/Font.cpp
         src/Text/CaseMapping.cpp
         src/Text/GlyphSource.cpp
@@ -124,6 +125,7 @@ add_library(veng SHARED
         src/Asset/Loaders/SettingsSchemaLoader.cpp
         src/Asset/Loaders/CollisionShapeLoader.cpp
         src/Asset/Loaders/FlipbookLoader.cpp
+        src/Asset/Loaders/ParticleEffectLoader.cpp
         src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
@@ -251,6 +253,7 @@ add_library(veng SHARED
         src/Scene/DeviceAssignmentSystem.cpp
         src/Scene/EffectPool.cpp
         src/Scene/FlipbookSystem.cpp
+        src/Scene/ParticleEffectSystem.cpp
         src/Scene/RibbonSystem.cpp
         src/Scene/FocusRequestReconcile.cpp
         src/Scene/InputMappingSystem.cpp
@@ -305,6 +308,7 @@ add_library(veng SHARED
         src/Renderer/Passes/PickingScenePass.cpp
         src/Renderer/Passes/RibbonScenePass.cpp
         src/Renderer/Passes/SpriteScenePass.cpp
+        src/Renderer/Passes/ParticleScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
         src/Renderer/Passes/HalfResCompositeScenePass.cpp
         src/Renderer/Passes/HalfResDepthReduceScenePass.cpp
@@ -387,6 +391,8 @@ add_library(veng SHARED
         src/Renderer/GBufferShadingOverride.cpp
         src/Renderer/LightTileCuller.cpp
         src/Renderer/SsrChain.cpp
+        src/Renderer/ParticleSimulation.cpp
+        src/Renderer/ParticleGather.cpp
         src/Renderer/PickingSystem.cpp
         src/Renderer/Passes/SkyboxScenePass.cpp
         src/Renderer/Passes/IblCubeDebugScenePass.cpp

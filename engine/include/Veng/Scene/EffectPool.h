@@ -8,15 +8,25 @@ namespace Veng
 {
     class Scene;
 
-    /// @brief What a transient effect shows: any of a flipbook sprite, a ribbon, and a light.
+    /// @brief What a transient effect shows: any of a flipbook sprite, a ribbon, a particle effect,
+    ///        and a light.
     struct EffectDesc
     {
         /// @brief The sprite the effect plays, or none. Its Time and Finished are reset at spawn.
         optional<FlipbookSprite> Sprite;
         /// @brief The ribbon the effect draws (a beam, a streak), or none. Its Age is reset at spawn.
         optional<Ribbon> Ribbon;
-        /// @brief A light the effect carries for its lifetime, or none.
+        /// @brief A light the effect carries for its lifetime, or none. A particle effect with light
+        ///        flashes owns the entity's Light and overwrites this one.
         optional<Light> Light;
+        /// @brief The particle effect the effect plays, or none.
+        ///
+        /// Spawn keeps its Time as a start time (0 plays from the beginning; a positive value
+        /// starts the playback that far in, showing what it would have shown then), sets Emitting,
+        /// clears StopTime and Finished, gives it a Playback distinct from every earlier effect on
+        /// the pooled entity, and anchors it at once at the spawn pose in the scene's stable frame,
+        /// so it draws from the frame it is spawned whichever phase spawned it.
+        optional<ParticleEffectInstance> Particles;
     };
 
     /// @brief Sizing for an EffectPool.
@@ -33,21 +43,23 @@ namespace Veng
     ///
     /// A transient effect — an impact flash, a burst, a puff — is an entity that stands for a
     /// moment and goes, and a busy scene stands many. The pool keeps a capped set of entities and
-    /// reuses them: Spawn poses one and gives it the effect's sprite, ribbon and light, and Update
-    /// returns it to the free list when its lifetime runs out, or once every visual it carries has
-    /// ended — its sprite finished and its ribbon faded (a ribbon with no Lifetime never ends by
-    /// itself, and neither does a looping sprite). Past the cap, a spawn recycles the oldest live
+    /// reuses them: Spawn poses one and gives it the effect's sprite, ribbon, particle effect and
+    /// light, and Update returns it to the free list when its lifetime runs out, or once every
+    /// visual it carries has ended — its sprite finished, its ribbon faded and its particle effect
+    /// finished (a ribbon with no Lifetime never ends by itself, and neither does a looping sprite
+    /// or a particle effect still emitting from an unbounded rate). Past the cap, a spawn recycles the oldest live
     /// effect rather than growing, so the bound is hard.
     ///
     /// A pooled entity is Tier::Local — a per-peer presentation that never replicates — and is a
-    /// root (no parent). A free entity keeps its Transform but carries no sprite, ribbon or light,
-    /// so it draws and lights nothing. Because entities are reused, an Entity a caller keeps from
+    /// root (no parent). A free entity keeps its Transform but carries no sprite, ribbon, particle
+    /// effect or light, so it draws and lights nothing. Because entities are reused, an Entity a caller keeps from
     /// Spawn names a later effect once its own has ended; IsLive answers whether it is still the
     /// same one only until then, so a caller wanting to follow an effect copies what it needs at
     /// spawn. An entity destroyed out from under the pool is dropped from it.
     ///
     /// A scene's own pool is installed through Scene::SetEffectPool (SpawnTransientEffect installs
-    /// a default one), and FlipbookSystem calls its Update each frame.
+    /// a default one), and FlipbookSystem calls its Update each frame. A level playing particle
+    /// effects through the pool also runs ParticleEffectSystem, ahead of FlipbookSystem.
     class VE_API EffectPool
     {
     public:
@@ -106,7 +118,7 @@ namespace Veng
             u64 Serial = 0;
         };
 
-        /// @brief Strips a slot's sprite, ribbon and light and marks it free.
+        /// @brief Strips a slot's sprite, ribbon, particle effect and light and marks it free.
         void RetireSlot(Scene& scene, Slot& slot);
 
         /// @brief Drops slots whose entity no longer exists in @p scene.

@@ -33,6 +33,7 @@ namespace Veng
     struct Animation;
     struct Skeleton;
     class Flipbook;
+    class ParticleEffect;
     class Texture;
 
     namespace Renderer
@@ -1527,6 +1528,62 @@ namespace Veng
         bool Finished = false;
     };
 
+    /// @brief Plays a particle effect: many sprites and streaks flying out from one anchor.
+    ///
+    /// The renderer simulates and draws the effect's particles on the GPU through the same shading
+    /// a FlipbookSprite uses, so a lit flipbook looks alike as one sprite or as a thousand
+    /// particles. Each particle's state is written once, at spawn; its position at any age is the
+    /// closed form of constant acceleration plus linear drag, so a particle with neither keeps the
+    /// velocity it was given (p = p0 + v0 t) and every renderer drawing the scene shows it in the
+    /// same place. ParticleEffectSystem advances Time and sets Finished once every particle and
+    /// flash the effect can produce has ended, which the CPU knows by construction. The component
+    /// is presentation, never replicated, as FlipbookSprite is; an EffectPool spawns one through
+    /// EffectDesc::Particles.
+    ///
+    /// The instance anchors in the frame the scene's content rests in — FloatingOrigin's stable
+    /// frame, or world space where the scene has none — at double precision, latched from the
+    /// entity's world pose once (LatchParticleEffect), and its particles are f32 offsets from that
+    /// anchor. Nothing re-bases the anchor when the origin moves, since it is already in the frame
+    /// that does not move; writing Anchor afterwards moves the whole cloud rigidly, which is how an
+    /// owner carries a live effect.
+    struct ParticleEffectInstance
+    {
+        /// @brief The effect played; an instance whose effect is not resident holds at its start.
+        AssetHandle<ParticleEffect> Effect;
+        /// @brief The seed every particle's random draws derive from; 0 derives one at the latch
+        ///        from the entity and the playback, so two instances differ unless told alike.
+        u32 Seed = 0;
+        /// @brief Added to every particle's initial velocity, in world units per second: the
+        ///        emitting body's velocity. Not scaled by Scale.
+        vec3 InheritVelocity{0.0f};
+        /// @brief Multiplies every length the effect authors — spawn radii, sizes, speeds,
+        ///        accelerations, streak lengths and flash ranges — and leaves every time alone, so
+        ///        one authored effect serves many sizes with the same timing.
+        f32 Scale = 1.0f;
+        /// @brief Whether rate emitters keep spawning; clearing it stops them, and the instance
+        ///        finishes once what they spawned has died.
+        bool Emitting = true;
+        /// @brief Seconds of playback, advanced by ParticleEffectSystem. Authoring it starts the
+        ///        playback that far in, showing exactly what a playback run from 0 would show then.
+        f32 Time = 0.0f;
+        /// @brief Where the effect is anchored, in the stable frame; set by LatchParticleEffect.
+        ///        Runtime-only.
+        dvec3 Anchor{0.0};
+        /// @brief The effect's frame, which turns its emitters' cones; set by LatchParticleEffect.
+        ///        Runtime-only.
+        quat Orientation{1.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Distinguishes successive playbacks on one entity, so a renderer treats a restart
+        ///        as a new instance. Runtime-only.
+        u32 Playback = 0;
+        /// @brief The Time at which Emitting was cleared, or below 0 while still emitting.
+        ///        Runtime-only.
+        f32 StopTime = -1.0f;
+        /// @brief Whether Anchor and Orientation have been latched. Runtime-only.
+        bool Anchored = false;
+        /// @brief Set once every particle and flash of the effect has ended. Runtime-only.
+        bool Finished = false;
+    };
+
     /// @brief A straight camera-facing ribbon between two world points: a beam, a streak, a tether.
     ///
     /// Drawn by the renderer's ribbon pass in the translucent layer, just ahead of the sprite pass,
@@ -2500,6 +2557,19 @@ VE_ARRAY_FIELD(EmissionRamp, .DisplayName = "Emission Ramp",
 VE_FIELD(Ignition, .DisplayName = "Ignition",
          .Tooltip = "Replaces the ignition threshold when at least 0",
          .Display = {.Min = -1.0, .Max = 1.0, .Step = 0.01})
+VE_REFLECT_END();
+
+// Presentation, local-only — never replicated. The anchor, orientation, playback counter, stop
+// time and latch and finish flags are runtime-only and carry no reflected field.
+VE_REFLECT(::Veng::ParticleEffectInstance, 0x67B79C3C429B3740ULL)
+VE_FIELD(Effect, .DisplayName = "Effect")
+VE_FIELD(Seed, .DisplayName = "Seed", .Tooltip = "0 derives one per entity and playback")
+VE_FIELD(InheritVelocity, .DisplayName = "Inherit Velocity",
+         .Tooltip = "World velocity added to every particle's initial velocity")
+VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Multiplies every length; times are unchanged",
+         .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(Emitting, .DisplayName = "Emitting")
+VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Ribbon, 0xA8DF9582C85E18F2ULL)

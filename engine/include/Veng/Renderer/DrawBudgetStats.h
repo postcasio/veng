@@ -52,4 +52,30 @@ namespace Veng::Renderer
         ///        full-resolution draws between them drew over them.
         u32 MergedRuns = 0;
     };
+
+    /// @brief The particle pool's accounting, reached through SceneRenderer::GetParticleStats().
+    ///
+    /// The GPU figures — Live, Spawned, Dropped and AlphaSorted — are read back as many frames late
+    /// as there are frames in flight, as the point field's are; the rest are the last Execute's.
+    /// Spawned and Dropped count from the pool's allocation. All zero while no particle effect has
+    /// been drawn.
+    struct ParticleStats
+    {
+        /// @brief The pool's capacity (SceneRendererSettings::ParticleCapacity).
+        u32 Capacity = 0;
+        /// @brief Particles alive after the last reported update.
+        u32 Live = 0;
+        /// @brief Particles spawned since the pool was allocated.
+        u32 Spawned = 0;
+        /// @brief Spawns dropped since the pool was allocated: trimmed on the CPU past the capacity
+        ///        or the spawn-range table, or finding no free slot on the GPU.
+        u32 Dropped = 0;
+        /// @brief The length the last reported frame's back-to-front sort ran over; 0 when no alpha
+        ///        particle drew.
+        u32 AlphaSorted = 0;
+        /// @brief Particle effect instances the renderer tracked in the last Execute.
+        u32 Instances = 0;
+        /// @brief Instances past the renderer's instance table in the last Execute, not tracked.
+        u32 InstancesDropped = 0;
+    };
 }

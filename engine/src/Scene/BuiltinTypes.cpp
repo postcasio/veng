@@ -299,6 +299,9 @@ namespace Veng
         registry.Register<SpriteFrameBlend>();
         registry.Register<FlipbookEmissionKey>();
         registry.Register<FlipbookSprite>();
+        // A playing particle effect, simulated and drawn by the renderer's particle chain and
+        // advanced by ParticleEffectSystem. Its anchor and playback state are runtime-only.
+        registry.Register<ParticleEffectInstance>();
 
         // World-space ribbons and point trails, gathered by the renderer's ribbon pass per Execute
         // and advanced by RibbonSystem. A trail's runtime samples carry no reflected field. An
@@ -362,6 +365,7 @@ namespace Veng
         registry.Register<AssetHandle<Audio::AudioClip>>();
         registry.Register<AssetHandle<Flipbook>>();
         registry.Register<AssetHandle<Haptics::RumbleClip>>();
+        registry.Register<AssetHandle<ParticleEffect>>();
         registry.Register<AssetHandle<Font>>();
         registry.Register<AssetHandle<Gui::StyleSheet>>();
         registry.Register<AssetHandle<Gui::UIDocument>>();

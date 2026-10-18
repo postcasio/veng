@@ -22,6 +22,10 @@ namespace Veng::Renderer
     /// loop's sample set at 6N depth tiles.
     inline constexpr u32 MaxShadowedPunctual = 4;
 
+    /// @brief The particle pool a renderer allocates by default (SceneRendererSettings::
+    ///        ParticleCapacity), and the largest it allows.
+    inline constexpr u32 DefaultParticleCapacity = 65536;
+
     /// @brief Selects which result the renderer produces, re-wiring the pass set.
     ///
     /// Final is the full deferred chain (g-buffer → lighting → tonemap). All other
@@ -551,6 +555,16 @@ namespace Veng::Renderer
         /// Executes sharing a per-viewport MaterialInstance with the main view.
         bool PostProcessEffects = true;
 
+        /// @brief How many particles the renderer's particle pool holds at once.
+        ///
+        /// A power of two, at most DefaultParticleCapacity; Configure asserts it in a debug build
+        /// and clamps it in release. 0 disables particles in this renderer, so a capture or a
+        /// portrait that must not pay for them draws none. The pool is allocated only while the
+        /// scene carries a playing ParticleEffectInstance, and a change reallocates it at
+        /// Configure, never per frame. Spawns past it are dropped and counted
+        /// (SceneRenderer::GetParticleStats).
+        u32 ParticleCapacity = DefaultParticleCapacity;
+
         /// @brief Whether the frame runs the temporal (jittered-history) AA resolve.
         ///
         /// The temporal path is the one several batteries gate on (the jitter, the history-reset,
@@ -710,4 +724,9 @@ VE_FIELD(ForcedLod, .DisplayName = "Forced LOD", .Tooltip = "-1 selects by scree
 VE_FIELD(DebugDraw, .DisplayName = "Debug draw", .Category = "Authoring")
 VE_FIELD(Picking, .DisplayName = "Picking", .Category = "Authoring")
 VE_FIELD(PostProcessEffects, .DisplayName = "Post-process effects", .Category = "Pipeline")
+VE_FIELD(ParticleCapacity, .DisplayName = "Particle capacity",
+         .Tooltip = "Particles alive at once; a power of two, 0 disables particles",
+         .Display = {.Min = 0.0,
+                     .Max = static_cast<f64>(::Veng::Renderer::DefaultParticleCapacity)},
+         .Category = "Pipeline")
 VE_REFLECT_END();

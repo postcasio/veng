@@ -113,6 +113,25 @@ frames), `IsFlipbookFinished` — and `Flipbook::Create` builds one
   over runtime textures, asserting the invariants the loader checks. `FlipbookSprite` plays one
   ([../Scene/CLAUDE.md](../Scene/CLAUDE.md)); the renderer draws it
   ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).
+- **`AssetTypes::ParticleEffect` — layered particle emitters and light flashes**
+  (`Veng/Asset/ParticleEffect.h`). Its source is a `*.particles.json` the pack entry names directly
+  (the format is [cooker/PARTICLE_EFFECT_SCHEMA.md](../../../cooker/PARTICLE_EFFECT_SCHEMA.md)). Each
+  `ParticleEmitterDesc` is a render mode (a billboard over an `AssetHandle<Flipbook>`, or a streak),
+  a blend, a burst and a rate, `[min, max]` lifetime, size, roll and spin, a spawn shape, a radial
+  speed with a cone, a speed-by-radius exponent and a speed noise, a constant acceleration and a
+  linear drag (both zero by default), a flipbook playback, a soft distance, an emission override and
+  piecewise-linear over-life curves; a `ParticleFlashDesc` is a point light over a window.
+  `ParticleEffect::Create` builds one in code (how a tool previews without cooking) and **bakes each
+  emitter's curves into two 32-sample tables** (`GetEmitterLut`, the first and last samples exactly
+  the end keys) the renderer copies. `ParticleEffectLoader` is two-phase: the parse decodes the blob
+  and names each distinct billboard flipbook as a **hard dependency**, the material-instance pattern,
+  so the flipbooks are resident before any instance plays; there is no GPU resource and nothing to
+  finalize. **The schedule is pure and device-free**, beside the asset: `ParticleSpawnTime(emitter,
+  index)` (burst indices `[0, BurstCount)`, then rate particle `j` at `RateStart + j / RatePerSecond`),
+  `ParticleSpawnedBy` and `ParticleFirstPossiblyAlive` (per stream, since the burst and the rate
+  interleave in time), `ParticleEffectEndTime` (the last spawn plus the longest lifetime, or a flash's
+  end; infinite while an unbounded rate emits) and `ParticleEffectMaxAlive` (a consumer's budget
+  against the renderer's capacity).
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
   `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a not-yet-resident
   `AssetHandle<T>` immediately and runs the decode + GPU upload on the task system (transfer
@@ -199,12 +218,13 @@ frames), `IsFlipbookFinished` — and `Flipbook::Create` builds one
   component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
   holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
   A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
-  Nineteen of the twenty-five builtins claim a leaf. `Shader` and
+  Twenty-one of the twenty-seven builtins claim a leaf. `Shader` and
   `VertexLayout` are wiring inside the material system: a draw binds a `MaterialInstance`, and
   nothing outside that system can consume a bare shader or vertex layout, so a reference to one
-  would be authorable but unusable. `GraphicsSchema` and `AudioBusGraph` are the other two: each is
-  loaded by id by a subsystem (the settings service; the audio mixer) and never referenced from a
-  component. All four leave `HandleFieldType` 0 and cannot sit on a component.
+  would be authorable but unusable. `GraphicsSchema`, `AudioBusGraph`, `LocaleCatalog` and
+  `LocaleIndex` are the other four: each is loaded by id by a subsystem (the settings service, the
+  audio mixer, the localization service) and never referenced from a component. All six leave
+  `HandleFieldType` 0 and cannot sit on a component.
 - **The `AssetManager` always owns a complete `AssetTypeRegistry`.** It fills its own with
   `RegisterBuiltinAssetTypes` at construction and merges `AssetManagerInfo::AssetTypes` on top —
   the same shape as the builtin-then-module loader registration beside it. `GetAssetTypes()` is

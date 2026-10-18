@@ -45,4 +45,6 @@ TEST_CASE("cooked blob padding: a value-initialized record leaks no indeterminat
     // trailing u32. Both are memcpy'd whole into the blob, so both gaps must be named and zeroed.
     CHECK(FirstIndeterminateByte<CookedLevelHeader>() == -1);
     CHECK(FirstIndeterminateByte<CookedUIElement>() == -1);
+    CHECK(FirstIndeterminateByte<CookedParticleEmitter>() == -1);
+    CHECK(FirstIndeterminateByte<CookedParticleFlash>() == -1);
 }

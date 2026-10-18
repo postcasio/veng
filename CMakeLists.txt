@@ -1172,6 +1172,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_packed_input.cpp
             tests/unit/net_lag_compensation.cpp
             tests/unit/flipbook.cpp
+            tests/unit/particles.cpp
             tests/unit/ribbon.cpp
             tests/unit/net_interest.cpp
             tests/unit/reflection.cpp
@@ -1984,6 +1985,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
             tests/gpu/sprite_pass.cpp
+            tests/gpu/particle_pass.cpp
             tests/gpu/ribbon_pass.cpp
             # A post-resolve translucent material draws in its own tail pass, over the opaque scene,
             # at full and reduced render scale, after one transition frame in the scene pass.
@@ -2397,6 +2399,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/texture_cook.cpp
             tests/cooker/normal_variance.cpp
             tests/cooker/flipbook_cook.cpp
+            tests/cooker/particle_effect_cook.cpp
             tests/cooker/font_variations.cpp
             tests/cooker/font_charset.cpp
             tests/cooker/font_asset.cpp

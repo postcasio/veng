@@ -1135,6 +1135,151 @@ namespace Veng
         u32 RecordBytes = 0;
     };
 
+    /// @brief The current particle-effect-format version.
+    ///
+    /// Bumped on any CookedParticleEffectHeader, CookedParticleEmitter or CookedParticleFlash
+    /// layout change; the loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedParticleEffectVersion = 1u;
+
+    /// @brief One piecewise-linear curve of a cooked particle effect: a run of the key pool.
+    ///
+    /// A scalar curve's keys are (t, value) pairs and a colour curve's (t, r, g, b) quadruples, so
+    /// the run spans KeyCount * 2 or KeyCount * 4 floats. A KeyCount of 0 is a missing curve.
+    struct CookedParticleCurve
+    {
+        /// @brief The first float of the run, an index into the key pool.
+        u32 KeyOffset = 0;
+        /// @brief How many keys the run holds.
+        u32 KeyCount = 0;
+    };
+
+    /// @brief One emitter of a cooked particle effect.
+    ///
+    /// Render, Blend, Shape and PlaybackMode are the underlying integers of the engine's
+    /// ParticleRender, ParticleBlend, ParticleShape and ParticlePlayback enums (cycle-avoidance
+    /// rule above); each [min, max] range is two floats; angles are in degrees.
+    struct CookedParticleEmitter
+    {
+        /// @brief The billboard's Flipbook id; 0 for a streak.
+        u64 Flipbook = 0;
+        /// @brief 0 = billboard, 1 = streak.
+        u32 Render = 0;
+        /// @brief 0 = the flipbook's recommendation, 1 = alpha, 2 = additive.
+        u32 Blend = 0;
+        /// @brief Particles the burst spawns; 0 for no burst.
+        u32 BurstCount = 0;
+        /// @brief Seconds into the effect the burst spawns at.
+        f32 BurstTime = 0.0f;
+        /// @brief Particles the rate spawns per second; 0 for no rate.
+        f32 RatePerSecond = 0.0f;
+        /// @brief Seconds into the effect the rate starts at.
+        f32 RateStart = 0.0f;
+        /// @brief Seconds the rate runs for; 0 runs until the instance stops emitting.
+        f32 RateDuration = 0.0f;
+        /// @brief Seconds each particle lives, [min, max].
+        f32 Lifetime[2] = {};
+        /// @brief 0 = point, 1 = sphere (uniform in volume), 2 = shell (on the surface).
+        u32 Shape = 0;
+        /// @brief The spawn shape's radius, in world units.
+        f32 ShapeRadius = 0.0f;
+        /// @brief The radial speed, [min, max], in world units per second.
+        f32 Speed[2] = {};
+        /// @brief The cone's axis in the effect's frame (unnormalised as authored).
+        f32 ConeAxis[3] = {};
+        /// @brief The cone's half-angle in degrees, in (0, 180].
+        f32 ConeAngle = 180.0f;
+        /// @brief The exponent of (r / R) the speed is scaled by.
+        f32 SpeedByRadius = 0.0f;
+        /// @brief The relative amplitude of the speed noise.
+        f32 NoiseAmplitude = 0.0f;
+        /// @brief The spatial frequency of the speed noise over spawn directions.
+        f32 NoiseFrequency = 1.0f;
+        /// @brief Constant acceleration in world units per second squared.
+        f32 Acceleration[3] = {};
+        /// @brief Linear drag rate, per second.
+        f32 Drag = 0.0f;
+        /// @brief The quad's width in world units, [min, max].
+        f32 Size[2] = {};
+        /// @brief The initial screen-plane roll in degrees, [min, max].
+        f32 Rotation[2] = {};
+        /// @brief The roll rate in degrees per second, [min, max].
+        f32 Spin[2] = {};
+        /// @brief 0 = stretched over the lifetime, 1 = at PlaybackFps.
+        u32 PlaybackMode = 0;
+        /// @brief The playback rate in frames per second for PlaybackMode 1; 0 takes the flipbook's.
+        f32 PlaybackFps = 0.0f;
+        /// @brief Whether playback starts at a random frame (stored as u32 bool).
+        u32 RandomStart = 0;
+        /// @brief Whether SoftDistance was authored (stored as u32 bool); otherwise the default rule.
+        u32 HasSoftDistance = 0;
+        /// @brief The soft-edge depth distance in world units; 0 is off.
+        f32 SoftDistance = 0.0f;
+        /// @brief Whether the emission override was authored (stored as u32 bool).
+        u32 HasEmission = 0;
+        /// @brief The emission override's ignition threshold.
+        f32 Ignition = 0.0f;
+        /// @brief The emission override's ramp, (t, r, g, b) keys.
+        CookedParticleCurve EmissionRamp;
+        /// @brief A streak's linear HDR colour.
+        f32 StreakColor[3] = {1.0f, 1.0f, 1.0f};
+        /// @brief Seconds of velocity a streak's length spans.
+        f32 StreakLengthScale = 0.05f;
+        /// @brief The size multiplier over normalised age.
+        CookedParticleCurve SizeCurve;
+        /// @brief The opacity multiplier over normalised age.
+        CookedParticleCurve OpacityCurve;
+        /// @brief The RGB tint over normalised age.
+        CookedParticleCurve TintCurve;
+        /// @brief The intensity multiplier over normalised age.
+        CookedParticleCurve IntensityCurve;
+        /// @brief The temperature offset over normalised age.
+        CookedParticleCurve TemperatureCurve;
+        /// @brief Pads the record to its 8-byte alignment with a determined byte.
+        u32 Pad = 0;
+    };
+    static_assert(sizeof(CookedParticleEmitter) == 224,
+                  "CookedParticleEmitter layout changed: bump CookedParticleEffectVersion");
+
+    /// @brief One light flash of a cooked particle effect: a point light over a window of time.
+    struct CookedParticleFlash
+    {
+        /// @brief Seconds into the effect the flash begins.
+        f32 Time = 0.0f;
+        /// @brief Seconds the flash lasts.
+        f32 Duration = 0.0f;
+        /// @brief The light's linear colour.
+        f32 Color[3] = {1.0f, 1.0f, 1.0f};
+        /// @brief Peak intensity in lumens.
+        f32 Intensity = 0.0f;
+        /// @brief The light's range, in world units.
+        f32 Range = 0.0f;
+        /// @brief The light's source radius, in world units.
+        f32 Radius = 0.0f;
+        /// @brief The intensity multiplier over the flash's normalised life.
+        CookedParticleCurve Curve;
+    };
+    static_assert(sizeof(CookedParticleFlash) == 40,
+                  "CookedParticleFlash layout changed: bump CookedParticleEffectVersion");
+
+    /// @brief Cooked header for a particle-effect asset: layered emitters and light flashes.
+    ///
+    /// The blob is, in order:
+    ///   CookedParticleEffectHeader
+    ///   CookedParticleEmitter[EmitterCount]
+    ///   CookedParticleFlash[FlashCount]
+    ///   f32 Keys[KeyFloats] — the key pool every CookedParticleCurve indexes
+    struct CookedParticleEffectHeader
+    {
+        /// @brief Must equal CookedParticleEffectVersion; the loader rejects a mismatch.
+        u32 Version = 0;
+        /// @brief How many emitters follow the header.
+        u32 EmitterCount = 0;
+        /// @brief How many flashes follow the emitters.
+        u32 FlashCount = 0;
+        /// @brief How many floats the key pool holds.
+        u32 KeyFloats = 0;
+    };
+
     /// @brief The current font-format version.
     ///
     /// Bumped on any CookedFontHeader layout change; the loader rejects a blob whose Version != this.

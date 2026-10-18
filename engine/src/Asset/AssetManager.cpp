@@ -19,6 +19,7 @@
 #include "Loaders/SettingsSchemaLoader.h"
 #include "Loaders/EnvironmentLoader.h"
 #include "Loaders/FlipbookLoader.h"
+#include "Loaders/ParticleEffectLoader.h"
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
 #include "Loaders/RumbleClipLoader.h"
@@ -93,6 +94,7 @@ namespace Veng
         RegisterLoader(CreateUnique<SettingsSchemaLoader>());
         RegisterLoader(CreateUnique<AudioBusGraphLoader>());
         RegisterLoader(CreateUnique<FlipbookLoader>());
+        RegisterLoader(CreateUnique<ParticleEffectLoader>());
 
         // Module-registered loaders come last, so a factory claiming a type the engine already
         // handles is caught rather than silently shadowing the builtin — override semantics for

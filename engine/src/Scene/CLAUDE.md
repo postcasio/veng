@@ -255,7 +255,8 @@ otherwise — 0 off, above 0 world units scaled with the entity), and, for a six
 `EmissionIntensity`, a `TemperatureOffset`, an override `EmissionRamp` of `FlipbookEmissionKey`s and
 an override `Ignition`; `ResolveSpriteShading` and `SpriteFlipbookFramePosition` are the pure
 resolves the renderer draws by — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook
-sprites"), and
+sprites"), `ParticleEffectInstance` (plays an `AssetHandle<ParticleEffect>` as particles the
+renderer simulates and draws — see [Particle effects](#particle-effects) below), and
 `Ribbon`, `Trail` and `RibbonPath` (see [Ribbons and trails](#ribbons-and-trails) below).
 
 ## Ribbons and trails
@@ -332,15 +333,46 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   the pass that moves the origin re-bases the `Transform`s, calls `OffsetRibbons` with the
   displacement and writes `FloatingOrigin::Position`, all from the same origin value, so the scene's
   placements and the offset agree on every frame. A scene without one is a fixed-origin scene.
+  **Particle effects need no re-base**: an instance anchors in the stable frame, so the origin's
+  move reaches its particles through the renderer's per-frame eye offset, not through any world
+  position written earlier.
+
+## Particle effects
+
+**A `ParticleEffectInstance` plays a `ParticleEffect`** (`Veng/Scene/Components.h`; the asset in
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md), the GPU side in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md),
+"Particles"). Presentation, never replicated. Its reflected fields are the effect, a `Seed` (0
+derives one per entity and playback at the latch), an `InheritVelocity` added to every particle's
+initial velocity (the emitting body's, unscaled), a `Scale` multiplying every length the effect
+authors while leaving every time alone, `Emitting` (clearing it stops rate emitters) and the
+playback `Time`. Runtime-only: the `Anchor` (`dvec3`, in `FloatingOrigin`'s stable frame or world
+space without one), the `Orientation` turning the emitters' cones, a `Playback` counter telling
+successive playbacks on one entity apart, the `StopTime`, and the `Anchored` and `Finished` flags.
+
+- **The anchor is latched once**, by `LatchParticleEffect(scene, entity, instance)` (world position
+  plus the scene's origin, world rotation, a derived seed). Nothing re-bases it, since it is already
+  in the frame that does not move; writing `Anchor` later moves the whole cloud rigidly, which is how
+  an owner carries a live effect. `RestartParticleEffect` starts a playback over, as a new instance.
+- **`ParticleEffectSystem`** (View phase, registered immediately ahead of `FlipbookSystem`) latches
+  an unanchored instance, records `StopTime` the first update after `Emitting` goes false, advances
+  `Time`, and sets `Finished` once `Time` reaches `ParticleEffectEndTime` — the CPU knows exactly when
+  every particle has died, by construction, so a scene with no renderer still retires its effects. An
+  instance whose effect is not resident holds at its start. **An effect with light flashes owns its
+  entity's `Light`**: while a flash is live the system writes a point light (`ParticleFlashLight`)
+  and removes it once none is, overwriting any `Light` beside it. A level lists the system to play
+  effects.
 
 ## Transient effects — a bounded pool, spawned and forgotten
 
 **`SpawnTransientEffect(scene, desc, pose, lifetime) → Entity`** (`Veng/Scene/EffectPool.h`) stands
-a short-lived effect — an `EffectDesc` of an optional `FlipbookSprite`, an optional `Ribbon` and an
-optional `Light` — at a pose, and the caller forgets it: the scene's **`EffectPool`** returns the
-entity to a free list when its lifetime ends, or once every visual it carries has ended (its sprite
-finished and its ribbon faded; a ribbon with no `Lifetime` and a looping sprite never end by
-themselves). **`SpawnTransientBeam(scene, ribbon, lifetime)`** is the beam front door: the ribbon
+a short-lived effect — an `EffectDesc` of an optional `FlipbookSprite`, an optional `Ribbon`, an
+optional `ParticleEffectInstance` and an optional `Light` — at a pose, and the caller forgets it: the
+scene's **`EffectPool`** returns the entity to a free list when its lifetime ends, or once every
+visual it carries has ended (its sprite finished, its ribbon faded and its particle effect
+finished; a ribbon with no `Lifetime`, a looping sprite and an effect still emitting from an
+unbounded rate never end by themselves). A pooled particle effect keeps its `Time` as a start time,
+takes a `Playback` distinct from the slot's earlier effects, and is anchored at the spawn pose at
+once, so it draws from the frame it is spawned; the level then runs `ParticleEffectSystem` too. **`SpawnTransientBeam(scene, ribbon, lifetime)`** is the beam front door: the ribbon
 alone, its `Lifetime` set to `lifetime` so it fades out as it goes, posed at its `From` end; the
 entity may be moved or its ribbon edited while `IsLive`, which is how a moving streak is advanced,
 and the level must run `RibbonSystem` (the fade) beside `FlipbookSystem` (the retire). The pool is **scene-owned** (`Scene::SetEffectPool` /
@@ -994,7 +1026,8 @@ trees a `BehaviorTreeRef` selects by id (see [../Behavior/CLAUDE.md](../Behavior
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,
 `PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `RibbonSystem` (View-phase —
-ribbon ages and trail samples, ahead of the pool's retire), `FlipbookSystem` (View-phase —
+ribbon ages and trail samples, ahead of the pool's retire), `ParticleEffectSystem` (View-phase —
+particle playback and flash lights, ahead of the pool's retire), `FlipbookSystem` (View-phase —
 sprite playback and the effect pool), `TimeOfDaySystem`, `AudioSystem` (View-phase — it
 places, spatializes, and publishes the scene's `AudioSource`s against the `AudioListener` at the
 interpolated poses the frame draws; see [../Audio/CLAUDE.md](../Audio/CLAUDE.md)). Registration is GPU-free (building a system touches no `Context`/device), so

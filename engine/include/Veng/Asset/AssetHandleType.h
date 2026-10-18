@@ -33,6 +33,7 @@ namespace Veng
     static_assert(AssetHandleFieldTypes::Flipbook == TypeIdOf<AssetHandle<Flipbook>>());
     static_assert(AssetHandleFieldTypes::RumbleClip ==
                   TypeIdOf<AssetHandle<Haptics::RumbleClip>>());
+    static_assert(AssetHandleFieldTypes::ParticleEffect == TypeIdOf<AssetHandle<ParticleEffect>>());
 
     /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
     ///

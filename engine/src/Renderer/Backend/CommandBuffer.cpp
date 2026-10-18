@@ -253,6 +253,18 @@ namespace Veng::Renderer
                                                     stride);
     }
 
+    void CommandBuffer::DrawIndirect(const Ref<Buffer>& buffer, const u64 offset,
+                                     const u32 drawCount, const u32 stride)
+    {
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+
+        // vkCmdDrawIndirect requires a 4-byte-aligned offset.
+        VE_ASSERT(offset % 4 == 0, "DrawIndirect: offset {} is not 4-byte aligned", offset);
+
+        m_Native->CommandBuffer.drawIndirect(buffer->GetNative().Buffer, offset, drawCount, stride);
+    }
+
     void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
     {
         m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);

@@ -547,10 +547,14 @@ extern "C"
 /// Version 133 lights flipbook sprites: FlipbookSprite grows FrameBlend, SoftDistance,
 /// EmissionIntensity, TemperatureOffset, EmissionRamp and Ignition. A module spawns sprites, and
 /// EffectDesc carries one by value, so a stale one lays the component out short.
+/// Version 134 adds particle effects: EffectDesc grows Particles, SceneRendererSettings grows
+/// ParticleCapacity, SceneRenderer grows its particle battery and statistics, and the
+/// ParticleEffectInstance component, the ParticleEffectSystem and the ParticleEffect asset type
+/// register. A module spawns effects and configures renderers, so a stale one lays these out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 133u
+#define VENG_MODULE_ABI_VERSION 134u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

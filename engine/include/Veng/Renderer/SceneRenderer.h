@@ -63,6 +63,7 @@ namespace Veng::Renderer
     class InstancedMeshSystem;
     class LightTileCuller;
     class SsrChain;
+    class ParticleSimulation;
     class GBufferShadingOverride;
     class PickingSystem;
     class Image;
@@ -306,6 +307,15 @@ namespace Veng::Renderer
         /// no point-field pass is active or before the first Execute that drew a field.
         /// @return The last Execute's point-field draw statistics.
         [[nodiscard]] PointFieldStats GetPointFieldStats() const;
+
+        /// @brief Returns the particle pool's accounting.
+        ///
+        /// The pool's capacity, the particles alive and spawned and the spawns dropped (read back
+        /// frames-in-flight late), the last reported sort length, and the instances tracked and
+        /// dropped in the last Execute. The renderer warns once for its lifetime on the first drop
+        /// of each kind. All zero while no particle effect has been drawn.
+        /// @return The particle statistics.
+        [[nodiscard]] ParticleStats GetParticleStats() const { return m_ParticleStats; }
 
         /// @brief Forces the point-field pass onto the direct sprite path (A/B verification hook).
         ///
@@ -1167,6 +1177,9 @@ namespace Veng::Renderer
         /// @brief The screen-space reflection chain, held only while the settings wire it.
         Unique<SsrChain> m_Ssr;
 
+        /// @brief The particle pool and its compute chain, held only while particles are wired.
+        Unique<ParticleSimulation> m_Particles;
+
         /// @brief The g-buffer pass's override pipelines under Settings.GBufferShadingOverride.
         Unique<GBufferShadingOverride> m_ShadingOverride;
 
@@ -1295,6 +1308,8 @@ namespace Veng::Renderer
 
         /// @brief The last Execute's draw-slot / palette budget accounting.
         DrawBudgetStats m_DrawBudgetStats;
+        /// @brief The particle pool's accounting (GetParticleStats).
+        ParticleStats m_ParticleStats;
         /// @brief The last Execute's translucent segment statistics (GetTranslucentSegmentStats).
         TranslucentSegmentStats m_TranslucentSegmentStats;
         /// @brief Set once the slot-budget clamp has logged, so the WARN fires only once.
@@ -1314,6 +1329,10 @@ namespace Veng::Renderer
         /// steady state rather than a transient, so each budget's message fires once for the life
         /// of the renderer and the per-frame signal is the stats block itself.
         void ReportDrawBudgetDrops();
+
+        /// @brief Refreshes GetParticleStats from the last gather and the battery's readback, and
+        ///        warns once per renderer on the first drop of each kind.
+        void UpdateParticleStats();
 
         /// @brief Warns once per renderer when a shadow-casting directional was denied a cascade set.
         ///

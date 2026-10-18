@@ -246,6 +246,11 @@ namespace Veng
                            .DisplayName = "RumbleClip",
                            .Glyph = "RMB",
                            .HandleFieldType = AssetHandleFieldTypes::RumbleClip});
+        registry.Register({.Id = AssetTypes::ParticleEffect,
+                           .Name = "ParticleEffect",
+                           .DisplayName = "Particle Effect",
+                           .Glyph = "PFX",
+                           .HandleFieldType = AssetHandleFieldTypes::ParticleEffect});
         // No handle-field leaf: a settings schema is loaded by id by a settings store, never
         // referenced from a component — the same posture as Shader and VertexLayout. The wire name
         // stays "GraphicsSchema" so an existing graphics-schema pack entry resolves unchanged.

@@ -222,6 +222,24 @@ namespace Veng::Renderer
         ///      device feature.
         void DrawIndexedIndirect(const Ref<Buffer>& buffer, u64 offset, u32 drawCount, u32 stride);
 
+        /// @brief Issues drawCount non-indexed draws from GPU-resident VkDrawIndirectCommand records.
+        ///
+        /// Maps to vkCmdDrawIndirect: each record is four u32 — vertexCount, instanceCount,
+        /// firstVertex, firstInstance — read when the draw executes, so a compute pass earlier in
+        /// the frame may write them. A record with a vertexCount or instanceCount of 0 draws
+        /// nothing. A vertex-pulled primitive list reaches the draw this way without an index buffer
+        /// built only to feed DrawIndexedIndirect.
+        /// @param buffer    Buffer holding the VkDrawIndirectCommand records.
+        /// @param offset    4-byte-aligned byte offset of the first record.
+        /// @param drawCount Number of records to issue; above 1 requires multiDrawIndirect.
+        /// @param stride    Byte stride between records (at least sizeof(VkDrawIndirectCommand) = 16).
+        /// @pre buffer was created with BufferUsage::Indirect, and the pass drawing reads it through
+        ///      RenderGraph::PassBuilder::IndirectRead, which orders the read after the writes that
+        ///      produced it.
+        /// @pre A record with a non-zero firstInstance requires the drawIndirectFirstInstance
+        ///      device feature.
+        void DrawIndirect(const Ref<Buffer>& buffer, u64 offset, u32 drawCount, u32 stride);
+
         /// @brief Records a compute dispatch.
         void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);
 
