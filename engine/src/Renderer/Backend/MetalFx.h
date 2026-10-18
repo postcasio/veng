@@ -85,6 +85,9 @@ namespace Veng::Renderer::Backend
         vec2 MotionScale{1.0f};
         /// @brief Whether the scaler discards its history this frame.
         bool Reset = false;
+        /// @brief The exposure the tonemap applies to the output this frame; the scaler weighs its
+        ///        samples as they will be seen.
+        f32 Exposure = 1.0f;
     };
 
     /// @brief A MetalFX temporal scaler: jittered sub-native colour accumulated into native.
@@ -126,6 +129,9 @@ namespace Veng::Renderer::Backend
         void* m_Scaler = nullptr;
         /// @brief The retained MTLCommandQueue the scaler's work is committed to.
         void* m_Queue = nullptr;
+        /// @brief One retained 1x1 exposure texture per frame in flight, so a frame's write never
+        ///        lands on one an earlier frame's encode still reads.
+        vector<void*> m_Exposure;
     };
 
     /// @brief The fixed shape of a spatial scaler: its texture sizes and formats.
@@ -190,6 +196,9 @@ namespace Veng::Renderer::Backend
         void* m_Scaler = nullptr;
         /// @brief The retained MTLCommandQueue the scaler's work is committed to.
         void* m_Queue = nullptr;
+        /// @brief One retained 1x1 exposure texture per frame in flight, so a frame's write never
+        ///        lands on one an earlier frame's encode still reads.
+        vector<void*> m_Exposure;
     };
 
 #ifndef __APPLE__

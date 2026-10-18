@@ -73,6 +73,7 @@ namespace Veng::Renderer
                         // wants the step back to the previous position, in content pixels.
                         .MotionScale = -content,
                         .Reset = *m_HistoryReset,
+                        .Exposure = *m_Exposure,
                     });
                 });
     }

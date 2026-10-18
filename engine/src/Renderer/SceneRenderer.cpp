@@ -1078,7 +1078,8 @@ namespace Veng::Renderer
                     m_Taa->GetExposurePointer()));
                 m_Passes.push_back(CreateUnique<MetalFxTemporalScenePass>(
                     *m_MetalFx, m_Internal->MetalFxColorId, depthId, m_Internal->MetalFxMotionId,
-                    m_ReactiveMaskId, dofTargetId, m_Taa->GetHistoryResetPointer()));
+                    m_ReactiveMaskId, dofTargetId, m_Taa->GetHistoryResetPointer(),
+                    m_Taa->GetExposurePointer()));
             }
             else if (m_Topology->TaaActive)
             {

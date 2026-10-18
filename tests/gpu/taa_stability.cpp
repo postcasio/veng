@@ -794,6 +794,62 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(brightest < 1.1f * ceiling);
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "taa stability: MetalFX temporal keeps a bright highlight's hue under a black sky")
+{
+    // A warm emissive face over a near-black sky, the frame of a ship in space. A scaler weighing
+    // samples at an exposure of its own, metered off the black frame, saturated the face in its
+    // internal tone curve: measured at landing, red over green rose to 4.0 against the colour's
+    // 1.82 and the bright face shrank by a quarter; at the tonemap's exposure both hold within a
+    // few percent of the engine's own resolve.
+    StabilityScene scene(*this);
+    if (scene.Resolved({.AntiAliasing = AntiAliasingMode::MetalFXTemporal}).AntiAliasing !=
+        AntiAliasingMode::MetalFXTemporal)
+    {
+        MESSAGE("MetalFX temporal scaling is unavailable on this device; nothing to measure");
+        return;
+    }
+    constexpr vec3 Warm{1.0f, 0.55f, 0.25f};
+    constexpr f32 Emission = 50.0f;
+    const AssetResult<AssetHandle<MaterialInstance>> sky =
+        scene.Assets.LoadSync<MaterialInstance>(AnalyticSkyInstanceId);
+    REQUIRE(sky.has_value());
+    sky->Get()->SetParam("Scale", vec4(5.0e-4f, 5.0e-4f, 5.0e-4f, 1.0f));
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        scene.Assets.LoadSync<MaterialInstance>(BrickInstanceId);
+    REQUIRE(brick.has_value());
+    brick->Get()->SetParam("EmissiveFactor", vec4(Warm * Emission, 0.0f));
+
+    struct Highlight
+    {
+        u32 Pixels = 0;
+        f32 WorstRedOverGreen = 0.0f;
+    };
+    const auto Measure = [&](const AntiAliasingMode mode)
+    {
+        Highlight highlight;
+        for (const vec3& c : scene.ResolvedHdr(mode).Rgb)
+        {
+            if (c.r > 0.5f)
+            {
+                ++highlight.Pixels;
+                highlight.WorstRedOverGreen =
+                    std::max(highlight.WorstRedOverGreen, c.r / std::max(c.g, 1.0e-6f));
+            }
+        }
+        return highlight;
+    };
+    const Highlight taa = Measure(AntiAliasingMode::TAA);
+    const Highlight metalFx = Measure(AntiAliasingMode::MetalFXTemporal);
+    CAPTURE(taa.Pixels);
+    CAPTURE(metalFx.Pixels);
+    CAPTURE(metalFx.WorstRedOverGreen);
+    REQUIRE(taa.Pixels > 100);
+    CHECK(metalFx.WorstRedOverGreen < 1.15f * (Warm.r / Warm.g));
+    CHECK(static_cast<f32>(metalFx.Pixels) > 0.9f * static_cast<f32>(taa.Pixels));
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "taa stability: a star over open sky leaves no trail under a turning camera")
 {

@@ -319,13 +319,18 @@ namespace Veng::Renderer
             const ParticleEffect& effect = *instance->Effect.Get();
             const u32 emitterCount = static_cast<u32>(effect.GetEmitters().size());
 
-            // The effect's emitters, once per frame however many instances play it.
+            // The effect's emitters, once per frame however many instances play it. An effect
+            // not drawn is either past the table or waiting on a flipbook still loading.
+            constexpr u32 OverBudget = std::numeric_limits<u32>::max();
+            constexpr u32 Waiting = OverBudget - 1u;
             bool drawn = true;
+            bool waiting = false;
             u32 base = 0;
             if (const auto found = effectBase.find(&effect); found != effectBase.end())
             {
                 base = found->second;
-                drawn = base != std::numeric_limits<u32>::max();
+                drawn = base < Waiting;
+                waiting = base == Waiting;
             }
             else
             {
@@ -348,6 +353,7 @@ namespace Veng::Renderer
                     if (!record)
                     {
                         drawn = false;
+                        waiting = true;
                         break;
                     }
                     plan.Emitters.push_back(*record);
@@ -364,6 +370,7 @@ namespace Veng::Renderer
                         if (!record)
                         {
                             drawn = false;
+                            waiting = true;
                             break;
                         }
                         plan.Emitters.push_back(*record);
@@ -373,11 +380,11 @@ namespace Veng::Renderer
                 {
                     plan.Emitters.resize(base);
                 }
-                effectBase.emplace(&effect, drawn ? base : std::numeric_limits<u32>::max());
+                effectBase.emplace(&effect, drawn ? base : (waiting ? Waiting : OverBudget));
             }
             if (!drawn)
             {
-                ++plan.EmittersDropped;
+                ++(waiting ? plan.InstancesWaiting : plan.EmittersDropped);
             }
 
             GpuParticleInstance& record = plan.Instances[slotIndex];

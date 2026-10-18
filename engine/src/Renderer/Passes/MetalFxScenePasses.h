@@ -89,11 +89,13 @@ namespace Veng::Renderer
         /// @param reactiveId    The reactive mask the frame's sprites and particles wrote.
         /// @param outputId      The scene colour the scaler reconstructs.
         /// @param historyReset  The renderer's history-reset gate, read at record time.
+        /// @param exposure      This frame's exposure, read at record time.
         MetalFxTemporalScenePass(const MetalFxUpscale& upscale, ResourceId litId,
                                  ResourceId depthId, ResourceId velocityId, ResourceId reactiveId,
-                                 ResourceId outputId, const bool* historyReset)
+                                 ResourceId outputId, const bool* historyReset, const f32* exposure)
             : m_Upscale(upscale), m_LitId(litId), m_DepthId(depthId), m_VelocityId(velocityId),
-              m_ReactiveId(reactiveId), m_OutputId(outputId), m_HistoryReset(historyReset)
+              m_ReactiveId(reactiveId), m_OutputId(outputId), m_HistoryReset(historyReset),
+              m_Exposure(exposure)
         {
         }
 
@@ -115,6 +117,8 @@ namespace Veng::Renderer
         ResourceId m_OutputId;
         /// @brief The renderer's history-reset gate.
         const bool* m_HistoryReset;
+        /// @brief This frame's exposure.
+        const f32* m_Exposure;
     };
 
     /// @brief The scene-colour promotion as MetalFX's spatial scaler.

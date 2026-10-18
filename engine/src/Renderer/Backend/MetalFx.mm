@@ -147,9 +147,11 @@ namespace Veng::Renderer::Backend
         descriptor.inputHeight = info.InputExtent.y;
         descriptor.outputWidth = info.OutputExtent.x;
         descriptor.outputHeight = info.OutputExtent.y;
-        // The input is linear HDR at the scene's own scale; the scaler meters it for its internal
-        // weights and returns linear HDR.
-        descriptor.autoExposureEnabled = YES;
+        // The input is linear HDR at the scene's own scale, and the scaler weighs it at the exposure
+        // the tonemap applies (Encode's exposure texture) and returns linear HDR. Metering its own
+        // exposure off a mostly black frame — space — it picks one far higher, saturates bright
+        // highlights in its internal tone curve, and shifts their hue toward red.
+        descriptor.autoExposureEnabled = NO;
         // A dynamic-resolution frame renders a top-left sub-rect of the input allocation.
         descriptor.inputContentPropertiesEnabled = YES;
         descriptor.inputContentMinScale = allocationScale;
@@ -191,8 +193,22 @@ namespace Veng::Renderer::Backend
             created.ReactiveFormat = Format::Undefined;
         }
 
-        return Unique<MetalFxTemporalScaler>(
+        Unique<MetalFxTemporalScaler> made(
             new MetalFxTemporalScaler(context, created, (void*)scaler, (void*)queue));
+        MTLTextureDescriptor* exposure =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
+                                                               width:1
+                                                              height:1
+                                                           mipmapped:NO];
+        exposure.storageMode = MTLStorageModeShared;
+        exposure.usage = MTLTextureUsageShaderRead;
+        for (u32 slot = 0; slot < context.GetMaxFramesInFlight(); ++slot)
+        {
+            id<MTLTexture> texture = [device newTextureWithDescriptor:exposure];
+            [texture setLabel:@"MetalFX Exposure"];
+            made->m_Exposure.push_back((void*)texture);
+        }
+        return made;
     }
 
     MetalFxTemporalScaler::MetalFxTemporalScaler(Context& context, const MetalFxTemporalInfo& info,
@@ -204,6 +220,10 @@ namespace Veng::Renderer::Backend
     MetalFxTemporalScaler::~MetalFxTemporalScaler()
     {
         RetireObjects(m_Context, m_Scaler, m_Queue);
+        for (void* texture : m_Exposure)
+        {
+            m_Context.GetNative().Retire([texture] { [(id)texture release]; });
+        }
     }
 
     void MetalFxTemporalScaler::Encode(const MetalFxTemporalFrame& frame)
@@ -225,6 +245,14 @@ namespace Veng::Renderer::Backend
         scaler.motionVectorScaleX = frame.MotionScale.x;
         scaler.motionVectorScaleY = frame.MotionScale.y;
         scaler.reset = frame.Reset ? YES : NO;
+        id<MTLTexture> exposure = (id<MTLTexture>)
+            m_Exposure[m_Context.GetCurrentFrameInFlight() % static_cast<u32>(m_Exposure.size())];
+        const f32 value = frame.Exposure;
+        [exposure replaceRegion:MTLRegionMake2D(0, 0, 1, 1)
+                    mipmapLevel:0
+                      withBytes:&value
+                    bytesPerRow:sizeof(f32)];
+        scaler.exposureTexture = exposure;
         if (m_Info.ReactiveFormat != Format::Undefined && frame.Reactive != nullptr)
         {
             if (@available(macOS 14.4, iOS 17.4, *))

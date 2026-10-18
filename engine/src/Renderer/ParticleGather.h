@@ -232,6 +232,8 @@ namespace Veng::Renderer
         u32 InstancesDropped = 0;
         /// @brief Instances whose emitters did not fit the emitter table, not drawn this frame.
         u32 EmittersDropped = 0;
+        /// @brief Instances whose effect waits on a flipbook still loading, not drawn this frame.
+        u32 InstancesWaiting = 0;
         /// @brief Whether a drawn emitter fades softly, and so reads the opaque-depth copy.
         bool ReadsSceneDepth = false;
 

@@ -1,6 +1,7 @@
 // Particle effects, device-free: the closed-form trajectory, the spawn schedule and its cursors, the
 // spawn state an index derives, the instance's lifetime on the CPU, the pool's retire, the anchor
-// under a floating origin, the baked over-life tables, and the gather's budgets.
+// under a floating origin, the baked over-life tables, the gather's budgets, and its wait on a
+// flipbook still loading.
 
 #include <doctest/doctest.h>
 
@@ -640,4 +641,23 @@ TEST_CASE("The gather drops and counts what its budgets cannot hold")
     gather.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
     CHECK(plan.InstanceCount == MaxParticleInstances);
     CHECK(plan.InstancesDropped == 1);
+}
+
+TEST_CASE("The gather waits on an effect whose flipbook is still loading, and drops nothing")
+{
+    // A billboard whose flipbook is not resident cannot be drawn yet; that is a wait, not a budget.
+    const AssetHandle<ParticleEffect> loading = MakeEffect({ParticleEmitterDesc{
+        .Render = ParticleRender::Billboard, .BurstCount = 4, .Lifetime = vec2(5.0f)}});
+    ParticleScene fixture;
+    Scene& scene = *fixture.World;
+    for (u32 i = 0; i < 3; ++i)
+    {
+        (void)Play(scene, loading);
+    }
+    ParticleGather gather;
+    ParticleFramePlan plan;
+    gather.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
+    CHECK(plan.InstancesWaiting == 3);
+    CHECK(plan.EmittersDropped == 0);
+    CHECK(plan.Emitters.empty());
 }

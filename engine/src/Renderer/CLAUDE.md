@@ -610,8 +610,12 @@ parameters are derived from what the frame already publishes: the content size i
 sub-rect (`SceneView::RenderExtent`), the jitter is `JitterNdc / 2` of it in pixels with the same
 signs (measured — the opposite sign leaves the jitter in the image, a pixel of edge wander), the
 motion scale is minus the sub-rect, since velocity is current minus previous in viewport UV and the
-scaler wants the step back in content pixels, and depth is reversed. The scaler meters exposure
-itself (`autoExposureEnabled`) and returns linear HDR.
+scaler wants the step back in content pixels, and depth is reversed. **The scaler is handed the
+tonemap's exposure** — the one the TAA resolve's luminance weights read — through its exposure
+texture (one 1×1 per frame in flight), with its own metering off, and returns linear HDR. Metering a
+mostly black frame itself, as space is, it picked an exposure far above the tonemap's, saturated
+bright highlights in its internal tone curve and shifted their hue toward red;
+`tests/gpu/taa_stability.cpp` holds a warm highlight's hue against a near-black sky.
 
 **The scaler reads a motion target, not the velocity channel.** The velocity channel is cleared to
 zero wherever the surface pass left the cleared depth, and the engine's resolve never reads it there:
@@ -1369,7 +1373,10 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   `ParticleFirstPossiblyAlive`), so each renderer issues every index exactly once whatever its
   cadence, and one meeting an effect late issues only what can still be alive, each at its exact
   spawn time. The emitter table holds each effect's emitters once per frame; an instance whose
-  emitters do not fit keeps its particles alive but undrawn and spawns nothing.
+  emitters do not fit keeps its particles alive but undrawn and spawns nothing, counted in
+  `EmittersDropped`, which the renderer warns of once. An instance whose effect names a flipbook not
+  yet resident does the same until it lands, counted apart in `InstancesWaiting` with no warning: an
+  effect loaded asynchronously waits a few frames, which is not a budget.
 - **An emitter with several flipbooks takes a record per flipbook.** A billboard's
   `ParticleEmitterDesc::Flipbooks` may list up to `MaxParticleFlipbookVariants`; an effect's
   records are its emitters' own, in order (each playing its first flipbook, so an emitter's index
