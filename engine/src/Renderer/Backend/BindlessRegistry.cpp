@@ -906,6 +906,22 @@ namespace Veng::Renderer
         return described;
     }
 
+    Ref<ImageView> BindlessRegistry::GetSlotView(const BindlessArray array, const u32 index) const
+    {
+        if (array != BindlessArray::Textures && array != BindlessArray::Volumes &&
+            array != BindlessArray::Cubes && array != BindlessArray::StorageImages)
+        {
+            return nullptr;
+        }
+        const SlotArray* const slots = SlotsFor(array);
+        if (slots == nullptr || index >= slots->Slots.size() || !slots->Slots[index] ||
+            std::ranges::find(slots->Free, index) != slots->Free.end())
+        {
+            return nullptr;
+        }
+        return std::static_pointer_cast<ImageView>(slots->Slots[index]);
+    }
+
     const BindlessRegistry::SlotArray* BindlessRegistry::SlotsFor(const BindlessArray array) const
     {
         switch (array)

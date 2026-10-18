@@ -142,6 +142,15 @@ namespace Veng::Renderer
         return m_ResolvedCube != nullptr ? m_ResolvedCube->GetCubeView() : nullptr;
     }
 
+    Ref<Image> SkyResolver::GetDisplayedSkyCube() const
+    {
+        if (m_ResolvedSkyKind == SkySourceKind::Environment)
+        {
+            return m_Ibl->GetRadianceImage();
+        }
+        return m_ResolvedCube != nullptr ? m_ResolvedCube->GetCubeImage() : nullptr;
+    }
+
     bool SkyResolver::IsIblSourceResident(const SceneView& view) const
     {
         return m_ResolvedLightingCube || view.Environment.IsLoaded() ||

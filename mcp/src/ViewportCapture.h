@@ -13,6 +13,7 @@ namespace Veng::Capture
 namespace Veng::Renderer
 {
     class Viewport;
+    struct TexelReadback;
 }
 
 namespace Veng::Mcp
@@ -46,4 +47,25 @@ namespace Veng::Mcp
     /// @param capture  The application's frame capture, holding a request made at the previous pump.
     /// @return The content-array JSON string on success, or why there is no frame to return.
     Result<string> TakeFrameContentBlocks(Capture::FrameCapture& capture);
+
+    /// @brief How render.export_texture encodes the texels it read back.
+    enum class TexelEncoding : u8
+    {
+        /// @brief Radiance RGBE (`.hdr`): linear float RGB, about 1 % precision, alpha dropped.
+        RadianceHdr,
+        /// @brief 8-bit PNG: the stored values clamped to [0, 1], sRGB-encoded only where the
+        ///        source format was sRGB, so an 8-bit texture round-trips its bytes.
+        Png,
+    };
+
+    /// @brief Encodes a readback as an MCP image content-block array, its layers side by side.
+    ///
+    /// The layers are laid out left to right in layer order — for a cube +X, −X, +Y, −Y, +Z, −Z —
+    /// so the picture is `Extent.x × Layers` wide.
+    /// @param readback  The decoded texels.
+    /// @param encoding  The file encoding.
+    /// @param text      The text block's content (the tool's description of what it read).
+    /// @return The content-array JSON string, or the encode's error.
+    Result<string> TexelContentBlocks(const Renderer::TexelReadback& readback,
+                                      TexelEncoding encoding, const string& text);
 }

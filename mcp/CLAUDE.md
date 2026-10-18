@@ -358,6 +358,20 @@ family registers from the editor side.
   back off the `Ref` the registry already keeps to stop a registered resource dangling, so a
   registration site is untouched and a caller pays only for the call.
 
+  **`render.export_texture` writes one mip of a texture or cubemap to a file.** Its source is
+  exactly one of `sky: true` (the radiance cube a viewport's skybox shows,
+  `SceneRenderer::GetDisplayedSkyCube` — an environment's or a baked sky's cube; a sky drawn per
+  pixel has none), `asset` (a `Texture`'s hex `AssetId`) or `array` + `slot` (an image slot as
+  `render.bindless_slots` lists it, through `BindlessRegistry::GetSlotView`). The texels come back
+  through the engine's `Renderer::ReadbackTexels` (`Veng/Renderer/TextureReadback.h`), a compute
+  fetch into float RGBA, so the image needs only `Sampled` usage and any colour format decodes —
+  sRGB linearized, block-compressed expanded. The image block is Radiance RGBE (`.hdr`, the
+  default for float formats) or 8-bit PNG (the default otherwise, sRGB-encoded only where the
+  source was), the layers side by side — a cube's faces +X −X +Y −Y +Z −Z — and the text block
+  reports the extent, format and Rec. 709 luminance statistics (percentiles, and for a cube the
+  solid-angle-weighted mean). Read-only; the readback blocks the render thread for its duration,
+  so a large image is bounded by the request timeout like a screenshot.
+
   **`render.configure` sets a viewport's diagnostic renderer settings** —
   `{ viewport?, debug_view?, light_tile_culling?, gbuffer_shading_override? }`, each optional and
   an absent one left as it is — `Configure`s the viewport and returns the settings as applied. It

@@ -212,6 +212,11 @@
       "source": "shaders/auto_exposure.comp.shader.json"
     },
     {
+      "id": "0x4FA1C8297F7F189D",
+      "type": "Shader",
+      "source": "shaders/texture_readback.comp.shader.json"
+    },
+    {
       "id": "0xFC9B4A56B2048E5F",
       "type": "Shader",
       "source": "shaders/light_tile_cull.comp.shader.json"

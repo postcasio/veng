@@ -7,12 +7,17 @@
 #include <Veng/Mcp/McpTool.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Capture/FrameCapture.h>
 #include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FormatInfo.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/TextureReadback.h>
 #include <Veng/Renderer/Viewport.h>
 
 #include <fmt/format.h>
@@ -23,6 +28,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <span>
 
 namespace Veng::Mcp
@@ -533,10 +539,251 @@ namespace Veng::Mcp
             }
             return out;
         }
+
+        /// @brief An image render.export_texture resolved, and the words its reply names it by.
+        struct ExportSource
+        {
+            /// @brief The image to read back.
+            Ref<Renderer::Image> Image;
+            /// @brief How the reply describes where it came from.
+            string Label;
+        };
+
+        /// @brief Resolves render.export_texture's source: exactly one of sky, asset, or array+slot.
+        Result<ExportSource> ResolveExportSource(const McpHost& host, const Json& args)
+        {
+            const bool sky =
+                args.contains("sky") && args["sky"].is_boolean() && args["sky"].get<bool>();
+            const bool asset = args.contains("asset");
+            const bool slot = args.contains("array") || args.contains("slot");
+            if (static_cast<int>(sky) + static_cast<int>(asset) + static_cast<int>(slot) != 1)
+            {
+                return std::unexpected(string(
+                    "name exactly one source: 'sky': true, 'asset' (a texture's hex AssetId), or "
+                    "'array' + 'slot' (as render.bindless_slots reports them)"));
+            }
+
+            if (sky)
+            {
+                const string name = ViewportName(args);
+                Renderer::Viewport* viewport = ResolveViewport(host, name);
+                if (viewport == nullptr)
+                {
+                    return std::unexpected(name.empty()
+                                               ? string("no primary viewport is available")
+                                               : fmt::format("no viewport named '{}'", name));
+                }
+                Ref<Renderer::Image> cube = viewport->GetRenderer().GetDisplayedSkyCube();
+                if (!cube)
+                {
+                    return std::unexpected(string(
+                        "the viewport's sky is not a cube (no sky, or one drawn per pixel)"));
+                }
+                return ExportSource{.Image = std::move(cube), .Label = "sky radiance cube"};
+            }
+
+            if (asset)
+            {
+                const optional<AssetId> id = args["asset"].is_string()
+                                                 ? ParseAssetId(args["asset"].get<string>())
+                                                 : std::nullopt;
+                if (!id)
+                {
+                    return std::unexpected(string("'asset' is a hex AssetId string"));
+                }
+                const AssetResult<AssetHandle<Texture>> texture =
+                    host.Assets.LoadSync<Texture>(*id);
+                if (!texture.has_value())
+                {
+                    return std::unexpected(fmt::format("texture {} did not load: {}",
+                                                       FormatAssetId(*id), texture.error().Detail));
+                }
+                return ExportSource{.Image = texture.value().Get()->GetImage(),
+                                    .Label = fmt::format("texture {}", FormatAssetId(*id))};
+            }
+
+            const optional<Renderer::BindlessArray> array =
+                args.contains("array") && args["array"].is_string()
+                    ? Renderer::ParseBindlessArray(args["array"].get<string>())
+                    : std::nullopt;
+            if (!array || !args.contains("slot") || !args["slot"].is_number_integer())
+            {
+                return std::unexpected(string(
+                    "'array' names an image array (textures, volumes, cubes, storage_images) and "
+                    "'slot' is its integer index"));
+            }
+            const u32 index = args["slot"].get<u32>();
+            const Ref<Renderer::ImageView> view =
+                host.Assets.GetContext().GetBindlessRegistry().GetSlotView(*array, index);
+            if (!view || !view->GetImage())
+            {
+                return std::unexpected(fmt::format("{} slot {} holds no image",
+                                                   Renderer::BindlessArrayName(*array), index));
+            }
+            return ExportSource{.Image = view->GetImage(),
+                                .Label = fmt::format("{} slot {} ({})",
+                                                     Renderer::BindlessArrayName(*array), index,
+                                                     view->GetName())};
+        }
+
+        /// @brief Rec. 709 luminance statistics over a readback, for the export's text block.
+        ///
+        /// A six-layer square readback is read as a cube, and its mean is also reported weighted by
+        /// each texel's solid angle — the mean radiance an observer at the centre sees, which the
+        /// unweighted mean overstates toward the face corners.
+        Json LuminanceStats(const Renderer::TexelReadback& readback)
+        {
+            vector<f32> luma;
+            luma.reserve(readback.Texels.size());
+            f64 sum = 0.0;
+            usize nonFinite = 0;
+            for (const vec4& texel : readback.Texels)
+            {
+                const f32 value = 0.2126f * texel.r + 0.7152f * texel.g + 0.0722f * texel.b;
+                if (!std::isfinite(value))
+                {
+                    ++nonFinite;
+                    continue;
+                }
+                luma.push_back(value);
+                sum += value;
+            }
+            Json stats{{"texels", readback.Texels.size()}, {"non_finite", nonFinite}};
+            if (luma.empty())
+            {
+                return stats;
+            }
+            std::ranges::sort(luma);
+            const auto at = [&luma](const f64 fraction)
+            {
+                const usize index = std::min(
+                    luma.size() - 1, static_cast<usize>(fraction * static_cast<f64>(luma.size())));
+                return luma[index];
+            };
+            stats["min"] = luma.front();
+            stats["max"] = luma.back();
+            stats["mean"] = sum / static_cast<f64>(luma.size());
+            stats["percentiles"] = Json{
+                {"p01", at(0.01)}, {"p10", at(0.10)},   {"p50", at(0.50)},    {"p90", at(0.90)},
+                {"p99", at(0.99)}, {"p999", at(0.999)}, {"p9999", at(0.9999)}};
+
+            if (readback.Layers == 6 && readback.Extent.x == readback.Extent.y)
+            {
+                const u32 size = readback.Extent.x;
+                f64 weighted = 0.0;
+                f64 weights = 0.0;
+                for (u32 layer = 0; layer < 6; ++layer)
+                {
+                    for (u32 y = 0; y < size; ++y)
+                    {
+                        const f64 v = (2.0 * (y + 0.5) / size) - 1.0;
+                        for (u32 x = 0; x < size; ++x)
+                        {
+                            const f64 u = (2.0 * (x + 0.5) / size) - 1.0;
+                            const vec4 texel =
+                                readback.Texels[(static_cast<usize>(layer) * size + y) * size + x];
+                            const f64 value =
+                                0.2126 * texel.r + 0.7152 * texel.g + 0.0722 * texel.b;
+                            if (!std::isfinite(value))
+                            {
+                                continue;
+                            }
+                            const f64 weight = 1.0 / std::pow(1.0 + u * u + v * v, 1.5);
+                            weighted += value * weight;
+                            weights += weight;
+                        }
+                    }
+                }
+                stats["mean_solid_angle_weighted"] = weighted / weights;
+            }
+            return stats;
+        }
     }
 
     void RegisterRenderTools(McpServer& server, const McpHost& host)
     {
+        // render.export_texture — one mip of an image (the sky cube a viewport shows, a texture
+        // asset, or a bindless slot) read back as float and written as a file.
+        {
+            McpTool tool;
+            tool.Name = "render.export_texture";
+            tool.Description =
+                "Exports one mip of a texture or cubemap as an image file. Name exactly one "
+                "source: "
+                "'sky': true (the radiance cube the viewport's skybox shows; optional 'viewport'), "
+                "'asset' (a Texture's hex AssetId), or 'array' + 'slot' (a bindless image slot, as "
+                "render.bindless_slots lists them). Optional 'mip' (default 0) and 'encoding': "
+                "'hdr' (Radiance RGBE, linear float — the default for float formats) or 'png' "
+                "(8-bit, the default otherwise). Layers sit side by side, a cube's in the order "
+                "+X -X +Y -Y +Z -Z. The text block reports the extent, format and luminance "
+                "statistics. Over the --connect CLI it requires --output <file>.";
+            tool.InputSchemaJson =
+                R"({"type":"object","properties":{"sky":{"type":"boolean"},"viewport":{"type":"string"},"asset":{"type":"string"},"array":{"type":"string"},"slot":{"type":"integer"},"mip":{"type":"integer"},"encoding":{"type":"string","enum":["hdr","png"]}}})";
+            tool.ReturnsContentBlocks = true;
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json parsed = Json::parse(argsJson, nullptr, false);
+                const Json args = parsed.is_object() ? parsed : Json::object();
+                const Result<ExportSource> source = ResolveExportSource(host, args);
+                if (!source)
+                {
+                    return std::unexpected(source.error());
+                }
+
+                const u32 mip = args.contains("mip") && args["mip"].is_number_integer()
+                                    ? args["mip"].get<u32>()
+                                    : 0;
+                const Result<Renderer::TexelReadback> readback = Renderer::ReadbackTexels(
+                    host.Assets.GetContext(), host.Assets, source->Image, mip);
+                if (!readback)
+                {
+                    return std::unexpected(readback.error());
+                }
+
+                const Renderer::Format format = readback->SourceFormat;
+                const bool floatFormat = format == Renderer::Format::R16Sfloat ||
+                                         format == Renderer::Format::RG16Sfloat ||
+                                         format == Renderer::Format::RGBA16Sfloat ||
+                                         format == Renderer::Format::R32Sfloat ||
+                                         format == Renderer::Format::RG32Sfloat ||
+                                         format == Renderer::Format::RGB32Sfloat ||
+                                         format == Renderer::Format::RGBA32Sfloat ||
+                                         format == Renderer::Format::B10G11R11Ufloat;
+                TexelEncoding encoding =
+                    floatFormat ? TexelEncoding::RadianceHdr : TexelEncoding::Png;
+                if (args.contains("encoding"))
+                {
+                    const string requested =
+                        args["encoding"].is_string() ? args["encoding"].get<string>() : string{};
+                    if (requested == "hdr")
+                    {
+                        encoding = TexelEncoding::RadianceHdr;
+                    }
+                    else if (requested == "png")
+                    {
+                        encoding = TexelEncoding::Png;
+                    }
+                    else
+                    {
+                        return std::unexpected(string("'encoding' is 'hdr' or 'png'"));
+                    }
+                }
+
+                const Json text{
+                    {"source", source->Label},
+                    {"format", Renderer::FormatName(format)},
+                    {"extent", Json::array({readback->Extent.x, readback->Extent.y})},
+                    {"layers", readback->Layers},
+                    {"mip", mip},
+                    {"encoding", encoding == TexelEncoding::RadianceHdr ? "hdr" : "png"},
+                    {"layout", readback->Layers == 6 ? "faces left to right: +X -X +Y -Y +Z -Z"
+                                                     : "layers left to right"},
+                    {"luminance", LuminanceStats(*readback)}};
+                return TexelContentBlocks(*readback, encoding, text.dump());
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
         // render.screenshot — the tonemapped output of a viewport as a PNG image content block,
         // plus its pixel dimensions. A world's own GuiOverlay is driven onto the viewport's layer
         // stack, so it is part of that output; only the app's overlay sits outside it.

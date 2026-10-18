@@ -377,6 +377,7 @@ add_library(veng SHARED
         src/Renderer/ShadowSystem.cpp
         src/Renderer/BloomPyramid.cpp
         src/Renderer/AutoExposureMeter.cpp
+        src/Renderer/TextureReadback.cpp
         src/Renderer/TaaResolve.cpp
         src/Renderer/PostResolveUpscale.cpp
         src/Renderer/MetalFxUpscale.cpp

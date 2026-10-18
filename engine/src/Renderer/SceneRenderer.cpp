@@ -3923,6 +3923,11 @@ namespace Veng::Renderer
         return m_UpscaleWired;
     }
 
+    Ref<Image> SceneRenderer::GetDisplayedSkyCube() const
+    {
+        return m_SkyResolver->GetDisplayedSkyCube();
+    }
+
     u32 SceneRenderer::GetLastVisibleCount() const
     {
         return static_cast<u32>(m_Broadphase.GetSubMeshCandidates().size());

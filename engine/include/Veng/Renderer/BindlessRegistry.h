@@ -613,6 +613,16 @@ namespace Veng::Renderer
         /// @return Its slots, in index order, of the array's capacity.
         [[nodiscard]] vector<BindlessSlot> DescribeSlots(BindlessArray array) const;
 
+        /// @brief The image view an image array's slot holds, or null.
+        ///
+        /// Reaches what DescribeSlots describes, so a diagnostic can read a registered image back by
+        /// the index a listing reported. A slot inside its release window still holds its view.
+        /// @param array  An image array: Textures, Volumes, Cubes or StorageImages.
+        /// @param index  The slot index.
+        /// @return The view, or null for a free slot, an index past the capacity, or a non-image
+        ///         array.
+        [[nodiscard]] Ref<ImageView> GetSlotView(BindlessArray array, u32 index) const;
+
         /// @brief The fixed capacity of one arrayed binding.
         ///
         /// The Max* constants keyed by BindlessArray, so a caller iterating the arrays reads a

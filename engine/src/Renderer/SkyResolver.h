@@ -175,6 +175,12 @@ namespace Veng::Renderer
         /// GetIbl().GetPrefilterCubeView()'s convolved output.
         [[nodiscard]] Ref<ImageView> GetLightingDebugCube() const;
 
+        /// @brief The radiance cube the skybox displays this resolve.
+        ///
+        /// An environment sky's radiance cube, or the resolved baked cube (owned or a CubeSky's);
+        /// null for a sky drawn per pixel or no sky.
+        [[nodiscard]] Ref<Image> GetDisplayedSkyCube() const;
+
         /// @brief The consumer set the skybox pass binds for the resolved baked cube (owned or borrowed).
         ///
         /// For a MaterialSky/AtmosphereSky in SkyMode::Baked this is the resolver's own bake cube's

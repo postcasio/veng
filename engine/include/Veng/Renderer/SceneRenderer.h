@@ -231,6 +231,14 @@ namespace Veng::Renderer
         /// @return True when the promotion pass is wired.
         [[nodiscard]] bool IsPostResolveUpscaleWired() const;
 
+        /// @brief Returns the radiance cube the skybox displays, as of the last Execute.
+        ///
+        /// An environment sky's radiance cube or a baked sky's cube — the image a sky export reads.
+        /// Null for a sky drawn per pixel (SkyMode::Direct), for no sky, and before the first
+        /// Execute.
+        /// @return The six-layer cube image, or null.
+        [[nodiscard]] Ref<Image> GetDisplayedSkyCube() const;
+
         /// @brief Returns the total resident per-submesh candidate count from the last Execute.
         ///
         /// One per submesh of every (Transform, MeshRenderer) with a loaded mesh, before any

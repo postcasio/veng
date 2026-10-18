@@ -1906,6 +1906,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/stb_image.cpp
             tests/gpu/audio_bus_graph_device.cpp
             tests/gpu/buffer_roundtrip.cpp
+            tests/gpu/texture_readback.cpp
             tests/gpu/immediate_gpu_timing.cpp
             tests/gpu/typed_buffer_roundtrip.cpp
             tests/gpu/image_clear_format.cpp
