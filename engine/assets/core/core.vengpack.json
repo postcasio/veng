@@ -537,6 +537,26 @@
       "source": "shaders/sprite_masked.frag.shader.json"
     },
     {
+      "id": "0x7D6B0FE48A6066D0",
+      "type": "Shader",
+      "source": "shaders/sprite_reactive.frag.shader.json"
+    },
+    {
+      "id": "0x8F1BCC7D0600B38B",
+      "type": "Shader",
+      "source": "shaders/sprite_masked_reactive.frag.shader.json"
+    },
+    {
+      "id": "0x8DF816C7AB0BCB67",
+      "type": "Shader",
+      "source": "shaders/particle_reactive.frag.shader.json"
+    },
+    {
+      "id": "0x73156E81A78E4012",
+      "type": "Shader",
+      "source": "shaders/particle_masked_reactive.frag.shader.json"
+    },
+    {
       "id": "0xBC3E1DD216A0CD28",
       "type": "Shader",
       "source": "shaders/particle_reset.comp.shader.json"

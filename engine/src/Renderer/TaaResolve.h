@@ -53,8 +53,9 @@ namespace Veng::Renderer
         /// persisted history, so this sets the reset gate — the next resolve ignores history until
         /// a frame repopulates it.
         ///
-        /// Under a platform resolve (MetalFX's temporal scaler) the lit target is created
-        /// exportable for it and no history is held: the scaler keeps its own.
+        /// The reactive mask is created beside the lit target, at its extent, in ReactiveMaskFormat.
+        /// Under a platform resolve (MetalFX's temporal scaler) the lit target and the reactive mask
+        /// are created exportable for it and no history is held: the scaler keeps its own.
         /// @param litExtent       The render allocation the lit target is sized to.
         /// @param historyExtent   The scene-colour allocation the history is sized to.
         /// @param enabled         Whether TAA is active (the targets are allocated only then).
@@ -84,6 +85,13 @@ namespace Veng::Renderer
 
         /// @brief Bindless slot for the lit target; the resolve samples the current frame through it.
         [[nodiscard]] TextureHandle GetLitHandle() const { return m_LitHandle; }
+
+        /// @brief The reactive mask: how much of each render pixel the frame's sprites and particles
+        ///        own, which the resolve takes more of the current frame by; null when TAA is off.
+        [[nodiscard]] const Ref<ImageView>& GetReactiveView() const { return m_ReactiveView; }
+
+        /// @brief Bindless slot for the reactive mask, which the resolve loads.
+        [[nodiscard]] TextureHandle GetReactiveHandle() const { return m_ReactiveHandle; }
 
         /// @brief The persisted history target; null when TAA is off or a platform scaler resolves.
         [[nodiscard]] const Ref<ImageView>& GetHistoryView() const { return m_HistoryView; }
@@ -126,6 +134,13 @@ namespace Veng::Renderer
         Ref<ImageView> m_LitView;
         /// @brief Bindless slot for the lit view.
         TextureHandle m_LitHandle;
+
+        /// @brief The reactive mask, render-allocation sized like the lit target.
+        Ref<Image> m_ReactiveImage;
+        /// @brief View over m_ReactiveImage.
+        Ref<ImageView> m_ReactiveView;
+        /// @brief Bindless slot for the reactive view.
+        TextureHandle m_ReactiveHandle;
 
         /// @brief Persisted previous-frame resolved HDR the resolve reprojects against.
         Ref<Image> m_HistoryImage;

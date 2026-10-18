@@ -30,6 +30,11 @@
 // blur a bilinear history accumulates). The blend is luminance-weighted on the exposed
 // luminance to damp fireflies (the Karis weighting), the stability mechanism the bloom
 // bright-pass's per-tap ceiling complements.
+//
+// Sprites and particles write no motion of their own and change as they play, so history
+// reprojected under them is the wrong content: the reactive mask they wrote says how much of each
+// render pixel they own, and the resolve leans toward this frame's reconstruction by that much
+// (ReactiveCurrentShare at full coverage).
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
@@ -46,6 +51,7 @@ struct PushConstants
     uint HistoryValid;    // 0 on the first frame / after a resize → ignore history
     float Exposure;       // the exposure the tonemap applies this frame (the Karis weights' scale)
     uint2 Extent;         // full output/history pixel dimensions (Catmull-Rom + output grid)
+    uint ReactiveTexture; // the reactive mask sprites and particles wrote (bindless index)
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -68,6 +74,10 @@ static const float ClipGamma = 1.25;
 // The reconstruction weight's falloff, exp(-KernelFalloff * d^2) with d in output pixels: the
 // Gaussian fit of a Blackman-Harris window one pixel wide.
 static const float KernelFalloff = 2.29;
+
+// How much of this frame a pixel the reactive mask fully covers takes after the history blend. Short
+// of one, so a fully covered pixel keeps a little history and its sub-pixel jitter still averages.
+static const float ReactiveCurrentShare = 0.9;
 
 // How far the reconstruction window may narrow under upscaling, as a ratio of output to render
 // pixels. Past it the jitter period's samples no longer land within the window of every output
@@ -182,6 +192,10 @@ float4 fsMain(VSOutput input) : SV_Target0
     float3 neighborMax = -1e9;
     float nearestDepth = 0.0;
     int2 nearestTexel = clamp(centerTexel, int2(0), maxTexel);
+    // The most any texel of the 3x3 is owned by a sprite or particle: under upscaling a covered
+    // render texel may not be the one nearest the output pixel.
+    float reactive = 0.0;
+    Texture2D reactiveTexture = g_Textures[NonUniformResourceIndex(g_PC.ReactiveTexture)];
     [unroll]
     for (int y = -1; y <= 1; ++y)
     {
@@ -200,6 +214,8 @@ float4 fsMain(VSOutput input) : SV_Target0
             m2 += ycc * ycc;
             neighborMin = min(neighborMin, ycc);
             neighborMax = max(neighborMax, ycc);
+
+            reactive = max(reactive, reactiveTexture.Load(int3(texel, 0)).r);
 
             const float depth = depthTexture.Load(int3(texel, 0)).r;
             if (depth > nearestDepth)
@@ -256,5 +272,5 @@ float4 fsMain(VSOutput input) : SV_Target0
     const float3 resolved =
         (color * currentWeight + history * historyWeight) / (currentWeight + historyWeight);
 
-    return float4(resolved, 1.0);
+    return float4(lerp(resolved, color, saturate(reactive) * ReactiveCurrentShare), 1.0);
 }

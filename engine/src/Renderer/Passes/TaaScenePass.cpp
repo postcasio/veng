@@ -25,6 +25,7 @@ namespace Veng::Renderer
             .Sample(m_HistoryId)
             .Sample(m_DepthId)
             .Sample(m_VelocityId)
+            .Sample(m_ReactiveId)
             .Execute(
                 [this, depthHandle, samplerHandle](PassContext& inner)
                 {
@@ -47,6 +48,7 @@ namespace Veng::Renderer
                         .HistoryValid = *m_HistoryResetPtr ? 0u : 1u,
                         .Exposure = *m_ExposurePtr,
                         .Extent = m_Extent,
+                        .ReactiveTexture = m_ReactiveHandle.Index,
                     });
                     cmd.DrawFullscreenTriangle();
                 });
@@ -78,5 +80,17 @@ namespace Veng::Renderer
                     });
                     cmd.DrawFullscreenTriangle();
                 });
+    }
+
+    void ReactiveMaskClearScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    {
+        graph.AddPass("Reactive Mask Clear")
+            .Color({
+                .Resource = m_ReactiveId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{},
+            })
+            .Execute([](PassContext& /*inner*/) {});
     }
 }

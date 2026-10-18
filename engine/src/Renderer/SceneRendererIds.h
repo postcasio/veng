@@ -36,6 +36,13 @@ namespace Veng::Renderer
     /// unbounded here for the same reason.
     inline constexpr Format BloomMaskFormat = Format::R16Sfloat;
 
+    /// @brief Format of the temporal resolve's reactive mask: how much of each render pixel the
+    ///        frame's sprites and particles own, which a resolve takes more of the current frame by.
+    ///
+    /// A coverage in [0, 1], so a normalized format; the additive blend its writers use saturates
+    /// where several overlap, which is the value's ceiling anyway.
+    inline constexpr Format ReactiveMaskFormat = Format::R8Unorm;
+
     /// @brief Usage the bloom-mask target is allocated with: written as a color attachment, sampled by the bloom down-sweep.
     inline constexpr ImageUsage BloomMaskUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
 

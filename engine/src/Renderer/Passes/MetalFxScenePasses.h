@@ -66,13 +66,14 @@ namespace Veng::Renderer
         /// @param litId         The jittered lit target.
         /// @param depthId       The g-buffer depth.
         /// @param velocityId    The motion target MetalFxMotionScenePass writes.
+        /// @param reactiveId    The reactive mask the frame's sprites and particles wrote.
         /// @param outputId      The scene colour the scaler reconstructs.
         /// @param historyReset  The renderer's history-reset gate, read at record time.
         MetalFxTemporalScenePass(const MetalFxUpscale& upscale, ResourceId litId,
-                                 ResourceId depthId, ResourceId velocityId, ResourceId outputId,
-                                 const bool* historyReset)
+                                 ResourceId depthId, ResourceId velocityId, ResourceId reactiveId,
+                                 ResourceId outputId, const bool* historyReset)
             : m_Upscale(upscale), m_LitId(litId), m_DepthId(depthId), m_VelocityId(velocityId),
-              m_OutputId(outputId), m_HistoryReset(historyReset)
+              m_ReactiveId(reactiveId), m_OutputId(outputId), m_HistoryReset(historyReset)
         {
         }
 
@@ -88,6 +89,8 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief The motion target.
         ResourceId m_VelocityId;
+        /// @brief The reactive mask.
+        ResourceId m_ReactiveId;
         /// @brief The scene colour the scaler reconstructs.
         ResourceId m_OutputId;
         /// @brief The renderer's history-reset gate.

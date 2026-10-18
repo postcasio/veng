@@ -1415,6 +1415,8 @@ namespace Veng::Renderer
         ResourceId m_HdrId;
         /// @brief Imported id for the lighting target under TAA (the resolve's current input).
         ResourceId m_LitId;
+        /// @brief The temporal resolve's reactive mask (invalid unless a temporal resolve is wired).
+        ResourceId m_ReactiveMaskId;
         /// @brief Imported id for the persisted TAA history target.
         ResourceId m_TaaHistoryId;
         /// @brief Imported id for the sub-rect scene target the non-temporal promotion reads.

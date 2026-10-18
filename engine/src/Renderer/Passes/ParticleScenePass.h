@@ -30,6 +30,9 @@ namespace Veng::Renderer
         ResourceId Depth;
         /// @brief The bloom-mask target, or invalid when the frame wires none.
         ResourceId Mask;
+        /// @brief The temporal resolve's reactive mask, or invalid when no temporal resolve is
+        ///        wired.
+        ResourceId Reactive;
         /// @brief The opaque-depth copy a soft particle reads, or invalid when the frame has none.
         ResourceId SceneDepthCopy;
         /// @brief The renderer's IBL and shadow sets, which the chain's update binds.
@@ -38,6 +41,8 @@ namespace Veng::Renderer
         Format TargetFormat = Format::Undefined;
         /// @brief Color format of the bloom-mask target.
         Format MaskFormat = Format::Undefined;
+        /// @brief Color format of the reactive mask.
+        Format ReactiveFormat = Format::Undefined;
     };
 
     /// @brief Simulates and draws the frame's particles into the lit scene color.
@@ -80,6 +85,8 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief The bloom-mask target (invalid when the frame wires none).
         ResourceId m_MaskId;
+        /// @brief The reactive mask (invalid when no temporal resolve is wired).
+        ResourceId m_ReactiveId;
         /// @brief The opaque-depth copy (invalid when the frame has none).
         ResourceId m_SceneDepthCopyId;
         /// @brief The renderer's IBL and shadow sets.

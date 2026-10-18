@@ -15,7 +15,8 @@ namespace Veng::Renderer
     // current/history/depth bindless slots, the shared sampler, the view-constants
     // region, the history-validity flag, the tonemap's exposure, and the full output/history
     // extent (the current frame's sub-rect extent and jitter are read from the view-constants
-    // block). Eight 4-byte fields put the trailing uint2 at its 8-byte-aligned offset.
+    // block), then the reactive mask's slot. Eight 4-byte fields put the uint2 at its 8-byte-aligned
+    // offset.
     struct TaaResolvePush
     {
         u32 CurrentTexture;
@@ -27,6 +28,7 @@ namespace Veng::Renderer
         u32 HistoryValid;
         f32 Exposure;
         uvec2 Extent;
+        u32 ReactiveTexture;
     };
 
     // The TAA history-copy push block, matching taa_history_copy.frag PushConstants:
@@ -58,24 +60,28 @@ namespace Veng::Renderer
         /// @param hdrId            The HDR target the resolved color is written into.
         /// @param depthId          The depth target the nearest-depth search reads.
         /// @param velocityId       The per-object velocity target.
+        /// @param reactiveId       The reactive mask the frame's sprites and particles wrote.
         /// @param litHandle        Bindless slot for the lit target.
         /// @param hdrHandle        Bindless slot for hdrId, which the history copy reads back.
         /// @param historyHandle    Bindless slot for the history target.
         /// @param velocityHandle   Bindless slot for the velocity target.
+        /// @param reactiveHandle   Bindless slot for the reactive mask.
         /// @param historyResetPtr  Points at the renderer's history-reset flag, read at record time.
         /// @param exposurePtr      Points at this frame's tonemap exposure, read at record time.
         /// @param extent           Initial render extent; updated via Resize.
         TaaScenePass(Context& context, Ref<GraphicsPipeline> resolvePipeline,
                      Ref<GraphicsPipeline> copyPipeline, ResourceId litId, ResourceId historyId,
                      ResourceId hdrId, ResourceId depthId, ResourceId velocityId,
-                     TextureHandle litHandle, TextureHandle hdrHandle, TextureHandle historyHandle,
-                     TextureHandle velocityHandle, const bool* historyResetPtr,
+                     ResourceId reactiveId, TextureHandle litHandle, TextureHandle hdrHandle,
+                     TextureHandle historyHandle, TextureHandle velocityHandle,
+                     TextureHandle reactiveHandle, const bool* historyResetPtr,
                      const f32* exposurePtr, uvec2 extent)
             : m_Context(context), m_ResolvePipeline(std::move(resolvePipeline)),
               m_CopyPipeline(std::move(copyPipeline)), m_LitId(litId), m_HistoryId(historyId),
-              m_HdrId(hdrId), m_DepthId(depthId), m_VelocityId(velocityId), m_LitHandle(litHandle),
-              m_HdrHandle(hdrHandle), m_HistoryHandle(historyHandle),
-              m_VelocityHandle(velocityHandle), m_HistoryResetPtr(historyResetPtr),
+              m_HdrId(hdrId), m_DepthId(depthId), m_VelocityId(velocityId),
+              m_ReactiveId(reactiveId), m_LitHandle(litHandle), m_HdrHandle(hdrHandle),
+              m_HistoryHandle(historyHandle), m_VelocityHandle(velocityHandle),
+              m_ReactiveHandle(reactiveHandle), m_HistoryResetPtr(historyResetPtr),
               m_ExposurePtr(exposurePtr), m_Extent(extent)
         {
         }
@@ -102,6 +108,8 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief The per-object velocity target.
         ResourceId m_VelocityId;
+        /// @brief The reactive mask.
+        ResourceId m_ReactiveId;
         /// @brief Bindless slot for the lit target.
         TextureHandle m_LitHandle;
         /// @brief Bindless slot for m_HdrId.
@@ -113,6 +121,8 @@ namespace Veng::Renderer
         TextureHandle m_HistoryHandle;
         /// @brief Bindless slot for the velocity target.
         TextureHandle m_VelocityHandle;
+        /// @brief Bindless slot for the reactive mask.
+        TextureHandle m_ReactiveHandle;
         /// @brief Points at the TaaResolve history-reset flag, read at record time.
         ///
         /// The graph executes before Execute clears the flag, so it reflects this frame's validity.
@@ -121,5 +131,26 @@ namespace Veng::Renderer
         const f32* m_ExposurePtr;
         /// @brief Current render extent.
         uvec2 m_Extent;
+    };
+
+    /// @brief Clears the reactive mask ahead of the passes that write it.
+    ///
+    /// The sprite and particle passes add their coverage into the mask and either may be unwired
+    /// or skip a frame, so the clear is a pass of its own, wired with every temporal resolve.
+    class ReactiveMaskClearScenePass final : public ScenePass
+    {
+    public:
+        /// @brief Constructs the pass.
+        /// @param reactiveId  The reactive mask it clears.
+        explicit ReactiveMaskClearScenePass(const ResourceId reactiveId) : m_ReactiveId(reactiveId)
+        {
+        }
+
+        /// @brief Contributes the clear into the graph.
+        void Declare(RenderGraph& graph, const PassIO& io) override;
+
+    private:
+        /// @brief The reactive mask.
+        ResourceId m_ReactiveId;
     };
 }

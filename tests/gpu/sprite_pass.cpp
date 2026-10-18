@@ -8,6 +8,9 @@
 // — light only in lightA's +X map — reads the light arriving along +X at the white-card
 // normalisation and none from -X, loses it behind an opaque caster, glows through its emission ramp
 // only above ignition, and fades into an opaque wall over its soft distance.
+//
+// Under TAA a sprite appearing over a settled background shows at once rather than fading in
+// through the history: it writes its coverage into the reactive mask the resolve reads.
 
 #include <array>
 #include <cmath>
@@ -497,4 +500,40 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // fades nearer in show the frame recorded the depth copy for the sprite alone. The tolerance
     // is two half-float steps at the sum's magnitude.
     CHECK(contribution[2] == doctest::Approx(alone).epsilon(2e-3));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sprite pass: under TAA a sprite shows on the frame it appears")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    SpriteRender render{
+        .Renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Bloom = false,
+                         .AntiAliasing = AntiAliasingMode::TAA,
+                         .Shadows = false,
+                         .AO = false},
+        }),
+    };
+    render.Camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    render.Camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    // A settled, valid history of the empty scene.
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        CHECK(glm::length(CenterRgb(render.Render(Context, *scene))) < 0.02f);
+    }
+
+    // Blended into a black history at the resolve's ordinary share, the sprite would read about a
+    // tenth of its tint; the reactive mask lets it take nearly all of this frame.
+    AddSprite(*scene, WhiteFlipbook(Context, FlipbookBlend::Alpha), SpriteBlend::Alpha, vec3(0.5f),
+              vec3(0.0f));
+    const vec3 center = CenterRgb(render.Render(Context, *scene));
+    CHECK(center.x > 0.4f);
+    CHECK(center.x < 0.55f);
 }

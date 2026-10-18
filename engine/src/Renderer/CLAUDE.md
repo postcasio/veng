@@ -399,6 +399,20 @@ has not turned: a static camera fetches the background's history from exactly th
 The Karis luminance weights are taken on the **exposed** luminance (the tonemap's exposure, pushed),
 so their damping does not depend on the scene's absolute HDR scale.
 
+**Sprites and particles mark their pixels in a reactive mask, and the resolve trusts history less
+there.** They write no motion of their own and change as they play, so history reprojected under
+them is other content; a growing, animating explosion blended into it smears. Under every temporal
+mode `TaaResolve` owns a render-allocation `ReactiveMaskFormat` (R8) image beside the lit target, a
+`ReactiveMaskClearScenePass` clears it ahead of the scene's composited layers, and the sprite and
+particle passes add `SpriteReactiveCoverage` — a draw's coverage, or its luminance where an additive
+draw carries light with little coverage — into it as one more attachment (their `*Reactive`
+fragment entries). The engine resolve takes the largest value of its 3×3 render texels and moves
+its result toward this frame's reconstruction by `ReactiveCurrentShare` (0.9) of it, so a fully
+covered pixel keeps a tenth of its history and its jitter still averages; MetalFX takes the same
+image as its reactive mask. Nothing changes with anti-aliasing off, where no mask exists.
+`tests/gpu/sprite_pass.cpp` holds that a sprite appearing over a settled history reads most of its
+tint on that frame.
+
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
 both modes and under TAA with a depth-of-field composite after it, the converged resolve changes by under a few
 half-float steps per frame inside geometry and in the open sky, a star keeps its place to 0.05
@@ -572,7 +586,9 @@ both allocations are TAAU's unchanged, and `FrameTopology::MetalFxTemporal` swap
 reconstructs the scene-colour allocation into the target the tail reads (the HDR target, or the
 depth-of-field intermediate behind a composited chain, where it resolves at the render allocation as
 TAAU does). The scaler keeps its own history, so no history target is allocated or imported and no
-history copy runs; the renderer's history-reset gate becomes the scaler's `reset`. The per-frame
+history copy runs; the renderer's history-reset gate becomes the scaler's `reset`. The reactive mask
+(above, under TAA) is the scaler's reactive mask texture, on systems whose MetalFX takes one
+(macOS 14.4 and later); elsewhere the scaler is created without it. The per-frame
 parameters are derived from what the frame already publishes: the content size is the rasterized
 sub-rect (`SceneView::RenderExtent`), the jitter is `JitterNdc / 2` of it in pixels with the same
 signs (measured — the opposite sign leaves the jitter in the image, a pixel of edge wander), the
@@ -1235,6 +1251,8 @@ surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
 - **Two draws.** The alpha set, sorted back to front on view-space depth, draws first through
   `BlendState::PremultipliedAlpha()`; the additive set follows, unsorted, through a `One, One` blend
   that keeps destination alpha. One stage serves both: the shading mode is a per-sprite flat branch.
+- **The reactive mask.** Under a temporal resolve each sprite adds its coverage into the reactive
+  mask (see "TAA"), the attachment after any bloom mask.
 - **The bloom mask.** When the frame wires a mask (bloom on), an unlit sprite adds
   `saturate(luma(colour))` into it, so a bright sprite glows whatever the bloom threshold, and a
   six-way one adds `saturate(luma(emission))` times opacity and fade, so a hot core glows and sunlit
@@ -1349,6 +1367,7 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   floored at 1.5 px with its coverage scaled by the ratio, falling back to a disc when its axis is
   shorter than its width, shaded `(1 − v²)²` across and soft at its ends. A frame drawing a soft
   particle records the depth copy (`ParticleFramePlan::ReadsSceneDepth`), as a soft sprite does.
+  Under a temporal resolve a particle adds its coverage into the reactive mask, as a sprite does.
 - **Budgets and stats.** `SceneRenderer::GetParticleStats()` reports the capacity, the live,
   spawned and dropped counts (read back frames-in-flight late, as the point field's are), the last
   sort length, and the instances tracked and dropped; the renderer warns once for its lifetime on the

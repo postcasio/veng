@@ -43,6 +43,7 @@ namespace Veng::Renderer
             .Sample(m_LitId)
             .Sample(m_DepthId)
             .Sample(m_VelocityId)
+            .Sample(m_ReactiveId)
             .StorageWrite(m_OutputId)
             .Execute(
                 [this](PassContext& inner)
@@ -56,6 +57,7 @@ namespace Veng::Renderer
                         .Color = inner.Resolved(m_LitId).GetImage().get(),
                         .Depth = inner.Resolved(m_DepthId).GetImage().get(),
                         .Motion = inner.Resolved(m_VelocityId).GetImage().get(),
+                        .Reactive = inner.Resolved(m_ReactiveId).GetImage().get(),
                         .Output = inner.Resolved(m_OutputId).GetImage().get(),
                         .ContentExtent = view.RenderExtent,
                         // The jitter moved the image by JitterNdc / 2 of the sub-rect, in the

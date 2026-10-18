@@ -106,6 +106,7 @@ namespace Veng::Renderer
                            .DepthFormat = GBuffer::DepthFormat,
                            .MotionFormat = GBuffer::VelocityFormat,
                            .OutputFormat = HdrFormat,
+                           .ReactiveFormat = ReactiveMaskFormat,
                            .DepthReversed = true,
                        });
         m_TemporalRefused = m_Temporal == nullptr;

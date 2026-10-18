@@ -34,6 +34,8 @@ namespace Veng::Renderer
         constexpr AssetId SpriteVertId{0xA37C1AA90FA4C7DFULL};
         constexpr AssetId SpriteFragId{0x107B3F89B7A7C029ULL};
         constexpr AssetId SpriteMaskedFragId{0xE770831C56E352E9ULL};
+        constexpr AssetId SpriteReactiveFragId{0x7D6B0FE48A6066D0ULL};
+        constexpr AssetId SpriteMaskedReactiveFragId{0x8F1BCC7D0600B38BULL};
 
         // Six vertices (two triangles) per sprite quad.
         constexpr u32 SpriteVertexCount = 6;
@@ -279,12 +281,16 @@ namespace Veng::Renderer
     SpriteScenePass::SpriteScenePass(Context& context, AssetManager& assets,
                                      const SpriteScenePassInfo& info)
         : m_Context(context), m_Plan(info.Plan), m_TargetId(info.Target), m_DepthId(info.Depth),
-          m_MaskId(info.Mask), m_SceneDepthCopyId(info.SceneDepthCopy), m_Forward(info.Forward),
-          m_FramesInFlight(info.FramesInFlight)
+          m_MaskId(info.Mask), m_ReactiveId(info.Reactive), m_SceneDepthCopyId(info.SceneDepthCopy),
+          m_Forward(info.Forward), m_FramesInFlight(info.FramesInFlight)
     {
         const AssetHandle<Veng::Shader> vs = LoadShader(assets, SpriteVertId, "sprite vertex");
-        const AssetHandle<Veng::Shader> fs = LoadShader(
-            assets, m_MaskId.IsValid() ? SpriteMaskedFragId : SpriteFragId, "sprite fragment");
+        // The entry writes colour, then the bloom mask, then the reactive mask, for those wired.
+        const AssetId fragId =
+            m_MaskId.IsValid()
+                ? (m_ReactiveId.IsValid() ? SpriteMaskedReactiveFragId : SpriteMaskedFragId)
+                : (m_ReactiveId.IsValid() ? SpriteReactiveFragId : SpriteFragId);
+        const AssetHandle<Veng::Shader> fs = LoadShader(assets, fragId, "sprite fragment");
 
         // Set 3 carries the per-frame records and ramps, off bindless: a closed per-frame
         // producer→consumer buffer needs no global registration. Sets 4 and 5 are the renderer's
@@ -320,6 +326,11 @@ namespace Veng::Renderer
             {
                 // The mask accumulates like the translucent pass's: two glows over one pixel sum.
                 attachments.push_back({.Format = maskFormat, .Blend = BlendState::Additive()});
+            }
+            if (m_ReactiveId.IsValid())
+            {
+                attachments.push_back(
+                    {.Format = info.ReactiveFormat, .Blend = BlendState::Additive()});
             }
             return GraphicsPipeline::Create(
                 m_Context, {
@@ -389,6 +400,15 @@ namespace Veng::Renderer
             // The translucent pass ahead of this one cleared the mask; sprites add to it.
             builder.Color({
                 .Resource = m_MaskId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            });
+        }
+        if (m_ReactiveId.IsValid())
+        {
+            // Cleared ahead of the scene's composited layers; sprites add their coverage.
+            builder.Color({
+                .Resource = m_ReactiveId,
                 .Load = LoadOp::Load,
                 .Store = StoreOp::Store,
             });

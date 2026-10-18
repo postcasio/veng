@@ -551,10 +551,12 @@ extern "C"
 /// ParticleCapacity, SceneRenderer grows its particle battery and statistics, and the
 /// ParticleEffectInstance component, the ParticleEffectSystem and the ParticleEffect asset type
 /// register. A module spawns effects and configures renderers, so a stale one lays these out short.
+/// Version 135 gives the temporal resolves a reactive mask the sprite and particle passes write:
+/// SceneRenderer grows its graph id. A module owns renderers, so a stale one lays it out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 134u
+#define VENG_MODULE_ABI_VERSION 135u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

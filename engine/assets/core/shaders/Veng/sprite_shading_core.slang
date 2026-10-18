@@ -226,6 +226,13 @@ static const uint SpriteAlphaOpaque = 3;
 
 static const float3 SpriteLumaWeights = float3(0.2126, 0.7152, 0.0722);
 
+// How much of a pixel a shaded sprite or particle owns, for a temporal resolve's reactive mask: its
+// coverage, or its luminance where an additive source carries light with little coverage.
+float SpriteReactiveCoverage(float4 premultiplied)
+{
+    return saturate(max(premultiplied.a, dot(premultiplied.rgb, SpriteLumaWeights)));
+}
+
 // Shades one texel of an unlit sheet: its alpha convention brought to premultiplied colour and
 // coverage, then tint and opacity applied.
 float4 ShadeUnlitSprite(float4 texel, uint alphaMode, float3 tint, float opacity)

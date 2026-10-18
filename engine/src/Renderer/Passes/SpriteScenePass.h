@@ -172,6 +172,9 @@ namespace Veng::Renderer
         ResourceId Depth;
         /// @brief The bloom-mask target, or invalid when the frame wires none.
         ResourceId Mask;
+        /// @brief The temporal resolve's reactive mask, or invalid when no temporal resolve is
+        ///        wired.
+        ResourceId Reactive;
         /// @brief The opaque-depth copy a soft sprite reads, or invalid when the frame has none.
         ResourceId SceneDepthCopy;
         /// @brief The renderer's IBL and shadow sets, bound at 4 and 5 for the six-way light
@@ -181,6 +184,8 @@ namespace Veng::Renderer
         Format TargetFormat = Format::Undefined;
         /// @brief Color format of the bloom-mask target.
         Format MaskFormat = Format::Undefined;
+        /// @brief Color format of the reactive mask.
+        Format ReactiveFormat = Format::Undefined;
         /// @brief Frames in flight, the depth of the record ring.
         u32 FramesInFlight = 1;
     };
@@ -228,6 +233,8 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief The bloom-mask target (invalid when the frame wires none).
         ResourceId m_MaskId;
+        /// @brief The reactive mask (invalid when no temporal resolve is wired).
+        ResourceId m_ReactiveId;
         /// @brief The opaque-depth copy (invalid when the frame has none).
         ResourceId m_SceneDepthCopyId;
         /// @brief The renderer's IBL and shadow sets.

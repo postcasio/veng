@@ -19,10 +19,13 @@ namespace Veng::Renderer
     namespace
     {
         // The draw's shaders in the engine core pack. The masked fragment writes the bloom mask as
-        // a second output; the plain one writes colour alone.
+        // a second output, a reactive one the reactive mask after any bloom mask; the plain one
+        // writes colour alone.
         constexpr AssetId ParticleVertId{0x20AF46B44DED5CA8ULL};
         constexpr AssetId ParticleFragId{0x63F035907DD5EEA6ULL};
         constexpr AssetId ParticleMaskedFragId{0xC58EA21E7F99F47BULL};
+        constexpr AssetId ParticleReactiveFragId{0x8DF816C7AB0BCB67ULL};
+        constexpr AssetId ParticleMaskedReactiveFragId{0x73156E81A78E4012ULL};
 
         // Matches particle_draw.slang's ParticleDrawPush.
         struct ParticleDrawPush
@@ -64,14 +67,16 @@ namespace Veng::Renderer
     ParticleScenePass::ParticleScenePass(Context& context, AssetManager& assets,
                                          const ParticleScenePassInfo& info)
         : m_Context(context), m_Simulation(info.Simulation), m_TargetId(info.Target),
-          m_DepthId(info.Depth), m_MaskId(info.Mask), m_SceneDepthCopyId(info.SceneDepthCopy),
-          m_Forward(info.Forward)
+          m_DepthId(info.Depth), m_MaskId(info.Mask), m_ReactiveId(info.Reactive),
+          m_SceneDepthCopyId(info.SceneDepthCopy), m_Forward(info.Forward)
     {
         VE_ASSERT(m_Simulation != nullptr, "ParticleScenePass: no particle battery");
         const AssetHandle<Veng::Shader> vs = LoadShader(assets, ParticleVertId, "particle vertex");
-        const AssetHandle<Veng::Shader> fs =
-            LoadShader(assets, m_MaskId.IsValid() ? ParticleMaskedFragId : ParticleFragId,
-                       "particle fragment");
+        const AssetId fragId =
+            m_MaskId.IsValid()
+                ? (m_ReactiveId.IsValid() ? ParticleMaskedReactiveFragId : ParticleMaskedFragId)
+                : (m_ReactiveId.IsValid() ? ParticleReactiveFragId : ParticleFragId);
+        const AssetHandle<Veng::Shader> fs = LoadShader(assets, fragId, "particle fragment");
 
         m_Layout = PipelineLayout::Create(
             m_Context, {
@@ -88,6 +93,11 @@ namespace Veng::Renderer
             if (m_MaskId.IsValid())
             {
                 attachments.push_back({.Format = info.MaskFormat, .Blend = BlendState::Additive()});
+            }
+            if (m_ReactiveId.IsValid())
+            {
+                attachments.push_back(
+                    {.Format = info.ReactiveFormat, .Blend = BlendState::Additive()});
             }
             return GraphicsPipeline::Create(
                 m_Context, {
@@ -125,6 +135,12 @@ namespace Veng::Renderer
         {
             // The translucent pass cleared the mask; particles add to it.
             builder.Color({.Resource = m_MaskId, .Load = LoadOp::Load, .Store = StoreOp::Store});
+        }
+        if (m_ReactiveId.IsValid())
+        {
+            // Cleared ahead of the scene's composited layers; particles add their coverage.
+            builder.Color(
+                {.Resource = m_ReactiveId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
         builder.Depth({.Resource = m_DepthId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         if (m_SceneDepthCopyId.IsValid())

@@ -57,6 +57,8 @@ namespace Veng::Renderer::Backend
         Format MotionFormat = Format::RG16Sfloat;
         /// @brief Format of the reconstructed output.
         Format OutputFormat = Format::RGBA16Sfloat;
+        /// @brief Format of the reactive mask, or Undefined for a scaler taking none.
+        Format ReactiveFormat = Format::Undefined;
         /// @brief Whether the depth input stores the far plane at zero.
         bool DepthReversed = true;
     };
@@ -70,6 +72,9 @@ namespace Veng::Renderer::Backend
         const Image* Depth = nullptr;
         /// @brief The motion vectors matching Color.
         const Image* Motion = nullptr;
+        /// @brief How far the scaler should trust Color over its history, per input pixel in [0, 1];
+        ///        null for none. Read only by a scaler created with a ReactiveFormat.
+        const Image* Reactive = nullptr;
         /// @brief The OutputExtent-sized image the scaler reconstructs in full.
         const Image* Output = nullptr;
         /// @brief The rendered sub-rect of the inputs this frame.

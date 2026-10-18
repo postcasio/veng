@@ -28,6 +28,8 @@ namespace Veng::Renderer::Backend
                 return MTLPixelFormatDepth32Float;
             case Format::R16Sfloat:
                 return MTLPixelFormatR16Float;
+            case Format::R8Unorm:
+                return MTLPixelFormatR8Unorm;
             default:
                 VE_ASSERT(false, "MetalFX: no Metal pixel format mapped for engine format {}",
                           static_cast<u32>(format));
@@ -155,6 +157,18 @@ namespace Veng::Renderer::Backend
         // Created where a resize already stalls the frame; an asynchronous initialization would
         // instead pass frames through at low quality until it finished.
         descriptor.requiresSynchronousInitialization = YES;
+        // The reactive mask says where the input holds content whose motion the motion texture
+        // does not carry; the API arrived in macOS 14.4.
+        bool reactive = false;
+        if (info.ReactiveFormat != Format::Undefined)
+        {
+            if (@available(macOS 14.4, iOS 17.4, *))
+            {
+                descriptor.reactiveMaskTextureEnabled = YES;
+                descriptor.reactiveMaskTextureFormat = PixelFormatFor(info.ReactiveFormat);
+                reactive = true;
+            }
+        }
 
         id<MTLFXTemporalScaler> scaler = [descriptor newTemporalScalerWithDevice:device];
         [descriptor release];
@@ -170,8 +184,15 @@ namespace Veng::Renderer::Backend
         id<MTLCommandQueue> queue = [device newCommandQueue];
         [queue setLabel:@"MetalFX Temporal"];
 
+        // What the scaler was created with, so Encode binds a reactive mask only to one that takes it.
+        MetalFxTemporalInfo created = info;
+        if (!reactive)
+        {
+            created.ReactiveFormat = Format::Undefined;
+        }
+
         return Unique<MetalFxTemporalScaler>(
-            new MetalFxTemporalScaler(context, info, (void*)scaler, (void*)queue));
+            new MetalFxTemporalScaler(context, created, (void*)scaler, (void*)queue));
     }
 
     MetalFxTemporalScaler::MetalFxTemporalScaler(Context& context, const MetalFxTemporalInfo& info,
@@ -204,6 +225,14 @@ namespace Veng::Renderer::Backend
         scaler.motionVectorScaleX = frame.MotionScale.x;
         scaler.motionVectorScaleY = frame.MotionScale.y;
         scaler.reset = frame.Reset ? YES : NO;
+        if (m_Info.ReactiveFormat != Format::Undefined && frame.Reactive != nullptr)
+        {
+            if (@available(macOS 14.4, iOS 17.4, *))
+            {
+                scaler.reactiveMaskTexture = TextureFor(m_Context, *frame.Reactive,
+                                                        scaler.reactiveTextureUsage, "reactive");
+            }
+        }
 
         EncodeBetweenSegments(m_Context, m_Queue, [scaler](id<MTLCommandBuffer> commandBuffer)
                               { [scaler encodeToCommandBuffer:commandBuffer]; });

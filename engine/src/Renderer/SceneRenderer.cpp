@@ -510,9 +510,12 @@ namespace Veng::Renderer
         ResourceId litId{};
         ResourceId taaHistoryId{};
         ResourceId velocityId{};
+        m_ReactiveMaskId = ResourceId{};
         if (m_Topology->TaaActive)
         {
             litId = graph.Import("SceneRenderer Lit");
+            // Where the frame's sprites and particles stand, which the resolve trusts history less.
+            m_ReactiveMaskId = graph.Import("SceneRenderer Reactive Mask");
         }
         // MetalFX's scaler keeps its own history, so only the engine's resolve imports one.
         if (m_Topology->TaaActive && !m_Topology->MetalFxTemporal)
@@ -1001,6 +1004,10 @@ namespace Veng::Renderer
             DeclareTranslucents(lightingTargetId, depthId, renderExtent);
             // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
             // those, into the same target and bloom mask, while the scene carries any.
+            if (m_ReactiveMaskId.IsValid())
+            {
+                m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
+            }
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
@@ -1024,10 +1031,12 @@ namespace Veng::Renderer
                         .Target = lightingTargetId,
                         .Depth = depthId,
                         .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
                         .SceneDepthCopy = m_RefractionDepthId,
                         .Forward = forwardSets,
                         .TargetFormat = HdrFormat,
                         .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
             }
@@ -1042,10 +1051,12 @@ namespace Veng::Renderer
                                                         .Target = lightingTargetId,
                                                         .Depth = depthId,
                                                         .Mask = m_BloomMaskId,
+                                                        .Reactive = m_ReactiveMaskId,
                                                         .SceneDepthCopy = m_RefractionDepthId,
                                                         .Forward = forwardSets,
                                                         .TargetFormat = HdrFormat,
                                                         .MaskFormat = BloomMaskFormat,
+                                                        .ReactiveFormat = ReactiveMaskFormat,
                                                     }));
             }
 
@@ -1058,8 +1069,8 @@ namespace Veng::Renderer
                     m_Context, *m_MetalFx, depthId, velocityId, m_Internal->MetalFxMotionId,
                     m_VelocityHandle));
                 m_Passes.push_back(CreateUnique<MetalFxTemporalScenePass>(
-                    *m_MetalFx, litId, depthId, m_Internal->MetalFxMotionId, dofTargetId,
-                    m_Taa->GetHistoryResetPointer()));
+                    *m_MetalFx, litId, depthId, m_Internal->MetalFxMotionId, m_ReactiveMaskId,
+                    dofTargetId, m_Taa->GetHistoryResetPointer()));
             }
             else if (m_Topology->TaaActive)
             {
@@ -1068,10 +1079,10 @@ namespace Veng::Renderer
                 // HDR target.
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
-                    taaHistoryId, dofTargetId, depthId, velocityId, m_Taa->GetLitHandle(),
-                    dofTargetHandle, m_Taa->GetHistoryHandle(), m_VelocityHandle,
-                    m_Taa->GetHistoryResetPointer(), m_Taa->GetExposurePointer(),
-                    sceneColorExtent));
+                    taaHistoryId, dofTargetId, depthId, velocityId, m_ReactiveMaskId,
+                    m_Taa->GetLitHandle(), dofTargetHandle, m_Taa->GetHistoryHandle(),
+                    m_VelocityHandle, m_Taa->GetReactiveHandle(), m_Taa->GetHistoryResetPointer(),
+                    m_Taa->GetExposurePointer(), sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
@@ -1404,6 +1415,10 @@ namespace Veng::Renderer
             DeclareTranslucents(lightingTargetId, depthId, renderExtent);
             // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
             // those, into the same target and bloom mask, while the scene carries any.
+            if (m_ReactiveMaskId.IsValid())
+            {
+                m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
+            }
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
@@ -1427,10 +1442,12 @@ namespace Veng::Renderer
                         .Target = lightingTargetId,
                         .Depth = depthId,
                         .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
                         .SceneDepthCopy = m_RefractionDepthId,
                         .Forward = forwardSets,
                         .TargetFormat = HdrFormat,
                         .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
             }
@@ -1445,10 +1462,12 @@ namespace Veng::Renderer
                                                         .Target = lightingTargetId,
                                                         .Depth = depthId,
                                                         .Mask = m_BloomMaskId,
+                                                        .Reactive = m_ReactiveMaskId,
                                                         .SceneDepthCopy = m_RefractionDepthId,
                                                         .Forward = forwardSets,
                                                         .TargetFormat = HdrFormat,
                                                         .MaskFormat = BloomMaskFormat,
+                                                        .ReactiveFormat = ReactiveMaskFormat,
                                                     }));
             }
             if (m_Settings.Mode == DebugView::Bloom)
@@ -3683,6 +3702,7 @@ namespace Veng::Renderer
         if (m_Topology->TaaActive)
         {
             bindings.push_back({.Id = m_LitId, .View = m_Taa->GetLitView()});
+            bindings.push_back({.Id = m_ReactiveMaskId, .View = m_Taa->GetReactiveView()});
         }
         if (m_Topology->TaaActive && !m_Topology->MetalFxTemporal)
         {

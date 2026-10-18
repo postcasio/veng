@@ -44,6 +44,21 @@ struct MaskedOutput
     float Mask : SV_Target1;
 };
 
+// The reactive variants add the temporal resolve's reactive mask after any bloom mask: the pixel's
+// coverage (SpriteReactiveCoverage), so a resolve takes more of this frame where the draw stands.
+struct ReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Reactive : SV_Target1;
+};
+
+struct MaskedReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Mask : SV_Target1;
+    float Reactive : SV_Target2;
+};
+
 struct SpriteShade
 {
     float4 Color;
@@ -157,5 +172,26 @@ MaskedOutput fsMainMasked(VSOutput input)
     MaskedOutput output;
     output.Color = shade.Color;
     output.Mask = shade.Mask;
+    return output;
+}
+
+[shader("fragment")]
+ReactiveOutput fsMainReactive(VSOutput input)
+{
+    SpriteShade shade = ShadeSprite(input);
+    ReactiveOutput output;
+    output.Color = shade.Color;
+    output.Reactive = SpriteReactiveCoverage(shade.Color);
+    return output;
+}
+
+[shader("fragment")]
+MaskedReactiveOutput fsMainMaskedReactive(VSOutput input)
+{
+    SpriteShade shade = ShadeSprite(input);
+    MaskedReactiveOutput output;
+    output.Color = shade.Color;
+    output.Mask = shade.Mask;
+    output.Reactive = SpriteReactiveCoverage(shade.Color);
     return output;
 }

@@ -12,20 +12,16 @@
 #include <Veng/Renderer/Types.h>
 
 #include "Passes/TaaScenePass.h"
+#include "SceneRendererIds.h"
 
 namespace Veng::Renderer
 {
     namespace
     {
-        // The shared fullscreen vertex stage and the TAA resolve / history-copy fragment shaders.
-        constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
+        // The TAA resolve / history-copy fragment shaders (the fullscreen vertex stage, the HDR
+        // format and its usage are the renderer's shared ids).
         constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
         constexpr AssetId TaaHistoryCopyFragId{0x07F31C1EC98A29BFULL};
-
-        // Linear float HDR format for the lit/history targets — the format the rest of the tail
-        // samples, so the resolve round-trips through it.
-        constexpr Format HdrFormat = Format::RGBA16Sfloat;
-        constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
     }
 
     Unique<TaaResolve> TaaResolve::Create(Context& context, AssetManager& assets)
@@ -91,6 +87,7 @@ namespace Veng::Renderer
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_LitHandle);
+        bindless.Release(m_ReactiveHandle);
         bindless.Release(m_HistoryHandle);
     }
 
@@ -104,8 +101,10 @@ namespace Veng::Renderer
         m_HistoryReset = true;
 
         bindless.Release(m_LitHandle);
+        bindless.Release(m_ReactiveHandle);
         bindless.Release(m_HistoryHandle);
         m_LitHandle = {};
+        m_ReactiveHandle = {};
         m_HistoryHandle = {};
 
         if (enabled)
@@ -120,12 +119,25 @@ namespace Veng::Renderer
             m_LitView = ImageView::Create(m_Context,
                                           {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
             m_LitHandle = bindless.Register(m_LitView);
+
+            m_ReactiveImage = Image::Create(m_Context, {
+                                                           .Name = "SceneRenderer Reactive Mask",
+                                                           .Extent = {litExtent.x, litExtent.y, 1},
+                                                           .Format = ReactiveMaskFormat,
+                                                           .Usage = HdrUsage,
+                                                           .PlatformExport = platformResolve,
+                                                       });
+            m_ReactiveView = ImageView::Create(
+                m_Context, {.Name = "SceneRenderer Reactive Mask View", .Image = m_ReactiveImage});
+            m_ReactiveHandle = bindless.Register(m_ReactiveView);
         }
         else
         {
             // Drop the resolve targets when TAA is off so the memory is not held for an unused path.
             m_LitImage.reset();
             m_LitView.reset();
+            m_ReactiveImage.reset();
+            m_ReactiveView.reset();
         }
 
         if (enabled && !platformResolve)
