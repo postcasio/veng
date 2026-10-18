@@ -44,16 +44,17 @@ namespace Veng::Renderer
                                ShaderStage::Fragment)},
                        });
         m_MotionPipeline = GraphicsPipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer MetalFX Motion Pipeline",
-                           .ColorAttachments = {{.Format = GBuffer::VelocityFormat}},
-                           .PipelineLayout = m_MotionLayout,
-                           .ShaderStages =
-                               {
-                                   {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                                   {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SceneRenderer MetalFX Motion Pipeline",
+                .ColorAttachments = {{.Format = GBuffer::VelocityFormat}, {.Format = HdrFormat}},
+                .PipelineLayout = m_MotionLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                    },
+            });
     }
 
     MetalFxUpscale::~MetalFxUpscale() = default;
@@ -64,6 +65,8 @@ namespace Veng::Renderer
         {
             m_MotionImage.reset();
             m_MotionView.reset();
+            m_ColorImage.reset();
+            m_ColorView.reset();
             return;
         }
         if (m_MotionImage != nullptr && uvec2(m_MotionImage->GetExtent()) == extent)
@@ -79,6 +82,15 @@ namespace Veng::Renderer
                                                  });
         m_MotionView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer MetalFX Motion View", .Image = m_MotionImage});
+        m_ColorImage = Image::Create(m_Context, {
+                                                    .Name = "SceneRenderer MetalFX Color",
+                                                    .Extent = {extent.x, extent.y, 1},
+                                                    .Format = HdrFormat,
+                                                    .Usage = GBuffer::ColorUsage,
+                                                    .PlatformExport = true,
+                                                });
+        m_ColorView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer MetalFX Color View", .Image = m_ColorImage});
     }
 
     bool MetalFxUpscale::ResizeTemporal(const uvec2 input, const uvec2 output, const bool enabled)

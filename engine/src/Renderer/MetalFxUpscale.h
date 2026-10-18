@@ -27,6 +27,10 @@ namespace Veng::Renderer
         u32 VelocityTexture;
         /// @brief The current frame-in-flight's view-constants region.
         u32 ViewConstantsIndex;
+        /// @brief The jittered lit target's bindless slot.
+        u32 LitTexture;
+        /// @brief The luminance the conditioned colour is rolled off toward, in HDR units.
+        f32 FireflyCeiling;
     };
 
     /// @brief Owns the renderer's MetalFX scalers and what the device lets them do.
@@ -36,8 +40,10 @@ namespace Veng::Renderer
     /// MetalFXSpatial promotion upscales through, each sized to the allocations it bridges and
     /// held only while its mode is wired; and the record of a shape MetalFX refused, which the
     /// settings resolution reads so the renderer falls back rather than renders nothing. Beside
-    /// the temporal scaler it holds the motion target the scaler reads — the velocity channel with
-    /// the background's motion filled in from the camera's turn — and the pipeline that writes it.
+    /// the temporal scaler it holds the two targets the scaler reads in place of the frame's own —
+    /// the motion target (the velocity channel with the background's motion filled in from the
+    /// camera's turn) and the conditioned colour (the lit target with no texel the tone curve
+    /// cannot show) — and the pipeline that writes both.
     /// The passes are MetalFxMotionScenePass, MetalFxTemporalScenePass and MetalFxSpatialScenePass.
     class MetalFxUpscale
     {
@@ -48,7 +54,8 @@ namespace Veng::Renderer
         /// @param assets  Asset manager the motion pass's shaders load through.
         MetalFxUpscale(Context& context, AssetManager& assets);
 
-        /// @brief Drops the scalers and the motion target; each retires through the frame bin.
+        /// @brief Drops the scalers and the scaler's input targets; each retires through the frame
+        ///        bin.
         ~MetalFxUpscale();
 
         MetalFxUpscale(const MetalFxUpscale&) = delete;
@@ -108,7 +115,7 @@ namespace Veng::Renderer
         /// @brief The spatial scaler; null while not wired.
         [[nodiscard]] Backend::MetalFxSpatialScaler* GetSpatial() const { return m_Spatial.get(); }
 
-        /// @brief The motion pass's pipeline, writing the motion target's format.
+        /// @brief The motion pass's pipeline, writing the motion target and the conditioned colour.
         [[nodiscard]] const Ref<GraphicsPipeline>& GetMotionPipeline() const
         {
             return m_MotionPipeline;
@@ -116,6 +123,9 @@ namespace Veng::Renderer
 
         /// @brief The motion target the temporal scaler reads; null while no scaler is held.
         [[nodiscard]] const Ref<ImageView>& GetMotionView() const { return m_MotionView; }
+
+        /// @brief The conditioned colour the temporal scaler reads; null while no scaler is held.
+        [[nodiscard]] const Ref<ImageView>& GetColorView() const { return m_ColorView; }
 
     private:
         Context& m_Context;
@@ -130,7 +140,8 @@ namespace Veng::Renderer
         /// @brief MetalFX refused the spatial shape last asked for.
         bool m_SpatialRefused = false;
 
-        /// @brief Recreates the motion target at @p extent, or releases it.
+        /// @brief Recreates the motion target and the conditioned colour at @p extent, or releases
+        ///        them.
         void ResizeMotion(uvec2 extent, bool enabled);
 
         /// @brief Layout for the motion pipeline: the motion push block.
@@ -141,5 +152,9 @@ namespace Veng::Renderer
         Ref<Image> m_MotionImage;
         /// @brief View over m_MotionImage.
         Ref<ImageView> m_MotionView;
+        /// @brief The conditioned colour, the render allocation in the HDR format.
+        Ref<Image> m_ColorImage;
+        /// @brief View over m_ColorImage.
+        Ref<ImageView> m_ColorView;
     };
 }

@@ -10,11 +10,17 @@ namespace Veng::Renderer
     class Context;
     class MetalFxUpscale;
 
-    /// @brief Writes the motion MetalFX's temporal scaler reconstructs from.
+    /// @brief Writes the motion and the colour MetalFX's temporal scaler reconstructs from.
     ///
-    /// The velocity channel where geometry stands and the camera's turn at the cleared depth, the
-    /// background rule the engine's own resolve applies (metalfx_motion.frag). Runs over the
-    /// rendered sub-rect ahead of MetalFxTemporalScenePass, which reads the target it writes.
+    /// The motion is the velocity channel where geometry stands and the camera's turn at the
+    /// cleared depth, the background rule the engine's own resolve applies. The colour is the lit
+    /// target conditioned as the engine's resolve never needs it to be: a non-finite channel is
+    /// zeroed, a negative one clamped to zero, and a texel brighter than the view's firefly ceiling
+    /// rolled off toward it, hue kept (metalfx_motion.frag). The engine's resolve damps such
+    /// texels by its luminance weights and neighbourhood clip; the scaler has neither, and shows
+    /// each as a saturated pixel. The ceiling is the one the bloom pass holds its taps to, so
+    /// neither the tone curve nor bloom sees a difference in ordinary content. Runs over the
+    /// rendered sub-rect ahead of MetalFxTemporalScenePass, which reads both targets it writes.
     class MetalFxMotionScenePass final : public ScenePass
     {
     public:
@@ -24,16 +30,22 @@ namespace Veng::Renderer
         /// @param depthId        The g-buffer depth.
         /// @param velocityId     The g-buffer velocity channel.
         /// @param motionId       The motion target.
+        /// @param litId          The jittered lit target.
+        /// @param colorId        The conditioned colour target.
         /// @param velocityHandle The velocity channel's bindless slot.
+        /// @param litHandle      The lit target's bindless slot.
+        /// @param exposure       This frame's exposure, read at record time.
         MetalFxMotionScenePass(Context& context, const MetalFxUpscale& upscale, ResourceId depthId,
-                               ResourceId velocityId, ResourceId motionId,
-                               TextureHandle velocityHandle)
+                               ResourceId velocityId, ResourceId motionId, ResourceId litId,
+                               ResourceId colorId, TextureHandle velocityHandle,
+                               TextureHandle litHandle, const f32* exposure)
             : m_Context(context), m_Upscale(upscale), m_DepthId(depthId), m_VelocityId(velocityId),
-              m_MotionId(motionId), m_VelocityHandle(velocityHandle)
+              m_MotionId(motionId), m_LitId(litId), m_ColorId(colorId),
+              m_VelocityHandle(velocityHandle), m_LitHandle(litHandle), m_Exposure(exposure)
         {
         }
 
-        /// @brief Declares the motion write and its two reads.
+        /// @brief Declares the motion and colour writes and their three reads.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
@@ -47,14 +59,22 @@ namespace Veng::Renderer
         ResourceId m_VelocityId;
         /// @brief The motion target.
         ResourceId m_MotionId;
+        /// @brief The jittered lit target.
+        ResourceId m_LitId;
+        /// @brief The conditioned colour target.
+        ResourceId m_ColorId;
         /// @brief The velocity channel's bindless slot.
         TextureHandle m_VelocityHandle;
+        /// @brief The lit target's bindless slot.
+        TextureHandle m_LitHandle;
+        /// @brief This frame's exposure, read at record time.
+        const f32* m_Exposure;
     };
 
     /// @brief The temporal resolve as MetalFX's temporal scaler.
     ///
-    /// Takes the TAA resolve's place under AntiAliasingMode::MetalFXTemporal: reads the jittered lit
-    /// target, the g-buffer depth and the motion target, and reconstructs the scene-colour
+    /// Takes the TAA resolve's place under AntiAliasingMode::MetalFXTemporal: reads the conditioned
+    /// colour, the g-buffer depth and the motion target, and reconstructs the scene-colour
     /// allocation into the target the HDR tail reads. The scaler keeps its own history, so there is
     /// no history copy. Its work runs outside Vulkan, between two submits of the frame
     /// (Context::SplitFrame); the declared accesses place the barriers either side of it.
@@ -63,7 +83,7 @@ namespace Veng::Renderer
     public:
         /// @brief Constructs the pass.
         /// @param upscale       The owner of the temporal scaler, read at record time.
-        /// @param litId         The jittered lit target.
+        /// @param litId         The conditioned colour MetalFxMotionScenePass writes.
         /// @param depthId       The g-buffer depth.
         /// @param velocityId    The motion target MetalFxMotionScenePass writes.
         /// @param reactiveId    The reactive mask the frame's sprites and particles wrote.

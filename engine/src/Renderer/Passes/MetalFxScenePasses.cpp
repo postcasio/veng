@@ -8,6 +8,8 @@
 
 #include "../MetalFxUpscale.h"
 
+#include <algorithm>
+
 namespace Veng::Renderer
 {
     void MetalFxMotionScenePass::Declare(RenderGraph& graph, const PassIO& io)
@@ -16,8 +18,10 @@ namespace Veng::Renderer
         // Outside the rendered sub-rect the scaler reads nothing, so the target is not cleared.
         graph.AddPass("MetalFX Motion")
             .Color({.Resource = m_MotionId, .Load = LoadOp::DontCare, .Store = StoreOp::Store})
+            .Color({.Resource = m_ColorId, .Load = LoadOp::DontCare, .Store = StoreOp::Store})
             .Sample(m_DepthId)
             .Sample(m_VelocityId)
+            .Sample(m_LitId)
             .Execute(
                 [this, depthHandle](PassContext& inner)
                 {
@@ -32,6 +36,8 @@ namespace Veng::Renderer
                         .DepthTexture = depthHandle.Index,
                         .VelocityTexture = m_VelocityHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                        .LitTexture = m_LitHandle.Index,
+                        .FireflyCeiling = view.BloomFireflyCeiling / std::max(*m_Exposure, 1e-5f),
                     });
                     cmd.DrawFullscreenTriangle();
                 });

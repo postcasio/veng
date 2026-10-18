@@ -229,8 +229,10 @@ namespace Veng::Renderer
         // materials read, and read by those passes, each of which skips every frame its flag is
         // clear.
         SceneGrabRecording GrabRecording;
-        // The motion target MetalFX's temporal scaler reads, imported only while it is wired.
+        // The motion target and the conditioned colour MetalFX's temporal scaler reads, imported
+        // only while it is wired.
         ResourceId MetalFxMotionId;
+        ResourceId MetalFxColorId;
         // PrepareDraws' reused scratch: the static survivors' sort keys and the survivors the
         // static phase triages to the skinned and translucent phases. Held across frames so a
         // steady-state gather allocates nothing.
@@ -1069,12 +1071,14 @@ namespace Veng::Renderer
             if (m_Topology->MetalFxTemporal)
             {
                 m_Internal->MetalFxMotionId = graph.Import("SceneRenderer MetalFX Motion");
+                m_Internal->MetalFxColorId = graph.Import("SceneRenderer MetalFX Color");
                 m_Passes.push_back(CreateUnique<MetalFxMotionScenePass>(
-                    m_Context, *m_MetalFx, depthId, velocityId, m_Internal->MetalFxMotionId,
-                    m_VelocityHandle));
+                    m_Context, *m_MetalFx, depthId, velocityId, m_Internal->MetalFxMotionId, litId,
+                    m_Internal->MetalFxColorId, m_VelocityHandle, m_Taa->GetLitHandle(),
+                    m_Taa->GetExposurePointer()));
                 m_Passes.push_back(CreateUnique<MetalFxTemporalScenePass>(
-                    *m_MetalFx, litId, depthId, m_Internal->MetalFxMotionId, m_ReactiveMaskId,
-                    dofTargetId, m_Taa->GetHistoryResetPointer()));
+                    *m_MetalFx, m_Internal->MetalFxColorId, depthId, m_Internal->MetalFxMotionId,
+                    m_ReactiveMaskId, dofTargetId, m_Taa->GetHistoryResetPointer()));
             }
             else if (m_Topology->TaaActive)
             {
@@ -3721,6 +3725,8 @@ namespace Veng::Renderer
         {
             bindings.push_back(
                 {.Id = m_Internal->MetalFxMotionId, .View = m_MetalFx->GetMotionView()});
+            bindings.push_back(
+                {.Id = m_Internal->MetalFxColorId, .View = m_MetalFx->GetColorView()});
         }
         // The promotion's sub-rect scene target: the scene chain writes it and the upscale reads it.
         if (m_UpscaleWired)

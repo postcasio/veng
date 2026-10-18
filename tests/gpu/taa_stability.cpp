@@ -43,6 +43,7 @@
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/TaaJitter.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -343,6 +344,28 @@ namespace
             }
             REQUIRE(core > 0.0);
             return static_cast<f32>(trail / core);
+        }
+
+        // The resolved HDR after the settle frames, ahead of bloom and the tonemap.
+        HdrFrame ResolvedHdr(const AntiAliasingMode mode)
+        {
+            const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+                .Context = Gpu.Context,
+                .Assets = Assets,
+                .OutputFormat = Gpu.Context.GetOutputFormat(),
+                .Extent = Extent,
+                .Settings = {.Mode = DebugView::Final,
+                             .Bloom = false,
+                             .AntiAliasing = mode,
+                             .Shadows = false,
+                             .PunctualShadows = false,
+                             .AO = false},
+            });
+            for (u32 frame = 0; frame < SettleFrames; ++frame)
+            {
+                Execute(*renderer, 1.0f);
+            }
+            return Decode(renderer->GetHdrView()->GetImage()->Download());
         }
 
         // The settings a renderer runs when asked for these, after any engine fallback.
@@ -724,6 +747,51 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Inside a frame the scaler splits the frame's own submit rather than a one-shot recording's.
     scene.InFrames = true;
     CheckStill(scene.Measure(AntiAliasingMode::MetalFXTemporal, 0.5f), MetalFxBounds);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "taa stability: MetalFX temporal shows nothing past the view's firefly ceiling")
+{
+    // The engine's resolve damps a texel the tone curve cannot show by its luminance weights; the
+    // scaler has none, so the colour it reads is conditioned instead. An emissive face lit past
+    // the half-float range drives the lit target to the lighting guard's cap, and the resolved
+    // HDR must hold every texel finite, non-negative and under the ceiling (at the scene's
+    // exposure of 1, the ceiling itself), allowing the scaler's own sharpening a tenth over it.
+    StabilityScene scene(*this);
+    if (scene.Resolved({.AntiAliasing = AntiAliasingMode::MetalFXTemporal}).AntiAliasing !=
+        AntiAliasingMode::MetalFXTemporal)
+    {
+        MESSAGE("MetalFX temporal scaling is unavailable on this device; nothing to measure");
+        return;
+    }
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        scene.Assets.LoadSync<MaterialInstance>(BrickInstanceId);
+    REQUIRE(brick.has_value());
+    brick->Get()->SetParam("EmissiveFactor", vec4(1.0e5f, 1.0e5f, 1.0e5f, 0.0f));
+
+    const f32 ceiling = Renderer::ViewState{}.BloomFireflyCeiling;
+    const HdrFrame frame = scene.ResolvedHdr(AntiAliasingMode::MetalFXTemporal);
+    u32 nonFinite = 0;
+    f32 lowest = 0.0f;
+    f32 brightest = 0.0f;
+    for (usize i = 0; i < frame.Rgb.size(); ++i)
+    {
+        const vec3& c = frame.Rgb[i];
+        if (!std::isfinite(c.r) || !std::isfinite(c.g) || !std::isfinite(c.b))
+        {
+            ++nonFinite;
+            continue;
+        }
+        lowest = std::min({lowest, c.r, c.g, c.b});
+        brightest = std::max(brightest, frame.Luminance[i]);
+    }
+    CAPTURE(lowest);
+    CAPTURE(brightest);
+    CHECK(nonFinite == 0);
+    CHECK(lowest > -1.0e-3f);
+    // The face is far past the ceiling, so the brightest texel reaches its shoulder.
+    CHECK(brightest > 0.5f * ceiling);
+    CHECK(brightest < 1.1f * ceiling);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

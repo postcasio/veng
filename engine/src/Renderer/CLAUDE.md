@@ -598,7 +598,8 @@ combination previously gave up scaling altogether.
 **`MetalFXTemporal` is TAAU with Apple's MetalFX temporal scaler as the resolve.** It sets
 `TaaActive` like the other temporal modes, so the jitter, the lit target, the stored velocity and
 both allocations are TAAU's unchanged, and `FrameTopology::MetalFxTemporal` swaps only the resolve:
-`MetalFxTemporalScenePass` takes the lit target, the g-buffer depth and a motion target and
+`MetalFxTemporalScenePass` takes a conditioned copy of the lit target, the g-buffer depth and a
+motion target and
 reconstructs the scene-colour allocation into the target the tail reads (the HDR target, or the
 depth-of-field intermediate behind a composited chain, where it resolves at the render allocation as
 TAAU does). The scaler keeps its own history, so no history target is allocated or imported and no
@@ -624,6 +625,18 @@ velocity channel itself is untouched for its other readers. What the fill cannot
 the background is its own motion — a translucent's parallax as the eye travels — which the camera's
 turn dominates at a distance. `tests/gpu/taa_stability.cpp` holds a point-field star over open sky
 under a turning camera to leaving no trail in either temporal resolve.
+
+**The scaler reads a conditioned colour, not the lit target.** The engine's resolve damps the texels
+the tone curve cannot show — it weights each sample by its exposed luminance and clips history to
+the neighbourhood — so a lone specular spike, a non-finite channel or a negative one never reaches
+the screen through it. The scaler does neither, and reconstructs each into a saturated pixel in one
+hue (a NaN or negative green and blue become pure red through the tonemap's `max(hdr * E, 0)`). The
+same pass therefore writes a second render-allocation target from the lit target: a non-finite
+channel zeroed, a negative one clamped to zero, and a luminance past half of
+`SceneView::BloomFireflyCeiling` (over the resolved exposure) rolled off toward it along the bloom
+bright pass's shoulder, hue kept. That ceiling is the one the bloom pass already holds its taps to,
+four times past the white point beyond which the tone curves resolve nothing, so ordinary content
+passes unchanged to both the tone curve and bloom.
 
 **`UpscaleFilter::MetalFXSpatial` is the promotion as MetalFX's spatial scaler.**
 `Settings.Upscale` picks the filter that carries the scene colour across the boundary on a frame
