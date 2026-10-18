@@ -47,7 +47,8 @@ namespace Veng::Renderer
             RangesBinding = 10,
             StatsBinding = 11,
             FrameScalesBinding = 12,
-            BindingCount = 13,
+            FedSpawnsBinding = 13,
+            BindingCount = 14,
         };
 
         // The sort's block (groupshared), and the threads one of its compare-exchange dispatches runs
@@ -119,6 +120,8 @@ namespace Veng::Renderer
         constexpr u64 EmitterRegionBytes = MaxParticleEmittersPerFrame * sizeof(GpuParticleEmitter);
         constexpr u64 RangeRegionBytes = MaxParticleSpawnRanges * sizeof(GpuParticleSpawnRange);
         constexpr u64 FrameScaleRegionBytes = MaxParticleFrameScalesPerFrame * sizeof(f32);
+        constexpr u64 FedSpawnRegionBytes =
+            MaxParticleFedSpawnsPerFrame * sizeof(GpuParticleFedSpawn);
     }
 
     Unique<ParticleSimulation> ParticleSimulation::Create(Context& context, AssetManager& assets,
@@ -156,6 +159,8 @@ namespace Veng::Renderer
         m_StatsRing = RingBuffer(context, "Particle Stats", StatsRegionBytes, m_FramesInFlight);
         m_FrameScales =
             RingBuffer(context, "Particle Frame Scales", FrameScaleRegionBytes, m_FramesInFlight);
+        m_FedSpawns =
+            RingBuffer(context, "Particle Fed Spawns", FedSpawnRegionBytes, m_FramesInFlight);
         std::memset(m_StatsRing->GetMappedData(), 0, StatsRegionBytes * m_FramesInFlight);
         m_SlotSequence.assign(m_FramesInFlight, 0);
 
@@ -192,6 +197,8 @@ namespace Veng::Renderer
             set->Write(StatsBinding, m_StatsRing, StatsRegionBytes * frame, StatsRegionBytes);
             set->Write(FrameScalesBinding, m_FrameScales, FrameScaleRegionBytes * frame,
                        FrameScaleRegionBytes);
+            set->Write(FedSpawnsBinding, m_FedSpawns, FedSpawnRegionBytes * frame,
+                       FedSpawnRegionBytes);
             m_Sets.push_back(std::move(set));
         }
 
@@ -269,6 +276,8 @@ namespace Veng::Renderer
                     plan.Ranges.size() * sizeof(GpuParticleSpawnRange));
         std::memcpy(Region(m_FrameScales, FrameScaleRegionBytes, frame), plan.FrameScales.data(),
                     plan.FrameScales.size() * sizeof(f32));
+        std::memcpy(Region(m_FedSpawns, FedSpawnRegionBytes, frame), plan.FedSpawns.data(),
+                    plan.FedSpawns.size() * sizeof(GpuParticleFedSpawn));
 
         m_SpawnTotal = plan.SpawnTotal;
         m_RangeCount = static_cast<u32>(plan.Ranges.size());

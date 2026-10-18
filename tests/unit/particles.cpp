@@ -1,7 +1,7 @@
 // Particle effects, device-free: the closed-form trajectory, the spawn schedule and its cursors, the
 // spawn state an index derives, the instance's lifetime on the CPU, the pool's retire, the anchor
-// under a floating origin, the baked over-life tables, the gather's budgets, and its wait on a
-// flipbook still loading.
+// under a floating origin, a fed emitter's spawns issued once each and pruned once dead, the baked
+// over-life tables, the gather's budgets, and its wait on a flipbook still loading.
 
 #include <doctest/doctest.h>
 
@@ -539,54 +539,63 @@ TEST_CASE("An anchor latches in the stable frame and holds against a moving orig
     CHECK(worst <= glm::length(base) * 1e-6f);
 }
 
-TEST_CASE("A world-space instance follows its entity, and spawns each particle where it stood then")
+TEST_CASE("A fed emitter's spawns are each issued once, in sequence, as their time comes")
 {
     ParticleScene fixture;
     Scene& scene = *fixture.World;
-    const dvec3 origin(5.0e6, 0.0, -3.0e6);
-    scene.Add<FloatingOrigin>(scene.CreateEntity(), FloatingOrigin{.Position = origin});
-    ParticleEmitterDesc rate = Streak();
-    rate.RatePerSecond = 10.0f;
-    const AssetHandle<ParticleEffect> effect = MakeEffect({rate});
+    ParticleEmitterDesc fed = Streak();
+    fed.Fed = true;
+    fed.Lifetime = vec2(1.0f);
+    const AssetHandle<ParticleEffect> effect = MakeEffect({fed});
+    CHECK(std::isinf(ParticleEffectEndTime(*effect.Get(), -1.0f)));
+    CHECK(ParticleEffectEndTime(*effect.Get(), 2.0f) == 3.0f);
 
-    const vec3 start(1.0f, 2.0f, 3.0f);
-    const Entity moving = scene.CreateEntity();
-    scene.Add<Transform>(moving, Transform{.Position = start});
-    scene.Add<ParticleEffectInstance>(moving,
-                                      ParticleEffectInstance{.Effect = effect, .WorldSpace = true});
-    const Entity still = scene.CreateEntity();
-    scene.Add<Transform>(still, Transform{.Position = start});
-    scene.Add<ParticleEffectInstance>(still, ParticleEffectInstance{.Effect = effect});
+    const Entity entity = Play(scene, effect);
+    const dvec3 anchor = scene.Get<ParticleEffectInstance>(entity).Anchor;
+    auto& feed = scene.Add<ParticleFeed>(entity);
+    for (const f32 time : {0.1f, 0.2f, 0.5f})
+    {
+        feed.Spawns.push_back({.Position = anchor + dvec3(10.0 * time, -2.0, 4.0),
+                               .Velocity = vec3(0.0f, 1.0f, 0.0f),
+                               .Time = time});
+    }
+    // A spawn naming no fed emitter draws nothing.
+    feed.Spawns.push_back({.Time = 0.5f, .Emitter = 3});
 
-    ParticleEffectSystem system;
-    TestSupport::TestServices services;
-    const SystemContext context = services.Make();
-    system.OnUpdate(scene, 0.1f, context);
-    const vec3 step(4.0f, 0.0f, -2.0f);
-    scene.Get<Transform>(moving).Position = start + step;
-    scene.Get<Transform>(still).Position = start + step;
-    system.OnUpdate(scene, 0.1f, context);
+    ParticleGather gather;
+    ParticleFramePlan plan;
+    scene.Get<ParticleEffectInstance>(entity).Time = 0.3f;
+    gather.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
+    REQUIRE(plan.FedSpawns.size() == 2);
+    REQUIRE(plan.Ranges.size() == 1);
+    CHECK((plan.Ranges[0].InstanceEmitter & ParticleRangeFed) != 0u);
+    CHECK(plan.Ranges[0].Count == 2);
+    CHECK(plan.SpawnTotal == 2);
+    CHECK(plan.FedSpawns[0].Index == 0);
+    CHECK(plan.FedSpawns[1].Index == 1);
+    CHECK(glm::length(plan.FedSpawns[1].Offset - vec3(2.0f, -2.0f, 4.0f)) < 1.0e-5f);
+    CHECK(plan.FedSpawns[1].Time == 0.2f);
 
-    const ParticleEffectInstance& a = scene.Get<ParticleEffectInstance>(moving);
-    CHECK(a.Anchor == dvec3(start) + origin);
-    CHECK(glm::length(a.Emitter - step) < 1.0e-4f);
-    CHECK(glm::length(a.PreviousEmitter) < 1.0e-4f);
-    CHECK(a.PreviousTime == doctest::Approx(0.1f));
-    CHECK(a.Time == doctest::Approx(0.2f));
-    // A particle spawning midway through the update stands midway along it, and the span's ends
-    // hold outside it.
-    CHECK(
-        glm::length(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.15f) -
-                    0.5f * step) < 1.0e-4f);
-    CHECK(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.05f) ==
-          a.PreviousEmitter);
-    CHECK(ParticleEmitterAt(a.PreviousEmitter, a.Emitter, a.PreviousTime, a.Time, 0.3f) ==
-          a.Emitter);
+    // Nothing twice, and the next as its time comes.
+    gather.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
+    CHECK(plan.FedSpawns.empty());
+    scene.Get<ParticleEffectInstance>(entity).Time = 0.6f;
+    gather.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
+    REQUIRE(plan.FedSpawns.size() == 1);
+    CHECK(plan.FedSpawns[0].Index == 2);
 
-    // An instance that is not world-space moves nothing.
-    const ParticleEffectInstance& b = scene.Get<ParticleEffectInstance>(still);
-    CHECK(b.Emitter == vec3(0.0f));
-    CHECK(b.PreviousEmitter == vec3(0.0f));
+    // A renderer meeting the feed late issues only what is still alive.
+    scene.Get<ParticleEffectInstance>(entity).Time = 1.25f;
+    ParticleGather late;
+    late.Gather(scene, dvec3(0.0), DefaultParticleCapacity, plan);
+    REQUIRE(plan.FedSpawns.size() == 1);
+    CHECK(plan.FedSpawns[0].Index == 2);
+
+    // Pruning drops the dead from the front and keeps the sequence.
+    PruneParticleFeed(*effect.Get(), 1.25f, feed);
+    CHECK(feed.First == 2);
+    REQUIRE(feed.Spawns.size() == 2);
+    CHECK(feed.Spawns[0].Time == 0.5f);
 }
 
 TEST_CASE("The baked over-life tables keep their curves' ends and shape")

@@ -562,10 +562,14 @@ extern "C"
 /// Version 138 lets a particle effect instance emit in world space: ParticleEffectInstance grows
 /// WorldSpace, Emitter, PreviousEmitter and PreviousTime. A module plays effects, so a stale one
 /// lays the component out short.
+/// Version 139 replaces world-space emission with fed emitters: ParticleEffectInstance drops
+/// WorldSpace, Emitter, PreviousEmitter and PreviousTime; ParticleEmitterDesc grows Fed, and the
+/// ParticleFeed component registers. A module builds effects and plays them, so a stale one lays
+/// both out at the old size.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 138u
+#define VENG_MODULE_ABI_VERSION 139u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

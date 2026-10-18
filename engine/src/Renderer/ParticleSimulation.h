@@ -176,6 +176,8 @@ namespace Veng::Renderer
         Ref<Buffer> m_StatsRing;
         /// @brief See m_Instances.
         Ref<Buffer> m_FrameScales;
+        /// @brief The per-frame ring of fed spawns the spawn pass reads.
+        Ref<Buffer> m_FedSpawns;
 
         /// @brief The chain's set-3 layout.
         Ref<DescriptorSetLayout> m_SetLayout;

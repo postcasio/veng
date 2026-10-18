@@ -124,6 +124,16 @@ namespace Veng
         f32 RateStart = 0.0f;
         /// @brief Seconds the rate runs; 0 runs it until the instance stops emitting.
         f32 RateDuration = 0.0f;
+        /// @brief Whether the emitter's particles are placed by its instance's owner rather than by a
+        ///        schedule.
+        ///
+        /// A fed emitter has no burst and no rate: each particle is one ParticleFeedSpawn the owner
+        /// appends to the ParticleFeed beside the instance — where and when it spawns and the
+        /// velocity it leaves with — and the emitter supplies everything else (lifetime, size,
+        /// spin, flipbook, the shape's offset and the cone's speed, added to the fed ones). It is
+        /// how one instance carries particles laid along many paths: smoke behind every engine in a
+        /// scene, at a spacing the owner chooses.
+        bool Fed = false;
         /// @brief Seconds each particle lives.
         vec2 Lifetime{1.0f, 1.0f};
         /// @brief Where particles spawn.
@@ -337,7 +347,9 @@ namespace Veng
     /// @brief Returns the time by which every particle and flash of an effect has ended.
     ///
     /// The latest of each emitter's last spawn plus its Lifetime.y and each flash's end. While a
-    /// rate emitter with no duration still emits (@p stopTime below 0) it is infinite. Every
+    /// rate emitter with no duration or a fed emitter still emits (@p stopTime below 0) it is
+    /// infinite; a fed emitter's last spawn is taken as the stop, since its owner feeds nothing
+    /// later. Every
     /// particle the effect can spawn is dead by it, so an instance whose time has reached it has
     /// finished, known on the CPU with no readback.
     /// @param effect    The effect.
@@ -361,7 +373,8 @@ namespace Veng
     /// @brief An upper bound on one instance's particles alive at once.
     ///
     /// The sum over the emitters of ParticleEmitterMaxAlive, for budgeting a consumer's effects
-    /// against the renderer's ParticleCapacity.
+    /// against the renderer's ParticleCapacity. A fed emitter adds nothing: what it holds is what
+    /// its owner feeds, which the owner budgets.
     /// @param effect  The effect.
     /// @return The bound, saturated at the u32 range.
     [[nodiscard]] VE_API u32 ParticleEffectMaxAlive(const ParticleEffect& effect);

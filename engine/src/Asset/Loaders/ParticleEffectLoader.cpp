@@ -140,6 +140,7 @@ namespace Veng
             emitter.Playback = static_cast<ParticlePlayback>(source.PlaybackMode);
             emitter.PlaybackFps = source.PlaybackFps;
             emitter.RandomStart = source.RandomStart != 0;
+            emitter.Fed = source.Fed != 0;
             if (source.HasSoftDistance != 0)
             {
                 emitter.SoftDistance = source.SoftDistance;

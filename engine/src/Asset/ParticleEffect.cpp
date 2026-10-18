@@ -235,6 +235,16 @@ namespace Veng
         f32 end = 0.0f;
         for (const ParticleEmitterDesc& emitter : effect.GetEmitters())
         {
+            // A fed emitter takes particles until its instance stops, each fed no later than then.
+            if (emitter.Fed)
+            {
+                if (stopTime < 0.0f)
+                {
+                    return std::numeric_limits<f32>::infinity();
+                }
+                end = std::max(end, stopTime + emitter.Lifetime.y);
+                continue;
+            }
             if (emitter.BurstCount > 0)
             {
                 end = std::max(end, emitter.BurstTime + emitter.Lifetime.y);

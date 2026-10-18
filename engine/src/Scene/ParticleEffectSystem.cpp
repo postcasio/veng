@@ -28,10 +28,29 @@ namespace Veng
             const u64 bits = (static_cast<u64>(entity.Generation) << 32) | entity.Index;
             instance.Seed = static_cast<u32>(Hash64(bits ^ instance.Playback));
         }
-        instance.Emitter = vec3(0.0f);
-        instance.PreviousEmitter = vec3(0.0f);
-        instance.PreviousTime = instance.Time;
         instance.Anchored = true;
+    }
+
+    void PruneParticleFeed(const ParticleEffect& effect, const f32 time, ParticleFeed& feed)
+    {
+        const auto& emitters = effect.GetEmitters();
+        const auto alive = [&](const ParticleFeedSpawn& spawn)
+        {
+            return spawn.Emitter < emitters.size() && emitters[spawn.Emitter].Fed &&
+                   spawn.Time + emitters[spawn.Emitter].Lifetime.y > time;
+        };
+        // Spawns arrive in time order, but emitters differ in lifetime: the front goes only while
+        // it is dead, so a longer-lived spawn behind a shorter-lived one waits for it.
+        usize dead = 0;
+        while (dead < feed.Spawns.size() && !alive(feed.Spawns[dead]))
+        {
+            ++dead;
+        }
+        if (dead > 0)
+        {
+            feed.Spawns.erase(feed.Spawns.begin(), feed.Spawns.begin() + static_cast<isize>(dead));
+            feed.First += dead;
+        }
     }
 
     void RestartParticleEffect(ParticleEffectInstance& instance)
@@ -100,16 +119,10 @@ namespace Veng
                 {
                     instance.StopTime = instance.Time;
                 }
-                const f32 before = instance.Time;
                 instance.Time += delta;
-                if (instance.WorldSpace)
+                if (auto* feed = scene.TryGet<ParticleFeed>(entity))
                 {
-                    const auto* origin = scene.TryGetFirst<FloatingOrigin>();
-                    const dvec3 originPosition = origin != nullptr ? origin->Position : dvec3(0.0);
-                    instance.PreviousEmitter = instance.Emitter;
-                    instance.PreviousTime = before;
-                    instance.Emitter = vec3(dvec3(vec3(WorldMatrix(scene, entity)[3])) +
-                                            originPosition - instance.Anchor);
+                    PruneParticleFeed(*effect, instance.Time, *feed);
                 }
                 instance.Finished =
                     instance.Time >= ParticleEffectEndTime(*effect, instance.StopTime);

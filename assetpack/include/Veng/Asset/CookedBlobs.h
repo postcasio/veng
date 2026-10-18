@@ -1245,8 +1245,9 @@ namespace Veng
         CookedParticleCurve IntensityCurve;
         /// @brief The temperature offset over normalised age.
         CookedParticleCurve TemperatureCurve;
-        /// @brief Pads the record to its 8-byte alignment with a determined byte.
-        u32 Pad = 0;
+        /// @brief Whether the emitter's particles are fed rather than scheduled (stored as u32
+        ///        bool); it holds the word that once padded the record, so an older blob reads 0.
+        u32 Fed = 0;
     };
     static_assert(sizeof(CookedParticleEmitter) == 224,
                   "CookedParticleEmitter layout changed: bump CookedParticleEffectVersion");

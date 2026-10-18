@@ -196,6 +196,24 @@ TEST_CASE("particle effect cook: a billboard's flipbook list cooks to a run of t
     CHECK(smoke.FlipbookCount == 3);
 }
 
+TEST_CASE("particle effect cook: a fed emitter cooks its flag and takes no schedule")
+{
+    nlohmann::json effect = Effect();
+    effect["emitters"][0]["spawn"] = {{"fed", true}};
+    const Cooked cooked = CookEffect("fed", effect);
+    REQUIRE(cooked.Status.has_value());
+    CookedParticleEffectHeader header;
+    std::memcpy(&header, cooked.Blob.data(), sizeof(header));
+    CookedParticleEmitter fed;
+    std::memcpy(&fed, cooked.Blob.data() + sizeof(header), sizeof(fed));
+    CHECK(fed.Fed == 1u);
+    CHECK(fed.BurstCount == 0u);
+    CHECK(fed.RatePerSecond == 0.0f);
+    CookedParticleEmitter scheduled;
+    std::memcpy(&scheduled, cooked.Blob.data() + sizeof(header) + sizeof(fed), sizeof(scheduled));
+    CHECK(scheduled.Fed == 0u);
+}
+
 TEST_CASE("particle effect cook: a malformed effect is refused naming the field")
 {
     {
@@ -256,5 +274,15 @@ TEST_CASE("particle effect cook: a malformed effect is refused naming the field"
         nlohmann::json effect = Effect();
         effect["emitters"][0]["spawn"] = nlohmann::json::object();
         CHECK(Refusal("nothing", effect).find("emitters[0].spawn") != string::npos);
+    }
+    {
+        nlohmann::json effect = Effect();
+        effect["emitters"][0]["spawn"] = {{"fed", true}, {"rate", {{"perSecond", 10}}}};
+        CHECK(Refusal("fedrate", effect).find("emitters[0].spawn") != string::npos);
+    }
+    {
+        nlohmann::json effect = Effect();
+        effect["emitters"][0]["spawn"] = {{"fed", 1}};
+        CHECK(Refusal("fedtype", effect).find("emitters[0].spawn.fed") != string::npos);
     }
 }

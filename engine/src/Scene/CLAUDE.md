@@ -344,25 +344,26 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
 "Particles"). Presentation, never replicated. Its reflected fields are the effect, a `Seed` (0
 derives one per entity and playback at the latch), an `InheritVelocity` added to every particle's
 initial velocity (the emitting body's, unscaled), a `Scale` multiplying every length the effect
-authors while leaving every time alone, `Emitting` (clearing it stops rate emitters),
-`WorldSpace` (below) and the playback `Time`. Runtime-only: the `Anchor` (`dvec3`, in
-`FloatingOrigin`'s stable frame or world space without one), the `Orientation` turning the emitters'
-cones, a `Playback` counter telling successive playbacks on one entity apart, the `StopTime`, a
-world-space instance's `Emitter` and `PreviousEmitter` offsets and `PreviousTime`, and the
-`Anchored` and `Finished` flags.
+authors while leaving every time alone, `Emitting` (clearing it stops rate emitters) and the
+playback `Time`. Runtime-only: the `Anchor` (`dvec3`, in `FloatingOrigin`'s stable frame or world
+space without one), the `Orientation` turning the emitters' cones, a `Playback` counter telling
+successive playbacks on one entity apart, the `StopTime`, and the `Anchored` and `Finished` flags.
 
 - **The anchor is latched once**, by `LatchParticleEffect(scene, entity, instance)` (world position
   plus the scene's origin, world rotation, a derived seed). Nothing re-bases it, since it is already
   in the frame that does not move; writing `Anchor` later moves the whole cloud rigidly, which is how
   an owner carries a live effect. `RestartParticleEffect` starts a playback over, as a new instance.
-- **A `WorldSpace` instance leaves a wake.** Its anchor latches and holds as any other's, but each
-  particle spawns where the entity stood at that particle's spawn time and then flies free of it: the
-  system records the entity's offset from the anchor at each update (`Emitter`, the previous one kept
-  as `PreviousEmitter` at `PreviousTime`), and the spawn interpolates linearly across the update
-  spanning a particle's spawn time (`ParticleEmitterAt`), so a fast emitter lays an even trail
-  rather than a clump per frame. Offsets stay f32 from the anchor, so an emitter that travels
-  kilometres is handed to a fresh instance — a second entity restarted where the emitter is — rather
-  than run indefinitely.
+- **A fed emitter's particles are placed by the owner** (`ParticleEmitterDesc::Fed`, `"spawn":
+  {"fed": true}`). The owner keeps a `ParticleFeed` beside the instance and appends a
+  `ParticleFeedSpawn` per particle — its place in the anchor's frame, its time, its velocity and its
+  emitter — in non-decreasing time, at or before the instance's `Time`; the emitter supplies the rest
+  and scatters each about its place and velocity by its shape and cone. A spawn's sequence number
+  (`ParticleFeed::First` plus its index) is the particle's index, so every renderer draws it once
+  and alike, and one meeting the feed late draws only what is still alive. `ParticleEffectSystem`
+  prunes spawns from the front once dead (`PruneParticleFeed`). It is how one instance carries
+  particles laid along many paths at the owner's own spacing; an instance with a fed emitter
+  finishes only a lifetime after it stops emitting. A feed is presentation: a `VE_TYPE`, never
+  replicated or saved.
 - **`ParticleEffectSystem`** (View phase, registered immediately ahead of `FlipbookSystem`) latches
   an unanchored instance, records `StopTime` the first update after `Emitting` goes false, advances
   `Time`, and sets `Finished` once `Time` reaches `ParticleEffectEndTime` — the CPU knows exactly when

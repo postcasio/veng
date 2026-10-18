@@ -1563,17 +1563,6 @@ namespace Veng
         /// @brief Whether rate emitters keep spawning; clearing it stops them, and the instance
         ///        finishes once what they spawned has died.
         bool Emitting = true;
-        /// @brief Whether each particle spawns where the entity stands when it spawns, rather than
-        ///        where the instance latched.
-        ///
-        /// Off, the whole effect plays about its latched anchor. On, the anchor still latches once
-        /// and nothing moves it, but ParticleEffectSystem follows the entity: each particle spawns
-        /// at the entity's position at its own spawn time — interpolated across the update that
-        /// spans it, so a fast emitter leaves an even trail rather than a clump per frame — and
-        /// then flies free of the entity. That is a moving emitter's wake: smoke behind an engine,
-        /// dust behind a vehicle. Positions are still f32 offsets from the anchor, so an emitter
-        /// that travels kilometres is handed to a fresh instance rather than run indefinitely.
-        bool WorldSpace = false;
         /// @brief Seconds of playback, advanced by ParticleEffectSystem. Authoring it starts the
         ///        playback that far in, showing exactly what a playback run from 0 would show then.
         f32 Time = 0.0f;
@@ -1589,18 +1578,42 @@ namespace Veng
         /// @brief The Time at which Emitting was cleared, or below 0 while still emitting.
         ///        Runtime-only.
         f32 StopTime = -1.0f;
-        /// @brief A WorldSpace instance's entity, as an offset from Anchor at Time; zero otherwise.
-        ///        Set by ParticleEffectSystem. Runtime-only.
-        vec3 Emitter{0.0f};
-        /// @brief Emitter as it stood at PreviousTime. Runtime-only.
-        vec3 PreviousEmitter{0.0f};
-        /// @brief The Time of the update before the latest, which PreviousEmitter was read at.
-        ///        Runtime-only.
-        f32 PreviousTime = 0.0f;
         /// @brief Whether Anchor and Orientation have been latched. Runtime-only.
         bool Anchored = false;
         /// @brief Set once every particle and flash of the effect has ended. Runtime-only.
         bool Finished = false;
+    };
+
+    /// @brief One particle an owner places for a fed emitter: where and when it spawns, and how it
+    ///        leaves.
+    struct ParticleFeedSpawn
+    {
+        /// @brief Where it spawns, in the frame the instance anchors in (FloatingOrigin's stable
+        ///        frame, or world space without one).
+        dvec3 Position{0.0};
+        /// @brief Its velocity at spawn, world units per second; the emitter's cone speed and the
+        ///        instance's InheritVelocity are added.
+        vec3 Velocity{0.0f};
+        /// @brief Seconds of the instance's playback it spawns at.
+        f32 Time = 0.0f;
+        /// @brief Which of the effect's emitters it belongs to; one not fed draws nothing.
+        u32 Emitter = 0;
+    };
+
+    /// @brief The particles an owner has placed for an instance's fed emitters.
+    ///
+    /// Beside a ParticleEffectInstance whose effect has a fed emitter (ParticleEmitterDesc::Fed).
+    /// The owner appends to Spawns in non-decreasing Time, at or before the instance's Time; each
+    /// spawn's place in the sequence — First plus its index — is the particle's index, so every
+    /// renderer draws it once and alike, and a renderer meeting the feed late issues only those
+    /// still alive. ParticleEffectSystem drops spawns from the front once their emitter's longest
+    /// lifetime has passed, advancing First. Presentation, never replicated or saved: a VE_TYPE.
+    struct ParticleFeed
+    {
+        /// @brief The spawns still possibly alive, oldest first.
+        vector<ParticleFeedSpawn> Spawns;
+        /// @brief The sequence number of Spawns' first entry.
+        u64 First = 0;
     };
 
     /// @brief A straight camera-facing ribbon between two world points: a beam, a streak, a tether.
@@ -2357,6 +2370,7 @@ VE_REFLECT_END();
 
 // Registered without a reflected field, so it neither serializes nor rides the wire: provenance is
 // derivable state recorded at spawn, never authored and never persisted.
+VE_TYPE(::Veng::ParticleFeed, 0x22741CAA9D6E422BULL);
 VE_TYPE(::Veng::PrefabSource, 0xD0EA6653C1F9B14DULL);
 
 // A fieldless mark: the component's presence is the whole signal, so there is nothing to reflect.
@@ -2579,7 +2593,7 @@ VE_FIELD(Ignition, .DisplayName = "Ignition",
 VE_REFLECT_END();
 
 // Presentation, local-only — never replicated. The anchor, orientation, playback counter, stop
-// time, emitter offsets and latch and finish flags are runtime-only and carry no reflected field.
+// time and latch and finish flags are runtime-only and carry no reflected field.
 VE_REFLECT(::Veng::ParticleEffectInstance, 0x67B79C3C429B3740ULL)
 VE_FIELD(Effect, .DisplayName = "Effect")
 VE_FIELD(Seed, .DisplayName = "Seed", .Tooltip = "0 derives one per entity and playback")
@@ -2588,8 +2602,6 @@ VE_FIELD(InheritVelocity, .DisplayName = "Inherit Velocity",
 VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Multiplies every length; times are unchanged",
          .Display = {.Min = 0.0, .Step = 0.05})
 VE_FIELD(Emitting, .DisplayName = "Emitting")
-VE_FIELD(WorldSpace, .DisplayName = "World Space",
-         .Tooltip = "Spawn each particle where the entity stands then, leaving a wake")
 VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 

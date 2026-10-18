@@ -19,6 +19,7 @@
 StructuredBuffer<GpuParticleSpawnRange> g_SpawnRanges;
 [[vk::binding(PARTICLE_BINDING_STATS, 3)]] RWStructuredBuffer<uint> g_Stats;
 [[vk::binding(PARTICLE_BINDING_FRAME_SCALES, 3)]] StructuredBuffer<float> g_FrameScales;
+[[vk::binding(PARTICLE_BINDING_FED_SPAWNS, 3)]] StructuredBuffer<GpuParticleFedSpawn> g_FedSpawns;
 
 // Matches ParticleSimulation's ParticleComputePush.
 struct ParticleComputePush

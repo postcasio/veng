@@ -1348,10 +1348,11 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   particles (48-byte `GpuParticle`), the dead list, two halves of live list, the additive list, the
   alpha sort keys (`max(N, 1024)` `uvec2`s), the 112-byte draw records, the counters and the
   argument buffer. Per-frame host-mapped rings — one region per frame in flight — carry the instance
-  table (`MaxParticleInstances`, 1,024 × 96 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
+  table (`MaxParticleInstances`, 1,024 × 64 bytes), the emitter table (`MaxParticleEmittersPerFrame`,
   256 × 1,424 bytes, each holding the emitter's parameters, one flipbook's handles, grid and
   shading, the ramp in the sprite pass's form and its two 32-sample over-life tables), the spawn
-  ranges (`MaxParticleSpawnRanges`, 4,096), a frame-extent table and a stats region. About 12 MB at
+  ranges (`MaxParticleSpawnRanges`, 4,096), the fed spawns (`MaxParticleFedSpawnsPerFrame`,
+  16,384 × 32 bytes), a frame-extent table and a stats region. About 12 MB at
   the default capacity, allocated only while the chain is wired.
 - **Each particle's state is written once, at spawn.** Its position at any age is the closed form
   of constant acceleration plus linear drag (`ParticleOffsetAt`, below a `k·t` of 1e-3 a third-order
@@ -1360,8 +1361,7 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   particles**: an environment capture executing every few frames, a second viewport, or a renderer
   created mid-effect shows each particle where it is. The math is twinned line for line in
   `ParticleMath.h` and `particle_math.slang` (the PCG hash, a particle's key and random streams, the
-  hashed value noise, `MakeParticleSpawnState`, a world-space emitter's `ParticleEmitterAt` and the
-  trajectory), the `InstancedCull.h` precedent,
+  hashed value noise, `MakeParticleSpawnState` and the trajectory), the `InstancedCull.h` precedent,
   so the unit band pins what the GPU computes. A force neither constant nor linear in velocity would
   need a stepped state, which this does not have.
 - **The gather is device-free** (`ParticleGather.{h,cpp}`, run each `Execute` after the sprite
@@ -1377,6 +1377,13 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   `EmittersDropped`, which the renderer warns of once. An instance whose effect names a flipbook not
   yet resident does the same until it lands, counted apart in `InstancesWaiting` with no warning: an
   effect loaded asynchronously waits a few frames, which is not a budget.
+- **Fed spawns ride the same ranges.** For an instance with a `ParticleFeed`, the gather issues each
+  spawn at or before the playback time and still alive, from the slot's own sequence cursor, as a
+  `GpuParticleFedSpawn` (its offset from the anchor, computed in double; its time, velocity and
+  sequence number), a run of one emitter's spawns sharing a range flagged `ParticleRangeFed` whose
+  `FirstIndex` is its first record. The spawn pass reads the record for the particle's index, time,
+  place and velocity and derives everything else from the index as for any particle. Spawns past
+  the pool or the record table are passed over and counted with the dropped spawns.
 - **An emitter with several flipbooks takes a record per flipbook.** A billboard's
   `ParticleEmitterDesc::Flipbooks` may list up to `MaxParticleFlipbookVariants`; an effect's
   records are its emitters' own, in order (each playing its first flipbook, so an emitter's index

@@ -1,10 +1,10 @@
 // Particle Spawn: one thread per index the frame's spawn ranges issue. A thread finds its range by
-// a binary search over the ranges' prefixes, derives its particle's spawn state from the index
-// alone (moved to where a world-space instance's emitter stood at the spawn time), picks which of
-// its emitter's flipbooks it plays, pops a free slot, writes the state and appends the slot to the
-// live list. A particle
-// already past its lifetime at this frame's time takes no slot and is not counted; a spawn finding
-// no free slot is dropped and counted.
+// a binary search over the ranges' prefixes and derives its particle's spawn state from the index
+// alone; a fed range reads the index, time, place and velocity from its fed-spawn record, and the
+// shape's offset and cone's speed scatter about them. It picks which of its emitter's flipbooks the
+// particle plays, pops a free slot, writes the state and appends the slot to the live list. A
+// particle already past its lifetime at this frame's time takes no slot and is not counted; a spawn
+// finding no free slot is dropped and counted.
 #include "particle_compute.slang"
 #include "particle_math.slang"
 
@@ -33,15 +33,28 @@ void csMain(uint3 id : SV_DispatchThreadID)
         }
     }
     GpuParticleSpawnRange range = g_SpawnRanges[lo];
-    uint index = range.FirstIndex + (id.x - range.Prefix);
+    bool fed = (range.InstanceEmitter & ParticleRangeFed) != 0u;
     uint slot = range.InstanceEmitter & 0xFFFFu;
-    uint emitterIndex = range.InstanceEmitter >> 16;
+    uint emitterIndex = (range.InstanceEmitter >> 16) & 0x7FFFu;
     GpuParticleInstance instance = g_Instances[slot];
     GpuParticleEmitter emitter = g_Emitters[instance.EmitterBase + emitterIndex];
 
-    uint burst = emitter.Counts.x;
-    float spawnTime = index < burst ? emitter.Spawn.x
-                                    : emitter.Spawn.y + float(index - burst) / emitter.Spawn.z;
+    // A scheduled particle's index and time come from its range; a fed one's from its record.
+    uint index = range.FirstIndex + (id.x - range.Prefix);
+    float spawnTime;
+    GpuParticleFedSpawn feed;
+    if (fed)
+    {
+        feed = g_FedSpawns[index];
+        index = feed.Index;
+        spawnTime = feed.Time;
+    }
+    else
+    {
+        uint burst = emitter.Counts.x;
+        spawnTime = index < burst ? emitter.Spawn.x
+                                  : emitter.Spawn.y + float(index - burst) / emitter.Spawn.z;
+    }
 
     ParticleSpawnParams params;
     params.Shape = emitter.Mode.z;
@@ -60,6 +73,13 @@ void csMain(uint3 id : SV_DispatchThreadID)
     spawner.Seed = instance.Seed;
     spawner.Scale = instance.Scale;
     ParticleSpawnState state = MakeParticleSpawnState(params, spawner, emitterIndex, index);
+    if (fed)
+    {
+        // The shape's offset and the cone's speed scatter a fed particle about its fed place
+        // and velocity.
+        state.Offset += feed.Offset;
+        state.Velocity += feed.Velocity;
+    }
     if (instance.Time - spawnTime >= state.Lifetime)
     {
         return;
@@ -77,10 +97,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     uint particleSlot = g_DeadList[previous - 1u];
 
     GpuParticle particle;
-    // A world-space instance spawns each particle where its emitter stood at the spawn time.
-    particle.Offset = state.Offset + ParticleEmitterAt(instance.PreviousEmitter, instance.Emitter,
-                                                       instance.PreviousTime, instance.Time,
-                                                       spawnTime);
+    particle.Offset = state.Offset;
     particle.SpawnTime = spawnTime;
     particle.Velocity = state.Velocity;
     particle.Lifetime = state.Lifetime;

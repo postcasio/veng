@@ -28,6 +28,13 @@ namespace Veng::Renderer
     /// @brief The most per-frame flipbook extents one frame uploads.
     inline constexpr u32 MaxParticleFrameScalesPerFrame = 16384;
 
+    /// @brief The most fed spawns one frame issues.
+    inline constexpr u32 MaxParticleFedSpawnsPerFrame = 16384;
+
+    /// @brief GpuParticleSpawnRange::InstanceEmitter's flag for a range of fed spawns, whose
+    ///        FirstIndex is its first record in the frame's fed-spawn table.
+    inline constexpr u32 ParticleRangeFed = 0x80000000u;
+
     /// @brief GpuParticleEmitter::Mode.w bits, mirrored by particle_types.slang.
     namespace ParticleFlag
     {
@@ -75,7 +82,7 @@ namespace Veng::Renderer
     };
     static_assert(sizeof(GpuParticle) == 48, "GpuParticle must match particle_types.slang");
 
-    /// @brief One playing instance (std430, 96 bytes); mirrors particle_types.slang.
+    /// @brief One playing instance (std430, 64 bytes); mirrors particle_types.slang.
     struct GpuParticleInstance
     {
         /// @brief The anchor relative to the eye, along render-space axes.
@@ -96,16 +103,8 @@ namespace Veng::Renderer
         u32 EmitterCount = 0;
         /// @brief Multiplies every length the effect authors.
         f32 Scale = 1.0f;
-        /// @brief A world-space emitter's offset from the anchor at Time; zero otherwise.
-        vec3 Emitter{0.0f};
-        /// @brief The update before Time.
-        f32 PreviousTime = 0.0f;
-        /// @brief Emitter at PreviousTime.
-        vec3 PreviousEmitter{0.0f};
-        /// @brief Pads the record to 96 bytes.
-        u32 Pad = 0;
     };
-    static_assert(sizeof(GpuParticleInstance) == 96,
+    static_assert(sizeof(GpuParticleInstance) == 64,
                   "GpuParticleInstance must match particle_types.slang");
 
     /// @brief One emitter of an effect drawn this frame (std430, 1408 bytes); mirrors
@@ -156,11 +155,27 @@ namespace Veng::Renderer
                   "GpuParticleEmitter must match particle_types.slang");
 
     /// @brief One run of particle indices to spawn (std430, 16 bytes); mirrors particle_types.slang.
+    /// @brief One fed spawn issued this frame (std430, 32 bytes); mirrors particle_types.slang.
+    struct GpuParticleFedSpawn
+    {
+        /// @brief Where it spawns, as an offset from the instance's anchor.
+        vec3 Offset{0.0f};
+        /// @brief Seconds of the instance's playback it spawns at.
+        f32 Time = 0.0f;
+        /// @brief Its fed velocity at spawn.
+        vec3 Velocity{0.0f};
+        /// @brief Its place in the feed's sequence: the particle's index.
+        u32 Index = 0;
+    };
+    static_assert(sizeof(GpuParticleFedSpawn) == 32,
+                  "GpuParticleFedSpawn must match particle_types.slang");
+
     struct GpuParticleSpawnRange
     {
-        /// @brief Instance slot in the low 16 bits, the effect-local emitter index in the high 16.
+        /// @brief Instance slot in the low 16 bits, the effect-local emitter index in bits 16-30,
+        ///        and ParticleRangeFed for a range of fed spawns.
         u32 InstanceEmitter = 0;
-        /// @brief The first particle index.
+        /// @brief The first particle index, or for a fed range its first fed-spawn record.
         u32 FirstIndex = 0;
         /// @brief How many indices.
         u32 Count = 0;
@@ -218,6 +233,8 @@ namespace Veng::Renderer
         vector<GpuParticleSpawnRange> Ranges;
         /// @brief Per-frame flipbook extents the emitters index.
         vector<f32> FrameScales;
+        /// @brief This frame's fed spawns, which its fed ranges index.
+        vector<GpuParticleFedSpawn> FedSpawns;
         /// @brief The particles this frame spawns: the sum of the ranges' counts.
         u32 SpawnTotal = 0;
         /// @brief An upper bound on the particles alive after this frame's spawns.
@@ -299,6 +316,8 @@ namespace Veng::Renderer
             bool Seen = false;
             /// @brief Per emitter, the indices of each stream issued so far.
             vector<ParticleStreamCounts> Cursors;
+            /// @brief The feed sequence number every spawn before has been issued or passed.
+            u64 FedCursor = 0;
         };
 
         /// @brief Every slot, the free ones included.

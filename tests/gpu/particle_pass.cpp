@@ -1,11 +1,10 @@
 // The particle chain on a real device, at a pool of 64: a particle drawn from the closed form lands
-// where the CPU twin puts it, a burst spawns exactly its count, a burst past the pool is clamped
-// and counted, death and an early retire empty the pool and idle the chain, alpha particles sort
-// back to front whichever spawned first, a world-space emitter leaves its particles along its path,
-// each particle plays the flipbook variant its key picks, and a streak lights the span between its
-// tail and its head. A white premultiplied flipbook makes a billboard's pixel its tint.
+// where the CPU twin puts it, a burst spawns exactly its count, a burst past the pool is clamped and
+// counted, death and an early retire empty the pool and idle the chain, alpha particles sort back to
+// front whichever spawned first, a fed particle draws where it was placed, each particle plays the
+// flipbook variant its key picks, and a streak lights the span between its tail and its head. A
+// white premultiplied flipbook makes a billboard's pixel its tint.
 
-#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -239,56 +238,28 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "particle pass: a world-space emitter leaves its particles along its path")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "particle pass: a fed particle draws where it was placed")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
     const AssetHandle<Flipbook> flipbook = WhiteFlipbook(Context);
     ParticleEmitterDesc emitter = Billboard(flipbook, ParticleBlend::Additive);
     emitter.BurstCount = 0;
-    emitter.RatePerSecond = 20.0f;
+    emitter.Fed = true;
     emitter.IntensityCurve = {{.T = 0.0f, .Value = 0.5f}};
-    const AssetHandle<ParticleEffect> effect = Effect({emitter});
-
-    // The emitter sweeps from x = -1.5 to 1.5 over a second, ten updates of 0.1 s; its particles
-    // rest where they spawned, 0.15 apart along the sweep.
-    constexpr vec3 From{-1.5f, 0.0f, 0.0f};
-    constexpr vec3 Sweep{3.0f, 0.0f, 0.0f};
-    for (const bool worldSpace : {true, false})
+    ParticleView render = MakeRenderer(Context, assets);
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = Play(*scene, Effect({emitter}), vec3(0.0f), 0.1f);
+    const dvec3 anchor = scene->Get<ParticleEffectInstance>(entity).Anchor;
+    auto& feed = scene->Add<ParticleFeed>(entity);
+    for (const f32 x : {-1.2f, 1.2f})
     {
-        CAPTURE(worldSpace);
-        ParticleView render = MakeRenderer(Context, assets);
-        const Unique<Scene> scene = Scene::Create(Types);
-        const Entity entity = Play(*scene, effect, From, 0.0f);
-        for (u32 frame = 1; frame <= 10; ++frame)
-        {
-            auto& instance = scene->Get<ParticleEffectInstance>(entity);
-            instance.PreviousTime = instance.Time;
-            instance.Time = 0.1f * static_cast<f32>(frame);
-            if (worldSpace)
-            {
-                instance.PreviousEmitter = instance.Emitter;
-                instance.Emitter = Sweep * (0.1f * static_cast<f32>(frame));
-            }
-            render.Render(Context, *scene);
-        }
-        f32 dimmest = 1.0f;
-        for (const f32 t : {0.2f, 0.45f, 0.7f, 0.9f})
-        {
-            dimmest = std::min(dimmest, render.At(From + Sweep * t).x);
-        }
-        if (worldSpace)
-        {
-            CHECK(dimmest > 0.2f);
-        }
-        else
-        {
-            // Every particle stands at the anchor.
-            CHECK(dimmest < 0.05f);
-            CHECK(render.At(From).x > 0.2f);
-        }
+        feed.Spawns.push_back({.Position = anchor + dvec3(x, 0.0, 0.0), .Time = 0.05f});
     }
+    render.Render(Context, *scene);
+    CHECK(render.At(vec3(-1.2f, 0.0f, 0.0f)).x > 0.2f);
+    CHECK(render.At(vec3(1.2f, 0.0f, 0.0f)).x > 0.2f);
+    CHECK(render.At(vec3(0.0f)).x < 0.05f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

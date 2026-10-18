@@ -233,8 +233,14 @@ namespace Veng::Renderer
             }
         }
 
-        // The instances this frame tracks, by slot, with the component each reads.
-        vector<std::pair<u32, const ParticleEffectInstance*>> tracked;
+        // The instances this frame tracks, by slot, with the component each reads and its feed.
+        struct Tracked
+        {
+            u32 Slot = 0;
+            const ParticleEffectInstance* Instance = nullptr;
+            const ParticleFeed* Feed = nullptr;
+        };
+        vector<Tracked> tracked;
         for (const auto [entity, instance] : scene.View<ParticleEffectInstance>())
         {
             if (instance.Effect.Get() == nullptr || !instance.Anchored || instance.Finished)
@@ -274,6 +280,7 @@ namespace Veng::Renderer
                 ++claimed.Generation;
                 claimed.Cursors.assign(instance.Effect.Get()->GetEmitters().size(),
                                        ParticleStreamCounts{});
+                claimed.FedCursor = 0;
                 bySlotKey[key] = slotIndex;
             }
             Slot& slot = m_Slots[slotIndex];
@@ -284,7 +291,9 @@ namespace Veng::Renderer
             }
             slot.Seen = true;
             slot.Cursors.resize(instance.Effect.Get()->GetEmitters().size());
-            tracked.emplace_back(slotIndex, &instance);
+            tracked.push_back({.Slot = slotIndex,
+                               .Instance = &instance,
+                               .Feed = scene.TryGet<ParticleFeed>(entity)});
         }
 
         for (Slot& slot : m_Slots)
@@ -313,7 +322,7 @@ namespace Veng::Renderer
         u64 alive = 0;
         u64 alphaAlive = 0;
 
-        for (const auto& [slotIndex, instance] : tracked)
+        for (const auto& [slotIndex, instance, feed] : tracked)
         {
             Slot& slot = m_Slots[slotIndex];
             const ParticleEffect& effect = *instance->Effect.Get();
@@ -399,9 +408,72 @@ namespace Veng::Renderer
             record.EmitterBase = drawn ? base : 0u;
             record.EmitterCount = drawn ? emitterCount : 0u;
             record.Scale = instance->Scale;
-            record.Emitter = instance->Emitter;
-            record.PreviousTime = instance->PreviousTime;
-            record.PreviousEmitter = instance->PreviousEmitter;
+
+            // Fed spawns, in sequence, from where this renderer left off: each spawn at or before
+            // the playback time and still alive is issued once, a run of one emitter's spawns
+            // sharing a range; one past the budgets is passed over and counted.
+            vector<u64> fedAlive(emitterCount, 0);
+            if (feed != nullptr)
+            {
+                const auto& emitters = effect.GetEmitters();
+                const u64 end = feed->First + feed->Spawns.size();
+                u64 sequence = std::max(slot.FedCursor, feed->First);
+                for (; drawn && sequence < end; ++sequence)
+                {
+                    const ParticleFeedSpawn& spawn = feed->Spawns[sequence - feed->First];
+                    if (spawn.Time > instance->Time)
+                    {
+                        break;
+                    }
+                    if (spawn.Emitter >= emitterCount || !emitters[spawn.Emitter].Fed ||
+                        spawn.Time + emitters[spawn.Emitter].Lifetime.y <= instance->Time)
+                    {
+                        continue;
+                    }
+                    if (plan.SpawnTotal >= capacity ||
+                        plan.FedSpawns.size() >= MaxParticleFedSpawnsPerFrame)
+                    {
+                        ++plan.SpawnsDropped;
+                        continue;
+                    }
+                    const u32 key = slotIndex | (spawn.Emitter << 16) | ParticleRangeFed;
+                    const u32 record = static_cast<u32>(plan.FedSpawns.size());
+                    GpuParticleSpawnRange* const last =
+                        plan.Ranges.empty() ? nullptr : &plan.Ranges.back();
+                    if (last == nullptr || last->InstanceEmitter != key ||
+                        last->FirstIndex + last->Count != record)
+                    {
+                        if (plan.Ranges.size() >= MaxParticleSpawnRanges)
+                        {
+                            ++plan.SpawnsDropped;
+                            continue;
+                        }
+                        plan.Ranges.push_back({.InstanceEmitter = key,
+                                               .FirstIndex = record,
+                                               .Count = 0,
+                                               .Prefix = plan.SpawnTotal});
+                    }
+                    plan.FedSpawns.push_back({
+                        .Offset = vec3(spawn.Position - instance->Anchor),
+                        .Time = spawn.Time,
+                        .Velocity = spawn.Velocity,
+                        .Index = static_cast<u32>(sequence),
+                    });
+                    ++plan.Ranges.back().Count;
+                    ++plan.SpawnTotal;
+                }
+                if (drawn)
+                {
+                    slot.FedCursor = sequence;
+                }
+                for (const ParticleFeedSpawn& spawn : feed->Spawns)
+                {
+                    if (spawn.Emitter < emitterCount && emitters[spawn.Emitter].Fed)
+                    {
+                        ++fedAlive[spawn.Emitter];
+                    }
+                }
+            }
 
             for (u32 e = 0; e < emitterCount; ++e)
             {
@@ -448,7 +520,7 @@ namespace Veng::Renderer
                 }
 
                 const u64 live = static_cast<u64>(CountsBetween(cursor.Burst, first.Burst)) +
-                                 CountsBetween(cursor.Rate, first.Rate);
+                                 CountsBetween(cursor.Rate, first.Rate) + fedAlive[e];
                 alive += live;
                 if (!drawn)
                 {

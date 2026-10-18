@@ -22,6 +22,7 @@
 #define PARTICLE_BINDING_SPAWN_RANGES 10
 #define PARTICLE_BINDING_STATS 11
 #define PARTICLE_BINDING_FRAME_SCALES 12
+#define PARTICLE_BINDING_FED_SPAWNS 13
 
 // Byte offsets of the counters buffer's words.
 static const uint ParticleCounterDead = 0;
@@ -77,7 +78,19 @@ struct GpuParticle
     float Spin;      // roll rate, radians per second
 };
 
-// One playing instance (96 bytes).
+// GpuParticleSpawnRange::InstanceEmitter's flag for a range of fed spawns.
+static const uint ParticleRangeFed = 0x80000000u;
+
+// One fed spawn issued this frame (32 bytes).
+struct GpuParticleFedSpawn
+{
+    float3 Offset;   // where it spawns, from the instance's anchor
+    float Time;      // seconds of the instance's playback it spawns at
+    float3 Velocity; // its fed velocity at spawn
+    uint Index;      // its place in the feed's sequence: the particle's index
+};
+
+// One playing instance (64 bytes).
 struct GpuParticleInstance
 {
     float3 AnchorEye;       // the anchor's position relative to the eye, render-space axes
@@ -89,10 +102,6 @@ struct GpuParticleInstance
     uint EmitterBase;       // the effect's first emitter in the emitter table
     uint EmitterCount;
     float Scale;            // multiplies every length the effect authors
-    float3 Emitter;         // a world-space emitter's offset from the anchor at Time; else zero
-    float PreviousTime;     // the update before Time
-    float3 PreviousEmitter; // Emitter at PreviousTime
-    uint Pad;
 };
 
 // One emitter's record for one of its flipbooks, drawn this frame (1424 bytes).

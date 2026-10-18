@@ -349,10 +349,24 @@ namespace Veng::Cook
             VE_PFX_READ(
                 emitter.RateDuration,
                 reader.NonNegative(*rate, "duration", field + ".spawn.rate.duration", 0.0f));
-            if (emitter.BurstCount == 0 && emitter.RatePerSecond <= 0.0f)
+            if (spawn->contains("fed") && !(*spawn)["fed"].is_null())
+            {
+                if (!(*spawn)["fed"].is_boolean())
+                {
+                    return std::unexpected(reader.Error(field + ".spawn.fed", "must be a boolean"));
+                }
+                emitter.Fed = (*spawn)["fed"].get<bool>() ? 1u : 0u;
+            }
+            if (emitter.Fed != 0 && (emitter.BurstCount > 0 || emitter.RatePerSecond > 0.0f))
+            {
+                return std::unexpected(
+                    reader.Error(field + ".spawn", "a fed emitter takes no burst and no rate"));
+            }
+            if (emitter.Fed == 0 && emitter.BurstCount == 0 && emitter.RatePerSecond <= 0.0f)
             {
                 return std::unexpected(reader.Error(
-                    field + ".spawn", "the emitter spawns nothing (no burst count and no rate)"));
+                    field + ".spawn",
+                    "the emitter spawns nothing (no burst count, no rate, and not fed)"));
             }
 
             vec2 range{};

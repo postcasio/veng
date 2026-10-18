@@ -100,17 +100,6 @@ struct ParticleSpawnParams
     float2 Spin;         // radians per second
 };
 
-// Where a world-space instance's emitter stood at a particle's spawn time: its offset from the
-// anchor, linear across the update spanning the time and held at either end outside it; zero for an
-// instance that is not world-space.
-float3 ParticleEmitterAt(float3 previous, float3 current, float previousTime, float time,
-                         float spawnTime)
-{
-    float span = time - previousTime;
-    float t = span > 0.0 ? clamp((spawnTime - previousTime) / span, 0.0, 1.0) : 1.0;
-    return previous + (current - previous) * t;
-}
-
 // What a particle's spawn reads of its instance.
 struct ParticleSpawnInstance
 {

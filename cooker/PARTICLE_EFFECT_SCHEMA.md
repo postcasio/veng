@@ -67,6 +67,7 @@ leaves every time alone. Every key the cook does not name here is ignored.
 | `spawn.rate.perSecond` | number ≥ 0 | 0 | The rate. Rate particle `j` spawns at `start + j / perSecond`. |
 | `spawn.rate.start` | number ≥ 0 | 0 | When the rate starts. |
 | `spawn.rate.duration` | number ≥ 0 | 0 | The rate spawns `ceil(duration · perSecond)` particles; 0 runs it until the instance stops emitting. |
+| `spawn.fed` | bool | false | The emitter's particles are placed by the instance's owner (`ParticleFeed`), each with its own place, time and velocity, rather than scheduled; it takes no burst and no rate. The shape's offset and the cone's speed are added to each fed place and velocity. An emitter must burst, rate or be fed. |
 | `lifetime` | `[min, max]` ≥ 0 | `[1, 1]` | Seconds each particle lives. |
 | `shape.kind` | `"point"` \| `"sphere"` \| `"shell"` | `"point"` | Where particles spawn: the origin, uniformly through a ball, or on its surface. |
 | `shape.radius` | number ≥ 0 | 0 | The shape's radius `R`. |
