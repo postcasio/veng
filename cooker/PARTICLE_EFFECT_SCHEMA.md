@@ -78,7 +78,7 @@ leaves every time alone. Every key the cook does not name here is ignored.
 | `velocity.noise.frequency` | number ≥ 0 | 1 | Its spatial frequency. |
 | `acceleration` | `[x, y, z]` | `[0, 0, 0]` | Constant acceleration in the stable frame, units per second squared. |
 | `drag` | number ≥ 0 | 0 | Linear drag rate `k`, per second. |
-| `size` | `[min, max]` ≥ 0 | `[1, 1]` | The quad's width; a billboard's height follows its flipbook's frame aspect. |
+| `size` | `[min, max]` ≥ 0 | `[1, 1]` | The quad's width; a billboard's height follows its flipbook's frame aspect. For a flipbook carrying `frameScale` it is the width of a frame at scale 1 — each frame draws at `size` times its scale. |
 | `rotation` | `[min, max]` degrees | `[0, 0]` | The initial screen-plane roll. |
 | `spin` | `[min, max]` degrees per second | `[0, 0]` | The roll rate. |
 | `playback.mode` | `"lifetime"` \| `"fps"` | `"lifetime"` | `lifetime` stretches the whole flipbook over the particle's life; `fps` plays at `playback.fps`, wrapping when the flipbook loops and holding its last frame when it does not. |
