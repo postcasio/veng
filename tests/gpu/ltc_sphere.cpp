@@ -11,6 +11,11 @@
 // whole angular range (to within the 16-gon discretization), which is exactly the correctness the
 // silhouette-disk construction buys — and which the centre-disk construction fails at large sizes.
 //
+// The specular path is pinned on what a sphere below the surface's plane does: nothing. The fitted
+// transform of a glossy lobe can carry such a sphere across the transformed horizon, where the
+// horizon clip reads it as partly visible and lights a ring about the light's antipode — a
+// reflection of a light the surface faces away from.
+//
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
 #include <array>
@@ -42,7 +47,106 @@ namespace
     struct LtcSpherePush
     {
         u32 CaseCount;
+        u32 Mode;
     };
+
+    /// @brief The shader's diffuse mode: one source angular size a case.
+    constexpr u32 DiffuseMode = 0;
+
+    /// @brief The shader's specular mode: one view and inverse transform a case.
+    constexpr u32 SpecularMode = 1;
+
+    /// @brief Dispatches the integrator over a case buffer and returns its per-case results.
+    /// @param fixture    The GPU fixture whose context, tasks and types run the dispatch.
+    /// @param cases      The case buffer's bytes, laid out as the mode reads them.
+    /// @param caseCount  The number of cases.
+    /// @param mode       DiffuseMode or SpecularMode.
+    /// @return One float4 of results per case.
+    vector<vec4> RunLtcSphere(Veng::Test::GpuFixture& fixture, std::span<const u8> cases,
+                              const u32 caseCount, const u32 mode)
+    {
+        AssetManager assets(fixture.Context, fixture.Tasks, fixture.Types);
+        const VoidResult mounted = assets.Mount(path(TEST_SHADER_PACK));
+        REQUIRE_MESSAGE(mounted, mounted.error());
+
+        const auto shaderAsset = assets.LoadSync<Shader>(LtcSphereCompId);
+        REQUIRE_MESSAGE(shaderAsset, shaderAsset.error().Detail);
+
+        const auto caseBuffer = Buffer::Create(
+            fixture.Context, {
+                                 .Name = "LTC Sphere Cases",
+                                 .Size = cases.size(),
+                                 .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+                             });
+        caseBuffer->UploadSync(cases);
+
+        const auto resultBuffer = Buffer::Create(
+            fixture.Context, {
+                                 .Name = "LTC Sphere Results",
+                                 .Size = static_cast<u64>(caseCount) * sizeof(vec4),
+                                 .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
+                             });
+
+        auto setLayout = DescriptorSetLayout::Create(
+            fixture.Context, {
+                                 .Name = "LTC Sphere Set Layout",
+                                 .Bindings =
+                                     {
+                                         {.Binding = 0,
+                                          .Type = DescriptorType::StorageBuffer,
+                                          .Count = 1,
+                                          .Stages = ShaderStage::Compute},
+                                         {.Binding = 1,
+                                          .Type = DescriptorType::StorageBuffer,
+                                          .Count = 1,
+                                          .Stages = ShaderStage::Compute},
+                                     },
+                             });
+
+        const auto pipelineLayout = PipelineLayout::Create(
+            fixture.Context, {
+                                 .Name = "LTC Sphere Layout",
+                                 .DescriptorSetLayouts = {setLayout},
+                                 .PushConstantRanges = {{.Stages = ShaderStage::Compute,
+                                                         .Offset = 0,
+                                                         .Size = sizeof(LtcSpherePush)}},
+                             });
+
+        auto pipeline = ComputePipeline::Create(
+            fixture.Context, {
+                                 .Name = "LTC Sphere Pipeline",
+                                 .PipelineLayout = pipelineLayout,
+                                 .ShaderStage = {.Stage = ShaderStage::Compute,
+                                                 .Module = shaderAsset->Get()->Module},
+                             });
+
+        auto set = DescriptorSet::Create(fixture.Context, {
+                                                              .Name = "LTC Sphere Set",
+                                                              .Layout = setLayout,
+                                                          });
+        set->Write(0, caseBuffer);
+        set->Write(1, resultBuffer);
+
+        fixture.Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                cmd.BindPipeline(pipeline);
+                cmd.BindDescriptorSets({
+                    .Sets = {set},
+                    .FirstSet = 3,
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(LtcSpherePush{.CaseCount = caseCount, .Mode = mode});
+                cmd.Dispatch(caseCount, 1, 1);
+            });
+
+        const vector<u8> downloaded = resultBuffer->Download();
+        REQUIRE(downloaded.size() == static_cast<usize>(caseCount) * sizeof(vec4));
+
+        vector<vec4> results(caseCount);
+        std::memcpy(results.data(), downloaded.data(), downloaded.size());
+        return results;
+    }
 
     // Source angular size as r/d (emitter radius over distance to the shading point). The shading
     // point faces the sphere head-on, so the diffuse form factor is at its analytic maximum.
@@ -66,88 +170,10 @@ namespace
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "The Sphere-light LTC diffuse form factor matches the analytic sphere irradiance")
 {
-    AssetManager assets(Context, Tasks, Types);
-    const VoidResult mounted = assets.Mount(path(TEST_SHADER_PACK));
-    REQUIRE_MESSAGE(mounted, mounted.error());
-
-    const auto shaderAsset = assets.LoadSync<Shader>(LtcSphereCompId);
-    REQUIRE_MESSAGE(shaderAsset, shaderAsset.error().Detail);
-
     const u32 caseCount = static_cast<u32>(Cases.size());
-
-    auto caseBuffer =
-        Buffer::Create(Context, {
-                                    .Name = "LTC Sphere Cases",
-                                    .Size = sizeof(Cases),
-                                    .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
-                                });
-    caseBuffer->UploadSync(std::span(reinterpret_cast<const u8*>(Cases.data()), sizeof(Cases)));
-
-    auto resultBuffer =
-        Buffer::Create(Context, {
-                                    .Name = "LTC Sphere Results",
-                                    .Size = static_cast<u64>(caseCount) * sizeof(vec4),
-                                    .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
-                                });
-
-    auto setLayout =
-        DescriptorSetLayout::Create(Context, {
-                                                 .Name = "LTC Sphere Set Layout",
-                                                 .Bindings =
-                                                     {
-                                                         {.Binding = 0,
-                                                          .Type = DescriptorType::StorageBuffer,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                         {.Binding = 1,
-                                                          .Type = DescriptorType::StorageBuffer,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                     },
-                                             });
-
-    auto pipelineLayout =
-        PipelineLayout::Create(Context, {
-                                            .Name = "LTC Sphere Layout",
-                                            .DescriptorSetLayouts = {setLayout},
-                                            .PushConstantRanges = {{.Stages = ShaderStage::Compute,
-                                                                    .Offset = 0,
-                                                                    .Size = sizeof(LtcSpherePush)}},
-                                        });
-
-    auto pipeline = ComputePipeline::Create(
-        Context,
-        {
-            .Name = "LTC Sphere Pipeline",
-            .PipelineLayout = pipelineLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = shaderAsset->Get()->Module},
-        });
-
-    auto set = DescriptorSet::Create(Context, {
-                                                  .Name = "LTC Sphere Set",
-                                                  .Layout = setLayout,
-                                              });
-    set->Write(0, caseBuffer);
-    set->Write(1, resultBuffer);
-
-    Context.ImmediateCommands(
-        [&](CommandBuffer& cmd)
-        {
-            cmd.BindPipeline(pipeline);
-            cmd.BindDescriptorSets({
-                .Sets = {set},
-                .FirstSet = 3,
-                .PipelineBindPoint = PipelineBindPoint::Compute,
-            });
-            cmd.PushConstants(LtcSpherePush{.CaseCount = caseCount});
-            cmd.Dispatch(caseCount, 1, 1);
-        });
-
-    const vector<u8> downloaded = resultBuffer->Download();
-    REQUIRE(downloaded.size() == static_cast<usize>(caseCount) * sizeof(vec4));
-
-    std::array<vec4, 6> results{};
-    std::memcpy(results.data(), downloaded.data(), downloaded.size());
+    const vector<vec4> results =
+        RunLtcSphere(*this, std::span(reinterpret_cast<const u8*>(Cases.data()), sizeof(Cases)),
+                     caseCount, DiffuseMode);
 
     // The form factor equals the analytic sphere irradiance sin^2(theta) at every angular size, to
     // within the 16-gon disk's slight under-count. The tolerance admits that (~2.6% at the small
@@ -175,4 +201,33 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A source nearly filling the facing hemisphere approaches, but does not exceed, unit coverage.
     CHECK(results[Widest][DiffSum] < 1.0f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "A Sphere light wholly below the surface's plane casts no specular")
+{
+    // The baked LUT's inverse transforms at the lighting core's 0.04 roughness floor, for a moderate
+    // and a grazing view: (view, top row m00/m02, bottom row m20/m22). A glossy lobe is where the
+    // transform is most extreme, and so where a sphere below the plane is carried furthest across
+    // the transformed horizon.
+    const std::array<vec4, 6> cases{
+        vec4(0.642788f, 0.0f, 0.766044f, 0.0f),        vec4(0.587287794f, 0.0f, 0.492670343f, 0.0f),
+        vec4(-0.001638077f, 0.0f, 0.001952609f, 0.0f),
+
+        vec4(0.994522f, 0.0f, 0.104528f, 0.0f),        vec4(0.011141766f, 0.0f, 0.104006168f, 0.0f),
+        vec4(-0.000345973f, 0.0f, 0.000037109f, 0.0f),
+    };
+    constexpr u32 caseCount = 2;
+
+    const vector<vec4> results =
+        RunLtcSphere(*this, std::span(reinterpret_cast<const u8*>(cases.data()), sizeof(cases)),
+                     caseCount, SpecularMode);
+
+    for (u32 i = 0; i < caseCount; ++i)
+    {
+        // No sphere below the plane reflects, at any azimuth, depth or size.
+        CHECK(results[i].x == 0.0f);
+        // The same transform still reflects a star-sized sphere at the mirror direction.
+        CHECK(results[i].y > 0.9f);
+    }
 }

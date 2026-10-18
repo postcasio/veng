@@ -71,6 +71,13 @@ float LtcSphere(float3 N, float3 V, float3 P, float3x3 Minv, float3 center, floa
     float3 dir = dist > 1e-4 ? toCenter / dist : float3(0.0, 0.0, 1.0);
 
     float sinTheta = clamp(radius / max(dist, 1e-4), 0.0, 0.9999);
+    // A sphere wholly below the surface's plane lights nothing. The clip below cannot see that: a
+    // glossy lobe's transform carries such a disk across the transformed horizon, where it reads as
+    // straddling and lights a ring about the light's antipode.
+    if (dot(N, dir) <= -sinTheta)
+    {
+        return 0.0;
+    }
     float cosTheta = sqrt(1.0 - sinTheta * sinTheta);
     float3 diskCenter = P + dir * (dist * cosTheta * cosTheta);
     float diskRadius = radius * cosTheta;
@@ -96,7 +103,7 @@ float LtcSphere(float3 N, float3 V, float3 P, float3x3 Minv, float3 center, floa
     {
         return 0.0;
     }
-    // The facing disk always fronts the shading point, so there is no behind case; the front-lit
-    // axis cosine is the negated z (see LtcPolygon).
+    // The disk is wound to face the shading point, so its front-lit axis cosine is the negated z
+    // (see LtcPolygon); a disk below the plane was rejected above.
     return LtcClippedFormFactor(-vsum.z / len, len);
 }
