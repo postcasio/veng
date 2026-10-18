@@ -62,7 +62,8 @@ namespace
         CameraView Camera;
 
         std::vector<u8> Render(Context& context, const Scene& scene,
-                               const f32 bloomThreshold = 1.0f, const f32 renderScale = 1.0f)
+                               const f32 bloomThreshold = 1.0f, const f32 renderScale = 1.0f,
+                               const f32 exposure = 1.0f)
         {
             context.ImmediateCommands(
                 [&](CommandBuffer& cmd)
@@ -72,7 +73,7 @@ namespace
                                                                 .Camera = Camera,
                                                                 .Delta = 0.0f,
                                                                 .RenderScale = renderScale,
-                                                                .Exposure = 1.0f,
+                                                                .Exposure = exposure,
                                                                 .Tonemapper = Tonemapper::None,
                                                                 .BloomThreshold = bloomThreshold});
                 });
@@ -161,6 +162,34 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // Full on the band's centre line, nothing in the empty top row.
         CHECK(texels[static_cast<usize>(mid) * Extent.x + mid] > 240);
         CHECK(texels[static_cast<usize>(1) * Extent.x + mid] < 5);
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a compensating path keeps its brightness at any exposure")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+    const u32 mid = Extent.x / 2;
+
+    for (const RibbonPlacement placement : {RibbonPlacement::Scene, RibbonPlacement::PostResolve})
+    {
+        CAPTURE(static_cast<u32>(placement));
+        const Unique<Scene> scene = Scene::Create(Types);
+        const Entity path = AddPath(*scene, vec3(0.1f), /*additive=*/false, placement);
+
+        // Exposed with the scene, the line scales with the exposure.
+        const f32 plainLow = RgbAt(render.Render(Context, *scene, 1.0f, 1.0f, 1.0f), mid, mid).y;
+        const f32 plainHigh = RgbAt(render.Render(Context, *scene, 1.0f, 1.0f, 4.0f), mid, mid).y;
+        CHECK(plainHigh == doctest::Approx(plainLow * 4.0f).epsilon(0.05));
+
+        // Compensating, it reads the same at both.
+        scene->Get<RibbonPath>(path).CompensateExposure = true;
+        const f32 heldLow = RgbAt(render.Render(Context, *scene, 1.0f, 1.0f, 1.0f), mid, mid).y;
+        const f32 heldHigh = RgbAt(render.Render(Context, *scene, 1.0f, 1.0f, 4.0f), mid, mid).y;
+        CHECK(heldLow == doctest::Approx(0.1f).epsilon(0.05));
+        CHECK(heldHigh == doctest::Approx(heldLow).epsilon(0.02));
     }
 }
 

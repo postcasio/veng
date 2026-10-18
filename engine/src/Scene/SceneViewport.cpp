@@ -74,8 +74,11 @@ namespace Veng
         view.Tonemapper = look.Tonemapper;
         view.AutoExposureMinLuminance = look.AutoExposureMinLuminance;
         view.AutoExposureMaxLuminance = look.AutoExposureMaxLuminance;
+        view.AutoExposureMeterFloor = look.AutoExposureMeterFloor;
         view.AutoExposureLowPercentile = look.AutoExposureLowPercentile;
         view.AutoExposureHighPercentile = look.AutoExposureHighPercentile;
+        view.AutoExposureHighlightPercentile = look.AutoExposureHighlightPercentile;
+        view.AutoExposureHighlightLuminance = look.AutoExposureHighlightLuminance;
         view.BloomThreshold = look.BloomThreshold;
         view.BloomFireflyCeiling = look.BloomFireflyCeiling;
         view.BloomIntensity = look.BloomIntensity;
@@ -113,8 +116,11 @@ namespace Veng
         view.Tonemapper = resolved.Tonemapper;
         view.AutoExposureMinLuminance = resolved.AutoExposureMinLuminance;
         view.AutoExposureMaxLuminance = resolved.AutoExposureMaxLuminance;
+        view.AutoExposureMeterFloor = resolved.AutoExposureMeterFloor;
         view.AutoExposureLowPercentile = resolved.AutoExposureLowPercentile;
         view.AutoExposureHighPercentile = resolved.AutoExposureHighPercentile;
+        view.AutoExposureHighlightPercentile = resolved.AutoExposureHighlightPercentile;
+        view.AutoExposureHighlightLuminance = resolved.AutoExposureHighlightLuminance;
         view.BloomThreshold = resolved.BloomThreshold;
         view.BloomFireflyCeiling = resolved.BloomFireflyCeiling;
         view.BloomIntensity = resolved.BloomIntensity;

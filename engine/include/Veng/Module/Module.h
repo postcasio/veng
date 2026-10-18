@@ -566,10 +566,20 @@ extern "C"
 /// WorldSpace, Emitter, PreviousEmitter and PreviousTime; ParticleEmitterDesc grows Fed, and the
 /// ParticleFeed component registers. A module builds effects and plays them, so a stale one lays
 /// both out at the old size.
+/// Version 140 separates the auto-exposure meter's floor from its adaptation clamp and gives it a
+/// highlight cap, and lets a pre-bloom overlay hold its brightness against the exposure:
+/// RenderLook, SceneView and ViewState grow AutoExposureMeterFloor, AutoExposureHighlightPercentile
+/// and AutoExposureHighlightLuminance; GuiOverlay and GuiHdrOverlayView grow CompensateExposure;
+/// BlendFactor grows the constant-colour factors. A module authors looks and overlays, so a stale
+/// one lays them out short.
+/// Version 141 lets a ribbon path and a translucent material hold their brightness against the
+/// exposure: the view-constants block grows ExposureParams (ViewConstantsStride 816 → 832) and
+/// RibbonPath grows CompensateExposure. A module's shaders index view regions by the stride and its
+/// systems author paths, so a stale one reads both at the old layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 139u
+#define VENG_MODULE_ABI_VERSION 141u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

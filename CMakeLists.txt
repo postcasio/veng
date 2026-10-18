@@ -1240,6 +1240,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_driver_registry.cpp
             tests/unit/gui_component_driver.cpp
             tests/unit/render_look.cpp
+            tests/unit/auto_exposure_metering.cpp
             tests/unit/normal_variance_math.cpp
             tests/unit/viewport_debug_overrides.cpp
             tests/unit/graphics_resolve.cpp
@@ -1992,6 +1993,7 @@ if (VENG_BUILD_TESTS)
             # at full and reduced render scale, after one transition frame in the scene pass.
             tests/gpu/post_resolve_translucent.cpp
             tests/gpu/translucent_reactive.cpp
+            tests/gpu/translucent_exposure.cpp
             tests/gpu/dof_battery.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp

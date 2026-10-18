@@ -94,6 +94,14 @@ namespace Veng::Renderer
         /// @param scale  The UI scale factor; must be positive.
         void SetUiScale(f32 scale);
 
+        /// @brief Sets the factor the colour every recorded run adds is weighted by.
+        ///
+        /// Applied through the blend, so it reaches a material fill as well as the fixed shape and
+        /// text pipelines, and it scales the light the UI adds without changing the coverage it
+        /// takes from what is behind it. The default of 1 records the UI as drawn.
+        /// @param scale  The colour weight.
+        void SetColorScale(f32 scale);
+
         /// @brief Sets the clock an animated material fill reads out of the pass's push block.
         ///
         /// A GuiFill material's only per-frame channel: the value lands in the GUI push block both

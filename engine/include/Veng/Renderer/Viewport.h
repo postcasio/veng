@@ -101,6 +101,8 @@ namespace Veng::Renderer
         f32 AutoExposureKey = 0.18f;
         /// @brief Auto-exposure lower clamp on the adapted average luminance.
         f32 AutoExposureMinLuminance = 0.002f;
+        /// @brief Auto-exposure metering floor (SceneView::AutoExposureMeterFloor).
+        f32 AutoExposureMeterFloor = 0.002f;
         /// @brief Auto-exposure upper clamp on the adapted average luminance.
         f32 AutoExposureMaxLuminance = 8.0f;
         /// @brief Auto-exposure adaptation rate per second (0 freezes the current adaptation).
@@ -109,6 +111,10 @@ namespace Veng::Renderer
         f32 AutoExposureLowPercentile = 0.0f;
         /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
         f32 AutoExposureHighPercentile = 1.0f;
+        /// @brief The percentile the highlight cap protects (SceneView::AutoExposureHighlightPercentile).
+        f32 AutoExposureHighlightPercentile = 0.99f;
+        /// @brief The exposed luminance the highlight percentile may reach; zero turns the cap off.
+        f32 AutoExposureHighlightLuminance = 0.0f;
         /// @brief The scene's authored flat-fallback ambient (no lit sky), multiplied by occlusion.
         ///
         /// The default is the engine's flat ambient, so a consumer authoring none is unchanged.
@@ -1425,6 +1431,8 @@ VE_FIELD(AutoExposureMinLuminance, .DisplayName = "Auto exposure min luminance",
          .Display = {.Min = 0.0, .Precision = 4}, .Category = "Exposure")
 VE_FIELD(AutoExposureMaxLuminance, .DisplayName = "Auto exposure max luminance",
          .Display = {.Min = 0.0}, .Category = "Exposure")
+VE_FIELD(AutoExposureMeterFloor, .DisplayName = "Auto exposure meter floor",
+         .Display = {.Min = 0.0, .Precision = 5}, .Category = "Exposure")
 VE_FIELD(AutoExposureSpeed, .DisplayName = "Auto exposure speed",
          .Display = {.Min = 0.0, .Max = 20.0}, .Category = "Exposure")
 VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto exposure low percentile",
@@ -1433,6 +1441,11 @@ VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto exposure low percentile
 VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto exposure high percentile",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
          .Category = "Exposure")
+VE_FIELD(AutoExposureHighlightPercentile, .DisplayName = "Auto exposure highlight percentile",
+         .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},
+         .Category = "Exposure")
+VE_FIELD(AutoExposureHighlightLuminance, .DisplayName = "Auto exposure highlight luminance",
+         .Display = {.Min = 0.0, .Max = 16.0}, .Category = "Exposure")
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient floor", .Category = "Lighting")
 VE_FIELD(EnvironmentLightTint, .DisplayName = "Environment light tint", .Category = "Lighting")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom threshold", .Display = {.Min = 0.0, .Max = 8.0},

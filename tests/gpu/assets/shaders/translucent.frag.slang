@@ -32,3 +32,12 @@ TranslucentReactiveOutput fsMainReactive(SurfaceFragmentInput input)
     output.Reactive = TranslucentReactiveAmount(p.Color);
     return output;
 }
+
+// The same colour divided by the view's exposure, for a material keeping its authored brightness.
+[shader("fragment")]
+float4 fsMainCompensated(SurfaceFragmentInput input) : SV_Target0
+{
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
+    const ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    return float4(CompensateExposure(vc, p.Color.rgb), p.Color.a);
+}

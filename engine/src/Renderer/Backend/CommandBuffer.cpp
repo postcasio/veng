@@ -318,6 +318,12 @@ namespace Veng::Renderer
                            .extent = {.width = extent.x, .height = extent.y}}});
     }
 
+    void CommandBuffer::SetBlendConstants(const vec4 constants)
+    {
+        const std::array<f32, 4> values{constants.r, constants.g, constants.b, constants.a};
+        m_Native->CommandBuffer.setBlendConstants(values.data());
+    }
+
     void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent)
     {
         m_Native->CommandBuffer.setViewport(0, {vk::Viewport{.x = static_cast<f32>(offset.x),

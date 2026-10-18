@@ -171,6 +171,18 @@ namespace Veng
         /// composite.
         AssetHandle<MaterialInstance> Material;
 
+        /// @brief Whether the overlay keeps its authored brightness whatever the frame's exposure
+        ///        (SceneHdrPreBloom only).
+        ///
+        /// A pre-bloom overlay is composited into the scene HDR, so the tone curve multiplies it by the
+        /// frame's exposure like everything else in the scene. When set, the light it adds — directly
+        /// or through its composite material — is divided by the frame's resolved exposure on the way
+        /// in, so it reaches the tone curve as it would at an exposure of 1: an interface authored at a
+        /// fixed brightness stays that bright as auto-exposure moves. The coverage it takes from the
+        /// scene behind it, and a composite material's bloom-mask amplitude, are unchanged. Off (the
+        /// default) leaves the overlay exposed with the scene. Ignored for a PostTonemap overlay.
+        bool CompensateExposure = false;
+
         /// @brief How this overlay maps into its target: flat screen-space (the default) or world-anchored.
         ///
         /// ScreenSpace is the flat placement — logical points at ScreenSpace's UI scale, the overlay's
@@ -394,6 +406,8 @@ VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
 VE_FIELD(Placement, .DisplayName = "Placement")
 VE_FIELD(Material, .DisplayName = "Material")
+VE_FIELD(CompensateExposure, .DisplayName = "Compensate Exposure",
+         .Tooltip = "Keep the authored brightness whatever the frame's exposure (pre-bloom only)")
 VE_FIELD(Projection, .DisplayName = "Projection")
 VE_FIELD(AnchorPosition, .DisplayName = "Anchor Position")
 VE_FIELD(AnchorRotation, .DisplayName = "Anchor Rotation")

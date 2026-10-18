@@ -18,7 +18,7 @@ struct GpuRibbonSegment
     float4 StartColor;   // rgb linear HDR, a opacity
     float4 EndColor;     // rgb linear HDR, a opacity
     float4 StartTangent; // xyz unit direction at the start; w 1 marks a dot record
-    float4 EndTangent;   // xyz unit direction at the end
+    float4 EndTangent;   // xyz unit direction at the end; w 1 divides the colour by the exposure
 };
 
 [[vk::binding(0, 3)]] StructuredBuffer<GpuRibbonSegment> g_Segments;
@@ -48,6 +48,10 @@ VSOutput ExpandRecord(uint vertexId, ViewConstants view, float4x4 proj, float ta
 
     float4 end = atEnd ? segment.End : segment.Start;
     float4 color = atEnd ? segment.EndColor : segment.StartColor;
+    if (segment.EndTangent.w > 0.5)
+    {
+        color.rgb *= ViewInverseExposure(view);
+    }
     float3 center = ToView(view, end.xyz);
 
     // World units per pixel at this end's depth, from the projection's vertical scale.

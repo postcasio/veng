@@ -133,6 +133,7 @@ namespace Veng::Renderer
             u32 Gathered = 0;
             RibbonPlacement Target = RibbonPlacement::Scene;
             bool Occluded = true;
+            bool CompensateExposure = false;
 
             void Add(const StripPoint& start, const StripPoint& end, const vec3& startTangent,
                      const vec3& endTangent, const bool additive)
@@ -146,7 +147,7 @@ namespace Veng::Renderer
                         .StartColor = start.Color,
                         .EndColor = end.Color,
                         .StartTangent = vec4(startTangent, 0.0f),
-                        .EndTangent = vec4(endTangent, 0.0f),
+                        .EndTangent = vec4(endTangent, CompensateExposure ? 1.0f : 0.0f),
                     },
                     additive);
             }
@@ -162,7 +163,7 @@ namespace Veng::Renderer
                         .StartColor = center.Color,
                         .EndColor = center.Color,
                         .StartTangent = vec4(0.0f, 0.0f, 0.0f, 1.0f),
-                        .EndTangent = vec4(0.0f),
+                        .EndTangent = vec4(0.0f, 0.0f, 0.0f, CompensateExposure ? 1.0f : 0.0f),
                     },
                     additive);
             }
@@ -388,6 +389,7 @@ namespace Veng::Renderer
             const f64 scale = glm::length(dvec3(transform[0]));
             sink.Target = path.Placement;
             sink.Occluded = path.Occluded;
+            sink.CompensateExposure = path.CompensateExposure;
             for (const RibbonStrip& strip : path.Strips)
             {
                 if (strip.Opacity <= 0.0f || strip.Points.empty())
@@ -422,6 +424,7 @@ namespace Veng::Renderer
             }
             sink.Target = RibbonPlacement::Scene;
             sink.Occluded = true;
+            sink.CompensateExposure = false;
         }
 
         // Moves a placement's sorted alpha records into its plan, farthest first.

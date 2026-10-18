@@ -70,6 +70,10 @@ namespace Veng::Renderer
         // rgb the colour multiplying the sky's ambient light (SceneView::EnvironmentLightTint);
         // w unused.
         vec4 EnvironmentLightTint;
+        // x the exposure the tonemap applies this frame, y its reciprocal; zw unused. Zero in a
+        // block no tonemapped view wrote (a sky-bake face), which a reader treats as an exposure
+        // of 1.
+        vec4 ExposureParams;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

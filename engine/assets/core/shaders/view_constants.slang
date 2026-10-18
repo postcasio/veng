@@ -122,9 +122,20 @@ struct ViewConstants
     // rgb the colour multiplying the light the sky gives the scene — the image-based and SH
     // skylight ambient arms — white for none; w unused.
     float4 EnvironmentLightTint;
+    // x the exposure the tonemap applies to this view this frame, y its reciprocal; zw unused.
+    // Zero in a block no tonemapped view wrote (a sky-bake face) — ViewInverseExposure reads that
+    // as an exposure of 1.
+    float4 ExposureParams;
 };
 
-static const uint ViewConstantsStride = 816;
+static const uint ViewConstantsStride = 832;
+
+// The reciprocal of the exposure the tonemap applies to this view: multiplying radiance by it
+// before the tone curve shows that radiance as it would be at an exposure of 1.
+float ViewInverseExposure(ViewConstants vc)
+{
+    return vc.ExposureParams.y > 0.0 ? vc.ExposureParams.y : 1.0;
+}
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

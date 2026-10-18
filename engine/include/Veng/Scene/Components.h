@@ -1849,6 +1849,13 @@ namespace Veng
         /// @brief Whether nearer scene geometry hides it; false draws it through everything, as a
         ///        hologram or a gizmo that must stay readable inside the geometry it stands in.
         bool Occluded = true;
+        /// @brief Whether it keeps its authored brightness whatever the frame's exposure.
+        ///
+        /// A path draws into the scene HDR, so the tone curve multiplies it by the frame's exposure.
+        /// When set, its colour is divided by that exposure as it draws, so it shows as it would at
+        /// an exposure of 1 — an instrument stays as bright as it was authored while auto-exposure
+        /// follows the scene. Its coverage, and the bloom mask it writes, follow the divided colour.
+        bool CompensateExposure = false;
     };
 
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
@@ -1905,18 +1912,26 @@ namespace Veng
         /// @brief Auto-exposure lower clamp on the adapted average luminance.
         ///
         /// Bounds how bright the metering lets a dark scene drive the exposure; a small value suits a
-        /// scene whose dimmest lit content is far below mid-grey. It is authored beside the upper
-        /// clamp because the two are one statement — the luminance range the metering spans, which
-        /// is also the range the histogram's bins are laid over — and a scene that has to raise one
-        /// end almost always has to lower the other. The default matches the renderer's own
-        /// ViewState default, so a look leaving it unset is unchanged.
+        /// scene whose dimmest lit content is far below mid-grey. Together with the upper clamp it is
+        /// the range the adapted luminance moves in; what is metered at all is the floor's
+        /// (AutoExposureMeterFloor). The default matches the renderer's own ViewState default, so a
+        /// look leaving it unset is unchanged.
         f32 AutoExposureMinLuminance = 0.002f;
         /// @brief Auto-exposure upper clamp on the adapted average luminance.
         ///
-        /// Bounds how dark the metering lets a bright scene drive the exposure; a large value suits a
-        /// high-dynamic-range scene (a bright sky, a starfield). The default matches the renderer's
-        /// own ViewState default, so a look leaving it unset is unchanged.
+        /// Bounds how dark the metering lets a bright scene drive the exposure, so a subject brighter
+        /// than it (a star filling the view) is shown bright rather than metered down to mid-grey or
+        /// to the highlight limit; a large value lets the exposure follow any scene down. It clamps
+        /// the adaptation only — the meter reads every luminance the scene colour can hold. The
+        /// default matches the renderer's own ViewState default, so a look leaving it unset is
+        /// unchanged.
         f32 AutoExposureMaxLuminance = 8.0f;
+        /// @brief Auto-exposure metering floor: a pixel darker than this is not metered.
+        ///
+        /// Separate from AutoExposureMinLuminance, so a dim field can be metered and shown dim under
+        /// that clamp instead of being dropped. The default matches the renderer's own ViewState
+        /// default. @see Renderer::SceneView::AutoExposureMeterFloor
+        f32 AutoExposureMeterFloor = 0.002f;
         /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
         ///
         /// Discards the darkest tail before averaging (0 keeps it). The default matches the
@@ -1927,6 +1942,13 @@ namespace Veng
         /// Discards the brightest tail before averaging (1 keeps it). The default matches the
         /// renderer's own ViewState default.
         f32 AutoExposureHighPercentile = 1.0f;
+        /// @brief The percentile of the metered pixels the highlight cap keeps from blowing out.
+        /// @see Renderer::SceneView::AutoExposureHighlightPercentile
+        f32 AutoExposureHighlightPercentile = 0.99f;
+        /// @brief The exposed luminance the highlight percentile may reach; zero (the default)
+        ///        turns the cap off.
+        /// @see Renderer::SceneView::AutoExposureHighlightLuminance
+        f32 AutoExposureHighlightLuminance = 0.0f;
         /// @brief Whether the bloom battery is enabled.
         bool Bloom = true;
         /// @brief Bloom bright-pass luminance knee fed into the per-frame SceneView.
@@ -2682,6 +2704,8 @@ VE_FIELD(Placement, .DisplayName = "Placement",
          .Tooltip = "Scene: resolved with the scene. PostResolve: drawn crisp at output resolution")
 VE_FIELD(Occluded, .DisplayName = "Occluded",
          .Tooltip = "Whether nearer scene geometry hides it; off draws it through everything")
+VE_FIELD(CompensateExposure, .DisplayName = "Compensate Exposure",
+         .Tooltip = "Keep the authored brightness whatever the frame's exposure")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)
@@ -2698,10 +2722,16 @@ VE_FIELD(AutoExposureMinLuminance, .DisplayName = "Auto Exposure Min Luminance",
          .Display = {.Min = 0.0})
 VE_FIELD(AutoExposureMaxLuminance, .DisplayName = "Auto Exposure Max Luminance",
          .Display = {.Min = 0.0})
+VE_FIELD(AutoExposureMeterFloor, .DisplayName = "Auto Exposure Meter Floor",
+         .Display = {.Min = 0.0})
 VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto Exposure Low Percentile",
          .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto Exposure High Percentile",
          .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(AutoExposureHighlightPercentile, .DisplayName = "Auto Exposure Highlight Percentile",
+         .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(AutoExposureHighlightLuminance, .DisplayName = "Auto Exposure Highlight Luminance",
+         .Display = {.Min = 0.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})
 VE_FIELD(BloomFireflyCeiling, .DisplayName = "Bloom Firefly Ceiling", .Display = {.Min = 0.0})

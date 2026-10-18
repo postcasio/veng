@@ -45,7 +45,8 @@ namespace Veng::Renderer
         /// @brief xyz: the unit direction the ribbon runs at the start; w: 1 for a dot record, 0
         ///        for a segment.
         vec4 StartTangent{0.0f};
-        /// @brief xyz: the unit direction the ribbon runs at the end; w unused.
+        /// @brief xyz: the unit direction the ribbon runs at the end; w: 1 when the colour is divided
+        ///        by the view's exposure (RibbonPath::CompensateExposure), 0 otherwise.
         vec4 EndTangent{0.0f};
     };
 

@@ -837,7 +837,7 @@ namespace Veng::Renderer
         /// clock, the scene-color grab handles, the view's light state, where its per-tile
         /// light masks live, the projection jitter with the direction reprojection, and the sky's
         /// ambient tint) fills it exactly.
-        static constexpr u32 ViewConstantsStride = 816;
+        static constexpr u32 ViewConstantsStride = 832;
 
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.

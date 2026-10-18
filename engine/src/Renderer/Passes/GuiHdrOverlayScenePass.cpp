@@ -24,12 +24,13 @@ namespace Veng::Renderer
     {
         // The overlay composites premultiplied-over the loaded scene color, so a fragment emitting
         // (premultiplied color, coverage) accumulates against OneMinusSrcAlpha — the GuiScenePass HDR
-        // blend, restated here for the material-composite attachment.
+        // blend, restated here for the material-composite attachment. The source colour is weighted
+        // by the blend constant, which carries an exposure-compensating overlay's 1/exposure.
         BlendState PremultipliedOver()
         {
             return {
                 .Enable = true,
-                .SrcColorFactor = BlendFactor::One,
+                .SrcColorFactor = BlendFactor::ConstantColor,
                 .DstColorFactor = BlendFactor::OneMinusSrcAlpha,
                 .ColorOp = BlendOp::Add,
                 .SrcAlphaFactor = BlendFactor::One,
@@ -211,7 +212,9 @@ namespace Veng::Renderer
                                  [origin](vec2 point) -> optional<vec2> { return point - origin; });
 
         // The projected geometry is already in target pixels, so the recorder draws it 1:1 (UiScale 1).
+        // The document renders as drawn; the composite applies any exposure compensation.
         m_Gui->SetUiScale(1.0f);
+        m_Gui->SetColorScale(1.0f);
         m_Gui->SetTime(ctx.View().GuiTime);
         m_Gui->SetDrawList(m_Merged);
         m_Gui->RecordInto(ctx.Cmd(), rect.Size);
@@ -312,6 +315,8 @@ namespace Veng::Renderer
         cmd.BindPipeline(pipeline);
         cmd.SetViewport({0, 0}, view.PostResolveExtent);
         cmd.SetScissor(ivec2(rect.Origin), rect.Size);
+        const f32 colorScale = overlay->CompensateExposure ? m_ExposureScale : 1.0f;
+        cmd.SetBlendConstants(vec4(vec3(colorScale), 1.0f));
         m_Context.GetBindlessRegistry().Bind(cmd);
         material.Bind(cmd);
         cmd.DrawFullscreenTriangle();
@@ -334,26 +339,33 @@ namespace Veng::Renderer
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         const SceneView& view = ctx.View();
-                        m_Merged.Clear();
-                        for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
+                        // One merged record per colour weight: overlays exposed with the scene, then
+                        // the ones compensating the exposure.
+                        for (const bool compensate : {false, true})
                         {
-                            if (overlay.Material != nullptr || overlay.DrawList == nullptr ||
-                                overlay.DrawList->IsEmpty())
+                            m_Merged.Clear();
+                            for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
+                            {
+                                if (overlay.Material != nullptr || overlay.DrawList == nullptr ||
+                                    overlay.DrawList->IsEmpty() ||
+                                    overlay.CompensateExposure != compensate)
+                                {
+                                    continue;
+                                }
+                                AppendOverlay(m_Merged, overlay, view);
+                            }
+
+                            if (m_Merged.IsEmpty())
                             {
                                 continue;
                             }
-                            AppendOverlay(m_Merged, overlay, view);
-                        }
 
-                        if (m_Merged.IsEmpty())
-                        {
-                            return;
+                            m_Gui->SetUiScale(1.0f);
+                            m_Gui->SetColorScale(compensate ? m_ExposureScale : 1.0f);
+                            m_Gui->SetTime(view.GuiTime);
+                            m_Gui->SetDrawList(m_Merged);
+                            m_Gui->RecordInto(ctx.Cmd(), view.PostResolveExtent);
                         }
-
-                        m_Gui->SetUiScale(1.0f);
-                        m_Gui->SetTime(view.GuiTime);
-                        m_Gui->SetDrawList(m_Merged);
-                        m_Gui->RecordInto(ctx.Cmd(), view.PostResolveExtent);
                     });
         }
 

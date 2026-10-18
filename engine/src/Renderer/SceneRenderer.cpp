@@ -1686,6 +1686,14 @@ namespace Veng::Renderer
                 {
                     m_Internal->PostResolveTranslucentPass->Declare(graph, io);
                 }
+                if (m_Topology->AutoExposureActive)
+                {
+                    // Meter the scene color the tonemap consumes, ahead of the pre-bloom overlays
+                    // composited into it in place below: an interface is not scene light, and
+                    // metering it would let a bright panel set the exposure of the world behind it.
+                    m_AutoExposure->RebindHdr(ppEffectFinalView);
+                    m_AutoExposure->Declare(graph, ppEffectFinalId, m_AutoExposureId, m_Extent);
+                }
                 // The GUI-overlay slot: after the post-process effects, before bloom. It loads and
                 // stores the effect chain's output (ppEffectFinalId) in place, blending the overlays
                 // over it, so bloom and the bloom-off tonemap read the overlay's result.
@@ -1701,13 +1709,6 @@ namespace Veng::Renderer
                     m_Bloom->SetSourceView(ppEffectFinalView);
                     m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, *m_AutoExposure,
                                      PostMaskId(), PostMaskHandle(), m_SamplerHandle);
-                }
-                if (m_Topology->AutoExposureActive)
-                {
-                    // Meter the same scene color the tonemap consumes: the effect chain's output
-                    // when active, matching the id declared below.
-                    m_AutoExposure->RebindHdr(ppEffectFinalView);
-                    m_AutoExposure->Declare(graph, ppEffectFinalId, m_AutoExposureId, m_Extent);
                 }
             }
 
@@ -2718,6 +2719,10 @@ namespace Veng::Renderer
         // metering is inactive). The bloom bright-pass later reads the same resolved exposure.
         const f32 exposure = m_AutoExposure->ResolveExposure(view, m_Topology->AutoExposureActive);
         m_Taa->SetExposure(exposure);
+        if (m_GuiHdrOverlayPass != nullptr)
+        {
+            m_GuiHdrOverlayPass->SetExposure(exposure);
+        }
 
         const Texture* const dirt = view.LensDirt.Get();
         const bool lensDirtActive =
@@ -3000,6 +3005,8 @@ namespace Veng::Renderer
                 .PrevFromCurDirection =
                     mat4(m_PreviousDirectionViewProj * glm::inverse(directionViewProj)),
                 .EnvironmentLightTint = vec4(resolvedView.EnvironmentLightTint, 0.0f),
+                .ExposureParams =
+                    vec4(exposure, exposure > 0.0f ? 1.0f / exposure : 1.0f, 0.0f, 0.0f),
             };
             for (u32 i = 0; i < ShCoefficientCount; ++i)
             {

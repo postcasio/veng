@@ -53,6 +53,15 @@ namespace Veng::Renderer
             };
         }
 
+        // The run pipelines' "over": the source colour is weighted by the blend constant, so a
+        // record scales the light the UI adds (SetColorScale) without touching the coverage it takes.
+        BlendState ScaledPremultipliedOver()
+        {
+            BlendState blend = PremultipliedOver();
+            blend.SrcColorFactor = BlendFactor::ConstantColor;
+            return blend;
+        }
+
         // Push block shared by the gui vertex and shape-fragment stages: the reciprocal of the UI
         // image extent (vertex, maps a framebuffer-pixel position to clip space) plus the gradient
         // record buffer's bindless slot and the current frame-in-flight's record base (fragment,
@@ -94,6 +103,8 @@ namespace Veng::Renderer
         f32 UiScale = 1.0f;
         // Seconds an animated material fill reads out of the push block; the driver advances it.
         f32 Time = 0.0f;
+        // The factor every run's colour is weighted by through the blend constant (SetColorScale).
+        f32 ColorScale = 1.0f;
         Format OutputFormat;
 
         // Resident shaders keep the modules alive for the pipelines' lifetime.
@@ -262,7 +273,8 @@ namespace Veng::Renderer
                 Context,
                 {
                     .Name = fmt::format("GuiScenePass Material Pipeline ({})", parent->GetName()),
-                    .ColorAttachments = {{.Format = OutputFormat, .Blend = PremultipliedOver()}},
+                    .ColorAttachments = {{.Format = OutputFormat,
+                                          .Blend = ScaledPremultipliedOver()}},
                     .VertexBufferLayout = GuiVertexLayout,
                     .PipelineLayout = parent->GetPipelineLayout(),
                     .ShaderStages =
@@ -377,6 +389,7 @@ namespace Veng::Renderer
                         bindless.Bind(passCmd);
                         passCmd.PushConstants(push);
                     }
+                    passCmd.SetBlendConstants(vec4(vec3(ColorScale), 1.0f));
                     boundPipeline = run.Pipeline;
                     boundMaterial = run.Material;
                 }
@@ -495,7 +508,7 @@ namespace Veng::Renderer
         Context& context = info.Context;
         AssetManager& assets = info.Assets;
 
-        auto load = [&](AssetId id) -> AssetHandle<Veng::Shader>
+        const auto load = [&](AssetId id) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "GuiScenePass: shader load failed: {}",
@@ -531,14 +544,14 @@ namespace Veng::Renderer
                              ShaderStage::Vertex | ShaderStage::Fragment)},
                      });
 
-        auto buildGuiPipeline = [&](string_view name, const AssetHandle<Veng::Shader>& fs)
+        const auto buildGuiPipeline = [&](string_view name, const AssetHandle<Veng::Shader>& fs)
         {
             return GraphicsPipeline::Create(
                 context,
                 {
                     .Name = string(name),
                     .ColorAttachments = {{.Format = m_Impl->OutputFormat,
-                                          .Blend = PremultipliedOver()}},
+                                          .Blend = ScaledPremultipliedOver()}},
                     .VertexBufferLayout = guiLayout,
                     .PipelineLayout = m_Impl->GuiLayout,
                     .ShaderStages =
@@ -560,7 +573,7 @@ namespace Veng::Renderer
                              ShaderStage::Fragment)},
                      });
 
-        auto buildBlitPipeline = [&](string_view name, BlendState blend)
+        const auto buildBlitPipeline = [&](string_view name, BlendState blend)
         {
             return GraphicsPipeline::Create(
                 context, {
@@ -701,6 +714,11 @@ namespace Veng::Renderer
         m_Impl->VertexSubOffset += vertexBytes;
         m_Impl->IndexSubOffset += indexBytes;
         m_Impl->GradientSubOffset += gradientBytes;
+    }
+
+    void GuiScenePass::SetColorScale(const f32 scale)
+    {
+        m_Impl->ColorScale = scale;
     }
 
     void GuiScenePass::SetUiScale(const f32 scale)

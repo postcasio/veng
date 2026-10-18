@@ -1,0 +1,15 @@
+{
+  "defaultInstance": "0x7695FF53569A9832",
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x6E4494C831CBE1FF"
+  },
+  "fields": [
+    {
+      "name": "Color",
+      "type": "vec4",
+      "value": [0.5, 0.5, 0.5, 1.0]
+    }
+  ]
+}

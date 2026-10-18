@@ -266,6 +266,10 @@ namespace Veng::Renderer
         /// @brief Sets the scissor rectangle.
         void SetScissor(ivec2 offset, uvec2 extent);
 
+        /// @brief Sets the blend constant a pipeline blending with BlendFactor::ConstantColor reads.
+        /// @param constants  The constant's RGBA.
+        void SetBlendConstants(vec4 constants);
+
         /// @brief Sets the viewport.
         void SetViewport(ivec2 offset, uvec2 extent);
 

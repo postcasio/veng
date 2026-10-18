@@ -1,5 +1,7 @@
 #include "AutoExposureMeter.h"
 
+#include "AutoExposureMetering.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -28,10 +30,6 @@ namespace Veng::Renderer
         // The auto-exposure metering compute shader (HDR → log-luminance histogram).
         constexpr AssetId AutoExposureCompId{0x9BF9CB926D0595B1ULL};
 
-        // Log-luminance histogram resolution: bin 0 is the excluded black bin, bins 1..255 span
-        // [MinLogLum, MaxLogLum]. Matches BinCount in auto_exposure.comp.
-        constexpr u32 AutoExposureBinCount = 256;
-
         // The auto-exposure metering push block, matching auto_exposure.comp PushConstants: the
         // dynamic-resolution sub-rect mapping, the valid extent, the log-luminance histogram
         // bounds, and the base element of the ring region this frame accumulates into.
@@ -44,6 +42,21 @@ namespace Veng::Renderer
             f32 MaxLogLum;
             u32 HistogramBase;
         };
+
+        // The metering knobs a view carries, in the form the histogram arithmetic takes them.
+        AutoExposureMeterParams MeterParams(const SceneView& view)
+        {
+            return {
+                .FloorLuminance = view.AutoExposureMeterFloor,
+                .MaxLuminance = view.AutoExposureMaxLuminance,
+                .MinLuminance = view.AutoExposureMinLuminance,
+                .LowPercentile = view.AutoExposureLowPercentile,
+                .HighPercentile = view.AutoExposureHighPercentile,
+                .HighlightPercentile = view.AutoExposureHighlightPercentile,
+                .HighlightLuminance = view.AutoExposureHighlightLuminance,
+                .Key = view.AutoExposureKey,
+            };
+        }
 
         // The dynamic-resolution sub-rect mapping for one mip level of a high-water-mark-allocated
         // chain: the valid extent at that level, and the (scale, clamp) UVs mapping a [0,1] valid
@@ -171,82 +184,37 @@ namespace Veng::Renderer
     {
         VE_PROFILE_SCOPE("Render/AutoExposure");
 
-        // Average the log-luminance histogram a completed frame metered (the current
-        // frame-in-flight's ring region, written framesInFlight ago and fenced), ease the internal
-        // adapted luminance toward it (eye adaptation), and resolve the exposure the tonemap uses.
-        // The average excludes bin 0 (the black bin), so a predominantly-black scene with sparse
-        // highlights meters on its lit content instead of collapsing to the floor.
-        // SceneView::Exposure biases the automatic result. With auto-exposure off, it is the
-        // exposure directly.
+        // Meter the histogram a completed frame wrote (the current frame-in-flight's ring region,
+        // written framesInFlight ago and fenced), ease the internal adapted luminance toward what it
+        // asks for (eye adaptation), and resolve the exposure the tonemap uses. SceneView::Exposure
+        // biases the automatic result; with auto-exposure off it is the exposure directly.
         f32 exposure = view.Exposure;
         if (active)
         {
             const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
             auto* region = reinterpret_cast<u32*>(static_cast<u8*>(m_Buffer->GetMappedData()) +
                                                   static_cast<usize>(frameIndex) * m_Stride);
-
-            // Weighted average of bins 1..255 (bin centers in log2 space), skipping the black bin
-            // and the lit pixels outside the [low, high] percentile band — trimming the tails
-            // makes a bimodal frame (a sun-lit surface against a near-black sky) meter on the
-            // band rather than the mean of both. The default 0..1 band meters every lit pixel.
-            const f32 minLogLum = std::log2(std::max(view.AutoExposureMinLuminance, 1e-5f));
-            const f32 maxLogLum = std::log2(std::max(view.AutoExposureMaxLuminance, 1e-4f));
-            const f32 logRange = maxLogLum - minLogLum;
-            u64 litTotal = 0;
-            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
-            {
-                litTotal += region[bin];
-            }
-            const f32 lowPercentile = std::clamp(view.AutoExposureLowPercentile, 0.0f, 1.0f);
-            const f32 highPercentile =
-                std::clamp(view.AutoExposureHighPercentile, lowPercentile, 1.0f);
-            const f64 lowRank = static_cast<f64>(litTotal) * lowPercentile;
-            const f64 highRank = static_cast<f64>(litTotal) * highPercentile;
-            f64 weightedLog = 0.0;
-            f64 count = 0.0;
-            f64 rank = 0.0;
-            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
-            {
-                const u32 binCount = region[bin];
-                if (binCount == 0)
-                {
-                    continue;
-                }
-                // The portion of this bin inside the percentile band (bins straddling an edge
-                // contribute fractionally, so the band boundaries do not snap to bins).
-                const f64 binLow = rank;
-                rank += binCount;
-                const f64 inBand =
-                    std::max(0.0, std::min(rank, highRank) - std::max(binLow, lowRank));
-                if (inBand <= 0.0)
-                {
-                    continue;
-                }
-                const f32 t =
-                    (static_cast<f32>(bin) - 0.5f) / static_cast<f32>(AutoExposureBinCount - 1);
-                weightedLog += static_cast<f64>(minLogLum + t * logRange) * inBand;
-                count += inBand;
-            }
+            const AutoExposureMeterParams params = MeterParams(view);
+            const AutoExposureReading reading = MeterAutoExposureHistogram(
+                std::span<const u32>(region, AutoExposureBinCount), params);
 
             // Zero this slot before this frame's metering pass accumulates into it (host-coherent,
             // recorded before the graph submit).
             std::memset(region, 0, AutoExposureBinCount * sizeof(u32));
 
-            // A frame with no lit content (count == 0) leaves the adaptation and reset pending
-            // untouched, so the exposure holds rather than blowing up on an empty meter.
-            if (count > 0.0)
+            // A frame with nothing metered leaves the adaptation and reset pending untouched, so
+            // the exposure holds rather than blowing up on an empty meter.
+            if (reading.Valid)
             {
-                const f32 meteredLuminance = std::exp2(static_cast<f32>(weightedLog / count));
                 if (m_Reset)
                 {
-                    m_AdaptedLuminance = meteredLuminance;
+                    m_AdaptedLuminance = reading.Target;
                     m_Reset = false;
                 }
                 else
                 {
-                    m_AdaptedLuminance =
-                        ExpApproach(m_AdaptedLuminance, meteredLuminance, view.Delta,
-                                    std::max(view.AutoExposureSpeed, 0.0f));
+                    m_AdaptedLuminance = ExpApproach(m_AdaptedLuminance, reading.Target, view.Delta,
+                                                     std::max(view.AutoExposureSpeed, 0.0f));
                 }
             }
             // The upper clamp is lifted to the lower rather than trusted to be above it: both ends
@@ -296,8 +264,8 @@ namespace Veng::Renderer
                     .SourceScaleUV = r.ScaleUV,
                     .SourceMaxUV = r.MaxUV,
                     .ValidExtent = r.ValidExtent,
-                    .MinLogLum = std::log2(std::max(view->AutoExposureMinLuminance, 1e-5f)),
-                    .MaxLogLum = std::log2(std::max(view->AutoExposureMaxLuminance, 1e-4f)),
+                    .MinLogLum = AutoExposureMinLog(MeterParams(*view)),
+                    .MaxLogLum = AutoExposureMaxLog(MeterParams(*view)),
                     .HistogramBase = frameIndex * (stride / static_cast<u32>(sizeof(u32))),
                 });
                 cmd.Dispatch((r.ValidExtent.x + 15) / 16, (r.ValidExtent.y + 15) / 16, 1);

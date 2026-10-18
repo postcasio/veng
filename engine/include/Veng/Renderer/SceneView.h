@@ -77,6 +77,9 @@ namespace Veng::Renderer
         vec2 DocExtent{1.0f};
         /// @brief Whether to project through the live camera onto the plane, or scale flat to the region.
         bool WorldAnchored = false;
+        /// @brief Whether the overlay's light is divided by the frame's exposure as it composites.
+        /// @see GuiOverlay::CompensateExposure
+        bool CompensateExposure = false;
     };
 
     /// @brief Construction parameters for SceneRenderer.
@@ -263,14 +266,27 @@ namespace Veng::Renderer
 
         /// @brief Auto-exposure lower clamp on the adapted average luminance, in cd-equivalent HDR units.
         ///
-        /// Bounds how bright the metering can drive a very dark scene (a small value = a brighter
-        /// cap in the dark). Ignored when auto-exposure is off.
+        /// Bounds how bright the metering can drive a very dark scene: the exposure never exceeds
+        /// Key / this, so a scene dimmer than it is shown dimmer than mid-grey (a small value = a
+        /// brighter cap in the dark). Independent of AutoExposureMeterFloor, which decides what is
+        /// metered at all. Ignored when auto-exposure is off.
         f32 AutoExposureMinLuminance = 0.002f;
+
+        /// @brief Auto-exposure metering floor: a pixel darker than this is not metered.
+        ///
+        /// The histogram's lower bound. A pixel below it falls in the excluded black bin, so a frame
+        /// of mostly black space meters on its lit content. Separate from AutoExposureMinLuminance
+        /// so a dim field can be metered (and shown dim, under that clamp) rather than ignored.
+        /// Ignored when auto-exposure is off.
+        f32 AutoExposureMeterFloor = 0.002f;
 
         /// @brief Auto-exposure upper clamp on the adapted average luminance.
         ///
-        /// Bounds how dark the metering can drive a very bright scene. Ignored when auto-exposure
-        /// is off.
+        /// Bounds how dark the metering can drive a very bright scene: the exposure never falls
+        /// below Key / this, so a subject brighter than it is shown bright, past the highlight limit.
+        /// It clamps the adaptation only; the histogram reaches the scene colour's own limit
+        /// (AutoExposureMeterCeiling), so the meter still reads such a subject at its luminance.
+        /// Ignored when auto-exposure is off.
         f32 AutoExposureMaxLuminance = 8.0f;
 
         /// @brief Auto-exposure adaptation rate per second (the eye-adaptation speed).
@@ -294,6 +310,20 @@ namespace Veng::Renderer
         /// See AutoExposureLowPercentile; lowering it excludes extreme highlights (a star disc)
         /// from the meter. Ignored when auto-exposure is off.
         f32 AutoExposureHighPercentile = 1.0f;
+
+        /// @brief The percentile of the metered pixels the highlight cap keeps from blowing out.
+        ///
+        /// See AutoExposureHighlightLuminance. Ignored when auto-exposure or the cap is off.
+        f32 AutoExposureHighlightPercentile = 0.99f;
+
+        /// @brief The exposed luminance the highlight percentile may reach; zero turns the cap off.
+        ///
+        /// With the cap on, the metering never exposes so brightly that the luminance at
+        /// AutoExposureHighlightPercentile passes this value after exposure (before the bias of
+        /// Exposure). So a small bright subject in a large dim field — a lit planet against a starry
+        /// sky — sets the exposure, instead of the field's average blowing it out; a frame of only
+        /// the dim field meters its average as usual. Ignored when auto-exposure is off.
+        f32 AutoExposureHighlightLuminance = 0.0f;
 
         /// @brief The scene's authored flat-fallback ambient, multiplied by surface occlusion.
         ///

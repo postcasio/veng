@@ -125,6 +125,15 @@ float TranslucentReactiveAmount(float4 color)
     return saturate(max(color.a, dot(color.rgb * color.a, float3(0.2126, 0.7152, 0.0722))));
 }
 
+// The light a surface returns, divided by the exposure the tonemap applies to this view, so it
+// shows as it would at an exposure of 1 — an instrument or a display that must keep its authored
+// brightness while auto-exposure follows the scene. Scale the colour only: the coverage, and any
+// bloom-mask amplitude, are the surface's own.
+float3 CompensateExposure(ViewConstants vc, float3 radiance)
+{
+    return radiance * ViewInverseExposure(vc);
+}
+
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's
 // Refraction setting is on and a drawn material declares "readsSceneColor"); SampleSceneColor
 // returns black otherwise.

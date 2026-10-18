@@ -719,10 +719,13 @@ namespace Veng::Renderer
             .Tonemapper = state.Tonemapper,
             .AutoExposureKey = state.AutoExposureKey,
             .AutoExposureMinLuminance = state.AutoExposureMinLuminance,
+            .AutoExposureMeterFloor = state.AutoExposureMeterFloor,
             .AutoExposureMaxLuminance = state.AutoExposureMaxLuminance,
             .AutoExposureSpeed = state.AutoExposureSpeed,
             .AutoExposureLowPercentile = state.AutoExposureLowPercentile,
             .AutoExposureHighPercentile = state.AutoExposureHighPercentile,
+            .AutoExposureHighlightPercentile = state.AutoExposureHighlightPercentile,
+            .AutoExposureHighlightLuminance = state.AutoExposureHighlightLuminance,
             .AmbientFloor = state.AmbientFloor,
             .EnvironmentLightTint = state.EnvironmentLightTint,
             .BloomThreshold = state.BloomThreshold,
@@ -1115,6 +1118,7 @@ namespace Veng::Renderer
                 .SurfaceSize = overlay.SurfaceSize,
                 .DocExtent = docExtent,
                 .WorldAnchored = worldAnchored,
+                .CompensateExposure = overlay.CompensateExposure,
             });
             ++index;
 

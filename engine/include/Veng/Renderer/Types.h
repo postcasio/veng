@@ -546,6 +546,10 @@ namespace Veng::Renderer
         DstAlpha,
         /// @brief 1 minus destination alpha.
         OneMinusDstAlpha,
+        /// @brief The command buffer's blend constant (CommandBuffer::SetBlendConstants).
+        ConstantColor,
+        /// @brief 1 minus the command buffer's blend constant.
+        OneMinusConstantColor,
     };
 
     /// @brief Arithmetic operator applied in a blend equation.
@@ -596,6 +600,18 @@ namespace Veng::Renderer
                 .DstAlphaFactor = BlendFactor::OneMinusSrcAlpha,
                 .AlphaOp = BlendOp::Add,
             };
+        }
+
+        /// @brief Whether this state reads the blend constant, which a draw must then set.
+        [[nodiscard]] bool UsesBlendConstants() const
+        {
+            const auto constant = [](const BlendFactor factor)
+            {
+                return factor == BlendFactor::ConstantColor ||
+                       factor == BlendFactor::OneMinusConstantColor;
+            };
+            return Enable && (constant(SrcColorFactor) || constant(DstColorFactor) ||
+                              constant(SrcAlphaFactor) || constant(DstAlphaFactor));
         }
 
         /// @brief Returns a premultiplied-alpha over state: src + dst·(1 − a).

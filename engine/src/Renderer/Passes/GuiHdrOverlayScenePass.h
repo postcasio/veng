@@ -123,6 +123,14 @@ namespace Veng::Renderer
         /// @return The largest document rect size this frame; zero when no document covers a pixel.
         [[nodiscard]] uvec2 PrepareDocuments(const SceneView& view);
 
+        /// @brief Sets the frame's resolved exposure, which a CompensateExposure overlay divides by.
+        /// @param exposure  The exposure the tonemap applies this frame; a non-positive one is
+        ///                  treated as 1.
+        void SetExposure(f32 exposure)
+        {
+            m_ExposureScale = exposure > 0.0f ? 1.0f / exposure : 1.0f;
+        }
+
         /// @brief Updates the cached allocation extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
 
@@ -156,6 +164,9 @@ namespace Veng::Renderer
         AssetManager& m_Assets;
         /// @brief The allocation extent (the record maps to the frame's PostResolveExtent).
         uvec2 m_Extent;
+        /// @brief The colour weight a CompensateExposure overlay composites at: the reciprocal of the
+        ///        frame's resolved exposure.
+        f32 m_ExposureScale = 1.0f;
         /// @brief Color format of the scene-color target, for the composite color attachment.
         Format m_OutputFormat;
         /// @brief The scene-color id this pass loads and stores (blended over in place).

@@ -80,6 +80,16 @@
       "id": "0xF445ECD1B3FA752F",
       "type": "Material",
       "source": "materials/translucent_reactive.vmat.json"
+    },
+    {
+      "id": "0x6E4494C831CBE1FF",
+      "type": "Shader",
+      "source": "shaders/translucent_compensated.frag.shader.json"
+    },
+    {
+      "id": "0x44A1C22D5AA2A56C",
+      "type": "Material",
+      "source": "materials/translucent_compensated.vmat.json"
     }
   ]
 }

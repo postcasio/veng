@@ -636,6 +636,10 @@ namespace Veng::Renderer
             return vk::BlendFactor::eDstAlpha;
         case BlendFactor::OneMinusDstAlpha:
             return vk::BlendFactor::eOneMinusDstAlpha;
+        case BlendFactor::ConstantColor:
+            return vk::BlendFactor::eConstantColor;
+        case BlendFactor::OneMinusConstantColor:
+            return vk::BlendFactor::eOneMinusConstantColor;
         }
         VE_ASSERT(false, "ToVk(BlendFactor): unmapped value {}", static_cast<u32>(factor));
     }

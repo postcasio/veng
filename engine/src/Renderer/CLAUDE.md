@@ -1559,6 +1559,10 @@ fragment discard switched off by the push block's `Occluded` word.
   weighted, destination alpha kept) — no blend of its own.
 - **The bloom mask is written by luminance** of the contributed light (`colour × coverage`) when the
   frame wires one, so an HDR beam glows whatever the threshold.
+- **A path may hold its brightness against the exposure (`RibbonPath::CompensateExposure`).** Its
+  records carry the flag in `EndTangent.w`, and the vertex stage divides the colour by the view's
+  exposure (`ViewInverseExposure`, the view block's `ExposureParams`), so an instrument drawn as
+  linework shows as it would at an exposure of 1 while auto-exposure follows the scene.
 - **The reactive mask** is written by the scene placement under a temporal resolve, after any bloom
   mask, the larger of the band's coverage and the luminance it adds (see "TAA"), so a thin, fast band
   — a tracer — is not dropped from the history.
@@ -1992,6 +1996,30 @@ surface is untouched); and that a renderer records the whole chain only with SSR
 glossy in view and no image-based lighting, draws the frame it draws with SSR off.
 `tests/unit/frame_topology.cpp` pins that D6's flag clears exactly while the chain is wired.
 
+### Auto-exposure
+
+**The meter reads a log-luminance histogram of the scene before the pre-bloom overlays**
+(`AutoExposureMeter`, `auto_exposure.comp`), a frame later through a host-mapped ring, and eases an
+adapted luminance toward what it asks for; the exposure is `Key / adapted × Exposure`. The arithmetic
+is the device-free `MeterAutoExposureHistogram` (`AutoExposureMetering.h`, pinned by
+`tests/unit/auto_exposure_metering.cpp`). Four knobs shape it, each a `SceneView` / `ViewState` /
+`RenderLook` field:
+
+- **`AutoExposureMeterFloor`** is the histogram's lower bound: a pixel darker than it is not metered,
+  so a frame of mostly black space meters its lit content. The top bin is fixed at the scene colour's
+  limit (`AutoExposureMeterCeiling`, 65504), so nothing the clamps say truncates what is read.
+- **`AutoExposureMinLuminance` / `MaxLuminance`** clamp the adapted luminance — Min is the darkest
+  scene exposed up to the key, so a field dimmer than it is shown dimmer than mid-grey; Max is how far
+  a bright scene may darken the exposure, so a subject past it (a star filling the view) stays bright. Separate from
+  the floor, so a dim field can be metered and shown dim instead of being either ignored or pushed
+  to mid-grey.
+- **`AutoExposureLowPercentile` / `HighPercentile`** bound the band the geometric mean is taken over.
+- **`AutoExposureHighlightLuminance`** (zero, off, by default) caps the exposure so the luminance at
+  `AutoExposureHighlightPercentile` exposes no brighter than it: the target is the larger of the
+  average and `Highlight · Key / HighlightLuminance`. So a small bright subject in a large dim field
+  — a lit planet against a sky — sets the exposure rather than being blown out by the field's average,
+  while a frame of only the field meters its average.
+
 ### Depth of field and the physical camera
 
 **Depth of field is a half-resolution ring-gather compute battery** (`DofChain`,
@@ -2229,6 +2257,12 @@ non-negative), read by `MakeLightingSurface`; `.w` the normal-map specular anti-
 (`SceneView::NormalMapAntiAliasingScale`, clamped likewise), read by `WidenRoughnessForNormalMap`. A
 view block a pass writes without them (zero) shades with both widenings off.
 
+**The block carries the exposure the tonemap applies to the view** — `ExposureParams`, x the resolved
+exposure and y its reciprocal, written after the auto-exposure resolve so it is this frame's. A shader
+reads the reciprocal through `ViewInverseExposure` (`view_constants.slang`), which treats a block no
+tonemapped view wrote (zero, a sky-bake face) as an exposure of 1; a Translucent material keeping its
+authored brightness passes its colour through `CompensateExposure` (`Veng/translucent.slang`).
+
 **The block carries the view's frame count and its temporal resolve.** `FrameIndex` is the
 renderer's executed-frame counter (the one the TAA jitter sequence reads), wrapped to 32 bits; each
 `SceneRenderer` keeps its own, so two viewports count their own frames and a cube capture counts one
@@ -2265,7 +2299,7 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **816 bytes**. The shadow system's own state — each cascade
+latency instead of starving whichever captures registered last. Its stride is **832 bytes**. The shadow system's own state — each cascade
 set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
 instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 
@@ -2845,6 +2879,20 @@ cover rather than the frame:
 - **The composite is scissored to the rect.** Its viewport stays the full target, so `sv_position` is
   a scene pixel. The scene colour's (and mask's) load and store still cover the whole attachment — a
   render pass's load and store actions are not scissored on a tile-based GPU.
+
+**An overlay can hold its brightness against the exposure, and the meter never sees one.** A
+pre-bloom overlay is composited into the scene HDR, so the tonemap multiplies it by the frame's
+exposure like the scene behind it. `GuiOverlay::CompensateExposure` (conveyed as
+`GuiHdrOverlayView::CompensateExposure`) divides the light it adds by the frame's resolved exposure
+on the way in, so it reaches the tone curve as it would at an exposure of 1 — an interface stays
+legible as auto-exposure moves. It is applied through the blend, not the shader: the direct path's
+`GuiScenePass` pipelines and the composite pipelines weight the source colour by the blend constant
+(`BlendFactor::ConstantColor`, dynamic per pipeline that uses it, `CommandBuffer::SetBlendConstants`),
+so a composite material or a GUI fill material needs no cooperation, and the coverage taken from the
+scene and a material's bloom-mask amplitude are untouched. The direct path records the compensating
+overlays as a second merged list. Separately, the auto-exposure meter is declared **ahead of** this
+pass and reads the same target, so it meters the scene without any overlay: a bright panel never sets
+the exposure of the world behind it.
 
 **The composite-material contract.** A composite material declares `Document` (texture handle) and
 `DocumentRect` (`float4`: origin, size, in scene pixels), both written per frame into the pass's

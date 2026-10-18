@@ -34,6 +34,12 @@ namespace Veng::UI
                         {.Speed = 0.005f, .Min = 0.0001f, .Max = 4.0f, .Format = "%.3f"});
         changed |= Drag("AE max luminance", state.AutoExposureMaxLuminance,
                         {.Speed = 0.02f, .Min = 0.01f, .Max = 32768.0f, .Format = "%.2f"});
+        changed |= Drag("AE meter floor", state.AutoExposureMeterFloor,
+                        {.Speed = 0.0005f, .Min = 0.00001f, .Max = 4.0f, .Format = "%.5f"});
+        changed |= Drag("AE highlight percentile", state.AutoExposureHighlightPercentile,
+                        {.Speed = 0.001f, .Min = 0.0f, .Max = 1.0f, .Format = "%.3f"});
+        changed |= Drag("AE highlight luminance", state.AutoExposureHighlightLuminance,
+                        {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f, .Format = "%.2f"});
         changed |= Drag("AE speed", state.AutoExposureSpeed,
                         {.Speed = 0.05f, .Min = 0.0f, .Max = 16.0f, .Format = "%.2f"});
         changed |= Drag("Bloom threshold", state.BloomThreshold,

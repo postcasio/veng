@@ -1,5 +1,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 
+#include <algorithm>
+
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
@@ -169,6 +171,12 @@ namespace Veng::Renderer
 
         vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport,
                                                   vk::DynamicState::eScissor};
+        // A pipeline reading the blend constant takes it from the command buffer, set per draw.
+        if (std::ranges::any_of(info.ColorAttachments, [](const PipelineAttachmentInfo& attachment)
+                                { return attachment.Blend.UsesBlendConstants(); }))
+        {
+            dynamicStates.push_back(vk::DynamicState::eBlendConstants);
+        }
 
         const vk::PipelineDynamicStateCreateInfo dynamicState = {
             .dynamicStateCount = static_cast<u32>(dynamicStates.size()),

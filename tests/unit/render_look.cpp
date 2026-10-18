@@ -23,6 +23,9 @@ TEST_CASE("ApplyRenderLook delivers the authored auto-exposure metering onto the
     render.AutoExposureMaxLuminance = 4000.0f;
     render.AutoExposureLowPercentile = 0.6f;
     render.AutoExposureHighPercentile = 0.98f;
+    render.AutoExposureMeterFloor = 0.00002f;
+    render.AutoExposureHighlightPercentile = 0.995f;
+    render.AutoExposureHighlightLuminance = 1.5f;
 
     Renderer::SceneRendererSettings settings;
     Renderer::ViewState view;
@@ -32,6 +35,9 @@ TEST_CASE("ApplyRenderLook delivers the authored auto-exposure metering onto the
     CHECK(view.AutoExposureMaxLuminance == doctest::Approx(4000.0f));
     CHECK(view.AutoExposureLowPercentile == doctest::Approx(0.6f));
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(0.98f));
+    CHECK(view.AutoExposureMeterFloor == doctest::Approx(0.00002f));
+    CHECK(view.AutoExposureHighlightPercentile == doctest::Approx(0.995f));
+    CHECK(view.AutoExposureHighlightLuminance == doctest::Approx(1.5f));
 }
 
 TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewState defaults")
@@ -50,6 +56,9 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(view.AutoExposureMaxLuminance == doctest::Approx(defaults.AutoExposureMaxLuminance));
     CHECK(view.AutoExposureLowPercentile == doctest::Approx(defaults.AutoExposureLowPercentile));
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(defaults.AutoExposureHighPercentile));
+    CHECK(view.AutoExposureMeterFloor == defaults.AutoExposureMeterFloor);
+    CHECK(view.AutoExposureHighlightPercentile == defaults.AutoExposureHighlightPercentile);
+    CHECK(view.AutoExposureHighlightLuminance == defaults.AutoExposureHighlightLuminance);
     CHECK(view.SpecularAntiAliasingVariance == defaults.SpecularAntiAliasingVariance);
     CHECK(view.SpecularAntiAliasingThreshold == defaults.SpecularAntiAliasingThreshold);
     CHECK(view.NormalMapAntiAliasingScale == defaults.NormalMapAntiAliasingScale);
@@ -137,6 +146,9 @@ namespace
         look.AutoExposureMaxLuminance = 50.0f;
         look.AutoExposureLowPercentile = 0.2f;
         look.AutoExposureHighPercentile = 0.9f;
+        look.AutoExposureMeterFloor = 0.0001f;
+        look.AutoExposureHighlightPercentile = 0.97f;
+        look.AutoExposureHighlightLuminance = 2.0f;
         look.BloomThreshold = 0.5f;
         look.BloomFireflyCeiling = 200.0f;
         look.BloomIntensity = 1.7f;
@@ -192,6 +204,9 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.AutoExposureMaxLuminance == direct.AutoExposureMaxLuminance);
     CHECK(carried.AutoExposureLowPercentile == direct.AutoExposureLowPercentile);
     CHECK(carried.AutoExposureHighPercentile == direct.AutoExposureHighPercentile);
+    CHECK(carried.AutoExposureMeterFloor == direct.AutoExposureMeterFloor);
+    CHECK(carried.AutoExposureHighlightPercentile == direct.AutoExposureHighlightPercentile);
+    CHECK(carried.AutoExposureHighlightLuminance == direct.AutoExposureHighlightLuminance);
     CHECK(carried.BloomThreshold == direct.BloomThreshold);
     CHECK(carried.BloomFireflyCeiling == direct.BloomFireflyCeiling);
     CHECK(carried.BloomIntensity == direct.BloomIntensity);

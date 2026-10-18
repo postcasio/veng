@@ -190,6 +190,97 @@ TEST_CASE_FIXTURE(
     CHECK(high.r > low.r + 0.05f);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui hdr overlay: a compensating overlay keeps its brightness at any exposure")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = Extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const Gui::DrawList list = OverlayQuad(vec2(32.0f), vec2(64.0f), vec4(0.5f, 0.5f, 0.5f, 1.0f));
+    GuiHdrOverlayView view = ScreenSpaceView(list);
+    view.CompensateExposure = true;
+    const GuiHdrOverlayView views[] = {view};
+
+    const auto renderAtExposure = [&](const f32 exposure)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = exposure,
+                                                           .HdrOverlays = views});
+            });
+        return DecodeTexel(renderer->GetOutput()->GetImage()->Download(), Extent.x, 64, 64);
+    };
+
+    const vec3 low = renderAtExposure(1.0f);
+    const vec3 high = renderAtExposure(4.0f);
+    CHECK(low.r > 0.05f);
+    CHECK(high.r == doctest::Approx(low.r).epsilon(0.01f));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui hdr overlay: the auto-exposure meter does not see a pre-bloom overlay")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    // An empty scene meters nothing, so the exposure holds at its seed (Key over the seeded adapted
+    // luminance, 1). Were the overlay metered it would be the frame's only lit content, and the
+    // exposure would fall to Key / 0.5.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+    const Gui::DrawList list = OverlayQuad(vec2(32.0f), vec2(64.0f), vec4(0.5f, 0.5f, 0.5f, 1.0f));
+    const GuiHdrOverlayView view = ScreenSpaceView(list);
+    const GuiHdrOverlayView views[] = {view};
+
+    const auto overlayPixel = [&](const bool autoExposure, const u32 frames)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .AO = false,
+                         .AutoExposure = autoExposure},
+        });
+        for (u32 frame = 0; frame < frames; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                               .Camera = camera,
+                                                               .Delta = 0.0f,
+                                                               .HdrOverlays = views});
+                });
+        }
+        return DecodeTexel(renderer->GetOutput()->GetImage()->Download(), Extent.x, 64, 64);
+    };
+
+    // Several frames, so the meter reads back histograms the earlier frames wrote.
+    const vec3 metered = overlayPixel(true, 4);
+    const vec3 manual = overlayPixel(false, 1);
+    CHECK(manual.r > 0.05f);
+    CHECK(metered.r == doctest::Approx(manual.r).epsilon(0.01f));
+}
+
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
     "gui hdr overlay: effect then overlay then bloom — the load-bearing cross-plan order")
