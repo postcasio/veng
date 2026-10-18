@@ -75,6 +75,15 @@ frame no draw samples the grab) and the half-resolution layer's depth reduce and
 with their composite on an idle frame) are the users. `CompiledGraph::DidRecordPass(name)`, surfaced
 as `SceneRenderer::DidRecordPassLastFrame`, reports whether a pass recorded on the last `Execute`.
 
+**A pass may leave a colour slot unbound** — `PassBuilder::UnboundColor()`, declared in order with
+its other attachments. The schedule bakes an attachment with no view there (`ScheduledAttachment::
+UnboundSlot`), `BeginRendering` binds a null view, and every pipeline drawn in the pass declares
+`Format::Undefined` at that location (`PipelineAttachmentInfo`), whose writes are discarded —
+Vulkan's dynamic rendering supports exactly this pairing with no extension. It keeps a later
+attachment's location fixed whatever the frame wires before it: the translucent passes leave the
+bloom mask's location unbound when bloom is off, so a reactive material's output is location 2
+either way.
+
 ## SceneRenderer: the deferred über-pipeline
 
 `SceneRenderer` is a long-lived, configurable render pipeline on top of `RenderGraph`: it owns an
@@ -399,19 +408,26 @@ has not turned: a static camera fetches the background's history from exactly th
 The Karis luminance weights are taken on the **exposed** luminance (the tonemap's exposure, pushed),
 so their damping does not depend on the scene's absolute HDR scale.
 
-**Sprites and particles mark their pixels in a reactive mask, and the resolve trusts history less
-there.** They write no motion of their own and change as they play, so history reprojected under
-them is other content; a growing, animating explosion blended into it smears. Under every temporal
-mode `TaaResolve` owns a render-allocation `ReactiveMaskFormat` (R8) image beside the lit target, a
-`ReactiveMaskClearScenePass` clears it ahead of the scene's composited layers, and the sprite and
-particle passes add `SpriteReactiveCoverage` — a draw's coverage, or its luminance where an additive
-draw carries light with little coverage — into it as one more attachment (their `*Reactive`
-fragment entries). The engine resolve takes the largest value of its 3×3 render texels and moves
+**Sprites, particles, ribbons and reactive translucent materials mark their pixels in a reactive
+mask, and the resolve trusts history less there.** They write no motion of their own and change as
+they play or move, so history reprojected under them is other content; a growing, animating
+explosion blended into it smears, and a thin, fast feature — a tracer, a field of drifting motes —
+is dropped from it. Under every temporal mode `TaaResolve` owns a render-allocation
+`ReactiveMaskFormat` (R8) image beside the lit target, a `ReactiveMaskClearScenePass` clears it
+ahead of the scene's translucent passes, and each writer adds its coverage — or its luminance where
+an additive draw carries light with little coverage — into it as one more attachment: the sprite,
+particle and ribbon passes through their `*Reactive` fragment entries (`SpriteReactiveCoverage`, and
+the ribbon and tube stages' own), and a Translucent material declaring `"reactive": true` at its
+SV_Target2 (see "Additive translucent materials"). Post-resolve placements write none: they draw
+after the resolve and never enter its history. The engine resolve takes the largest value of its 3×3 render texels and moves
 its result toward this frame's reconstruction by `ReactiveCurrentShare` (0.9) of it, so a fully
 covered pixel keeps a tenth of its history and its jitter still averages; MetalFX takes the same
 image as its reactive mask. Nothing changes with anti-aliasing off, where no mask exists.
 `tests/gpu/sprite_pass.cpp` holds that a sprite appearing over a settled history reads most of its
-tint on that frame.
+tint on that frame; `tests/gpu/ribbon_pass.cpp` and `tests/gpu/translucent_reactive.cpp` read the
+mask back (`SceneRenderer::GetReactiveMaskView`) to hold that a ribbon and a reactive material write
+it where they draw — under TAA, TAAU and MetalFX, with and without the bloom mask — and a plain
+material does not.
 
 `tests/gpu/taa_stability.cpp` holds the result: under a static camera, at render scale 1 and 0.5 in
 both modes and under TAA with a depth-of-field composite after it, the converged resolve changes by under a few
@@ -1165,6 +1181,22 @@ In the half-resolution layer the kept alpha is what matters: an additive draw ad
 transparent-cleared layer without claiming coverage, so the composite's `(One, OneMinusSrcAlpha)`
 adds it onto the scene.
 
+**A Translucent material may write the temporal resolve's reactive mask** — `"reactive": true` in
+its `.vmat.json` (Translucent domain, full-resolution scene layer only: exclusive with
+`"resolution": "half"` and `"placement": "postResolve"`, each a cook error), read as
+`Material::IsReactiveWriter()`. Its fragment returns `TranslucentReactiveOutput` or
+`TranslucentBloomReactiveOutput` (`Veng/translucent.slang`), whose reactive amount is SV_Target2
+and `TranslucentReactiveAmount` the usual value. Under a temporal resolve the full-resolution
+translucent passes bind the mask as their third attachment, location 1 being the bloom mask or left
+unbound, and enable its writes for a declaring material's pipeline alone. It is for a thin, fast or
+animating surface the history would drop or smear; a large surface should not declare it, since a
+reactive pixel keeps little of its history.
+
+**An output's location is checked against its SV_Target index at cook.** Slang numbers an entry's
+outputs in declaration order unless every one carries an explicit `[[vk::location(N)]]`, so an
+SV_Target2 after SV_Target0 compiles to location 1; the contract structs pin every location, and the
+material importer refuses an output compiled anywhere but its own index.
+
 ### Flipbook sprites
 
 **A `FlipbookSprite` component draws a flipbook as a camera-facing HDR quad** (the component and the
@@ -1499,6 +1531,9 @@ fragment discard switched off by the push block's `Occluded` word.
   weighted, destination alpha kept) — no blend of its own.
 - **The bloom mask is written by luminance** of the contributed light (`colour × coverage`) when the
   frame wires one, so an HDR beam glows whatever the threshold.
+- **The reactive mask** is written by the scene placement under a temporal resolve, after any bloom
+  mask, the larger of the band's coverage and the luminance it adds (see "TAA"), so a thin, fast band
+  — a tracer — is not dropped from the history.
 - **Budget: `MaxRibbonSegmentsPerFrame` (8192) records, shared by both placements** (a dot is one).
   Past it the rest are dropped for the frame and the renderer warns once for its lifetime. The scene
   placement is depth-tested against the opaque depth, never written.

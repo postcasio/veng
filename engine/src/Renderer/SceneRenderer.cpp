@@ -849,8 +849,8 @@ namespace Veng::Renderer
                 TranslucentScenePass::CreatePipelineCache();
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, extent, &segments.Full[0], litId, depthTargetId, m_RefractionSceneId,
-                m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
-                TranslucentPassKind::First, 0, forwardSets, fullPipelines));
+                m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat, m_ReactiveMaskId,
+                ReactiveMaskFormat, TranslucentPassKind::First, 0, forwardSets, fullPipelines));
             if (!m_HalfResTranslucentActive)
             {
                 return;
@@ -868,8 +868,8 @@ namespace Veng::Renderer
                 m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                     m_Context, extent, &segments.Full[segment + 1], litId, depthTargetId,
                     m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
-                    BloomMaskFormat, TranslucentPassKind::Continuation, segment, forwardSets,
-                    fullPipelines));
+                    BloomMaskFormat, m_ReactiveMaskId, ReactiveMaskFormat,
+                    TranslucentPassKind::Continuation, segment, forwardSets, fullPipelines));
             }
         };
 
@@ -1001,13 +1001,15 @@ namespace Veng::Renderer
             // with Refraction on the lit scene color, first so a translucent fragment can sample
             // the scene behind it.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
-            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
-            // those, into the same target and bloom mask, while the scene carries any.
+            // The reactive mask is cleared ahead of every layer that writes it: the translucent
+            // surfaces, then the ribbons, sprites and particles over them.
             if (m_ReactiveMaskId.IsValid())
             {
                 m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
             }
+            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
+            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
+            // those, into the same target and bloom mask, while the scene carries any.
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
@@ -1017,8 +1019,10 @@ namespace Veng::Renderer
                         .Target = lightingTargetId,
                         .Depth = depthId,
                         .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
                         .TargetFormat = HdrFormat,
                         .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
             }
@@ -1234,7 +1238,8 @@ namespace Veng::Renderer
                 m_Internal->PostResolveTranslucentPass = CreateUnique<TranslucentScenePass>(
                     m_Context, tailExtent, &m_Internal->PostResolveTranslucentPlan, ppEffectFinalId,
                     ResourceId{}, ResourceId{}, ResourceId{}, HdrFormat, PostMaskId(),
-                    BloomMaskFormat, TranslucentPassKind::PostResolve, 0, forwardSets);
+                    BloomMaskFormat, ResourceId{}, Format::Undefined,
+                    TranslucentPassKind::PostResolve, 0, forwardSets);
             }
 
             // The HDR tail declares just before the tonemap — never after it, even when a
@@ -1412,13 +1417,15 @@ namespace Veng::Renderer
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
-            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
-            // those, into the same target and bloom mask, while the scene carries any.
+            // The reactive mask is cleared ahead of every layer that writes it: the translucent
+            // surfaces, then the ribbons, sprites and particles over them.
             if (m_ReactiveMaskId.IsValid())
             {
                 m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
             }
+            DeclareTranslucents(lightingTargetId, depthId, renderExtent);
+            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
+            // those, into the same target and bloom mask, while the scene carries any.
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
@@ -1428,8 +1435,10 @@ namespace Veng::Renderer
                         .Target = lightingTargetId,
                         .Depth = depthId,
                         .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
                         .TargetFormat = HdrFormat,
                         .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
                         .FramesInFlight = m_Context.GetMaxFramesInFlight(),
                     }));
             }
@@ -4103,6 +4112,10 @@ namespace Veng::Renderer
         // The frame count advanced after the Execute, so the target it wrote is now the history.
         return m_Ssr != nullptr ? m_Ssr->GetRadianceView(m_Ssr->GetRadianceHistoryIndex())
                                 : nullptr;
+    }
+    Ref<ImageView> SceneRenderer::GetReactiveMaskView() const
+    {
+        return m_Topology->TaaActive ? m_Taa->GetReactiveView() : nullptr;
     }
     Ref<ImageView> SceneRenderer::GetVelocityView() const
     {

@@ -21,3 +21,14 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
     return p.Color;
 }
+
+// The same colour, writing its reactive amount at SV_Target2 for a material declaring "reactive".
+[shader("fragment")]
+TranslucentReactiveOutput fsMainReactive(SurfaceFragmentInput input)
+{
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
+    TranslucentReactiveOutput output;
+    output.Color = p.Color;
+    output.Reactive = TranslucentReactiveAmount(p.Color);
+    return output;
+}

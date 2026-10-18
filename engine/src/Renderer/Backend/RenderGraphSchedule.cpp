@@ -96,6 +96,20 @@ namespace Veng::Renderer::Backend
 
             for (const RenderGraph::Access& access : pass.Accesses)
             {
+                if (!access.Resource.IsValid())
+                {
+                    VE_ASSERT(access.Kind == AccessKind::ColorAttachment,
+                              "RenderGraph::Compile: pass '{}' declares an access on no resource",
+                              pass.Name);
+                    baked.Attachments.push_back({
+                        .Slot = ScheduledAttachment::UnboundSlot,
+                        .IsDepth = false,
+                        .Load = access.Load,
+                        .Store = access.Store,
+                        .Clear = access.Clear,
+                    });
+                    continue;
+                }
                 const u32 slot = access.Resource.Index;
                 const ScheduleResource& source = resources[slot];
 

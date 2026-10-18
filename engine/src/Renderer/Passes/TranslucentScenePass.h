@@ -116,6 +116,10 @@ namespace Veng::Renderer
         /// @param targetFormat Color format the per-parent pipelines target.
         /// @param maskId       The bloom-mask target, or invalid when the frame wires none.
         /// @param maskFormat   Color format of the bloom-mask attachment.
+        /// @param reactiveId   The temporal resolve's reactive mask, or invalid when no temporal
+        ///                     resolve is wired. It is always the third attachment, location 2,
+        ///                     with the second left unbound when the frame wires no bloom mask.
+        /// @param reactiveFormat Color format of the reactive mask.
         /// @param kind         Which pass this is. A HalfLayer instance renders the
         ///                     reduced-resolution layer: the viewport is the half valid sub-rect and
         ///                     the target is cleared to transparent at pass begin. A PostResolve
@@ -129,8 +133,9 @@ namespace Veng::Renderer
         TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
                              ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
                              ResourceId sceneDepthId, Format targetFormat, ResourceId maskId,
-                             Format maskFormat, TranslucentPassKind kind, u32 segment,
-                             ForwardLightingSets forward, Ref<PipelineCache> pipelines = {});
+                             Format maskFormat, ResourceId reactiveId, Format reactiveFormat,
+                             TranslucentPassKind kind, u32 segment, ForwardLightingSets forward,
+                             Ref<PipelineCache> pipelines = {});
 
         /// @brief Creates a pipeline cache passes of one target and mask configuration share.
         [[nodiscard]] static Ref<PipelineCache> CreatePipelineCache();
@@ -197,6 +202,10 @@ namespace Veng::Renderer
         ResourceId m_MaskId;
         /// @brief Color format of the bloom-mask attachment.
         Format m_MaskFormat;
+        /// @brief The reactive mask (invalid when no temporal resolve is wired).
+        ResourceId m_ReactiveId;
+        /// @brief Color format of the reactive mask.
+        Format m_ReactiveFormat;
         /// @brief Which of the frame's translucent passes this is.
         TranslucentPassKind m_Kind;
         /// @brief The segment the pass belongs to.

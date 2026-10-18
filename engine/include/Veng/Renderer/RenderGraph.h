@@ -259,6 +259,12 @@ namespace Veng::Renderer
 
             /// @brief Declares a color attachment access for this pass.
             PassBuilder& Color(const PassAttachment& attachment);
+            /// @brief Declares an unbound color slot at this position in the pass's attachments.
+            ///
+            /// The pass renders into nothing there, so every pipeline drawn in it declares
+            /// Format::Undefined at that location and a fragment output to it is discarded. It keeps
+            /// a later attachment's location fixed whatever the frame wires before it.
+            PassBuilder& UnboundColor();
             /// @brief Declares a depth attachment access for this pass.
             PassBuilder& Depth(const PassAttachment& attachment);
             /// @brief Declares a shader-sample read on resource, by the stage this pass's type runs

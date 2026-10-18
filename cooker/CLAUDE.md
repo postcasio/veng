@@ -118,8 +118,14 @@ at cook time:
   `"readsSceneDepth": true` when it samples only the opaque-depth copy, both likewise
   Translucent-only, and `"placement": "postResolve"` (default `"scene"`) to draw in the
   post-resolve translucent layer, Translucent-only and exclusive with `"resolution": "half"` and both
-  scene reads; the cooked header's layer word carries it and the half-resolution choice alike. A Surface material may declare `"instancedSets": true` when an instanced mesh
-  set may draw it, a located cook error on any other domain. Because the
+  scene reads; the cooked header's layer word carries it and the half-resolution choice alike. A
+  Translucent material may declare `"reactive": true` when its fragment writes the temporal resolve's
+  reactive mask at SV_Target2, Translucent-only and exclusive with `"resolution": "half"` and
+  `"placement": "postResolve"`; every fragment output must compile to the location its SV_Target index
+  names, which Slang's declaration-order numbering breaks for a struct with a gap unless every output
+  carries an explicit `[[vk::location(N)]]`, and the importer refuses one that does not. A Surface
+  material may declare `"instancedSets": true` when an instanced mesh set may draw it, a located cook
+  error on any other domain. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects

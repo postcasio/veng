@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x9FAE5B1FE688D6EA",
+      "type": "Shader",
+      "source": "shaders/translucent_reactive_implicit.frag.shader.json"
+    },
+    {
+      "id": "0x97D826E28AA7C827",
+      "type": "Material",
+      "source": "materials/translucent_reactive_implicit.vmat.json"
+    }
+  ]
+}

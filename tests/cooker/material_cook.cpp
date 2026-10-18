@@ -775,6 +775,45 @@ TEST_CASE("Cooker: a Surface material declaring instanced sets cooks with the fl
     CHECK(translucent.error().find("'instancedSets' requires the Surface domain") != string::npos);
 }
 
+TEST_CASE("Cooker: a reactive translucent material cooks with the flag set; the misuses are "
+          "located cook errors")
+{
+    const Result<ArchiveReader> reader =
+        CookMaterialPack(FixtureDir / "material_translucent_reactive_pack.json",
+                         Veng::TestSupport::TempDir() / "veng_cooker_material_reactive.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xA1EDE28EE0B35E5FULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.Reactive == 1u);
+    CHECK(header.BloomMask == 0u);
+
+    // The reactive mask is the full-resolution scene's and its output is SV_Target2, so another
+    // domain, another layer, or a flag without the output is refused rather than silently inert.
+    const auto CookError = [](const char* pack)
+    {
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        const VoidResult result =
+            cooker.CookPack(FixtureDir / pack, Veng::TestSupport::TempDir() /
+                                                   "veng_cooker_material_reactive_err.vengpack");
+        REQUIRE_FALSE(result.has_value());
+        return result.error();
+    };
+    CHECK(CookError("material_surface_reactive_pack.json")
+              .find("'reactive' requires the Translucent domain") != string::npos);
+    CHECK(CookError("material_translucent_reactive_half_pack.json")
+              .find("'reactive' is exclusive with 'resolution: half'") != string::npos);
+    CHECK(CookError("material_translucent_reactive_no_output_pack.json")
+              .find("SV_Target2 (the reactive amount it declares)") != string::npos);
+    // Slang numbers outputs in declaration order, so an SV_Target2 after SV_Target0 with no
+    // explicit locations compiles to location 1 and would write the wrong attachment.
+    CHECK(CookError("material_translucent_reactive_implicit_pack.json")
+              .find("is SV_Target2 but compiles to location 1") != string::npos);
+}
+
 TEST_CASE("Cooker: a scene-depth-reading translucent material cooks with the flag set; other "
           "domains refuse it")
 {

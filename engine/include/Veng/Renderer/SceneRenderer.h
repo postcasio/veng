@@ -518,6 +518,14 @@ namespace Veng::Renderer
         /// Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetSsrReflectionView() const;
 
+        /// @brief Returns the temporal resolve's reactive mask the last Execute wrote, or null when
+        ///        no temporal resolve is wired.
+        ///
+        /// R8 at the render allocation: how much of each pixel the frame's reactive layers own
+        /// (reactive translucent materials, ribbons, sprites, particles), summed and saturated.
+        /// Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetReactiveMaskView() const;
+
         /// @brief Returns the per-object velocity target (g-buffer channel G3).
         ///
         /// RG screen-space motion vectors written by the surface pass as a fourth g-buffer

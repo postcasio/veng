@@ -120,13 +120,16 @@ namespace Veng::Renderer
                                           {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
             m_LitHandle = bindless.Register(m_LitView);
 
-            m_ReactiveImage = Image::Create(m_Context, {
-                                                           .Name = "SceneRenderer Reactive Mask",
-                                                           .Extent = {litExtent.x, litExtent.y, 1},
-                                                           .Format = ReactiveMaskFormat,
-                                                           .Usage = HdrUsage,
-                                                           .PlatformExport = platformResolve,
-                                                       });
+            m_ReactiveImage =
+                Image::Create(m_Context, {
+                                             .Name = "SceneRenderer Reactive Mask",
+                                             .Extent = {litExtent.x, litExtent.y, 1},
+                                             .Format = ReactiveMaskFormat,
+                                             // Read back by GetReactiveMaskView's
+                                             // callers.
+                                             .Usage = HdrUsage | ImageUsage::TransferSrc,
+                                             .PlatformExport = platformResolve,
+                                         });
             m_ReactiveView = ImageView::Create(
                 m_Context, {.Name = "SceneRenderer Reactive Mask View", .Image = m_ReactiveImage});
             m_ReactiveHandle = bindless.Register(m_ReactiveView);

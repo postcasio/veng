@@ -441,7 +441,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 16u;
+    inline constexpr u32 CookedMaterialVersion = 17u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -544,8 +544,17 @@ namespace Veng
         /// declaring this, and refuses a set drawn with one that does not. Surface domain only,
         /// enforced at cook.
         u32 InstancedSets = 0;
+        /// @brief Whether the fragment stage writes the temporal resolve's reactive mask at
+        ///        SV_Target2 (the "reactive" key; default 0).
+        ///
+        /// Under a temporal resolve the scene translucent passes enable the reactive attachment's
+        /// writes for a declaring material's pipeline alone. Translucent domain, full-resolution
+        /// scene layer only, enforced at cook.
+        u32 Reactive = 0;
+        /// @brief Pads the header to its 8-byte alignment with a determined byte.
+        u32 Pad = 0;
     };
-    static_assert(sizeof(CookedMaterialHeader) == 64,
+    static_assert(sizeof(CookedMaterialHeader) == 72,
                   "CookedMaterialHeader carries no unnamed padding");
 
     /// @brief One reflected material field within the single parameter block.

@@ -697,6 +697,13 @@ errors on any other domain. Neither is policed against the shader: a depth-only 
 the colour helpers reads black. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The refraction
 grab, and reading it blurred".
 
+**A Translucent material declares whether it writes the temporal resolve's reactive mask**,
+`"reactive": true` (`Material::IsReactiveWriter`; default false), its fragment returning the
+reactive amount at SV_Target2 through `TranslucentReactiveOutput` or
+`TranslucentBloomReactiveOutput`. Translucent domain and full-resolution scene layer only, each a
+located cook error otherwise. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Additive
+translucent materials".
+
 **A Surface material declares whether an instanced mesh set may draw it**, `"instancedSets": true`
 (`Material::SupportsInstancedSets`; default false, a located cook error on any other domain). Sets
 are built at runtime, so the declaration is the gate: the renderer builds the material's

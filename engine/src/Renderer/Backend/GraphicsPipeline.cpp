@@ -146,7 +146,8 @@ namespace Veng::Renderer
         for (auto& attachment : info.ColorAttachments)
         {
             vk::PipelineColorBlendAttachmentState state = ToVk(attachment.Blend);
-            if (!attachment.Write)
+            // An unbound slot (Format::Undefined) takes nothing, whatever its blend says.
+            if (!attachment.Write || attachment.Format == Format::Undefined)
             {
                 state.colorWriteMask = {};
             }

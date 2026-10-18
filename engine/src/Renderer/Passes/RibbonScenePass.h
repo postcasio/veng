@@ -177,10 +177,15 @@ namespace Veng::Renderer
         /// @brief The bloom-mask target at the pass's allocation, or invalid when the frame wires
         ///        none.
         ResourceId Mask;
+        /// @brief The temporal resolve's reactive mask, or invalid when no temporal resolve is
+        ///        wired. Scene placement only: a post-resolve ribbon never enters the history.
+        ResourceId Reactive;
         /// @brief Color format of the scene-color target.
         Format TargetFormat = Format::Undefined;
         /// @brief Color format of the bloom-mask target.
         Format MaskFormat = Format::Undefined;
+        /// @brief Color format of the reactive mask.
+        Format ReactiveFormat = Format::Undefined;
         /// @brief Frames in flight, the depth of the record ring.
         u32 FramesInFlight = 1;
     };
@@ -244,6 +249,8 @@ namespace Veng::Renderer
         SamplerHandle m_SamplerHandle;
         /// @brief The bloom-mask target (invalid when the frame wires none).
         ResourceId m_MaskId;
+        /// @brief The reactive mask (invalid when no temporal resolve is wired).
+        ResourceId m_ReactiveId;
         /// @brief Frames in flight, the depth of the record ring.
         u32 m_FramesInFlight;
 

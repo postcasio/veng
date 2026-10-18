@@ -135,8 +135,9 @@ namespace Veng::Renderer
 
     /// @brief Clears the reactive mask ahead of the passes that write it.
     ///
-    /// The sprite and particle passes add their coverage into the mask and either may be unwired
-    /// or skip a frame, so the clear is a pass of its own, wired with every temporal resolve.
+    /// A reactive translucent material, and the ribbon, sprite and particle passes, add their
+    /// coverage into the mask and any of them may be unwired or skip a frame, so the clear is a pass
+    /// of its own, wired with every temporal resolve ahead of the translucent passes.
     class ReactiveMaskClearScenePass final : public ScenePass
     {
     public:

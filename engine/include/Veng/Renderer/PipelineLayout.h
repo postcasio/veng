@@ -20,7 +20,8 @@ namespace Veng::Renderer
     /// @brief Format and blend state for one color attachment in a graphics pipeline.
     struct PipelineAttachmentInfo
     {
-        /// @brief Color attachment format.
+        /// @brief Color attachment format; Format::Undefined for a slot the pass leaves unbound
+        ///        (RenderGraph::PassBuilder::UnboundColor), which takes no writes.
         Format Format = Format::Undefined;
         /// @brief Blend mode (default opaque).
         BlendState Blend = BlendState::Opaque();

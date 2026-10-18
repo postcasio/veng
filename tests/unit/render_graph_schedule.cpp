@@ -2,7 +2,7 @@
 // device-free core of RenderGraph::Compile (Compile delegates to it, then allocates
 // transient backing), so the graph-level barrier orchestration — multi-pass
 // read-after-write ordering, per-mip subresource tracking, buffer hazard detection,
-// and attachment collection — is testable without a GPU. The per-edge hazard rule it
+// and attachment collection, unbound color slots included — is testable without a GPU. The per-edge hazard rule it
 // composes is covered by barrier_decision.cpp; these cases cover the cross-pass
 // scheduling around it.
 
@@ -63,6 +63,32 @@ TEST_CASE("Schedule: a color attachment write derives one transition and one att
     CHECK_FALSE(schedule[0].Attachments[0].IsDepth);
     CHECK(schedule[0].Attachments[0].Load == LoadOp::Clear);
     CHECK(schedule[0].Attachments[0].Store == StoreOp::Store);
+}
+
+TEST_CASE("Schedule: an unbound color slot keeps its place among the attachments, untransitioned")
+{
+    const vector<ScheduleResource> resources{ImportImage("Target"), ImportImage("Reactive")};
+    const vector<RenderGraph::Access> accesses{
+        {.Resource = ResourceId{.Index = 0},
+         .Kind = AccessKind::ColorAttachment,
+         .Load = LoadOp::Load,
+         .Store = StoreOp::Store},
+        {.Kind = AccessKind::ColorAttachment, .Load = LoadOp::Load, .Store = StoreOp::Store},
+        {.Resource = ResourceId{.Index = 1},
+         .Kind = AccessKind::ColorAttachment,
+         .Load = LoadOp::Load,
+         .Store = StoreOp::Store}};
+    const vector<SchedulePass> passes{{.Name = "Translucent", .Accesses = accesses}};
+
+    const auto schedule = DeriveRenderGraphSchedule(resources, passes);
+
+    REQUIRE(schedule.size() == 1);
+    CHECK(schedule[0].Transitions.size() == 2);
+    REQUIRE(schedule[0].Attachments.size() == 3);
+    CHECK(schedule[0].Attachments[0].Slot == 0);
+    CHECK(schedule[0].Attachments[1].Slot == ScheduledAttachment::UnboundSlot);
+    CHECK_FALSE(schedule[0].Attachments[1].IsDepth);
+    CHECK(schedule[0].Attachments[2].Slot == 1);
 }
 
 TEST_CASE(

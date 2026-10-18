@@ -70,6 +70,16 @@
       "id": "0x5891E0BA639B092B",
       "type": "Material",
       "source": "materials/translucent_post_resolve.vmat.json"
+    },
+    {
+      "id": "0x69819002EC4D205F",
+      "type": "Shader",
+      "source": "shaders/translucent_reactive.frag.shader.json"
+    },
+    {
+      "id": "0xF445ECD1B3FA752F",
+      "type": "Material",
+      "source": "materials/translucent_reactive.vmat.json"
     }
   ]
 }

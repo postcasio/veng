@@ -39,7 +39,8 @@ namespace Veng::Renderer
     /// @brief Describes a single color, depth, or stencil attachment for a dynamic render pass.
     struct RenderingAttachmentInfo
     {
-        /// @brief The view to attach.
+        /// @brief The view to attach; null leaves a color slot unbound (its writes are discarded,
+        ///        and a pipeline drawn in the pass declares Format::Undefined there).
         Ref<ImageView> ImageView;
         /// @brief Load operation at pass begin.
         LoadOp LoadOp;

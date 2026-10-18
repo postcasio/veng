@@ -242,6 +242,24 @@ namespace Veng::Cook
             return true;
         }
 
+        // Slang numbers an entry's varying outputs in declaration order unless every one carries
+        // an explicit [[vk::location(N)]], so SV_Target2 after SV_Target0 compiles to location 1
+        // and writes the wrong attachment. A target is accepted only where it compiles to its own
+        // index.
+        VoidResult CheckTargetLocation(const size_t location, const u32 targetIndex,
+                                       const char* name, std::string_view entry)
+        {
+            if (location == targetIndex)
+            {
+                return {};
+            }
+            return std::unexpected(fmt::format(
+                "material importer: entry point '{}': output '{}' is SV_Target{} but compiles to "
+                "location {} — Slang numbers outputs in declaration order, so give every output of "
+                "the struct an explicit [[vk::location(N)]] matching its SV_TargetN",
+                entry, name != nullptr ? name : "?", targetIndex, location));
+        }
+
         // Walks the entry result layout — either a bare SV_TargetN or a struct of
         // varyings (MRT) — and collects each render target. An SV_Depth member is dropped
         // rather than collected: it writes the depth attachment, so it is not part of the
@@ -275,9 +293,17 @@ namespace Veng::Cook
 
                     // The varying's declared type comes through the type layout —
                     // a struct field's own getType() is empty for an entry result.
+                    const auto targetIndex = static_cast<u32>(field->getSemanticIndex());
+                    const VoidResult located = CheckTargetLocation(
+                        result->getOffset(slang::ParameterCategory::VaryingOutput) +
+                            field->getOffset(slang::ParameterCategory::VaryingOutput),
+                        targetIndex, field->getName(), entry);
+                    if (!located)
+                    {
+                        return std::unexpected(located.error());
+                    }
                     const Result<ReflectedFragmentOutput> output =
-                        ReflectOutputType(field->getTypeLayout()->getType(),
-                                          static_cast<u32>(field->getSemanticIndex()), entry);
+                        ReflectOutputType(field->getTypeLayout()->getType(), targetIndex, entry);
                     if (!output)
                     {
                         return std::unexpected(output.error());
@@ -295,8 +321,16 @@ namespace Veng::Cook
                                     entry));
                 }
 
-                const Result<ReflectedFragmentOutput> output = ReflectOutputType(
-                    typeLayout->getType(), static_cast<u32>(result->getSemanticIndex()), entry);
+                const auto targetIndex = static_cast<u32>(result->getSemanticIndex());
+                const VoidResult located =
+                    CheckTargetLocation(result->getOffset(slang::ParameterCategory::VaryingOutput),
+                                        targetIndex, result->getName(), entry);
+                if (!located)
+                {
+                    return std::unexpected(located.error());
+                }
+                const Result<ReflectedFragmentOutput> output =
+                    ReflectOutputType(typeLayout->getType(), targetIndex, entry);
                 if (!output)
                 {
                     return std::unexpected(output.error());

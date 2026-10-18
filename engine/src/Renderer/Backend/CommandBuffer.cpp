@@ -55,6 +55,10 @@ namespace Veng::Renderer
     static vk::RenderingAttachmentInfo
     BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
     {
+        if (info.ImageView == nullptr)
+        {
+            return {.imageView = nullptr, .imageLayout = vk::ImageLayout::eUndefined};
+        }
         return {.imageView = info.ImageView->GetNative().ImageView,
                 .imageLayout =
                     Utils::GetFormatAttachmentImageLayout(ToVk(info.ImageView->GetFormat())),
@@ -114,7 +118,9 @@ namespace Veng::Renderer
 
         for (const auto& attachment : info.ColorAttachments)
         {
-            m_ActiveColorAttachmentFormats.push_back(attachment.ImageView->GetFormat());
+            m_ActiveColorAttachmentFormats.push_back(attachment.ImageView != nullptr
+                                                         ? attachment.ImageView->GetFormat()
+                                                         : Format::Undefined);
         }
 
         m_ActiveDepthAttachmentFormat = info.DepthAttachment.has_value()

@@ -5,6 +5,9 @@
 // regardless of the bloom threshold. The alpha pipeline composites it straight-alpha over and the
 // additive pipeline adds it weighted by coverage, so one stage serves both.
 //
+// The reactive entries add the temporal resolve's reactive mask after any bloom mask: how much of the
+// pixel the ribbon owns, so a resolve takes more of this frame under a thin, fast band.
+//
 // The post-resolve entries draw where no depth buffer is attached, so they occlude by hand: the
 // render-allocation g-buffer depth is sampled at this pixel through the sub-rect remap, turned back
 // into a view depth through the projection's depth rows (which TAA's jitter leaves alone), and a
@@ -19,6 +22,19 @@ struct MaskedOutput
 {
     float4 Color : SV_Target0;
     float Mask : SV_Target1;
+};
+
+struct ReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Reactive : SV_Target1;
+};
+
+struct MaskedReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Mask : SV_Target1;
+    float Reactive : SV_Target2;
 };
 
 static const float3 LumaWeights = float3(0.2126, 0.7152, 0.0722);
@@ -36,6 +52,13 @@ float4 ShadeRibbon(VSOutput input)
 float MaskOf(float4 color)
 {
     return saturate(dot(color.rgb * color.a, LumaWeights));
+}
+
+// The reactive amount of a straight colour: its coverage, or the luminance of the light it adds where
+// an additive band carries more light than coverage.
+float ReactiveOf(float4 color)
+{
+    return saturate(max(color.a, dot(color.rgb * color.a, LumaWeights)));
 }
 
 // The view depth a reverse-Z device depth stands for, through any projection whose clip z and w
@@ -80,6 +103,25 @@ MaskedOutput fsMainMasked(VSOutput input)
     MaskedOutput output;
     output.Color = ShadeRibbon(input);
     output.Mask = MaskOf(output.Color);
+    return output;
+}
+
+[shader("fragment")]
+ReactiveOutput fsMainReactive(VSOutput input)
+{
+    ReactiveOutput output;
+    output.Color = ShadeRibbon(input);
+    output.Reactive = ReactiveOf(output.Color);
+    return output;
+}
+
+[shader("fragment")]
+MaskedReactiveOutput fsMainMaskedReactive(VSOutput input)
+{
+    MaskedReactiveOutput output;
+    output.Color = ShadeRibbon(input);
+    output.Mask = MaskOf(output.Color);
+    output.Reactive = ReactiveOf(output.Color);
     return output;
 }
 

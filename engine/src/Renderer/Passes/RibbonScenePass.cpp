@@ -41,6 +41,8 @@ namespace Veng::Renderer
         constexpr AssetId RibbonVertId{0xF6BFB05FF0406BA1ULL};
         constexpr AssetId RibbonFragId{0x53221CEA8AE17B58ULL};
         constexpr AssetId RibbonMaskedFragId{0x27AC55CDC4A9B5EFULL};
+        constexpr AssetId RibbonReactiveFragId{0xBD85E1C9A258FDB5ULL};
+        constexpr AssetId RibbonMaskedReactiveFragId{0x70F6C55F1A4753E6ULL};
         constexpr AssetId RibbonPostResolveVertId{0x3E89E5673CF50020ULL};
         constexpr AssetId RibbonPostResolveFragId{0x4D7810339113239AULL};
         constexpr AssetId RibbonPostResolveMaskedFragId{0xF6C14E1276C14FEDULL};
@@ -49,6 +51,8 @@ namespace Veng::Renderer
         constexpr AssetId RibbonTubeVertId{0xA7CAC74C1DC3143DULL};
         constexpr AssetId RibbonTubeFragId{0xBD4211ED1668BCB8ULL};
         constexpr AssetId RibbonTubeMaskedFragId{0x759BE1D5728983B8ULL};
+        constexpr AssetId RibbonTubeReactiveFragId{0xBDDD3E99C19551E1ULL};
+        constexpr AssetId RibbonTubeMaskedReactiveFragId{0x69E270EBB79C8D3DULL};
 
         // Six vertices (two triangles) per record quad.
         constexpr u32 RibbonVertexCount = 6;
@@ -549,15 +553,21 @@ namespace Veng::Renderer
                                      const RibbonScenePassInfo& info)
         : m_Context(context), m_Plan(info.Plan), m_Placement(info.Placement),
           m_TargetId(info.Target), m_DepthId(info.Depth), m_DepthHandle(info.DepthHandle),
-          m_SamplerHandle(info.Sampler), m_MaskId(info.Mask), m_FramesInFlight(info.FramesInFlight)
+          m_SamplerHandle(info.Sampler), m_MaskId(info.Mask), m_ReactiveId(info.Reactive),
+          m_FramesInFlight(info.FramesInFlight)
     {
         const bool postResolve = m_Placement == RibbonPlacement::PostResolve;
+        VE_ASSERT(!postResolve || !m_ReactiveId.IsValid(),
+                  "RibbonScenePass: a post-resolve ribbon writes no reactive mask");
         const bool masked = m_MaskId.IsValid();
+        const bool reactive = m_ReactiveId.IsValid();
         const AssetHandle<Veng::Shader> vs = LoadShader(
             assets, postResolve ? RibbonPostResolveVertId : RibbonVertId, "ribbon vertex");
+        // The entry writes colour, then the bloom mask, then the reactive mask, for those wired.
         const AssetId fragmentId =
             postResolve ? (masked ? RibbonPostResolveMaskedFragId : RibbonPostResolveFragId)
-                        : (masked ? RibbonMaskedFragId : RibbonFragId);
+            : masked    ? (reactive ? RibbonMaskedReactiveFragId : RibbonMaskedFragId)
+                        : (reactive ? RibbonReactiveFragId : RibbonFragId);
         const AssetHandle<Veng::Shader> fs = LoadShader(assets, fragmentId, "ribbon fragment");
 
         // Set 3 carries the per-frame record SSBO, off bindless, as the sprite pass's does.
@@ -596,6 +606,11 @@ namespace Veng::Renderer
                 // The mask accumulates like the translucent pass's: two glows over one pixel sum.
                 attachments.push_back({.Format = info.MaskFormat, .Blend = BlendState::Additive()});
             }
+            if (reactive)
+            {
+                attachments.push_back(
+                    {.Format = info.ReactiveFormat, .Blend = BlendState::Additive()});
+            }
             return GraphicsPipeline::Create(
                 m_Context,
                 {
@@ -632,8 +647,11 @@ namespace Veng::Renderer
         {
             const AssetHandle<Veng::Shader> tubeVs =
                 LoadShader(assets, RibbonTubeVertId, "ribbon tube vertex");
-            const AssetHandle<Veng::Shader> tubeFs = LoadShader(
-                assets, masked ? RibbonTubeMaskedFragId : RibbonTubeFragId, "ribbon tube fragment");
+            const AssetId tubeFragmentId =
+                masked ? (reactive ? RibbonTubeMaskedReactiveFragId : RibbonTubeMaskedFragId)
+                       : (reactive ? RibbonTubeReactiveFragId : RibbonTubeFragId);
+            const AssetHandle<Veng::Shader> tubeFs =
+                LoadShader(assets, tubeFragmentId, "ribbon tube fragment");
             m_TubeAlphaPipeline = makePipeline("Ribbon Tube Alpha Pipeline",
                                                BlendState::AlphaBlend(), true, tubeVs, tubeFs);
             m_TubeAdditivePipeline = makePipeline(
@@ -705,6 +723,15 @@ namespace Veng::Renderer
             // render allocation, by it or the promotion at the post-resolve one — and ribbons add.
             builder.Color({
                 .Resource = m_MaskId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            });
+        }
+        if (m_ReactiveId.IsValid())
+        {
+            // Cleared ahead of the scene's composited layers; ribbons add their coverage.
+            builder.Color({
+                .Resource = m_ReactiveId,
                 .Load = LoadOp::Load,
                 .Store = StoreOp::Store,
             });

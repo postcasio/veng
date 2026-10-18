@@ -347,6 +347,29 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1j'. Parse the optional reactive declaration (default false) ---
+
+        // Set by a Translucent material whose fragment writes the temporal resolve's reactive mask
+        // at SV_Target2 — a thin, fast or animating surface the resolve's history would smear or
+        // drop. The scene translucent passes enable the reactive attachment's writes for a declaring
+        // material's pipeline alone; the layer rules below keep it to the full-resolution scene.
+        bool reactive = false;
+        if (vmat.contains("reactive"))
+        {
+            if (!vmat["reactive"].is_boolean())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'reactive' must be a boolean", vmatPath.string()));
+            }
+            reactive = vmat["reactive"].get<bool>();
+            if (reactive && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'reactive' requires the Translucent domain",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 1k. Parse the optional translucent placement (default scene) ---
 
         // "postResolve" draws a Translucent material at the HDR tail, at the output resolution
@@ -402,6 +425,15 @@ namespace Veng::Cook
         const TranslucentLayer layer = postResolve      ? TranslucentLayer::PostResolve
                                        : halfResolution ? TranslucentLayer::HalfResolution
                                                         : TranslucentLayer::Full;
+        if (reactive && layer != TranslucentLayer::Full)
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': 'reactive' is exclusive with 'resolution: half' and "
+                "'placement: postResolve' — the reactive mask is the full-resolution scene's, and "
+                "a "
+                "post-resolve surface never enters the temporal history",
+                vmatPath.string()));
+        }
 
         // --- 2. Validate and resolve shader references ---
 
@@ -597,22 +629,28 @@ namespace Veng::Cook
             // the pass enables the mask attachment's writes from the flag, so a flag without the
             // output writes undefined values into the mask and an output without the flag is
             // silently discarded.
+            // Declaring "reactive" adds a scalar float SV_Target2, the reactive amount, whether or
+            // not the material declares the mask — the pass keeps the reactive attachment at
+            // location 2 by leaving location 1 unbound when no mask is wired.
             const bool colorOk = !outputs->empty() && (*outputs)[0].TargetIndex == 0 &&
                                  (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
-            const bool maskOk =
-                !bloomMask ? outputs->size() == 1
-                           : outputs->size() == 2 && (*outputs)[1].TargetIndex == 1 &&
-                                 (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 1;
-            if (!colorOk || !maskOk)
+            const auto scalarAt = [&](const usize i, const u32 target)
+            {
+                return i < outputs->size() && (*outputs)[i].TargetIndex == target &&
+                       (*outputs)[i].IsFloat && (*outputs)[i].ComponentCount == 1;
+            };
+            const usize expected = 1 + (bloomMask ? 1 : 0) + (reactive ? 1 : 0);
+            const bool extrasOk = outputs->size() == expected && (!bloomMask || scalarAt(1, 1)) &&
+                                  (!reactive || scalarAt(bloomMask ? 2 : 1, 2));
+            if (!colorOk || !extrasOk)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': translucent material must write a single float4 "
-                    "SV_Target0 (HDR color + alpha){} — not the g-buffer MRT; its fragment shader "
-                    "does not",
+                    "SV_Target0 (HDR color + alpha){}{} and no further targets — not the g-buffer "
+                    "MRT; its fragment shader does not",
                     vmatPath.string(),
-                    bloomMask ? " plus a float SV_Target1 (the bloom mask it declares) and no "
-                                "further targets"
-                              : " and no further targets"));
+                    bloomMask ? ", a float SV_Target1 (the bloom mask it declares)" : "",
+                    reactive ? ", a float SV_Target2 (the reactive amount it declares)" : ""));
             }
         }
         else if (domainValue == MaterialDomain::GuiFill)
@@ -1106,6 +1144,7 @@ namespace Veng::Cook
         header.ReadsSceneColor = readsSceneColor ? 1u : 0u;
         header.ReadsSceneDepth = readsSceneDepth ? 1u : 0u;
         header.InstancedSets = instancedSets ? 1u : 0u;
+        header.Reactive = reactive ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

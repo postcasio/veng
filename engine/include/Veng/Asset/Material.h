@@ -196,6 +196,15 @@ namespace Veng
         /// in the pass leaves the mask untouched. Ignored outside the Translucent domain.
         bool WritesBloomMask = false;
 
+        /// @brief Whether the fragment stage writes the temporal resolve's reactive mask at
+        ///        SV_Target2.
+        ///
+        /// A Translucent material returning TranslucentReactiveOutput or
+        /// TranslucentBloomReactiveOutput sets this, and the full-resolution scene translucent
+        /// passes enable the reactive attachment's writes for its pipeline alone. Ignored outside
+        /// the Translucent domain.
+        bool WritesReactive = false;
+
         /// @brief Which translucent layer the material draws in.
         ///
         /// An expensive per-pixel translucent opts into the half-resolution layer (exclusive with
@@ -299,6 +308,13 @@ namespace Veng
         /// and leaves them off for every other, so a material that declares no SV_Target1 cannot
         /// write undefined values into the mask.
         [[nodiscard]] bool IsBloomMaskWriter() const { return m_WritesBloomMask; }
+
+        /// @brief Returns whether the fragment stage writes the reactive mask at SV_Target2.
+        ///
+        /// Under a temporal resolve the scene translucent passes enable the reactive attachment's
+        /// writes for this material's pipeline and leave them off for every other, so a resolve
+        /// trusts its history less only where a declaring material draws.
+        [[nodiscard]] bool IsReactiveWriter() const { return m_WritesReactive; }
 
         /// @brief Returns which translucent layer the material draws in.
         [[nodiscard]] TranslucentLayer GetTranslucentLayer() const { return m_Layer; }
@@ -518,6 +534,7 @@ namespace Veng
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         i32 m_SortPriority = 0;
         bool m_WritesBloomMask = false;
+        bool m_WritesReactive = false;
         TranslucentLayer m_Layer = TranslucentLayer::Full;
         TranslucentBlend m_Blend = TranslucentBlend::Alpha;
         bool m_ReadsSceneColor = false;

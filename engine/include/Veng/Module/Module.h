@@ -556,10 +556,13 @@ extern "C"
 /// Version 136 lets a billboard emitter pick each particle's flipbook from a list:
 /// ParticleEmitterDesc's single Flipbook handle becomes the Flipbooks vector. A module builds
 /// effects in code and reads their emitters, so a stale one reads the field at the wrong layout.
+/// Version 137 lets a translucent material write the temporal resolve's reactive mask: Material and
+/// MaterialInfo grow WritesReactive, and SceneRenderer the GetReactiveMaskView accessor. A module
+/// builds materials, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 136u
+#define VENG_MODULE_ABI_VERSION 137u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

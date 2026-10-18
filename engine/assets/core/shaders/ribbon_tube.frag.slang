@@ -3,7 +3,7 @@
 // Softness, so the core where the view crosses the most of the tube is brightest and the silhouette
 // fades to nothing. fsMain returns the straight colour and that coverage times the opacity, as the
 // band stage does, so the alpha and additive pipelines serve it unchanged; fsMainMasked also returns
-// the bloom-mask amplitude.
+// the bloom-mask amplitude, and the reactive entries the temporal resolve's reactive mask after it.
 #include "view_constants.slang"
 
 struct TubeVSOutput
@@ -19,6 +19,19 @@ struct MaskedOutput
 {
     float4 Color : SV_Target0;
     float Mask : SV_Target1;
+};
+
+struct ReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Reactive : SV_Target1;
+};
+
+struct MaskedReactiveOutput
+{
+    float4 Color : SV_Target0;
+    float Mask : SV_Target1;
+    float Reactive : SV_Target2;
 };
 
 static const float3 LumaWeights = float3(0.2126, 0.7152, 0.0722);
@@ -38,11 +51,36 @@ float4 fsMain(TubeVSOutput input) : SV_Target
     return ShadeTube(input);
 }
 
+// The reactive amount of a straight colour: its coverage, or the luminance of the light it adds.
+float ReactiveOf(float4 color)
+{
+    return saturate(max(color.a, dot(color.rgb * color.a, LumaWeights)));
+}
+
 [shader("fragment")]
 MaskedOutput fsMainMasked(TubeVSOutput input)
 {
     MaskedOutput output;
     output.Color = ShadeTube(input);
     output.Mask = saturate(dot(output.Color.rgb * output.Color.a, LumaWeights));
+    return output;
+}
+
+[shader("fragment")]
+ReactiveOutput fsMainReactive(TubeVSOutput input)
+{
+    ReactiveOutput output;
+    output.Color = ShadeTube(input);
+    output.Reactive = ReactiveOf(output.Color);
+    return output;
+}
+
+[shader("fragment")]
+MaskedReactiveOutput fsMainMaskedReactive(TubeVSOutput input)
+{
+    MaskedReactiveOutput output;
+    output.Color = ShadeTube(input);
+    output.Mask = saturate(dot(output.Color.rgb * output.Color.a, LumaWeights));
+    output.Reactive = ReactiveOf(output.Color);
     return output;
 }

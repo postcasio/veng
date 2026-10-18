@@ -7,8 +7,8 @@
 // path draws through its own tail pass (and a scene of scene-placed paths never records it), glows
 // through the post-resolve bloom mask whether or not the mask was promoted, and is hidden behind
 // an opaque cube by its sampled-depth occlusion, at full and at reduced render scale. A one-point
-// strip draws a round dot in either placement, and a tube trail lights its path through the tube
-// pipeline.
+// strip draws a round dot in either placement, a tube trail lights its path through the tube
+// pipeline, and under TAA a ribbon writes the temporal resolve's reactive mask where it draws.
 
 #include <filesystem>
 #include <vector>
@@ -125,6 +125,42 @@ namespace
                        .Additive = additive,
                        .Placement = placement});
         return entity;
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: under TAA a ribbon writes the reactive mask where it draws")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const u32 mid = Extent.x / 2;
+    for (const bool bloom : {false, true})
+    {
+        CAPTURE(bloom);
+        RibbonRender render{
+            .Renderer = SceneRenderer::Create({
+                .Context = Context,
+                .Assets = assets,
+                .OutputFormat = Context.GetOutputFormat(),
+                .Extent = Extent,
+                .Settings = {.Bloom = bloom,
+                             .AntiAliasing = AntiAliasingMode::TAA,
+                             .Shadows = false,
+                             .AO = false},
+            }),
+        };
+        render.Camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+        render.Camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        const Unique<Scene> scene = Scene::Create(Types);
+        (void)AddRibbon(*scene, vec3(0.5f), /*additive=*/false);
+        (void)render.Render(Context, *scene);
+
+        const Ref<ImageView> mask = render.Renderer->GetReactiveMaskView();
+        REQUIRE(mask != nullptr);
+        const std::vector<u8> texels = mask->GetImage()->Download();
+        // Full on the band's centre line, nothing in the empty top row.
+        CHECK(texels[static_cast<usize>(mid) * Extent.x + mid] > 240);
+        CHECK(texels[static_cast<usize>(1) * Extent.x + mid] < 5);
     }
 }
 

@@ -59,6 +59,15 @@ namespace Veng::Renderer
         return *this;
     }
 
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::UnboundColor()
+    {
+        // No resource: the schedule bakes an attachment with no view. Load and store keep a
+        // skippable pass's every attachment declared as loaded and stored.
+        m_Pass.Accesses.push_back(
+            {.Kind = AccessKind::ColorAttachment, .Load = LoadOp::Load, .Store = StoreOp::Store});
+        return *this;
+    }
+
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Depth(const PassAttachment& attachment)
     {
         m_Pass.Accesses.push_back({.Resource = attachment.Resource,
@@ -375,6 +384,10 @@ namespace Veng::Renderer
             {
                 for (const auto& access : m_Passes[passIndex]->Accesses)
                 {
+                    if (!access.Resource.IsValid())
+                    {
+                        continue;
+                    }
                     const u32 ti = transientIndex[access.Resource.Index];
                     if (ti == ~0u)
                     {
@@ -620,6 +633,12 @@ namespace Veng::Renderer
 
                 for (const Backend::ScheduledAttachment& attachment : pass.Attachments)
                 {
+                    if (attachment.Slot == Backend::ScheduledAttachment::UnboundSlot)
+                    {
+                        info.ColorAttachments.push_back(
+                            {.LoadOp = attachment.Load, .StoreOp = attachment.Store});
+                        continue;
+                    }
                     const Ref<ImageView>& view = resolved[attachment.Slot];
 
                     // Extent at the attachment's mip level (image_extent >> base_mip, floored at 1);

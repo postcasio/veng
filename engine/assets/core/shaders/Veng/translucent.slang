@@ -11,9 +11,10 @@
 //
 // A Translucent material's fragment stage outputs a single float4 SV_Target0: HDR linear color in
 // rgb and coverage in a — or one of the structs below, which add a fragment-written depth
-// (TranslucentDepthOutput) or a bloom mask (TranslucentBloomOutput). The forward translucent pass draws it into the lit HDR scene-color target
-// after deferred lighting and the sky composite and before the bloom/tonemap tail, so translucents
-// bloom and tonemap with the scene. The pass depth-TESTs against the opaque depth buffer with depth
+// (TranslucentDepthOutput), a bloom mask (TranslucentBloomOutput) or a reactive amount
+// (TranslucentReactiveOutput, TranslucentBloomReactiveOutput). The forward translucent pass draws it
+// into the lit HDR scene-color target after deferred lighting and the sky composite and before the
+// bloom/tonemap tail, so translucents bloom and tonemap with the scene. The pass depth-TESTs against the opaque depth buffer with depth
 // writes OFF (a translucent surface never occludes another), sorts submeshes back-to-front by view
 // depth, and blends with STRAIGHT (non-premultiplied) alpha: the destination is weighted by
 // (1 - a) and the source color by a, so a fragment returns its color un-premultiplied and lets the
@@ -90,6 +91,39 @@ struct TranslucentBloomOutput
     float4 Color     : SV_Target0;  // HDR linear color in rgb, coverage in a (un-premultiplied)
     float  BloomMask : SV_Target1;  // bloom amplitude, weighted by the same coverage
 };
+
+// A Translucent material whose surface is thin, fast or animating — a field of moving motes, a flicker
+// — may also write the temporal resolve's reactive mask: how much of the pixel it owns, in [0, 1], so
+// TAA, TAAU and MetalFX take more of the current frame there instead of a history that smears or drops
+// it. It declares `"reactive": true` and returns one of the structs below; the reactive amount is
+// always SV_Target2, the bloom mask SV_Target1 or absent. The amounts of overlapping surfaces sum,
+// saturating at 1. Only the full-resolution scene layer writes the mask: the cook refuses "reactive"
+// beside "resolution": "half" or "placement": "postResolve". Large surfaces (glass, an atmosphere)
+// should not declare it, since a reactive pixel keeps little of its history and shimmers as it would
+// without a temporal resolve.
+//
+// Slang numbers outputs in declaration order unless every one carries an explicit location, so these
+// structs pin each output to its SV_Target index; an author's own struct leaving a gap must do the
+// same, and the cook refuses one that does not.
+struct TranslucentReactiveOutput
+{
+    [[vk::location(0)]] float4 Color    : SV_Target0;  // HDR linear color in rgb, coverage in a
+    [[vk::location(2)]] float  Reactive : SV_Target2;  // the reactive amount, in [0, 1]
+};
+
+struct TranslucentBloomReactiveOutput
+{
+    [[vk::location(0)]] float4 Color     : SV_Target0;  // HDR linear color in rgb, coverage in a
+    [[vk::location(1)]] float  BloomMask : SV_Target1;  // bloom amplitude, weighted by coverage
+    [[vk::location(2)]] float  Reactive  : SV_Target2;  // the reactive amount, in [0, 1]
+};
+
+// The reactive amount of a straight color: its coverage, or the luminance of the light it adds where
+// an additive surface carries more light than coverage.
+float TranslucentReactiveAmount(float4 color)
+{
+    return saturate(max(color.a, dot(color.rgb * color.a, float3(0.2126, 0.7152, 0.0722))));
+}
 
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's
 // Refraction setting is on and a drawn material declares "readsSceneColor"); SampleSceneColor

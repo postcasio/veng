@@ -79,7 +79,9 @@ namespace Veng::Renderer::Backend
     /// @brief A baked graphics attachment: the slot plus its load/store/clear declaration.
     struct ScheduledAttachment
     {
-        /// @brief Resource-table slot bound to this attachment.
+        /// @brief The Slot of an unbound color slot (PassBuilder::UnboundColor).
+        static constexpr u32 UnboundSlot = ~0u;
+        /// @brief Resource-table slot bound to this attachment, or UnboundSlot.
         u32 Slot;
         /// @brief True for the depth attachment; false for a color attachment.
         bool IsDepth;

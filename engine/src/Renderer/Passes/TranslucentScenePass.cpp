@@ -25,11 +25,13 @@ namespace Veng::Renderer
         Context& context, const uvec2 extent, const TranslucentDrawPlan* plan,
         const ResourceId targetId, const ResourceId depthId, const ResourceId sceneColorId,
         const ResourceId sceneDepthId, const Format targetFormat, const ResourceId maskId,
-        const Format maskFormat, const TranslucentPassKind kind, const u32 segment,
-        ForwardLightingSets forward, Ref<PipelineCache> pipelines)
+        const Format maskFormat, const ResourceId reactiveId, const Format reactiveFormat,
+        const TranslucentPassKind kind, const u32 segment, ForwardLightingSets forward,
+        Ref<PipelineCache> pipelines)
         : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
           m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
-          m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat), m_Kind(kind),
+          m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat),
+          m_ReactiveId(reactiveId), m_ReactiveFormat(reactiveFormat), m_Kind(kind),
           m_Segment(segment), m_HalfResolution(kind == TranslucentPassKind::HalfLayer),
           m_PostResolve(kind == TranslucentPassKind::PostResolve), m_Forward(std::move(forward)),
           m_Pipelines(pipelines ? std::move(pipelines) : std::make_shared<PipelineCache>())
@@ -94,6 +96,17 @@ namespace Veng::Renderer
         else if (m_MaskId.IsValid())
         {
             builder.Color({.Resource = m_MaskId, .Load = LoadOp::Load, .Store = StoreOp::Store});
+        }
+        if (m_ReactiveId.IsValid())
+        {
+            // A reactive material writes location 2 whether or not the frame wires a bloom mask.
+            if (!m_MaskId.IsValid())
+            {
+                builder.UnboundColor();
+            }
+            // Cleared ahead of the scene's composited layers; a declaring material adds to it.
+            builder.Color(
+                {.Resource = m_ReactiveId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
         // The post-resolve allocation has no depth buffer and the grab predates it, so that layer
         // binds neither and draws over the scene.
@@ -195,18 +208,27 @@ namespace Veng::Renderer
              .Blend = parent->GetTranslucentBlend() == TranslucentBlend::Additive
                           ? BlendState::AlphaAdditive()
                           : BlendState::AlphaBlend()}};
-        if (m_MaskId.IsValid())
+        if (m_MaskId.IsValid() || m_ReactiveId.IsValid())
         {
             // The mask accumulates additively, so two declaring surfaces over one pixel glow by
             // the sum of the amplitudes they ask for rather than by the nearer one's alone. The
             // float target does not bound that sum: the mask is an amplitude, and clamping it
             // would cap a glow at the radiance it was decoupled from. Writes are off unless this
             // material's fragment declares the output — the value an undeclared stage would leave
-            // in the slot is undefined.
+            // in the slot is undefined. With no mask wired the slot is unbound.
             attachments.push_back({
-                .Format = m_MaskFormat,
+                .Format = m_MaskId.IsValid() ? m_MaskFormat : Format::Undefined,
                 .Blend = BlendState::Additive(),
-                .Write = parent->IsBloomMaskWriter(),
+                .Write = m_MaskId.IsValid() && parent->IsBloomMaskWriter(),
+            });
+        }
+        if (m_ReactiveId.IsValid())
+        {
+            // Reactive amounts sum like the mask's, saturating in the R8 target.
+            attachments.push_back({
+                .Format = m_ReactiveFormat,
+                .Blend = BlendState::Additive(),
+                .Write = parent->IsReactiveWriter(),
             });
         }
 
