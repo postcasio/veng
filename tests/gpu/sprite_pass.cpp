@@ -2,7 +2,8 @@
 // flipbook's frame into the lit scene color. A white premultiplied atlas makes the expected pixel the
 // tint itself, so an alpha sprite shows its tint and two overlapping additive sprites show their sum;
 // a sprite-less scene carries no pass and renders black, and a sprite too dim for the bloom threshold
-// still lights the margin around it, which only its bloom-mask write can do.
+// still lights the margin around it, which only its bloom-mask write can do. An area light reaches a
+// six-way sprite as a small source of its power.
 //
 // A schema-1 sprite stays unlit, stepped and hard-edged by default. A six-way flipbook built in code
 // — light only in lightA's +X map — reads the light arriving along +X at the white-card
@@ -19,6 +20,7 @@
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/packing.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <doctest/doctest.h>
 
@@ -396,6 +398,63 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     AddSun(*scene, right, Irradiance);
     const vec3 fromLeft = CenterRgb(render.Render(Context, *scene));
     CHECK(glm::length(fromLeft - baseline) < 1e-3f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sprite pass: an area light lights a six-way sprite as a source of its power")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    SpriteRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+    const Unique<Scene> scene = Scene::Create(Types);
+    AddSprite(*scene, SixWayFlipbook(Context, 0.0f, {}), SpriteBlend::Alpha, vec3(1.0f),
+              vec3(0.0f));
+    const vec3 baseline = CenterRgb(render.Render(Context, *scene));
+    const vec3 right = CameraRight(render.Camera);
+    constexpr f32 Distance = 20.0f;
+    constexpr f32 Luminance = 400.0f;
+
+    // A sphere to the right delivers its luminance over its disc, L pi r^2 / d^2, read at E/pi.
+    constexpr f32 SphereRadius = 1.0f;
+    const Entity sphere = scene->CreateEntity();
+    scene->Add<Transform>(sphere, Transform{.Position = right * Distance});
+    scene->Add<Light>(sphere) = Light{.Type = LightType::Sphere,
+                                      .Intensity = Luminance / LuminousAnchor,
+                                      .Range = 1000.0f,
+                                      .Radius = SphereRadius,
+                                      .CastsShadows = false};
+    {
+        const f32 irradiance =
+            Luminance * glm::pi<f32>() * SphereRadius * SphereRadius / (Distance * Distance);
+        const vec3 lit = CenterRgb(render.Render(Context, *scene));
+        CHECK(lit.x - baseline.x == doctest::Approx(irradiance / glm::pi<f32>()).epsilon(0.03));
+    }
+    scene->DestroyEntity(sphere);
+
+    // A rect facing the sprite delivers its luminance over its area; turned away it delivers none.
+    const auto addRect = [&](const vec3 facing)
+    {
+        const Entity rect = scene->CreateEntity();
+        scene->Add<Transform>(rect,
+                              Transform{.Position = right * Distance,
+                                        .Rotation = glm::rotation(vec3(0.0f, 0.0f, 1.0f), facing)});
+        scene->Add<Light>(rect) = Light{.Type = LightType::Rect,
+                                        .Intensity = Luminance / LuminousAnchor,
+                                        .Range = 1000.0f,
+                                        .Width = 2.0f,
+                                        .Height = 1.0f,
+                                        .CastsShadows = false};
+        return rect;
+    };
+    const Entity toward = addRect(-right);
+    {
+        const f32 irradiance = Luminance * 2.0f / (Distance * Distance);
+        const vec3 lit = CenterRgb(render.Render(Context, *scene));
+        CHECK(lit.x - baseline.x == doctest::Approx(irradiance / glm::pi<f32>()).epsilon(0.03));
+    }
+    scene->DestroyEntity(toward);
+    addRect(right);
+    CHECK(glm::length(CenterRgb(render.Render(Context, *scene)) - baseline) < 1e-3f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

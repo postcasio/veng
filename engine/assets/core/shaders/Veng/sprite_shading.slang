@@ -21,8 +21,65 @@
 #include "Veng/sh.slang"
 #include "Veng/sprite_shading_core.slang"
 
-// The radiance arriving along each of a six-way flipbook's axes from this view's directional,
-// point and spot lights, shadowed. centre is the sprite's world centre, X, Y and Z its frame's unit
+// An area light as a small source of the same power, seen from a sprite: the factor its radiance
+// (the emitter's luminance) takes to the irradiance it delivers at worldPos, where Point and Spot
+// take PunctualLightFalloff. A Sphere is its luminance over its disc, L pi r^2 / d^2, exact outside
+// it; a Rect or Polygon is its luminance over its area, foreshortened by the cosine it faces worldPos
+// at (either face of a two-sided one), and nothing behind a one-sided one. Distances are floored at
+// the larger of distanceFloor and the source's own size, and fade to the light's Range as a point
+// light's do, measured from a Sphere's surface. A medium has no normal, so no receiver cosine is
+// taken. L receives the unit direction toward the light's centre and dist the distance to it.
+float SpriteAreaLightFalloff(ViewConstants vc, GpuLight light, float3 worldPos,
+                             float distanceFloor, out float3 L, out float dist)
+{
+    float3 toLight = light.PositionRange.xyz - worldPos;
+    dist = length(toLight);
+    L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
+    float range = max(light.PositionRange.w, 1e-4);
+
+    float type = light.DirectionType.w;
+    float projected;
+    float sourceSize;
+    float reach = dist;
+    if (type == LightTypeSphere)
+    {
+        float radius = light.Area.x;
+        projected = SpriteShadingPi * radius * radius;
+        sourceSize = radius;
+        reach = max(dist - radius, 0.0);
+    }
+    else
+    {
+        uint base = uint(light.Area.y);
+        uint count = uint(light.Area.z);
+        if (count < 3u)
+        {
+            return 0.0;
+        }
+        float3 first = LoadAreaVertex(vc, base);
+        float3 twiceArea = float3(0.0);
+        for (uint i = 1u; i + 1u < count; ++i)
+        {
+            twiceArea += cross(LoadAreaVertex(vc, base + i) - first,
+                               LoadAreaVertex(vc, base + i + 1u) - first);
+        }
+        float area = 0.5 * length(twiceArea);
+        float facing = dot(light.AreaNormal.xyz, -L);
+        facing = LightIsTwoSided(light.Cone.w) ? abs(facing) : max(facing, 0.0);
+        projected = area * facing;
+        sourceSize = sqrt(area / SpriteShadingPi);
+    }
+    if (projected <= 0.0 || reach >= range)
+    {
+        return 0.0;
+    }
+    float floorRadius = max(sourceSize, distanceFloor);
+    float rangeFactor = saturate(1.0 - pow(reach / range, 4.0));
+    rangeFactor *= rangeFactor;
+    return projected / max(max(dist * dist, floorRadius * floorRadius), 1e-4) * rangeFactor;
+}
+
+// The radiance arriving along each of a six-way flipbook's axes from this view's lights, shadowed. centre is the sprite's world centre, X, Y and Z its frame's unit
 // world axes (X right, Y up, Z toward the viewer), and radius its world radius. The result's
 // Ambient is zero; SpriteAmbient supplies it.
 //
@@ -31,7 +88,8 @@
 //   a light inside the sprite reaches it as if from its surface rather than blowing up, and its
 //   weights blend from isotropic to directional by saturate(dist / radius), so a light at the
 //   centre lights every face alike.
-// - An area light is skipped: its response has no six-way form here.
+// - An area light (Rect, Sphere, Polygon) arrives as a small source of the same power from its
+//   centre (SpriteAreaLightFalloff), with the same distance floor and directional blend.
 //
 // Visibility is LightVisibility at the centre through the 3×3 PCF kernel, one lookup per light per
 // sprite, so a sprite drifting across a shadow's edge fades rather than popping.
@@ -45,7 +103,7 @@ SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X
         GpuLight light = LoadLight(vc, i);
         float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
         float type = light.DirectionType.w;
-        if (all(radiance == float3(0.0)) || type > LightTypeSpot + 0.5)
+        if (all(radiance == float3(0.0)))
         {
             continue;
         }
@@ -60,8 +118,15 @@ SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X
         else
         {
             float dist;
-            float sinSource;
-            attenuation = PunctualLightFalloff(light, centre, radius, L, dist, sinSource);
+            if (type > LightTypeSpot + 0.5)
+            {
+                attenuation = SpriteAreaLightFalloff(vc, light, centre, radius, L, dist);
+            }
+            else
+            {
+                float sinSource;
+                attenuation = PunctualLightFalloff(light, centre, radius, L, dist, sinSource);
+            }
             if (attenuation <= 0.0)
             {
                 continue;

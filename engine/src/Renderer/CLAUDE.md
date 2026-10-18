@@ -1214,8 +1214,11 @@ surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
   floor, the range cutoff and the spot cone, shared with the surface loop's `AccumulateLight`) with a
   distance floor of the sprite's radius, and its weights blend from isotropic to directional by
   `saturate(dist / radius)`, so a light inside the sprite lights every face alike rather than
-  blowing up; area lights are skipped. Visibility is `LightVisibility` at the centre through the 3×3
-  PCF kernel, one lookup per light. Every vertex computes the same gather from the same inputs, and
+  blowing up. An area light arrives as a small source of its power from its centre
+  (`SpriteAreaLightFalloff`): a Sphere's luminance over its disc, `L·πr²/d²`, and a Rect's or
+  Polygon's over its area, foreshortened by the cosine it faces the sprite at (either face when
+  two-sided, none behind a one-sided one), with the same distance floor, range fade and blend.
+  Visibility is `LightVisibility` at the centre through the 3×3 PCF kernel, one lookup per light. Every vertex computes the same gather from the same inputs, and
   it reaches the fragment flat: seven RGB terms, six axes and the ambient. The comparison sample at
   an explicit level of 0 is legal in a vertex function, and runs there on MoltenVK.
 - **The six-way weights are the squared components** of the light's direction in the sprite's
