@@ -1,5 +1,6 @@
 // Flipbook playback timing and the transient-effect pool, device-free: the frame a clip shows at a
-// time, the duration override, when a one-shot finishes, and the pool's reuse, bound, and retire.
+// time and where it stands between two frames, the duration override, when a one-shot finishes, how
+// a sprite's frame blend and soft edge resolve, and the pool's reuse, bound, and retire.
 
 #include <doctest/doctest.h>
 
@@ -35,6 +36,72 @@ TEST_CASE("A flipbook's frame at time t is floor(t * rate) wrapped when looping,
 
     CHECK(FlipbookFrameAt(oneShot, rate, -1.0f) == 0);
     CHECK(FlipbookFrameAt(oneShot, rate, 1e9f) == 3);
+}
+
+TEST_CASE("A flipbook's frame position agrees with its frame and stays in range")
+{
+    const FlipbookClip looping{.FrameCount = 5, .Fps = 10.0f, .Loop = true};
+    const FlipbookClip oneShot{.FrameCount = 5, .Fps = 10.0f, .Loop = false};
+    constexpr f32 Rate = 10.0f;
+
+    // Forty samples across two loops of the looping clip, and across the one-shot and past its end.
+    u32 violations = 0;
+    for (u32 step = 0; step < 40; ++step)
+    {
+        const f32 t = static_cast<f32>(step) * 0.0257f;
+        const FlipbookFramePosition loop = FlipbookFramePositionAt(looping, Rate, t);
+        violations += loop.Frame != FlipbookFrameAt(looping, Rate, t) ? 1u : 0u;
+        violations += loop.Next != (loop.Frame + 1) % 5 ? 1u : 0u;
+        violations += loop.Fraction < 0.0f || loop.Fraction >= 1.0f ? 1u : 0u;
+
+        const FlipbookFramePosition once = FlipbookFramePositionAt(oneShot, Rate, t * 1.5f);
+        violations += once.Frame != FlipbookFrameAt(oneShot, Rate, t * 1.5f) ? 1u : 0u;
+        violations += once.Fraction < 0.0f || once.Fraction >= 1.0f ? 1u : 0u;
+        const bool last = once.Frame == 4;
+        violations += last && (once.Next != once.Frame || once.Fraction != 0.0f) ? 1u : 0u;
+        violations += !last && once.Next != once.Frame + 1 ? 1u : 0u;
+    }
+    CHECK(violations == 0);
+
+    // The fraction is exactly 0 where time · rate is integral, and the part past the frame between.
+    CHECK(FlipbookFramePositionAt(looping, 8.0f, 0.25f).Fraction == 0.0f);
+    CHECK(FlipbookFramePositionAt(looping, 8.0f, 0.3125f).Fraction == doctest::Approx(0.5f));
+    CHECK(FlipbookFramePositionAt(oneShot, Rate, 100.0f).Next == 4);
+}
+
+TEST_CASE("A sprite's shading resolves so a stepped unlit flipbook draws as it always has")
+{
+    const FlipbookSprite sprite{};
+
+    // A default sprite on a stepped unlit flipbook: stepped, with no soft edge.
+    const SpriteShading unlit = ResolveSpriteShading(
+        sprite, FlipbookShading::Unlit, FlipbookFrameBlend::Step, /*hasMotion=*/false, 4.0f, 2.0f);
+    CHECK(unlit.FrameBlend == FlipbookFrameBlend::Step);
+    CHECK(unlit.SoftDistance == 0.0f);
+
+    // On a six-way flipbook it takes the recommendation, and fades over half the quad's width.
+    const SpriteShading sixWay =
+        ResolveSpriteShading(sprite, FlipbookShading::SixWay, FlipbookFrameBlend::Motion,
+                             /*hasMotion=*/true, 4.0f, 2.0f);
+    CHECK(sixWay.FrameBlend == FlipbookFrameBlend::Motion);
+    CHECK(sixWay.SoftDistance == doctest::Approx(2.0f));
+
+    // Motion asked of a flipbook with no motion sheet crossfades.
+    const FlipbookSprite motion{.FrameBlend = SpriteFrameBlend::Motion};
+    CHECK(ResolveSpriteShading(motion, FlipbookShading::Unlit, FlipbookFrameBlend::Step,
+                               /*hasMotion=*/false, 4.0f, 1.0f)
+              .FrameBlend == FlipbookFrameBlend::Crossfade);
+
+    // An explicit distance of 0 is off even on a six-way flipbook; a positive one scales with the
+    // entity, as Size does.
+    const FlipbookSprite hard{.SoftDistance = 0.0f};
+    CHECK(ResolveSpriteShading(hard, FlipbookShading::SixWay, FlipbookFrameBlend::Crossfade,
+                               /*hasMotion=*/false, 4.0f, 2.0f)
+              .SoftDistance == 0.0f);
+    const FlipbookSprite soft{.SoftDistance = 0.75f};
+    CHECK(ResolveSpriteShading(soft, FlipbookShading::Unlit, FlipbookFrameBlend::Step,
+                               /*hasMotion=*/false, 4.0f, 2.0f)
+              .SoftDistance == doctest::Approx(1.5f));
 }
 
 TEST_CASE("A duration override fits the whole sequence to the stated seconds")

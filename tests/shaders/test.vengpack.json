@@ -100,6 +100,11 @@
       "id": "0xB48AAF3AE6866C42",
       "type": "Shader",
       "source": "dispatch_visit.comp.shader.json"
+    },
+    {
+      "id": "0x959CE75A45092DCE",
+      "type": "Shader",
+      "source": "sprite_shading.comp.shader.json"
     }
   ]
 }

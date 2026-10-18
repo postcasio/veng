@@ -248,6 +248,8 @@ namespace Veng::Renderer
         u32 SpriteIdleFrames = 0;
         // Whether the over-budget warning has been logged; once per renderer.
         bool SpriteBudgetWarned = false;
+        // Whether the over-long emission-ramp warning has been logged; once per renderer.
+        bool SpriteRampWarned = false;
         // The frame's gathered scene-placed ribbon, trail and path records, which the ribbon pass
         // uploads and draws.
         RibbonDrawPlan RibbonPlan;
@@ -963,8 +965,18 @@ namespace Veng::Renderer
             if (m_Internal->SpriteActive)
             {
                 m_Passes.push_back(CreateUnique<SpriteScenePass>(
-                    m_Context, m_Assets, &m_Internal->SpritePlan, lightingTargetId, depthId,
-                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+                    m_Context, m_Assets,
+                    SpriteScenePassInfo{
+                        .Plan = &m_Internal->SpritePlan,
+                        .Target = lightingTargetId,
+                        .Depth = depthId,
+                        .Mask = m_BloomMaskId,
+                        .SceneDepthCopy = m_RefractionDepthId,
+                        .Forward = forwardSets,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
             }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
@@ -1339,8 +1351,18 @@ namespace Veng::Renderer
             if (m_Internal->SpriteActive)
             {
                 m_Passes.push_back(CreateUnique<SpriteScenePass>(
-                    m_Context, m_Assets, &m_Internal->SpritePlan, lightingTargetId, depthId,
-                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+                    m_Context, m_Assets,
+                    SpriteScenePassInfo{
+                        .Plan = &m_Internal->SpritePlan,
+                        .Target = lightingTargetId,
+                        .Depth = depthId,
+                        .Mask = m_BloomMaskId,
+                        .SceneDepthCopy = m_RefractionDepthId,
+                        .Forward = forwardSets,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
             }
             if (m_Settings.Mode == DebugView::Bloom)
             {
@@ -2251,8 +2273,9 @@ namespace Veng::Renderer
             };
         }
 
-        // The grab's copies are read only by a translucent draw whose material samples them, so a
-        // frame with none — most frames of most scenes — runs neither.
+        // The grab's copies are read only by a translucent draw whose material samples them and the
+        // depth copy by a soft sprite (gathered ahead of this), so a frame with none — most frames
+        // of most scenes — runs neither.
         const auto readsColor = [](const TranslucentDraw& draw)
         { return draw.Material->GetParent()->IsSceneColorReader(); };
         const auto readsDepth = [](const TranslucentDraw& draw)
@@ -2262,7 +2285,8 @@ namespace Veng::Renderer
                              .Color = std::ranges::any_of(translucentPlan.Draws, readsColor) ||
                                       std::ranges::any_of(halfResPlan.Draws, readsColor),
                              .Depth = std::ranges::any_of(translucentPlan.Draws, readsDepth) ||
-                                      std::ranges::any_of(halfResPlan.Draws, readsDepth),
+                                      std::ranges::any_of(halfResPlan.Draws, readsDepth) ||
+                                      m_Internal->SpritePlan.ReadsSceneDepth,
                          });
 
         m_DrawBudgetStats = budget.GetStats();
@@ -3373,6 +3397,15 @@ namespace Veng::Renderer
                 "not drawn; later frames clamp without warning again.",
                 m_Internal->SpritePlan.Dropped, MaxSpritesPerFrame);
             m_Internal->SpriteBudgetWarned = true;
+        }
+        if (m_Internal->SpritePlan.RampsClamped > 0 && !m_Internal->SpriteRampWarned)
+        {
+            Log::Warn("SceneRenderer: {} flipbook sprites override an emission ramp with more than "
+                      "{} keys; each keeps its first {}, and later frames clamp without warning "
+                      "again.",
+                      m_Internal->SpritePlan.RampsClamped, MaxFlipbookEmissionKeys,
+                      MaxFlipbookEmissionKeys);
+            m_Internal->SpriteRampWarned = true;
         }
         // The same for ribbons and trails, with their own hysteresis — one per placement, so each
         // pass is wired only while its own plan carries records.

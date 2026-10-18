@@ -51,15 +51,21 @@ namespace Veng::Renderer
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Color(const PassAttachment& attachment)
     {
-        m_Pass.Accesses.push_back({attachment.Resource, AccessKind::ColorAttachment,
-                                   attachment.Load, attachment.Store, attachment.Clear});
+        m_Pass.Accesses.push_back({.Resource = attachment.Resource,
+                                   .Kind = AccessKind::ColorAttachment,
+                                   .Load = attachment.Load,
+                                   .Store = attachment.Store,
+                                   .Clear = attachment.Clear});
         return *this;
     }
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Depth(const PassAttachment& attachment)
     {
-        m_Pass.Accesses.push_back({attachment.Resource, AccessKind::DepthAttachment,
-                                   attachment.Load, attachment.Store, attachment.Clear});
+        m_Pass.Accesses.push_back({.Resource = attachment.Resource,
+                                   .Kind = AccessKind::DepthAttachment,
+                                   .Load = attachment.Load,
+                                   .Store = attachment.Store,
+                                   .Clear = attachment.Clear});
         return *this;
     }
 
@@ -70,6 +76,15 @@ namespace Veng::Renderer
         // the fragment stage for it would order that write against a stage which read nothing.
         const AccessKind kind = m_Pass.Type == PassType::Compute ? AccessKind::SampleCompute
                                                                  : AccessKind::SampleGraphics;
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = kind});
+        return *this;
+    }
+
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::Sample(const ResourceId resource,
+                                                               const AccessKind kind)
+    {
+        VE_ASSERT(IsSampledAccess(kind), "RenderGraph: Sample declared with a non-sample access {}",
+                  static_cast<u32>(kind));
         m_Pass.Accesses.push_back({.Resource = resource, .Kind = kind});
         return *this;
     }

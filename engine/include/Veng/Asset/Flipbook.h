@@ -127,6 +127,30 @@ namespace Veng
     /// @return The frame index, in [0, FrameCount).
     [[nodiscard]] VE_API u32 FlipbookFrameAt(const FlipbookClip& clip, f32 rate, f32 time);
 
+    /// @brief Where a clip's playback stands between two consecutive frames.
+    struct FlipbookFramePosition
+    {
+        /// @brief The frame shown, exactly FlipbookFrameAt.
+        u32 Frame = 0;
+        /// @brief The frame after it: wrapped for a looping clip, and Frame itself on a one-shot's
+        ///        last frame.
+        u32 Next = 0;
+        /// @brief How far playback is from Frame toward Next, in [0, 1); 0 whenever Next is Frame.
+        f32 Fraction = 0.0f;
+    };
+
+    /// @brief Returns where a clip stands between two frames at a playback time.
+    ///
+    /// Frame is `floor(time · rate)` as FlipbookFrameAt resolves it and Fraction is the part of
+    /// `time · rate` past it. A one-shot's last frame holds rather than blending into nothing: its
+    /// Next is itself and its Fraction 0. A negative time is the first frame at fraction 0.
+    /// @param clip  The clip's timing (its Fps is not read; @p rate replaces it).
+    /// @param rate  Frames per second, from ResolveFlipbookRate.
+    /// @param time  Seconds since playback began.
+    /// @return The frame pair and the fraction between them.
+    [[nodiscard]] VE_API FlipbookFramePosition FlipbookFramePositionAt(const FlipbookClip& clip,
+                                                                       f32 rate, f32 time);
+
     /// @brief Whether a clip has played through its last frame at a playback time.
     ///
     /// A looping clip never finishes. A one-shot finishes once its last frame has been shown for

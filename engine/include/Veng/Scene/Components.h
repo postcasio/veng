@@ -18,6 +18,7 @@
 #include <Veng/Reflection/Variant.h>
 
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/Flipbook.h>
 
 #include <limits>
 
@@ -1446,15 +1447,40 @@ namespace Veng
         Additive = 2,
     };
 
+    /// @brief How a FlipbookSprite moves from one frame to the next.
+    enum class SpriteFrameBlend : u8
+    {
+        /// @brief Takes the flipbook's own recommendation (FlipbookFrameBlend).
+        Asset = 0,
+        /// @brief Shows one frame at a time.
+        Step = 1,
+        /// @brief Fades from each frame into the next.
+        Crossfade = 2,
+        /// @brief Warps both frames toward each other along the flipbook's motion vectors, then
+        ///        fades; a crossfade on a flipbook with no motion sheet.
+        Motion = 3,
+    };
+
     /// @brief Plays a flipbook as a camera-facing sprite in the world.
     ///
     /// Drawn by the renderer's sprite pass in the translucent layer — after the opaque scene and
     /// its translucent surfaces, before the bloom and tonemap tail — as an HDR quad facing the
     /// camera, centred on the entity so the flipbook's anchor sits on its world position. The
     /// pass depth-tests against the opaque scene without writing depth, sorts Alpha sprites back
-    /// to front and leaves Additive ones unsorted, and writes the bloom mask by each sprite's
-    /// luminance so a bright sprite glows. FlipbookSystem advances Time; a one-shot sprite sets
-    /// Finished once its last frame has played. The component is presentation, never replicated.
+    /// to front and leaves Additive ones unsorted. FlipbookSystem advances Time; a one-shot sprite
+    /// sets Finished once its last frame has played. The component is presentation, never
+    /// replicated.
+    ///
+    /// An unlit flipbook draws its colour sheet tinted and writes the bloom mask by luminance, so a
+    /// bright sprite glows. A six-way flipbook is lit by the view's directional, point and spot
+    /// lights, gathered once per sprite and shadowed by the opaque scene, plus the scene's ambient;
+    /// Tint colours that lit term. Its temperature glows through an emission ramp — the
+    /// flipbook's own unless EmissionRamp or Ignition overrides it — scaled by EmissionIntensity,
+    /// and only the emission writes the bloom mask, so a hot core glows and sunlit smoke does not.
+    /// FrameBlend blends between frames without any temporal accumulation, and SoftDistance fades
+    /// the sprite where it meets opaque geometry. By default a flipbook takes its own recommended
+    /// blend (stepped for a schema-1 source) and only a six-way one fades softly, so an unlit
+    /// stepped flipbook draws as a plain tinted quad.
     struct FlipbookSprite
     {
         /// @brief The flipbook played; a sprite whose flipbook is not resident draws nothing and
@@ -1479,6 +1505,22 @@ namespace Veng
         SpriteBlend Blend = SpriteBlend::Asset;
         /// @brief Roll in the screen plane, in radians, counter-clockwise.
         f32 Rotation = 0.0f;
+        /// @brief How the sprite moves between frames; Asset takes the flipbook's recommendation.
+        SpriteFrameBlend FrameBlend = SpriteFrameBlend::Asset;
+        /// @brief The depth over which the sprite fades into opaque geometry behind it: below 0 the
+        ///        flipbook's default (half the quad's width for a six-way flipbook, off otherwise),
+        ///        0 off, above 0 world units at unit scale (the entity's world scale multiplies it).
+        f32 SoftDistance = -1.0f;
+        /// @brief Multiplies a six-way flipbook's emission.
+        f32 EmissionIntensity = 1.0f;
+        /// @brief Added to a six-way flipbook's normalised temperature before the ramp: a negative
+        ///        offset reads cooler.
+        f32 TemperatureOffset = 0.0f;
+        /// @brief Replaces a six-way flipbook's emission ramp when non-empty; keys ascend in T, and
+        ///        past MaxFlipbookEmissionKeys the rest are ignored.
+        vector<FlipbookEmissionKey> EmissionRamp;
+        /// @brief Replaces the ignition threshold when at least 0; below 0 takes the flipbook's.
+        f32 Ignition = -1.0f;
         /// @brief Set by FlipbookSystem once a one-shot sequence has played its last frame; never
         ///        set for a looping one. A finished sprite draws nothing. Runtime-only: it carries
         ///        no VE_FIELD and never serializes.
@@ -2415,6 +2457,19 @@ VE_ENUMERATOR(Alpha)
 VE_ENUMERATOR(Additive)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::SpriteFrameBlend, 0x498911DAF3756ACFULL)
+VE_ENUMERATOR(Asset)
+VE_ENUMERATOR(Step)
+VE_ENUMERATOR(Crossfade)
+VE_ENUMERATOR(Motion)
+VE_ENUM_END();
+
+VE_REFLECT(::Veng::FlipbookEmissionKey, 0x2E44CF4E37870991ULL)
+VE_FIELD(T, .DisplayName = "Temperature", .Tooltip = "Normalised temperature the key sits at",
+         .Display = {.Min = 0.0, .Max = 1.0, .Step = 0.01})
+VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR emission")
+VE_REFLECT_END();
+
 VE_REFLECT(::Veng::FlipbookSprite, 0x36AE315773D9D391ULL)
 VE_FIELD(Flipbook, .DisplayName = "Flipbook")
 VE_FIELD(Size, .DisplayName = "Size",
@@ -2429,6 +2484,22 @@ VE_FIELD(DurationOverride, .DisplayName = "Duration Override",
 VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
 VE_FIELD(Blend, .DisplayName = "Blend")
 VE_FIELD(Rotation, .DisplayName = "Rotation", .Display = {.Step = 0.01})
+VE_FIELD(FrameBlend, .DisplayName = "Frame Blend",
+         .Tooltip = "How frames blend; Asset takes the flipbook's recommendation")
+VE_FIELD(SoftDistance, .DisplayName = "Soft Distance",
+         .Tooltip = "Fade depth into geometry; below 0 the flipbook's default, 0 off",
+         .Display = {.Min = -1.0, .Step = 0.05})
+VE_FIELD(EmissionIntensity, .DisplayName = "Emission Intensity",
+         .Tooltip = "Multiplies a six-way flipbook's emission",
+         .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(TemperatureOffset, .DisplayName = "Temperature Offset",
+         .Tooltip = "Added to the temperature before the ramp; negative reads cooler",
+         .Display = {.Min = -1.0, .Max = 1.0, .Step = 0.01})
+VE_ARRAY_FIELD(EmissionRamp, .DisplayName = "Emission Ramp",
+               .Tooltip = "Replaces the flipbook's ramp when non-empty")
+VE_FIELD(Ignition, .DisplayName = "Ignition",
+         .Tooltip = "Replaces the ignition threshold when at least 0",
+         .Display = {.Min = -1.0, .Max = 1.0, .Step = 0.01})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Ribbon, 0xA8DF9582C85E18F2ULL)

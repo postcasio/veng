@@ -248,7 +248,14 @@ interpolation), and `FlipbookSprite` (plays an `AssetHandle<Flipbook>` as a came
 — size, HDR tint, opacity, a playback rate or a duration override, a screen-plane roll, and a
 `SpriteBlend` of `Asset`, `Alpha` or `Additive`; the View-phase `FlipbookSystem` advances its `Time`
 and sets its runtime-only `Finished` once a one-shot sequence has played, and a finished sprite
-draws nothing — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook sprites"), and
+draws nothing. Six runtime fields, all defaulted so an existing sprite is unchanged, tune how the
+renderer shades it: a `SpriteFrameBlend` (`Asset`, `Step`, `Crossfade`, `Motion`), a
+`SoftDistance` (below 0 the flipbook's default — half the width for a six-way flipbook, off
+otherwise — 0 off, above 0 world units scaled with the entity), and, for a six-way flipbook, an
+`EmissionIntensity`, a `TemperatureOffset`, an override `EmissionRamp` of `FlipbookEmissionKey`s and
+an override `Ignition`; `ResolveSpriteShading` and `SpriteFlipbookFramePosition` are the pure
+resolves the renderer draws by — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook
+sprites"), and
 `Ribbon`, `Trail` and `RibbonPath` (see [Ribbons and trails](#ribbons-and-trails) below).
 
 ## Ribbons and trails

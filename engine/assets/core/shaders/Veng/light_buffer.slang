@@ -5,6 +5,9 @@
 //
 // The includer declares the view block (view_constants.slang) before including this. This file
 // declares the set-0 light and area-vertex buffers (bindings 6 and 7) and nothing else.
+//
+// PunctualLightFalloff is the one statement of how a point or spot light weakens with distance and
+// angle, shared by the surface light loop and by anything else a punctual light reaches.
 
 #pragma once
 
@@ -16,6 +19,11 @@
 
 static const uint LightStride = 112;
 static const uint AreaVertexStride = 16;
+
+// The view block's ambient arm (LightState.w), matching the renderer's AmbientArm.
+static const uint AmbientArmFlat = 0;
+static const uint AmbientArmSkylight = 1;
+static const uint AmbientArmIbl = 2;
 
 // LightType, matching the Light builtin's enum.
 static const float LightTypeDirectional = 0.0;
@@ -70,4 +78,49 @@ float3 LoadAreaVertex(ViewConstants vc, uint index)
 uint AllLightsMask(uint count)
 {
     return count >= 32u ? 0xFFFFFFFFu : (1u << count) - 1u;
+}
+
+// The attenuation of a point or spot light at worldPos: the inverse-square falloff, its smooth
+// cutoff at the light's Range, and a spot's cone. Returns 0 at or past the range and outside the
+// cone. L receives the unit direction from worldPos toward the light ((0, 0, 1) when the two
+// coincide), dist the distance to it, and sinSource the sine of the angular radius the light's
+// source sphere subtends there.
+//
+// The inverse square is taken over a distance floored at the larger of the light's source radius
+// (Area.x) and distanceFloor, so a real source size — not an epsilon guard — caps the response at
+// contact; with both zero the 1e-4 floor makes it a pure inverse square. A 1/(d^2 + 1)
+// denominator is deliberately not used: the +1 perturbs the falloff at every distance, not only
+// near the singularity, so it cannot be read as absolute radiance under a fixed exposure. L still
+// comes from the true offset — the floor bounds the magnitude of the response, not its direction.
+// A receiver with an extent of its own passes it as distanceFloor, so a light inside it reaches it
+// as if from its surface.
+float PunctualLightFalloff(GpuLight light, float3 worldPos, float distanceFloor, out float3 L,
+                           out float dist, out float sinSource)
+{
+    float3 toLight = light.PositionRange.xyz - worldPos;
+    dist = length(toLight);
+    float range = max(light.PositionRange.w, 1e-4);
+    L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
+    float sourceRadius = light.Area.x;
+    // The same radius sizes a lobe by the angle it subtends here (a hemisphere inside it).
+    sinSource = min(sourceRadius / max(dist, 1e-4), 1.0);
+    if (dist >= range)
+    {
+        return 0.0;
+    }
+
+    float floorRadius = max(sourceRadius, distanceFloor);
+    float distanceFactor = 1.0 / max(max(dist * dist, floorRadius * floorRadius), 1e-4);
+    float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
+    rangeFactor *= rangeFactor;
+    float attenuation = distanceFactor * rangeFactor;
+
+    if (light.DirectionType.w == LightTypeSpot)
+    {
+        // Smoothstep the cone between cos(inner) (full) and cos(outer) (zero); the
+        // receiver-to-light direction is compared against the light's travel direction.
+        float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
+        attenuation *= smoothstep(light.Cone.y, light.Cone.x, cosAngle);
+    }
+    return attenuation;
 }

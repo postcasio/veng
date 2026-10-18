@@ -45,6 +45,8 @@
 // Veng/postprocess.slang, and Veng/sky.slang.
 
 #include "Veng/surface.slang"
+// SceneScreenUV, SceneDepthAvailable, SampleSceneDepth and ViewDepthFromDeviceDepth.
+#include "Veng/scene_depth.slang"
 
 // The Translucent output with a fragment-written depth. A fragment returns this instead of a bare
 // float4 SV_Target0 when the depth it should test against is not the depth its geometry
@@ -97,14 +99,6 @@ bool SceneColorAvailable(ViewConstants vc)
     return vc.SceneColor.z != 0;
 }
 
-// A fragment's logical [0,1] screen UV from its SV_Position: the viewport covers the valid
-// (rendered sub-rect) extent, so the divide is by ExtentParams.xy. Perturb this UV and pass
-// it to SampleSceneColor to read the scene behind the fragment.
-float2 SceneScreenUV(ViewConstants vc, float4 svPosition)
-{
-    return svPosition.xy / vc.ExtentParams.xy;
-}
-
 // Samples the pre-translucent scene color at a logical [0,1] screen UV, mapping through the
 // dynamic-resolution sub-rect (ScaledSampleUV clamps to the valid region, so a distorted UV
 // never bleeds past the rendered edge). Returns black when the copy is unavailable.
@@ -148,29 +142,4 @@ float3 SampleSceneColorBlurred(ViewConstants vc, float2 logicalUV, float blur)
     const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy,
                                      max(vc.MaxValidUV.xy - inset, float2(0.0, 0.0)));
     return g_Textures[vc.SceneColor.x].SampleLevel(g_Samplers[vc.SceneColor.y], uv, lod).rgb;
-}
-
-// True when the pre-translucent opaque-depth copy is populated this frame (a drawn material
-// declares "readsSceneDepth" or "readsSceneColor"); SampleSceneDepth returns the far plane
-// otherwise. No renderer setting gates it.
-bool SceneDepthAvailable(ViewConstants vc)
-{
-    return vc.SceneDepthCopied != 0;
-}
-
-// Samples the pre-translucent opaque depth at a logical [0,1] screen UV — raw [0,1], reverse-Z
-// so larger is nearer. A refracting material depth-gates a distorted sample against its own
-// sv_position.z: a sampled depth nearer than the fragment belongs to geometry in front of the
-// refractor, whose light never passed through it, so the sample is foreground contamination to
-// reject. A medium or a soft edge reads it to find the surface behind the fragment. Point fields
-// write no depth, so they are not in it. Returns the far plane (reverse-Z: 0) when the copy is
-// unavailable.
-float SampleSceneDepth(ViewConstants vc, float2 logicalUV)
-{
-    if (!SceneDepthAvailable(vc))
-    {
-        return 0.0;
-    }
-    const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
-    return g_Textures[vc.SceneColor.w].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).r;
 }

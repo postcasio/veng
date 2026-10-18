@@ -931,6 +931,10 @@ full-extent `HdrFormat` colour target and an `R32Sfloat` depth target, and publi
 view block's `SceneColor` slot. A Translucent fragment reaches them through `Veng/translucent.slang`
 — `SampleSceneColor` for what is behind it, `SampleSceneDepth` to reject a distorted sample whose
 geometry stands in *front* of the refractor, or to find the surface a medium or a soft edge meets.
+The depth readers live in `Veng/scene_depth.slang`, which `translucent.slang` includes and any other
+pass drawn after the copy may include on its own (the sprite pass does), beside
+`ViewDepthFromDeviceDepth`, the positive view depth of a reverse-Z sample solved from the
+projection's depth and w rows.
 The copies predate the translucent pass, so one translucent surface never refracts another.
 
 **The two copies are separate passes behind separate gates.** The colour copy (`Scene Color Copy`)
@@ -944,7 +948,8 @@ have it.
 reads in its `.vmat.json` (Translucent domain only, a cook error elsewhere): `"readsSceneColor":
 true` for the colour (`Material::IsSceneColorReader`), `"readsSceneDepth": true` for the depth alone
 (`Material::IsSceneDepthReader`). The gather reads both off every draw in the translucent and
-half-resolution plans, and `ResolveSceneGrabRecording` (`FrameTopology.h`, pure) decides what
+half-resolution plans, and a soft-edged sprite (`SpriteDrawPlan::ReadsSceneDepth`, gathered ahead of
+it) reads the depth too; `ResolveSceneGrabRecording` (`FrameTopology.h`, pure) decides what
 records:
 
 - **a colour or a depth reader** records the depth copy — a refractor depth-gates its samples, so a
@@ -1153,32 +1158,107 @@ compositing arms, into the same lit target and bloom mask — so sprites composi
 surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
 
 - **Content-driven with deactivation hysteresis.** `GatherSprites` walks `View<FlipbookSprite>` each
-  `Execute` (skipping a sprite whose flipbook or atlas is not resident, whose opacity is zero, or
-  which has finished) into a `SpriteDrawPlan`; the pass is wired the first `Execute` that gathers
-  one and unwired only after `SpriteIdleFrameLimit` consecutive empty gathers, because transient
-  effects leave a scene momentarily empty between bursts and a recompile per burst is the cost the
-  hysteresis avoids. A scene that never carries a sprite has no pass, so the smoke golden is
-  unaffected.
-- **One record per sprite, no vertex input.** Each gathered sprite is an 80-byte `GpuSprite` (anchor
-  position and width, tint and opacity, the frame's atlas rectangle, the anchor fraction, height,
-  roll, the atlas's bindless texture and sampler, its alpha mode) in a host-mapped ring, one region
-  per frame in flight bound through a per-frame set at set 3. The vertex stage indexes the record by
+  `Execute` (skipping a sprite whose flipbook or the textures it draws with are not resident, whose
+  opacity is zero, or which has finished) into a `SpriteDrawPlan`; the pass is wired the first
+  `Execute` that gathers one and unwired only after `SpriteIdleFrameLimit` consecutive empty gathers,
+  because transient effects leave a scene momentarily empty between bursts and a recompile per burst
+  is the cost the hysteresis avoids. A scene that never carries a sprite has no pass, so the smoke
+  golden is unaffected.
+- **One record per sprite, no vertex input.** Each gathered sprite is a 160-byte `GpuSprite`
+  (`sprite_record.slang` mirrors it): anchor and width, tint and opacity, frame N's and frame N+1's
+  atlas rectangles, the anchor fraction, height and roll, one tile's UV extent and the two frames'
+  extents, the bindless texture handles (the colour sheet or `lightA`, `lightB`, motion, the
+  temperature's texture) and one sampler, the alpha mode, a `SpriteFlag` word (six-way, the
+  two-bit frame blend, the sqrt temperature transfer, temperature in red of its own texture,
+  emits), the ramp index, the frame fraction, the motion scale, the soft distance, the emission
+  intensity and the temperature offset. They sit in a host-mapped ring, one region per frame in
+  flight bound through a per-frame set at set 3. The vertex stage indexes the record by
   `VertexIndex / 6` and places the quad corners about the anchor along the camera's right and up
-  axes, rolled in the screen plane, projected through the jittered `Proj`.
+  axes, rolled in the screen plane, projected through the jittered `Proj`; a flipbook whose frames
+  differ in extent (`frameScale`) sizes the quad by the blended extent about the frame centre.
+- **The emission-ramp table** is set 3 binding 1: one 144-byte `GpuEmissionRamp` (eight
+  `(r, g, b, t)` keys and `(ignition, key count)`) per distinct flipbook default, keyed by the
+  flipbook, and one per sprite carrying an override (`EmissionRamp` or `Ignition`). It is bounded by
+  `MaxSpritesPerFrame` too, so it cannot overflow while the records fit; an override longer than
+  eight keys is cut to its first eight with a once-per-renderer warning.
+- **The shading model is one module, `Veng/sprite_shading.slang`,** so a flipbook looks the same
+  however it is drawn. Its binding-free core, `Veng/sprite_shading_core.slang`, is the per-texel
+  arithmetic — six-way weights, the lit combine, the temperature decode, the emission ramp and its
+  ignition gate, the frame blend, the soft fade, and the unlit path — written as functions of plain
+  values (and, for the frame blend, a texture and sampler handed in), so a tool previewing a bake
+  includes it with no binding of the renderer's. The bound half adds the per-sprite light gather and
+  the ambient, and reaches the scene through `Veng/medium_lighting.slang` (light buffer, shadows at
+  set 5, IBL at set 4) and `Veng/scene_depth.slang`.
+- **Lighting is gathered once per sprite, in the vertex stage.** A six-way sprite's frame is the
+  camera's rolled right and up, `Z = X × Y` toward the viewer, centred on the frame centre with a
+  radius of half its larger extent. `EvaluateSpriteLighting` walks the view's lights: a directional
+  light arrives along its own direction; a point or spot light is attenuated by
+  `PunctualLightFalloff` (`Veng/light_buffer.slang`, the inverse square with its source-radius
+  floor, the range cutoff and the spot cone, shared with the surface loop's `AccumulateLight`) with a
+  distance floor of the sprite's radius, and its weights blend from isotropic to directional by
+  `saturate(dist / radius)`, so a light inside the sprite lights every face alike rather than
+  blowing up; area lights are skipped. Visibility is `LightVisibility` at the centre through the 3×3
+  PCF kernel, one lookup per light. Every vertex computes the same gather from the same inputs, and
+  it reaches the fragment flat: seven RGB terms, six axes and the ambient. The comparison sample at
+  an explicit level of 0 is legal in a vertex function, and runs there on MoltenVK.
+- **The six-way weights are the squared components** of the light's direction in the sprite's
+  frame, `(x+², y+², z−²)` for `lightA` and `(x−², y−², z+²)` for `lightB`. They always sum to 1, so
+  a light between two axes interpolates their maps and gains no energy, where plain components
+  would brighten a diagonal by up to √3. Each axis gains `radiance · attenuation · visibility · w /
+  π`, the surface core's Lambert normalisation, so a map value of 1 returns what a white diffuse
+  card facing that light does.
+- **The ambient** is the mean, over the frame's six directions, of the view's ambient arm for a white
+  diffuse surface facing each — the flat floor, the SH skylight, or the IBL irradiance, with no
+  Fresnel split since a medium has no specular lobe — and it multiplies the six maps' mean. The lit
+  term is `Σ map · In + ambient · mean(maps)`, times the tint.
+- **Emission** is the ramp's colour at the temperature `t = saturate(decode(stored) +
+  TemperatureOffset)`, gated by `saturate((t − ignition) / fwidth(t) + 0.5)` (a hard step where
+  `fwidth` is 0), times coverage and `EmissionIntensity`, added to the lit term. The gate's band is
+  analytic and about a pixel wide, so it needs no anti-aliasing and is zero a pixel below ignition;
+  `fwidth` is taken in the six-way branch, which is flat per primitive and so uniform across a quad.
+  Emission is the only term meant to go above 1, and its contrast lives in the ramp, retuned at
+  runtime.
+- **The frame blend needs nothing temporal.** A crossfade reads each texture at frame N and N+1 and
+  lerps by the fraction (`FlipbookFramePositionAt`). A motion blend works in extent-normalised space:
+  the fragment at `w = (q − ½)·lerp(sN, sN1, f)` reads frame N at `(w − mN·f)/sN + ½` and frame N+1
+  at `(w + mN1·(1 − f))/sN1 + ½`, each motion read from its own frame at the unwarped coordinate,
+  each tap clamped into its tile's inset rectangle and sampled with the unwarped coordinate's
+  gradients, so an edge in the motion field does not spike the mip. It relies on no accumulation and
+  no dither, so it holds with anti-aliasing off. A flipbook without motion crossfades, and the blend
+  acts on stored values, so shading runs once on the result.
+- **The soft edge.** With a positive soft distance the fragment reads the opaque-depth copy, takes
+  the gap to it in view depth (`ViewDepthFromDeviceDepth` against the interpolated view depth, exact
+  across a flat camera-facing quad) and multiplies the premultiplied result and the mask by
+  `saturate(gap / distance)`. A frame gathering such a sprite records the depth copy
+  (`SpriteDrawPlan::ReadsSceneDepth`) whatever its translucents read; with no copy nothing fades.
 - **Two draws.** The alpha set, sorted back to front on view-space depth, draws first through
   `BlendState::PremultipliedAlpha()`; the additive set follows, unsorted, through a `One, One` blend
-  that keeps destination alpha. The fragment brings each atlas alpha convention (premultiplied,
-  coverage, luminance, opaque) to premultiplied colour before the tint and opacity apply, so one
-  stage serves both blends.
-- **The bloom mask is written by luminance.** When the frame wires a mask (bloom on), the masked
-  fragment variant adds `saturate(luma(colour))` into it, so a bright sprite glows whatever the
-  bloom threshold; the translucent pass ahead of it cleared the mask, and this pass loads it.
+  that keeps destination alpha. One stage serves both: the shading mode is a per-sprite flat branch.
+- **The bloom mask.** When the frame wires a mask (bloom on), an unlit sprite adds
+  `saturate(luma(colour))` into it, so a bright sprite glows whatever the bloom threshold, and a
+  six-way one adds `saturate(luma(emission))` times opacity and fade, so a hot core glows and sunlit
+  smoke does not; the translucent pass ahead of it cleared the mask, and this pass loads it.
+- **Sets 4 and 5.** The pass binds the renderer's IBL and shadow sets with the frame-slot dynamic
+  offsets, exactly as the forward-lit translucent pass does, and declares the shadow atlases sampled
+  by `AccessKind::SampleVertexFragment` — a barrier into the fragment stage does not order a
+  vertex-stage read. The IBL irradiance cube and the dummy and punctual shadow atlases are released
+  `SampleAny`, which names the vertex stage too.
+- **What a schema-1 flipbook does by default.** `ResolveSpriteShading` (`FlipbookSystem.h`) resolves
+  a sprite's `FrameBlend` (its own, or the flipbook's recommendation, which is `Step` for a schema-1
+  source; `Motion` without a motion sheet becomes `Crossfade`) and its soft distance (half the quad's
+  width for a six-way flipbook, off otherwise, unless the sprite names one). So an unlit stepped
+  flipbook takes the same sample and the same arithmetic as ever, unlit, stepped and hard-edged,
+  unless its sprite opts in.
 - **Budget: `MaxSpritesPerFrame` (4096).** Past it the rest are dropped for that frame and the
   renderer warns once for its lifetime. Depth is tested against the opaque depth without being
-  written, and there is no soft-particle depth fade.
+  written.
 
 `tests/gpu/sprite_pass.cpp` renders a white premultiplied flipbook through each blend and checks the
-composited centre pixel against the tint, the additive sum, and the bloom-masked path.
+composited centre pixel against the tint, the additive sum, and the bloom-masked path; a schema-1
+sprite is unaffected by a light, stepped and hard-edged; and a six-way flipbook built in code reads
+`E/π` from a light along its lit axis and nothing from the opposite one, its baseline behind an
+opaque caster (the vertex-stage shadow path), its ramp only above ignition, and a fade that rises
+into a wall. `tests/gpu/sprite_shading.cpp` evaluates the core's functions in one dispatch.
 
 ### Ribbons and trails
 
@@ -1327,8 +1407,12 @@ specular term, or divides it out, rather than letting the blend dim both alike.
   renderer's set — then binds the renderer's sets there, with the frame-slot dynamic offsets the
   lighting pass uses. Sets 4 and 5 are therefore reserved to that include in the Translucent domain;
   a translucent material that does not include it binds nothing extra. The pass declares the shadow
-  atlases sampled, as the lighting pass does. **The shadow maps hold only opaque casters** (a
-  Translucent submesh casts no shadow), so a translucent surface is shadowed by opaque geometry and
+  atlases sampled, as the lighting pass does. The sprite pass binds the two sets too (see "Flipbook
+  sprites") and gathers in its vertex stage, and a compute pass may gather per element with the same
+  functions, so both layouts — the shadow system's and `BakedSkyCube::CreateConsumerSetLayout`'s —
+  are visible to the vertex, fragment and compute stages; every pipeline binding them is built
+  against those same layout objects, so no two consumers' layouts drift apart. **The shadow maps
+  hold only opaque casters** (a Translucent submesh casts no shadow), so a translucent surface is shadowed by opaque geometry and
   never by another translucent one.
 - **What differs from the deferred result.** Screen-space AO is not applied — it is computed from the
   opaque depth, which describes what lies behind the surface — so only `ForwardSurface.Occlusion`

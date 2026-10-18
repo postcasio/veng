@@ -296,6 +296,8 @@ namespace Veng
         // A camera-facing flipbook sprite, gathered by the renderer's sprite pass per Execute and
         // advanced by FlipbookSystem. The runtime-only Finished flag carries no reflected field.
         registry.Register<SpriteBlend>();
+        registry.Register<SpriteFrameBlend>();
+        registry.Register<FlipbookEmissionKey>();
         registry.Register<FlipbookSprite>();
 
         // World-space ribbons and point trails, gathered by the renderer's ribbon pass per Execute

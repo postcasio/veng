@@ -115,8 +115,16 @@ namespace Veng::Renderer::Backend
         case Kind::SampleAny:
             return {
                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                .Stage = vk::PipelineStageFlagBits::eFragmentShader |
+                .Stage = vk::PipelineStageFlagBits::eVertexShader |
+                         vk::PipelineStageFlagBits::eFragmentShader |
                          vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
+            };
+        case Kind::SampleVertexFragment:
+            return {
+                .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .Stage = vk::PipelineStageFlagBits::eVertexShader |
+                         vk::PipelineStageFlagBits::eFragmentShader,
                 .Access = vk::AccessFlagBits::eShaderRead,
             };
         case Kind::StorageRead:

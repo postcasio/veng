@@ -261,8 +261,15 @@ namespace Veng::Renderer
             PassBuilder& Color(const PassAttachment& attachment);
             /// @brief Declares a depth attachment access for this pass.
             PassBuilder& Depth(const PassAttachment& attachment);
-            /// @brief Declares a shader-sample read on resource.
+            /// @brief Declares a shader-sample read on resource, by the stage this pass's type runs
+            ///        (compute, or a graphics pass's fragment stage).
             PassBuilder& Sample(ResourceId resource);
+            /// @brief Declares a shader-sample read on resource by the stages kind names.
+            ///
+            /// For a read the pass's type does not imply: a graphics pass sampling in its vertex
+            /// stage declares AccessKind::SampleVertexFragment.
+            /// @pre IsSampledAccess(kind).
+            PassBuilder& Sample(ResourceId resource, AccessKind kind);
             /// @brief Declares a storage-image read on resource.
             PassBuilder& StorageRead(ResourceId resource);
             /// @brief Declares a storage-image write on resource.

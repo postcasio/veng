@@ -29,11 +29,6 @@
 
 #include "Veng/ibl_maps.slang"
 
-// The view block's ambient arm (LightState.w), matching the renderer's AmbientArm.
-static const uint AmbientArmFlat = 0;
-static const uint AmbientArmSkylight = 1;
-static const uint AmbientArmIbl = 2;
-
 // The largest radiance a lighting entry point returns, per channel. It sits below the RGBA16F scene
 // colour's maximum (65504), so a lit value is never written as inf.
 static const float LightingOutputMax = 6.0e4;
@@ -412,50 +407,13 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
     }
     else
     {
-        // Point and spot are placed at PositionRange.xyz; L points from the
-        // surface toward the light.
-        float3 toLight = light.PositionRange.xyz - worldPos;
-        float dist = length(toLight);
-        float range = max(light.PositionRange.w, 1e-4);
-        if (dist >= range)
+        // Point and spot are placed at PositionRange.xyz; L points from the surface toward the
+        // light. Nothing past the range or outside a spot's cone reaches the surface.
+        float dist;
+        attenuation = PunctualLightFalloff(light, worldPos, 0.0, L, dist, sinSource);
+        if (attenuation <= 0.0)
         {
             return;
-        }
-        L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
-
-        // Inverse-square falloff with a smooth cutoff at Range: physically
-        // correct near the light, faded to zero by the range radius so the loop
-        // bound stays meaningful.
-        //
-        // The near field is bounded by the light's spherical source radius (Area.x):
-        // the shading distance is clamped to be no less than it before the square, so a
-        // real source size — not an epsilon guard — caps the response at contact. A zero
-        // radius (the default) falls back to the 1e-4 floor and is bit-identical to a pure
-        // inverse-square. A 1/(d^2 + 1) denominator is deliberately not used: the +1
-        // perturbs the falloff at every distance, not only near the singularity, so it
-        // cannot be read as absolute radiance under a fixed exposure. L still comes from the
-        // true toLight — the clamp bounds the magnitude of the response, not its direction.
-        float sourceRadius = light.Area.x;
-        float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
-        // The same radius sizes the lobe by the angle it subtends here (a hemisphere inside it).
-        sinSource = min(sourceRadius / max(dist, 1e-4), 1.0);
-        float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
-        rangeFactor *= rangeFactor;
-        attenuation = distanceFactor * rangeFactor;
-
-        if (type == LightTypeSpot)
-        {
-            // Smoothstep the cone between cos(inner) (full) and cos(outer)
-            // (zero); the surface-to-light direction is compared against the
-            // light's travel direction.
-            float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
-            float cosInner = light.Cone.x;
-            float cosOuter = light.Cone.y;
-            attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
-            if (attenuation <= 0.0)
-            {
-                return;
-            }
         }
     }
 

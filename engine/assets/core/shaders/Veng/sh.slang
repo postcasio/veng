@@ -6,6 +6,8 @@
 // projected and convolved on the CPU and only evaluated here — the CPU↔GPU consistency
 // test pins this equality.
 
+#pragma once
+
 // Evaluates the nine order-2 real-SH basis functions in a direction. Direction is assumed
 // unit length; a non-normalized direction scales the higher bands and is caller error.
 void ShBasis(float3 direction, out float basis[9])

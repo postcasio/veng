@@ -8,9 +8,10 @@
 // that visibility is read through at a point and how finely it resolves there, so a march can
 // space its lookups by the map's own texels.
 //
-// Include it after Veng/translucent.slang, whose view block and push block it reads. A material that
-// also lights a surface includes Veng/forward_lighting.slang in place of Veng/translucent.slang (it
-// re-exports that contract) and this after it; the two share the shadow system and light buffer.
+// The includer declares the view block (view_constants.slang) first; a Translucent material has it
+// through Veng/translucent.slang, and a material that also lights a surface includes
+// Veng/forward_lighting.slang (which re-exports that contract) and this after it, the two sharing
+// the shadow system and light buffer. Nothing here reads a push block.
 //
 // Bindings: the set-0 light buffer (binding 6, through Veng/light_buffer.slang), the shadow system
 // at set 5 (through shadow.slang), and the IBL maps' declarations at set 4, which nothing here

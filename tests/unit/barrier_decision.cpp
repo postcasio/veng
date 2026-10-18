@@ -302,9 +302,9 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(depth.Access == (vk::AccessFlagBits::eDepthStencilAttachmentWrite |
                            vk::AccessFlagBits::eDepthStencilAttachmentRead));
 
-    // The three sampled kinds share a layout and an access and differ only in the stage they
-    // name — which is the whole point of their being three: a barrier's source scope must name
-    // the stage that actually read, or it waits on work that never happened.
+    // The sampled kinds share a layout and an access and differ only in the stages they name —
+    // which is the whole point of their being several: a barrier's source scope must name the
+    // stage that actually read, or it waits on work that never happened.
     const auto sample = ScopeFor(Kind::SampleGraphics);
     CHECK(sample.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
     CHECK(sample.Stage == vk::PipelineStageFlagBits::eFragmentShader);
@@ -315,19 +315,25 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(sampleCompute.Stage == vk::PipelineStageFlagBits::eComputeShader);
     CHECK(sampleCompute.Access == vk::AccessFlagBits::eShaderRead);
 
+    const auto sampleVertex = ScopeFor(Kind::SampleVertexFragment);
+    CHECK(sampleVertex.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(sampleVertex.Stage ==
+          (vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader));
+    CHECK(sampleVertex.Access == vk::AccessFlagBits::eShaderRead);
+
     const auto sampleAny = ScopeFor(Kind::SampleAny);
     CHECK(sampleAny.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
-    CHECK(sampleAny.Stage ==
-          (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
     CHECK(sampleAny.Access == vk::AccessFlagBits::eShaderRead);
 
-    // SampleAny covers both single-stage kinds, which is what makes it the safe release label.
+    // SampleAny covers every other sampled kind, which is what makes it the safe release label.
     CHECK((sampleAny.Stage & sample.Stage) == sample.Stage);
     CHECK((sampleAny.Stage & sampleCompute.Stage) == sampleCompute.Stage);
+    CHECK((sampleAny.Stage & sampleVertex.Stage) == sampleVertex.Stage);
 
     CHECK(IsSampledAccess(Kind::SampleGraphics));
     CHECK(IsSampledAccess(Kind::SampleCompute));
     CHECK(IsSampledAccess(Kind::SampleAny));
+    CHECK(IsSampledAccess(Kind::SampleVertexFragment));
     CHECK_FALSE(IsSampledAccess(Kind::StorageRead));
     CHECK_FALSE(IsSampledAccess(Kind::TransferSrc));
 

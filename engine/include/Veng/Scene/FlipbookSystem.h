@@ -1,13 +1,13 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/Flipbook.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
 {
     class Scene;
     struct FlipbookSprite;
-    struct FlipbookClip;
 
     /// @brief Resolves the frames per second a sprite plays its flipbook's clip at.
     ///
@@ -24,6 +24,44 @@ namespace Veng
     /// @return The frame index, in [0, clip.FrameCount).
     [[nodiscard]] VE_API u32 SpriteFlipbookFrame(const FlipbookSprite& sprite,
                                                  const FlipbookClip& clip);
+
+    /// @brief Returns where a sprite's playback stands between two frames now:
+    ///        FlipbookFramePositionAt at its Time and resolved rate.
+    /// @param sprite  The sprite.
+    /// @param clip    Its flipbook's timing.
+    /// @return The frame shown, the next, and the fraction between them.
+    [[nodiscard]] VE_API FlipbookFramePosition
+    SpriteFlipbookFramePosition(const FlipbookSprite& sprite, const FlipbookClip& clip);
+
+    /// @brief How a sprite's flipbook is drawn, resolved from the sprite's choices and the asset.
+    struct SpriteShading
+    {
+        /// @brief The blend between frames: never Motion without a motion sheet.
+        FlipbookFrameBlend FrameBlend = FlipbookFrameBlend::Step;
+        /// @brief The world depth the sprite fades over into opaque geometry; 0 is no fade.
+        f32 SoftDistance = 0.0f;
+    };
+
+    /// @brief Resolves a sprite's frame blend and soft-edge distance. Pure and device-free.
+    ///
+    /// The frame blend is the sprite's own, or the flipbook's recommendation for
+    /// SpriteFrameBlend::Asset; Motion on a flipbook with no motion sheet becomes Crossfade. A
+    /// negative SoftDistance takes the default — half the quad's width for a six-way flipbook,
+    /// which is how far a round puff of that width reaches in front of its centre plane, and no
+    /// fade otherwise — and a positive one is scaled by the entity's world scale, as Size is. So a
+    /// sprite on a stepped unlit flipbook resolves Step and no fade unless it opts in.
+    /// @param sprite      The sprite.
+    /// @param shading     Its flipbook's shading.
+    /// @param recommended Its flipbook's recommended frame blend.
+    /// @param hasMotion   Whether its flipbook carries a motion sheet.
+    /// @param quadWidth   The quad's world width, the entity's scale applied.
+    /// @param worldScale  The entity's world scale.
+    /// @return The resolved blend and fade distance.
+    [[nodiscard]] VE_API SpriteShading ResolveSpriteShading(const FlipbookSprite& sprite,
+                                                            FlipbookShading shading,
+                                                            FlipbookFrameBlend recommended,
+                                                            bool hasMotion, f32 quadWidth,
+                                                            f32 worldScale);
 
     /// @brief View-phase system that plays every FlipbookSprite and retires the scene's finished
     ///        transient effects.

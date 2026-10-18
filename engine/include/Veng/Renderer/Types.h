@@ -295,11 +295,11 @@ namespace Veng::Renderer
         ///
         /// @see SampleGraphics for why the stage is named rather than assumed.
         SampleCompute,
-        /// @brief Sampled by fragment and compute shaders alike.
+        /// @brief Sampled by vertex, fragment and compute shaders alike.
         ///
         /// The honest declaration at a **release point** — the barrier ending a write, whose
-        /// next reader is either stage, or is not known to the code recording it. Waits wider
-        /// than either single-stage kind, which is the price of not having to know.
+        /// next reader is any of those stages, or is not known to the code recording it. Waits
+        /// wider than any single-stage kind, which is the price of not having to know.
         ///
         /// @see SampleGraphics for why the stage is named rather than assumed.
         SampleAny,
@@ -336,17 +336,25 @@ namespace Veng::Renderer
         ///
         /// @see StorageBufferRead, the compute-stage read.
         StorageBufferReadGraphics,
+        /// @brief Sampled by a graphics pipeline's vertex stage, its fragment stage, or both.
+        ///
+        /// A graphics pass reading a texture before rasterization — a per-primitive lookup done
+        /// once in the vertex stage rather than per fragment — declares this, since a barrier into
+        /// SampleGraphics's fragment stage does not order a vertex-stage read.
+        ///
+        /// @see SampleGraphics for why the stage is named rather than assumed.
+        SampleVertexFragment,
     };
 
     /// @brief Whether an access kind is a sampled read, whichever stage performs it.
     ///
-    /// The three Sample* kinds differ only in the pipeline stage they name, so code asking
+    /// The four Sample* kinds differ only in the pipeline stage they name, so code asking
     /// "is this a sampled read" — barrier scheduling, usage derivation — asks here rather
     /// than comparing against one of them and silently excluding the other two.
     [[nodiscard]] constexpr bool IsSampledAccess(const AccessKind kind)
     {
         return kind == AccessKind::SampleGraphics || kind == AccessKind::SampleCompute ||
-               kind == AccessKind::SampleAny;
+               kind == AccessKind::SampleAny || kind == AccessKind::SampleVertexFragment;
     }
 
     /// @brief Whether an access kind reads a buffer, whichever stage or path performs it.

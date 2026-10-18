@@ -107,7 +107,9 @@ engine *mounts* archives and resolves assets against them.
   frame, and `GetBlend()` / `GetAlphaMode()` the recommended compositing and alpha convention. The
   timing is pure and device-free — `ResolveFlipbookRate` (the authored rate times a playback rate,
   or a duration override fitting the whole sequence to a length of its own), `FlipbookFrameAt`
-  (`floor(t · rate)` wrapped or clamped), `IsFlipbookFinished` — and `Flipbook::Create` builds one
+  (`floor(t · rate)` wrapped or clamped), `FlipbookFramePositionAt` (that frame, the next — wrapped
+when looping, held on a one-shot's last — and the fraction between them, for a player blending
+frames), `IsFlipbookFinished` — and `Flipbook::Create` builds one
   over runtime textures, asserting the invariants the loader checks. `FlipbookSprite` plays one
   ([../Scene/CLAUDE.md](../Scene/CLAUDE.md)); the renderer draws it
   ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).

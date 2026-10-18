@@ -45,6 +45,7 @@ namespace Veng::Renderer
             case AccessKind::SampleGraphics:
             case AccessKind::SampleCompute:
             case AccessKind::SampleAny:
+            case AccessKind::SampleVertexFragment:
                 return ImageUsage::Sampled;
             case AccessKind::IndirectRead:
             case AccessKind::StorageBufferRead:

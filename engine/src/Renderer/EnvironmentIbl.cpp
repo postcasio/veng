@@ -363,12 +363,13 @@ namespace Veng::Renderer
         // bind the consumer set before an environment is set (the shader gates the sample on
         // the IblEnabled push flag, so the as-yet-uninitialized contents are never read).
         // The radiance cube is SampleAny because the convolutions below read it with a dispatch
-        // as well as the skybox sampling it in a fragment; the irradiance cube has fragment readers
-        // only. The screen-space reflection chain's dispatches sample the prefiltered cube
+        // as well as the skybox sampling it in a fragment; the irradiance cube is read by the
+        // lighting fragments and by a sprite's or a particle's ambient gather, in a vertex or a
+        // compute stage. The screen-space reflection chain's dispatches sample the prefiltered cube
         // ungated, scaled by an IBL factor of zero for a view without image-based lighting, so it
         // starts zeroed rather than undefined.
         cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
-        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleGraphics);
+        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleAny);
         const Ref<Buffer> zeros =
             Buffer::Create(m_Context, {
                                           .Name = "IBL Prefilter Clear",
@@ -515,7 +516,7 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(IrradiancePush{.FaceSize = IrradianceSize});
         cmd.Dispatch(Groups(IrradianceSize), Groups(IrradianceSize), CubeFaces);
-        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleGraphics);
+        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleAny);
 
         // Radiance cube -> prefiltered specular cube, one dispatch per roughness mip.
         cmd.BindPipeline(m_PrefilterPipeline);

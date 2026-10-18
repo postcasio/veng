@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <unordered_map>
 
 #include <glm/geometric.hpp>
 
@@ -85,17 +86,96 @@ namespace Veng::Renderer
         }
     }
 
+    namespace
+    {
+        // The ramp entry a gathered sprite reads: its override, or its flipbook's default, appended
+        // to the plan's table once per frame.
+        class RampTable
+        {
+        public:
+            explicit RampTable(SpriteDrawPlan& plan) : m_Plan(plan) {}
+
+            u32 Resolve(const FlipbookSprite& sprite, const Flipbook& flipbook)
+            {
+                const FlipbookEmission& emission = flipbook.GetEmission();
+                const bool overridesRamp = !sprite.EmissionRamp.empty();
+                if (!overridesRamp && sprite.Ignition < 0.0f)
+                {
+                    const auto [it, inserted] =
+                        m_Defaults.try_emplace(&flipbook, static_cast<u32>(m_Plan.Ramps.size()));
+                    if (inserted)
+                    {
+                        Append(emission.Ramp, emission.Ignition);
+                    }
+                    return it->second;
+                }
+
+                const vector<FlipbookEmissionKey>& keys =
+                    overridesRamp ? sprite.EmissionRamp : emission.Ramp;
+                if (keys.size() > MaxFlipbookEmissionKeys)
+                {
+                    ++m_Plan.RampsClamped;
+                }
+                const auto index = static_cast<u32>(m_Plan.Ramps.size());
+                Append(keys, sprite.Ignition >= 0.0f ? sprite.Ignition : emission.Ignition);
+                return index;
+            }
+
+        private:
+            void Append(const vector<FlipbookEmissionKey>& keys, const f32 ignition)
+            {
+                const auto count =
+                    static_cast<u32>(std::min<usize>(keys.size(), MaxFlipbookEmissionKeys));
+                GpuEmissionRamp& ramp = m_Plan.Ramps.emplace_back();
+                for (u32 key = 0; key < count; ++key)
+                {
+                    ramp.Keys[key] = vec4(keys[key].Color, keys[key].T);
+                }
+                ramp.Params = vec4(ignition, static_cast<f32>(count), 0.0f, 0.0f);
+            }
+
+            SpriteDrawPlan& m_Plan;
+            std::unordered_map<const Flipbook*, u32> m_Defaults;
+        };
+
+        u32 SpriteFlags(const Flipbook& flipbook, const FlipbookFrameBlend blend, const bool emits)
+        {
+            u32 flags = static_cast<u32>(blend) << SpriteFlag::BlendShift;
+            if (flipbook.GetShading() == FlipbookShading::SixWay)
+            {
+                flags |= SpriteFlag::SixWay;
+                if (flipbook.GetTemperatureEncoding() == FlipbookTemperatureEncoding::Sqrt)
+                {
+                    flags |= SpriteFlag::SqrtTemperature;
+                }
+                if (flipbook.GetTemperatureChannel() == 0)
+                {
+                    flags |= SpriteFlag::TemperatureRed;
+                }
+                if (emits)
+                {
+                    flags |= SpriteFlag::Emits;
+                }
+            }
+            return flags;
+        }
+    }
+
     void GatherSprites(const Scene& scene, const CameraView& camera, const f32 alpha,
                        SpriteDrawPlan& plan)
     {
         plan.Alpha.clear();
         plan.Additive.clear();
+        plan.Ramps.clear();
         plan.Dropped = 0;
+        plan.RampsClamped = 0;
+        plan.ReadsSceneDepth = false;
 
         // The alpha set sorts on view-space depth; the additive set needs no order.
         vector<std::pair<f32, GpuSprite>> sorted;
         const mat4 view = camera.View();
         u32 gathered = 0;
+        RampTable ramps(plan);
 
         for (auto [entity, sprite] : scene.View<FlipbookSprite>())
         {
@@ -105,12 +185,17 @@ namespace Veng::Renderer
             {
                 continue;
             }
+            const bool sixWay = flipbook->GetShading() == FlipbookShading::SixWay;
+            if (sixWay &&
+                (flipbook->GetLightB() == nullptr || flipbook->GetTemperatureTexture() == nullptr))
+            {
+                continue;
+            }
             if (gathered >= MaxSpritesPerFrame)
             {
                 ++plan.Dropped;
                 continue;
             }
-            ++gathered;
 
             const mat4 world = scene.GetInterpolatedWorldTransform(entity, alpha);
             const vec3 position(world[3]);
@@ -123,19 +208,53 @@ namespace Veng::Renderer
             }
             width *= scale;
 
+            const SpriteShading shading =
+                ResolveSpriteShading(sprite, flipbook->GetShading(), flipbook->GetFrameBlend(),
+                                     flipbook->GetMotion() != nullptr, width, scale);
+            ++gathered;
+
             const Texture& atlas = *flipbook->GetAtlas();
-            const u32 frame = SpriteFlipbookFrame(sprite, flipbook->GetClip());
-            const GpuSprite record{
+            const FlipbookClip& clip = flipbook->GetClip();
+            const FlipbookFramePosition frame = SpriteFlipbookFramePosition(sprite, clip);
+            const bool blends = shading.FrameBlend != FlipbookFrameBlend::Step;
+            const u32 next = blends ? frame.Next : frame.Frame;
+            const bool emits =
+                sixWay && (!sprite.EmissionRamp.empty() || !flipbook->GetEmission().Ramp.empty());
+            const u32 ramp = emits ? ramps.Resolve(sprite, *flipbook) : 0u;
+
+            GpuSprite record{
                 .PositionWidth = vec4(position, width),
                 .Color = vec4(sprite.Tint, sprite.Opacity),
-                .UvRect = flipbook->GetFrameRect(frame),
+                .UvRect = flipbook->GetFrameRect(frame.Frame),
+                .UvRectNext = flipbook->GetFrameRect(next),
                 .Anchor = flipbook->GetAnchor(),
                 .Height = width * flipbook->GetAspect(),
                 .Rotation = sprite.Rotation,
+                .TileSize = vec2(1.0f / static_cast<f32>(flipbook->GetColumns()),
+                                 1.0f / static_cast<f32>(flipbook->GetRows())),
+                .FrameScale = flipbook->GetFrameScale(frame.Frame),
+                .FrameScaleNext = flipbook->GetFrameScale(next),
                 .Texture = atlas.GetHandle().Index,
                 .Sampler = atlas.GetSamplerHandle().Index,
                 .AlphaMode = static_cast<u32>(flipbook->GetAlphaMode()),
+                .Flags = SpriteFlags(*flipbook, shading.FrameBlend, emits),
+                .Ramp = ramp,
+                .FrameFraction = blends ? frame.Fraction : 0.0f,
+                .SoftDistance = shading.SoftDistance,
+                .EmissionIntensity = sprite.EmissionIntensity,
+                .TemperatureOffset = sprite.TemperatureOffset,
             };
+            if (sixWay)
+            {
+                record.LightB = flipbook->GetLightB()->GetHandle().Index;
+                record.Temperature = flipbook->GetTemperatureTexture()->GetHandle().Index;
+            }
+            if (shading.FrameBlend == FlipbookFrameBlend::Motion)
+            {
+                record.Motion = flipbook->GetMotion()->GetHandle().Index;
+                record.MotionScale = flipbook->GetMotionScale();
+            }
+            plan.ReadsSceneDepth = plan.ReadsSceneDepth || shading.SoftDistance > 0.0f;
 
             if (IsAdditive(sprite, *flipbook))
             {
@@ -158,35 +277,41 @@ namespace Veng::Renderer
     }
 
     SpriteScenePass::SpriteScenePass(Context& context, AssetManager& assets,
-                                     const SpriteDrawPlan* plan, const ResourceId targetId,
-                                     const ResourceId depthId, const ResourceId maskId,
-                                     const Format targetFormat, const Format maskFormat,
-                                     const u32 framesInFlight)
-        : m_Context(context), m_Plan(plan), m_TargetId(targetId), m_DepthId(depthId),
-          m_MaskId(maskId), m_FramesInFlight(framesInFlight)
+                                     const SpriteScenePassInfo& info)
+        : m_Context(context), m_Plan(info.Plan), m_TargetId(info.Target), m_DepthId(info.Depth),
+          m_MaskId(info.Mask), m_SceneDepthCopyId(info.SceneDepthCopy), m_Forward(info.Forward),
+          m_FramesInFlight(info.FramesInFlight)
     {
         const AssetHandle<Veng::Shader> vs = LoadShader(assets, SpriteVertId, "sprite vertex");
         const AssetHandle<Veng::Shader> fs = LoadShader(
-            assets, maskId.IsValid() ? SpriteMaskedFragId : SpriteFragId, "sprite fragment");
+            assets, m_MaskId.IsValid() ? SpriteMaskedFragId : SpriteFragId, "sprite fragment");
 
-        // Set 3 carries the per-frame record SSBO, off bindless: a closed per-frame
-        // producer→consumer buffer needs no global registration.
+        // Set 3 carries the per-frame records and ramps, off bindless: a closed per-frame
+        // producer→consumer buffer needs no global registration. Sets 4 and 5 are the renderer's
+        // IBL and shadow sets, read by the six-way light gather.
         m_SetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "Sprite Set Layout",
                            .Bindings = {{.Binding = 0,
                                          .Type = DescriptorType::StorageBuffer,
                                          .Count = 1,
-                                         .Stages = ShaderStage::Vertex}},
+                                         .Stages = ShaderStage::Vertex | ShaderStage::Fragment},
+                                        {.Binding = 1,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Fragment}},
                        });
         m_Layout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "Sprite Layout",
-                           .DescriptorSetLayouts = {m_SetLayout},
-                           .PushConstantRanges = {PushConstantRange::Of<SpritePushConstants>(
-                               ShaderStage::Vertex | ShaderStage::Fragment)},
-                       });
+            m_Context,
+            {
+                .Name = "Sprite Layout",
+                .DescriptorSetLayouts = {m_SetLayout, m_Forward.IblLayout, m_Forward.ShadowLayout},
+                .PushConstantRanges = {PushConstantRange::Of<SpritePushConstants>(
+                    ShaderStage::Vertex | ShaderStage::Fragment)},
+            });
 
+        const Format targetFormat = info.TargetFormat;
+        const Format maskFormat = info.MaskFormat;
         const auto makePipeline = [&](const char* name, const BlendState& colorBlend)
         {
             vector<PipelineAttachmentInfo> attachments = {
@@ -226,8 +351,16 @@ namespace Veng::Renderer
                                                   .Usage = BufferUsage::Storage,
                                                   .HostMapped = true,
                                               });
+        // At most one ramp per gathered sprite, so the table cannot overflow while the records fit.
+        m_RampRegionStride = static_cast<u64>(MaxSpritesPerFrame) * sizeof(GpuEmissionRamp);
+        m_Ramps = Buffer::Create(m_Context, {
+                                                .Name = "Sprite Emission Ramps",
+                                                .Size = m_RampRegionStride * m_FramesInFlight,
+                                                .Usage = BufferUsage::Storage,
+                                                .HostMapped = true,
+                                            });
 
-        // One set per frame in flight, each bound once to its own ring region: rewriting a shared
+        // One set per frame in flight, each bound once to its own ring regions: rewriting a shared
         // set still referenced by a pending command buffer is a validation error.
         m_Sets.reserve(m_FramesInFlight);
         for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
@@ -235,13 +368,15 @@ namespace Veng::Renderer
             Ref<DescriptorSet> set =
                 DescriptorSet::Create(m_Context, {.Name = "Sprite Set", .Layout = m_SetLayout});
             set->Write(0, m_Records, static_cast<u64>(frame) * m_RegionStride, m_RegionStride);
+            set->Write(1, m_Ramps, static_cast<u64>(frame) * m_RampRegionStride,
+                       m_RampRegionStride);
             m_Sets.push_back(std::move(set));
         }
     }
 
     SpriteScenePass::~SpriteScenePass() = default;
 
-    void SpriteScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    void SpriteScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         RenderGraph::PassBuilder builder = graph.AddPass("Scene Sprites");
         builder.Color({
@@ -263,6 +398,20 @@ namespace Veng::Renderer
             .Load = LoadOp::Load,
             .Store = StoreOp::Store,
         });
+        // A soft sprite's fragment reads the opaque-depth copy, and a six-way sprite's vertex
+        // stage the shadow atlases.
+        if (m_SceneDepthCopyId.IsValid())
+        {
+            builder.Sample(m_SceneDepthCopyId);
+        }
+        if (io.ShadowMap.IsValid())
+        {
+            builder.Sample(io.ShadowMap, AccessKind::SampleVertexFragment);
+        }
+        if (io.PunctualShadowMap.IsValid())
+        {
+            builder.Sample(io.PunctualShadowMap, AccessKind::SampleVertexFragment);
+        }
         // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
         // storing its targets around no draws.
         builder.SkipWhen([this] { return m_Plan == nullptr || m_Plan->IsEmpty(); });
@@ -283,6 +432,11 @@ namespace Veng::Renderer
         std::memcpy(base, plan.Alpha.data(), alphaCount * sizeof(GpuSprite));
         std::memcpy(base + alphaCount * sizeof(GpuSprite), plan.Additive.data(),
                     (count - alphaCount) * sizeof(GpuSprite));
+
+        const usize ramps = std::min<usize>(plan.Ramps.size(), MaxSpritesPerFrame);
+        auto* rampBase = static_cast<u8*>(m_Ramps->GetMappedData()) +
+                         static_cast<usize>(region) * m_RampRegionStride;
+        std::memcpy(rampBase, plan.Ramps.data(), ramps * sizeof(GpuEmissionRamp));
         return count;
     }
 
@@ -313,11 +467,12 @@ namespace Veng::Renderer
         {
             cmd.BindPipeline(pipeline);
             registry.Bind(cmd);
-            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                .Sets = {m_Sets[frame]},
-                .FirstSet = BindlessRegistry::FirstUserSet,
-                .PipelineBindPoint = PipelineBindPoint::Graphics,
-            });
+            // The shadow rings are framesInFlight-deep, so their dynamic offsets are the
+            // frame-in-flight index, as the lighting and forward-lit translucent passes bind them.
+            cmd.BindDescriptorSets(
+                {m_Sets[frame].get(), m_Forward.IblSet.get(), m_Forward.ShadowSet.get()},
+                BindlessRegistry::FirstUserSet, PipelineBindPoint::Graphics,
+                {frame * m_Forward.ShadowRingStride, frame * m_Forward.PunctualRingStride});
             cmd.PushConstants(push);
             cmd.Draw(sprites * SpriteVertexCount, 1, first * SpriteVertexCount, 0);
         };

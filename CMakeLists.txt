@@ -1858,6 +1858,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sprite_shading.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1877,7 +1878,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sprite_shading.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1993,6 +1995,8 @@ if (VENG_BUILD_TESTS)
             tests/gpu/sh_consistency.cpp
             tests/gpu/area_shadow_size.cpp
             tests/gpu/ltc_sphere.cpp
+            # sprite_shading.cpp evaluates the flipbook shading core's functions in one dispatch.
+            tests/gpu/sprite_shading.cpp
             # forward_lighting.cpp renders an opaque cube and its forward-lit Translucent twin under
             # the same lights and compares them texel for texel: the forward loop is the deferred one.
             tests/gpu/forward_lighting.cpp

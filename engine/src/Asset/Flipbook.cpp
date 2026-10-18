@@ -34,6 +34,24 @@ namespace Veng
         return static_cast<u32>(std::min<u64>(index, frames - 1));
     }
 
+    FlipbookFramePosition FlipbookFramePositionAt(const FlipbookClip& clip, const f32 rate,
+                                                  const f32 time)
+    {
+        const u32 frames = std::max(1u, clip.FrameCount);
+        FlipbookFramePosition position{.Frame = FlipbookFrameAt(clip, rate, time)};
+        position.Next = position.Frame;
+        const f64 playback = static_cast<f64>(std::max(0.0f, time)) * static_cast<f64>(rate);
+        if (!std::isfinite(playback) || (!clip.Loop && position.Frame + 1 >= frames))
+        {
+            return position;
+        }
+        position.Next = clip.Loop ? (position.Frame + 1) % frames : position.Frame + 1;
+        // The f64 remainder can round up to 1 in f32; the fraction stays below it.
+        position.Fraction =
+            std::min(static_cast<f32>(playback - std::floor(playback)), std::nextafter(1.0f, 0.0f));
+        return position;
+    }
+
     bool IsFlipbookFinished(const FlipbookClip& clip, const f32 rate, const f32 time)
     {
         if (clip.Loop || rate <= 0.0f)

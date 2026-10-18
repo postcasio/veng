@@ -52,7 +52,9 @@ namespace Veng::Renderer
                         .Execute([](PassContext&) {});
                     const RenderGraph::ImportBinding binding{.Id = target, .View = view};
                     graph.Compile()->Execute(cmd, {&binding, 1});
-                    cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
+                    // Read by the lighting fragments, a sprite's vertex-stage light gather and a
+                    // compute pass gathering per element alike.
+                    cmd.PrepareForAccess(view, AccessKind::SampleAny);
                 });
         }
     }
@@ -95,6 +97,11 @@ namespace Veng::Renderer
         //   4: punctual shadow atlas (SampledImage)
         // The comparison sampler is shared across cascade and punctual tiles; binding 1
         // is immutable, so descriptor writes supply only bindings 0, 4 and buffers 2, 3.
+        // Visible to every stage that reads a light's visibility: the lighting and translucent
+        // fragments, a sprite's vertex-stage light gather, and a compute pass gathering per
+        // element.
+        constexpr ShaderStage ConsumerStages =
+            ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute;
         m_SetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer Shadow Set Layout",
@@ -103,24 +110,24 @@ namespace Veng::Renderer
                                    {.Binding = 0,
                                     .Type = DescriptorType::SampledImage,
                                     .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
+                                    .Stages = ConsumerStages},
                                    {.Binding = 1,
                                     .Type = DescriptorType::Sampler,
                                     .Count = 1,
-                                    .Stages = ShaderStage::Fragment,
+                                    .Stages = ConsumerStages,
                                     .ImmutableSamplers = {m_ComparisonSampler}},
                                    {.Binding = 2,
                                     .Type = DescriptorType::UniformBufferDynamic,
                                     .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
+                                    .Stages = ConsumerStages},
                                    {.Binding = 3,
                                     .Type = DescriptorType::UniformBufferDynamic,
                                     .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
+                                    .Stages = ConsumerStages},
                                    {.Binding = 4,
                                     .Type = DescriptorType::SampledImage,
                                     .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
+                                    .Stages = ConsumerStages},
                                },
                        });
 

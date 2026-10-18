@@ -1052,7 +1052,10 @@ namespace Veng::Renderer
         // (0) and the sampler (4); the skybox pipeline binds the whole layout, so a baked cube's set
         // and the IBL lighting set must share it. This is its one definition; EnvironmentIbl builds
         // its own consumer set against this, and a service that owns a cube without a SceneRenderer
-        // creates a compatible layout here.
+        // creates a compatible layout here. Every stage that reads the ambient sees it: the
+        // lighting and translucent fragments, a sprite's vertex-stage gather, a compute pass.
+        constexpr ShaderStage ConsumerStages =
+            ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute;
         return DescriptorSetLayout::Create(context,
                                            {
                                                .Name = "Sky Radiance Consumer Set Layout",
@@ -1061,23 +1064,23 @@ namespace Veng::Renderer
                                                        {.Binding = 0,
                                                         .Type = DescriptorType::SampledImage,
                                                         .Count = 1,
-                                                        .Stages = ShaderStage::Fragment},
+                                                        .Stages = ConsumerStages},
                                                        {.Binding = 1,
                                                         .Type = DescriptorType::SampledImage,
                                                         .Count = 1,
-                                                        .Stages = ShaderStage::Fragment},
+                                                        .Stages = ConsumerStages},
                                                        {.Binding = 2,
                                                         .Type = DescriptorType::SampledImage,
                                                         .Count = 1,
-                                                        .Stages = ShaderStage::Fragment},
+                                                        .Stages = ConsumerStages},
                                                        {.Binding = 3,
                                                         .Type = DescriptorType::SampledImage,
                                                         .Count = 1,
-                                                        .Stages = ShaderStage::Fragment},
+                                                        .Stages = ConsumerStages},
                                                        {.Binding = 4,
                                                         .Type = DescriptorType::Sampler,
                                                         .Count = 1,
-                                                        .Stages = ShaderStage::Fragment},
+                                                        .Stages = ConsumerStages},
                                                    },
                                            });
     }
