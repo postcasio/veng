@@ -297,6 +297,78 @@ TEST_CASE("Full join: readiness gates the stream, seat + pawn arrive, possession
     CHECK(world.Get<Authority>(localCamera).Tier == Tier::Local);
 }
 
+TEST_CASE("A joiner's seat is marked presented only while its client reports showing the world")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
+        .World = *serverScene,
+        .Assets = TestAssets(),
+        .LevelId = AssetId{0x00000000000000ABULL},
+    });
+    REQUIRE(host.has_value());
+
+    Unique<Client> client =
+        *Client::Connect(ClientInfo{.TransportOverride = clientT.get(), .Connection = Config});
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = TestAssets(),
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    f64 now = 0.0;
+    u64 tick = 0;
+    const auto pump = [&](const int ticks)
+    {
+        for (int i = 0; i < ticks; ++i)
+        {
+            now += 1.0 / 60.0;
+            serverScene->SetChangeTick(++tick);
+            (*host)->Pump(now, tick);
+            clientHost->Pump(now);
+        }
+    };
+
+    pump(20);
+    REQUIRE(clientHost->IsJoined());
+    REQUIRE_FALSE((*host)->Server().Connections().empty());
+    const ConnectionId id = (*host)->Server().Connections().front();
+    const JoinId serverJoin = (*host)->CurrentJoin(id);
+    const Entity seat = (*host)->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+
+    // Joined and streaming, but not yet shown: the seat carries no mark.
+    CHECK((*host)->IsReady(id, serverJoin));
+    CHECK_FALSE((*host)->IsPresenting(id, serverJoin));
+    CHECK_FALSE(serverScene->Has<SeatPresented>(seat));
+
+    CHECK(clientHost->ReportPresenting(clientHost->CurrentJoinId(), true));
+    pump(4);
+    CHECK((*host)->IsPresenting(id, serverJoin));
+    CHECK(serverScene->Has<SeatPresented>(seat));
+
+    CHECK(clientHost->ReportPresenting(clientHost->CurrentJoinId(), false));
+    pump(4);
+    CHECK_FALSE((*host)->IsPresenting(id, serverJoin));
+    CHECK_FALSE(serverScene->Has<SeatPresented>(seat));
+
+    // A join the client does not hold is not reported.
+    CHECK_FALSE(clientHost->ReportPresenting(JoinId{0x7777}, true));
+}
+
 TEST_CASE("Disconnect tears the seat down and surfaces the event")
 {
     auto [serverT, clientT] = LoopbackTransport::CreatePair();

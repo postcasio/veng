@@ -281,6 +281,17 @@ namespace Veng
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
         void ApplyPendingReconfigure(WorldRunner& runner, f32 delta);
 
+        /// @brief Seats any viewport still without a seat, and records each completed rebind's seat
+        ///        as the one its viewport now holds.
+        ///
+        /// ApplyPendingReconfigure ends with this. A consumer that stands a seat after the apply and
+        /// before the frame's presentation hooks — in a world's arrival hook, for a seat that only
+        /// exists while the world is presented — runs it again, so the viewport is seated on the
+        /// frame the world is first presented rather than the next, and the presented record
+        /// carries that seat.
+        /// @param runner  The runner each viewport's presented world resolves through.
+        void SeatUnboundViewports(WorldRunner& runner);
+
         /// @brief Moves the rebinds that completed in the last apply into @p out, clearing the queue.
         ///
         /// The delivery half of the rebind: a completed rebind is a moment the set knows exactly, so

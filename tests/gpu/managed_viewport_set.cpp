@@ -618,6 +618,50 @@ TEST_CASE("A completed rebind is reported once, with the seat the viewport ended
     app.Run({});
 }
 
+TEST_CASE("A seat stood after a rebind lands on a seatless world is adopted the same frame")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat base{};
+    WorldInstanceId seatless;
+    Entity stood = Entity::Null;
+    bool adoptedAtOnce = false;
+
+    app.InitFn = [&](MvApp& app)
+    {
+        base = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        seatless = app.OpenReadySeatlessWorld();
+        app.GetManagedViewports().SetViewportWorld(0, base.World);
+    };
+
+    app.StepFn = [&](MvApp& app, const int frame)
+    {
+        if (frame == 0)
+        {
+            app.RebindManagedViewport(0, seatless);
+        }
+        else if (stood.IsNull() && app.GetManagedViewportWorld(0) == seatless)
+        {
+            // The world admits its seat only once it is shown, as an arrival hook would stand it.
+            CHECK(app.GetManagedViewports().GetViewportViewer(0) == Entity::Null);
+            Scene& scene = app.GetWorldRunner().ResolveWorld(seatless)->GetScene();
+            stood = scene.CreateEntity();
+            scene.Add<Viewer>(stood);
+            app.GetManagedViewports().SeatUnboundViewports(app.GetWorldRunner());
+            adoptedAtOnce = app.GetManagedViewports().GetViewportViewer(0) == stood;
+        }
+    };
+
+    app.Frames = 4;
+    app.Run({});
+    REQUIRE_FALSE(stood.IsNull());
+    CHECK(adoptedAtOnce);
+}
+
 TEST_CASE("An abandoned present-on-ready is reported once, and a later rebind does not repeat it")
 {
     TypeRegistry types;

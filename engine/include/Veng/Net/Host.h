@@ -397,6 +397,14 @@ namespace Veng
         /// @param join  The JoinId to test.
         [[nodiscard]] bool IsReady(Net::ConnectionId id, Net::JoinId join) const;
 
+        /// @brief Whether a (connection, join)'s client last reported presenting the joined world.
+        ///
+        /// The client reports it on each change (ClientHost::ReportPresenting); while it is true the
+        /// join's seat carries SeatPresented. False before the first report.
+        /// @param id    The connection.
+        /// @param join  The JoinId to test.
+        [[nodiscard]] bool IsPresenting(Net::ConnectionId id, Net::JoinId join) const;
+
         /// @brief Directs a connection to travel: join a world by key and, once ready, leave a join.
         ///
         /// Sends a directed-travel control message: the client joins @p key (carrying @p payload through
@@ -707,6 +715,17 @@ namespace Veng
         /// travel calls this internally once the destination is ready; a client may call it directly.
         /// @param join  The JoinId to leave; a no-op for an unknown join.
         void Leave(Net::JoinId join);
+
+        /// @brief Tells the server whether a viewport on this client presents a joined world.
+        ///
+        /// The server marks the join's seat SeatPresented while it does, so server-side game code can
+        /// keep a player out of a world until that player is shown it. Application reports each
+        /// change for every joined world it drives; a consumer driving a ClientHost itself calls it.
+        /// @param join        The joined world.
+        /// @param presenting  Whether a viewport now presents it.
+        /// @return Whether the report was sent: false for an unknown join, while not connected, or
+        ///         when the reliable channel refused it, so the caller reports again later.
+        [[nodiscard]] bool ReportPresenting(Net::JoinId join, bool presenting);
 
         /// @brief Pumps one frame: advance the connection, resolve join replies, apply each stream.
         /// @param now  Monotonic time in seconds (injected).

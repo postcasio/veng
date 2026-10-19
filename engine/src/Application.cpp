@@ -152,6 +152,8 @@ namespace Veng
             // This world's sim time-scale this frame (the client slew toward its target tick lead); 1
             // when not yet syncing. Applied as the world's SimScale so it runs its sim ahead of the server.
             f32 Slew = 1.0f;
+            // Whether the server was last told a viewport here presents this world.
+            bool ReportedPresenting = false;
         };
         unordered_map<u64, ClientWorldState> ClientWorlds;
         // The runner worlds each in-flight join installs into, in join-request (FIFO) order: LoadLevel
@@ -2379,6 +2381,19 @@ namespace Veng
             }
         }
 
+        // The server may keep this peer's player out of the world until it is shown, so each change
+        // in whether a viewport presents it is reported.
+        if (const World* const resolved = m_WorldRunner->ResolveWorld(world);
+            state.Started && resolved != nullptr)
+        {
+            const bool presenting = FindScenePresenter(world, resolved->GetScene()) != nullptr;
+            if (presenting != state.ReportedPresenting &&
+                m_Net->ClientHost->ReportPresenting(join, presenting))
+            {
+                state.ReportedPresenting = presenting;
+            }
+        }
+
         // Acknowledge the highest applied server tick for this world so the server advances this
         // connection's delta baselines (and gates its snapshots against them) rather than re-sending
         // full state forever, and the newest component-state message so the server sends the next.
@@ -2844,6 +2859,8 @@ namespace Veng
             {
                 VE_PROFILE_SCOPE("Frame/WorldArrivals");
                 FireWorldArrivals();
+                // A seat an arrival hook stood is the arrived viewport's on this frame.
+                m_ManagedViewports->SeatUnboundViewports(*m_WorldRunner);
             }
 
             // Then the presentation moments the apply produced: what a viewport now presents and what

@@ -299,7 +299,10 @@ rather than leaving a consumer to compare the queries above against a remembered
 **`OnWorldPresented(index, world, seat)`** fires once per completed rebind — deferred or
 present-on-ready — at the same frame-safe point the rebind applied on, *after* the seat association,
 the cursor seat and the unbound-seat resolution have settled, carrying the seat the viewport ended up
-adopting (`Entity::Null` when the destination seats none). It is where a consumer gives a presented
+adopting (`Entity::Null` when the destination seats none). A seat the consumer stood in
+`OnWorldArrival` is among them: the engine seats any viewport still without one right after the
+arrival hooks (`ManagedViewportSet::SeatUnboundViewports`), so a world that admits the local player
+only once it is shown still presents seated on its first frame. It is where a consumer gives a presented
 seat its input posture, by stamping one `FocusRequest`; the seat arrives already holding whatever
 focus the cursor carried in, and beyond that carry focus policy stays the consumer's. **`OnWorldPresentAbandoned(index, destination)`** fires once when a
 present-on-ready request is abandoned, so a transition aborts on the frame it failed; the
@@ -576,7 +579,7 @@ honest guarantee is per-world **convergence, not independent streams**. The join
 **content digest** the client validates its reconstructed world against (fail-loud carried into the
 join tier); worlds are **server-owned** — refcounted by live joins, idle-reaped after a keep-warm
 dwell, and bounded by a server-wide cap (with a per-connection join cap); and clock/tick-sync scopes
-**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **10** and the
+**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **11** and the
 `ConnectAcceptMessage` carries only the connection id (the level/seat moved to the per-world join
 reply). Who a connection *is* is a consumer-minted, opaque **`Net::AccountId`** presented at the
 handshake (the `GameNetInfo::Identity` / `AdmitAccount` hooks) and threaded through seats,

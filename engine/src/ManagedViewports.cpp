@@ -295,15 +295,19 @@ namespace Veng
             ++it;
         }
 
-        // Last, so a viewport a rebind just resolved a seat for is already bound and skipped: give a
-        // seat to any viewport still without one. Running at this top-of-frame point puts it ahead of
-        // the request drain, so a seat resolved here is the one a focus request stamped at simulation
-        // start reconciles against on this very frame rather than a frame later.
+        // Last, so a viewport a rebind just resolved a seat for is already bound and skipped.
+        // Running at this top-of-frame point puts it ahead of the request drain, so a seat resolved
+        // here is the one a focus request stamped at simulation start reconciles against on this
+        // very frame rather than a frame later.
+        SeatUnboundViewports(runner);
+    }
+
+    void ManagedViewportSet::SeatUnboundViewports(WorldRunner& runner)
+    {
         ResolveUnboundSeats(runner);
 
-        // Stamp each completed rebind's seat only now: a rebind that resolved none leaves its
-        // viewport for the pass above, which may seat it on this very frame, and what a consumer
-        // wants is the seat the frame ends with.
+        // A rebind that resolved no seat leaves its viewport for the pass above, which may seat it
+        // now, and what a consumer wants is the seat the viewport holds.
         for (PresentedViewport& presented : m_PresentedEvents)
         {
             presented.Seat = GetViewportViewer(presented.Index);

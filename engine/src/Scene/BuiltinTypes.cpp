@@ -179,6 +179,7 @@ namespace Veng
         // The account a seat entity belongs to, stamped server-side at seat spawn. Not replicated —
         // the id stays server-local. Net::AccountId registers transitively through its field.
         registry.Register<SeatAccount>();
+        registry.Register<SeatPresented>();
 
         // The prefab a spawned root came from, stamped by Prefab::SpawnInto, and the opt-in mark
         // that turns it into an engine-driven prefab association on a hosted world. Both carry no

@@ -58,6 +58,25 @@ namespace Veng
             return payload.size() == 1 && payload[0] == ClientReadyMessageId;
         }
 
+        // The client→server per-world presentation message: whether a viewport on the client now
+        // presents the joined world. Rides the same envelope as ClientReady, and is sent on each
+        // change, after that join's ClientReady.
+        constexpr u8 ClientPresentingMessageId = 33;
+
+        vector<u8> EncodeClientPresenting(const bool presenting)
+        {
+            return vector<u8>{ClientPresentingMessageId, static_cast<u8>(presenting ? 1 : 0)};
+        }
+
+        optional<bool> DecodeClientPresenting(std::span<const u8> payload)
+        {
+            if (payload.size() != 2 || payload[0] != ClientPresentingMessageId || payload[1] > 1)
+            {
+                return std::nullopt;
+            }
+            return payload[1] == 1;
+        }
+
         // Sends a reliable control or game frame, logging a refusal (a frame past the reliable
         // bound) with what it was and where it was going rather than dropping it unseen.
         VoidResult SendReliable(Net::Connection& connection, std::span<const u8> frame,
@@ -116,6 +135,8 @@ namespace Veng
             Net::WorldKey Key;
             Entity Seat = Entity::Null;
             bool Ready = false;
+            // Whether the client's own viewport presents this world, as it last reported.
+            bool Presenting = false;
             // How this join entered the account's session record, so its leave (a standing removal)
             // and the disconnect pose capture (the gameplay join's seat) resolve without a re-lookup.
             Net::SessionDurability Durability = Net::SessionDurability::None;
@@ -1159,12 +1180,36 @@ namespace Veng
                     }
                     continue;
                 }
-                // World-tagged data on the reliable channel: only the per-world ClientReady. Gate on
-                // the granted set — a tag the connection was never granted is dropped, not routed.
-                if (State::JoinState* join = s.JoinStateOf(id, env->Join);
-                    join != nullptr && IsClientReady(env->Payload))
+                // World-tagged data on the reliable channel: the per-world ClientReady and the
+                // presentation report. Gate on the granted set — a tag the connection was never
+                // granted is dropped, not routed.
+                State::JoinState* const join = s.JoinStateOf(id, env->Join);
+                if (join == nullptr)
+                {
+                    continue;
+                }
+                if (IsClientReady(env->Payload))
                 {
                     join->Ready = true;
+                }
+                else if (const optional<bool> presenting = DecodeClientPresenting(env->Payload);
+                         presenting.has_value())
+                {
+                    join->Presenting = *presenting;
+                    if (State::HostedWorld* const world = s.TryWorldOf(join->World);
+                        world != nullptr && world->World != nullptr &&
+                        world->World->IsAlive(join->Seat))
+                    {
+                        Scene& scene = *world->World;
+                        if (*presenting && !scene.Has<SeatPresented>(join->Seat))
+                        {
+                            scene.Add<SeatPresented>(join->Seat);
+                        }
+                        else if (!*presenting && scene.Has<SeatPresented>(join->Seat))
+                        {
+                            (void)scene.Remove<SeatPresented>(join->Seat);
+                        }
+                    }
                 }
             }
         }
@@ -1304,6 +1349,12 @@ namespace Veng
     {
         const State::JoinState* state = m_State->JoinStateOf(id, join);
         return state != nullptr && state->Ready;
+    }
+
+    bool ServerHost::IsPresenting(const Net::ConnectionId id, const Net::JoinId join) const
+    {
+        const State::JoinState* state = m_State->JoinStateOf(id, join);
+        return state != nullptr && state->Presenting;
     }
 
     void ServerHost::DirectTravel(const Net::ConnectionId connection, const Net::JoinId leave,
@@ -1907,6 +1958,19 @@ namespace Veng
     void ClientHost::Leave(const Net::JoinId join)
     {
         m_State->LeaveJoin(join);
+    }
+
+    bool ClientHost::ReportPresenting(const Net::JoinId join, const bool presenting)
+    {
+        const State& s = *m_State;
+        if (!s.Joins.contains(join) || s.Client->State() != Net::ClientState::Connected)
+        {
+            return false;
+        }
+        return SendReliable(s.Client->Server(),
+                            Net::EncodeWorldEnvelope(join, EncodeClientPresenting(presenting)),
+                            "client presenting", Net::ServerConnectionId)
+            .has_value();
     }
 
     void ClientHost::RegisterChannel(const Net::ChannelId channel,

@@ -71,8 +71,8 @@ request carries the protocol version, so it must stay readable by a peer of any 
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**10**,
-the version that gave an input packet with no records its meaning — see "Input replication") + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**11**,
+the version that added the per-world presentation report — see "Hosts & Application wiring") + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -682,6 +682,20 @@ hook resolves the scene it is handed to the world holding it (`WorldRunner::Repl
 `FindWorld`): a replayed step runs under that world's id and role, at that world's own clock rate,
 whichever joined world it reconciles; a scene the runner does not hold is a fatal assert. Both hosts are usable standalone; **`Application` mounts them** as the
 plug-and-play path.
+
+**The server learns when a client shows a world.** A client loads, streams and simulates a
+joined world before any viewport presents it — the present-on-ready wait runs on a live, populated
+world — so `ClientReady` means *loaded*, not *shown*. A second per-world message on the same
+envelope says the rest: `ClientHost::ReportPresenting(join, presenting)` sends whether a viewport
+now presents the join, and `Application` reports every change for each joined world it drives,
+judged by the same presenting viewport the context factory and the input stamp use
+(`FindScenePresenter`). The host records it on the join (`ServerHost::IsPresenting(conn, join)`)
+and keeps the join's seat marked with the builtin **`SeatPresented`** while it holds — server-local,
+fieldless and never replicated, like `SeatAccount`. A consumer that must not place a player in a
+world the player cannot see yet — a pawn that would fly, collide or be seen by others during the
+client's wait — waits for the mark; one that pawns a seat at once keeps doing so. Adding the message
+bumped `Net::ProtocolVersion` to 11, so an older client, which never reports, is refused at connect
+rather than admitted and never shown in a world.
 
 **Adopt-in-place, leave, and the swap.** `ClientHost::JoinInto(key, scene)` is the **adopt** join:
 the reply loads no level — the borrowed `scene` is the client's already-standing reconstruction, and

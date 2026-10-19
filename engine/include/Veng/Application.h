@@ -1608,7 +1608,10 @@ namespace Veng
         /// re-run. @p reused distinguishes the two: false for a world this travel opened (its
         /// OnWorldLoaded fired this travel too), true for a reused live world (it did not). Fires only
         /// for a local presenting travel; a data-world or non-presenting resolve does not present and
-        /// so does not arrive. Default is a no-op.
+        /// so does not arrive. It runs at the top of the frame the world is first presented on, before
+        /// any world ticks, and a seat the hook stands is adopted by the arrived viewport on that same
+        /// frame — so a game may keep its local player out of a world until the world is shown, and
+        /// still present it seated. Default is a no-op.
         /// @param world    The destination world's handle.
         /// @param scene    The destination world's Scene, live and started.
         /// @param payload  The travel's opaque arrival payload; may be empty.

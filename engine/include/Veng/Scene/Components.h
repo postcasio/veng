@@ -928,6 +928,17 @@ namespace Veng
         Net::AccountId Account;
     };
 
+    /// @brief Marks a remote seat whose client is presenting the seat's world.
+    ///
+    /// Server-local bookkeeping, like SeatAccount: the host adds it when the seat's client reports a
+    /// viewport now shows the world (ClientHost::ReportPresenting) and removes it when the client
+    /// reports it no longer does. A joining client loads and streams a world before it shows it, so
+    /// game code that must not place a player in a world the player cannot yet see — a pawn that
+    /// would fly or be seen by others meanwhile — waits for it. Never replicated, never authored.
+    struct SeatPresented
+    {
+    };
+
     /// @brief The prefab an entity was spawned from, stamped on each spawned root by Prefab::SpawnInto.
     ///
     /// Spawn provenance: it ties a live entity back to the recipe that produced it, which nothing
@@ -2411,6 +2422,9 @@ VE_TYPE(::Veng::LocalControl, 0x7B0B171ABA0821EDULL);
 VE_REFLECT(::Veng::SeatAccount, 0xF3DBE3736F6A92EDULL)
 VE_FIELD(Account, .DisplayName = "Account", .ReadOnly = true)
 VE_REFLECT_END();
+
+// Registered without a reflected field: server-local presentation state, never serialized or sent.
+VE_TYPE(::Veng::SeatPresented, 0x8A22B7F43E5EE2B3ULL);
 
 VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
 VE_FIELD(Target, .DisplayName = "Target")
