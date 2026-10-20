@@ -30,17 +30,21 @@ namespace Veng::Renderer
         // The auto-exposure metering compute shader (HDR → log-luminance histogram).
         constexpr AssetId AutoExposureCompId{0x9BF9CB926D0595B1ULL};
 
-        // The auto-exposure metering push block, matching auto_exposure.comp PushConstants: the
-        // dynamic-resolution sub-rect mapping, the valid extent, the log-luminance histogram
-        // bounds, and the base element of the ring region this frame accumulates into.
+        // The auto-exposure metering push block, matching auto_exposure.comp PushConstants field for
+        // field (every two-component member on an 8-byte boundary, as the shader lays it out): the
+        // dynamic-resolution sub-rect mapping, the valid extent, the g-buffer's own sub-rect mapping,
+        // the log-luminance histogram bounds, the base element of the ring region this frame
+        // accumulates into, and whether a g-buffer is bound.
         struct AutoExposurePush
         {
             vec2 SourceScaleUV;
             vec2 SourceMaxUV;
             uvec2 ValidExtent;
+            vec2 OrmScaleUV;
             f32 MinLogLum;
             f32 MaxLogLum;
             u32 HistogramBase;
+            u32 ReadsFlags;
         };
 
         // The metering knobs a view carries, in the form the histogram arithmetic takes them.
@@ -83,13 +87,15 @@ namespace Veng::Renderer
     }
 
     Unique<AutoExposureMeter> AutoExposureMeter::Create(Context& context, AssetManager& assets,
-                                                        const Ref<ImageView>& hdrView)
+                                                        const Ref<ImageView>& hdrView,
+                                                        const Ref<ImageView>& ormView)
     {
-        return Unique<AutoExposureMeter>(new AutoExposureMeter(context, assets, hdrView));
+        return Unique<AutoExposureMeter>(new AutoExposureMeter(context, assets, hdrView, ormView));
     }
 
     AutoExposureMeter::AutoExposureMeter(Context& context, AssetManager& assets,
-                                         const Ref<ImageView>& hdrView)
+                                         const Ref<ImageView>& hdrView,
+                                         const Ref<ImageView>& ormView)
         : m_Context(context)
     {
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
@@ -141,6 +147,10 @@ namespace Veng::Renderer
                                     .Type = DescriptorType::StorageBuffer,
                                     .Count = 1,
                                     .Stages = ShaderStage::Compute},
+                                   {.Binding = 3,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
                                },
                        });
         m_Layout = PipelineLayout::Create(
@@ -158,12 +168,12 @@ namespace Veng::Renderer
                                            .Module = meterCs.value().Get()->Module},
                        });
 
-        RebindHdr(hdrView);
+        Rebind(hdrView, ormView);
     }
 
     AutoExposureMeter::~AutoExposureMeter() = default;
 
-    void AutoExposureMeter::RebindHdr(const Ref<ImageView>& hdrView)
+    void AutoExposureMeter::Rebind(const Ref<ImageView>& hdrView, const Ref<ImageView>& ormView)
     {
         // The HDR target is recreated on every Resize, but the live set may still be referenced
         // by an in-flight frame's command buffer, and its bindings are not update-after-bind —
@@ -178,6 +188,9 @@ namespace Veng::Renderer
         m_Set->Write(0, hdrView);
         m_Set->Write(1, m_Sampler);
         m_Set->Write(2, m_Buffer);
+        // With no g-buffer the binding still needs an image, and the pass is told not to read it.
+        m_ReadsFlags = ormView != nullptr;
+        m_Set->Write(3, m_ReadsFlags ? ormView : hdrView);
     }
 
     f32 AutoExposureMeter::ResolveExposure(const SceneView& view, const bool active)
@@ -230,7 +243,8 @@ namespace Veng::Renderer
     }
 
     void AutoExposureMeter::Declare(RenderGraph& graph, const ResourceId hdrId,
-                                    const ResourceId histogramId, const uvec2 allocExtent)
+                                    const ResourceId ormId, const ResourceId histogramId,
+                                    const uvec2 allocExtent, const uvec2 ormAllocExtent)
     {
         // One thread per lit-HDR texel scatters into a log-luminance histogram. The
         // StorageBufferWrite on the histogram import schedules the pass (it has no image output)
@@ -238,13 +252,19 @@ namespace Veng::Renderer
         // re-zeroes the histogram a frame later.
         RenderGraph::PassBuilder builder = graph.AddComputePass("Auto Exposure Metering");
         builder.Sample(hdrId);
+        const bool readsFlags = m_ReadsFlags && ormId.IsValid();
+        if (readsFlags)
+        {
+            builder.Sample(ormId);
+        }
         builder.StorageBufferWrite(histogramId);
 
         const Ref<ComputePipeline> pipeline = m_Pipeline;
         const Ref<DescriptorSet> set = m_Set;
         const u32 stride = m_Stride;
         builder.Execute(
-            [this, pipeline, set, allocExtent, stride](PassContext& inner)
+            [this, pipeline, set, allocExtent, ormAllocExtent, readsFlags,
+             stride](PassContext& inner)
             {
                 const auto* view = static_cast<const SceneView*>(inner.UserData());
                 VE_ASSERT(view != nullptr, "Auto exposure pass: null SceneView");
@@ -252,6 +272,8 @@ namespace Veng::Renderer
                 // meter reads the post-resolve scene color, so its region is the post-resolve
                 // extent — the sub-rect only where the scene color itself is still the sub-rect.
                 const MipSubRect r = ComputeMipSubRect(view->PostResolveExtent, allocExtent, 0);
+                // The g-buffer is the rendered sub-rect of its own allocation.
+                const MipSubRect g = ComputeMipSubRect(view->RenderExtent, ormAllocExtent, 0);
                 const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
                 CommandBuffer& cmd = inner.Cmd();
                 cmd.BindPipeline(pipeline);
@@ -264,9 +286,11 @@ namespace Veng::Renderer
                     .SourceScaleUV = r.ScaleUV,
                     .SourceMaxUV = r.MaxUV,
                     .ValidExtent = r.ValidExtent,
+                    .OrmScaleUV = g.ScaleUV,
                     .MinLogLum = AutoExposureMinLog(MeterParams(*view)),
                     .MaxLogLum = AutoExposureMaxLog(MeterParams(*view)),
                     .HistogramBase = frameIndex * (stride / static_cast<u32>(sizeof(u32))),
+                    .ReadsFlags = readsFlags ? 1U : 0U,
                 });
                 cmd.Dispatch((r.ValidExtent.x + 15) / 16, (r.ValidExtent.y + 15) / 16, 1);
             });

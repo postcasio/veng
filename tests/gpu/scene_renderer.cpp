@@ -3355,10 +3355,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 
     // The flag set: the same geometry, the same light, the same shadow atlas — the lookup
-    // declined. The values are surface_flags.slang's levels (code / 3): bit 0 alone, bit 1 alone,
+    // declined. The values are surface_flags.slang's levels (code / 7): bit 0 alone, bit 1 alone,
     // and both.
-    constexpr f32 NoShadowReception = 1.0f / 3.0f;
-    constexpr f32 NoEnvironmentLighting = 2.0f / 3.0f;
+    constexpr f32 NoShadowReception = 1.0f / 7.0f;
+    constexpr f32 NoEnvironmentLighting = 2.0f / 7.0f;
     mat.SetParam("SurfaceFlags", NoShadowReception);
     const f32 declinedLuma =
         Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
@@ -3387,6 +3387,100 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // shadow flag still reads with the environment flag beside it.
     CHECK(environmentOnlyLuma == doctest::Approx(shadowedLuma).epsilon(0.02));
     CHECK(bothLuma == doctest::Approx(declinedLuma).epsilon(0.02));
+
+    std::filesystem::remove(outArchive);
+}
+
+// A surface flagged SurfaceFlagExcludedFromMetering is not read by the auto-exposure meter. A
+// glowing cube and a lit one share the view, under the highlight cap: unflagged, the glow is the
+// frame's highlight and holds the exposure down, so the lit cube renders dim; flagged, the meter
+// reads only the lit cube and exposes for it. The glowing cube is still drawn, and brighter.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a surface excluded from metering does not set the exposure")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_excluded_from_metering.vengpack");
+    const AssetResult<AssetHandle<MaterialInstance>> lit =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(lit.has_value());
+    const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(AssetId{0x232BULL});
+    REQUIRE(parent.has_value());
+    const AssetHandle<MaterialInstance> glow = assets.BuildSync<MaterialInstance>(
+        MaterialInstanceInfo{.Name = "Glowing", .Context = &Context, .Parent = *parent});
+    glow.Get()->SetParam("EmissiveFactor", vec4(200.0f, 200.0f, 200.0f, 0.0f));
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const auto AddCube = [&](const vec3 at, const AssetHandle<MaterialInstance>& material)
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Position = at;
+        scene->Add<MeshRenderer>(entity).Mesh =
+            assets.Adopt(Mesh::BuildSync(Context, Primitives::Cube(1.0f, material), "Cube"));
+    };
+    AddCube(vec3(-0.65f, 0.0f, 0.0f), glow);
+    AddCube(vec3(0.65f, 0.0f, 0.0f), *lit);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{.Direction = vec3(0.0f, 0.0f, -1.0f),
+                                           .Color = vec3(1.0f),
+                                           .Intensity = DirectionalLux(1.0f)};
+
+    constexpr uvec2 extent{128, 128};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.6f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .AO = false,
+                     .AutoExposure = true},
+    });
+
+    // Converges the eye adaptation (the meter is read frames-in-flight late), then reads the
+    // centre of each cube's face.
+    const auto Converge = [&](const f32 flags) -> std::pair<f32, f32>
+    {
+        glow.Get()->SetParam("SurfaceFlags", flags);
+        for (u32 frame = 0; frame < 24; ++frame)
+        {
+            CommandBuffer& cmd = Context.BeginFrame();
+            renderer->Execute(cmd, Renderer::SceneView{
+                                       .World = *scene,
+                                       .Camera = camera,
+                                       .Delta = 1.0f,
+                                       .AutoExposureMaxLuminance = 1000.0f,
+                                       .AutoExposureSpeed = 4.0f,
+                                       .AutoExposureHighlightPercentile = 0.9f,
+                                       .AutoExposureHighlightLuminance = 1.0f,
+                                   });
+            Context.EndFrame();
+            Context.WaitIdle();
+        }
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        const auto Luma = [&](const u32 x)
+        {
+            const vec3 c = DecodeTexel(pixels, extent.x, x, extent.y / 2);
+            return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+        };
+        return {Luma(extent.x / 2 - 22), Luma(extent.x / 2 + 22)};
+    };
+
+    constexpr f32 ExcludedFromMetering = 4.0f / 7.0f;
+    const auto [glowMetered, litBesideGlow] = Converge(0.0f);
+    const auto [glowExcluded, litAlone] = Converge(ExcludedFromMetering);
+
+    // Metered, the glow sets the exposure and the lit cube sits far below it.
+    CHECK(litBesideGlow < 0.5f * glowMetered);
+    // Excluded, the meter exposes for the lit cube: it is brought up well clear of where it sat,
+    // and the glow, no longer holding the exposure, is drawn brighter still.
+    CHECK(litAlone > 2.0f * litBesideGlow);
+    CHECK(glowExcluded > glowMetered);
 
     std::filesystem::remove(outArchive);
 }

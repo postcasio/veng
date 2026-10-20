@@ -4,15 +4,15 @@
 // deferred_lighting.frag.slang each declare the set-0 bindless arrays, so one including the other
 // is a redeclaration.
 //
-// Encoding. The channel is the alpha of an RGBA8Unorm target and holds a two-bit code spread over
-// four evenly spaced levels, code / 3: 0, 1/3, 2/3, 1. Each level is a whole UNORM8 step (0, 85,
-// 170, 255), so a written value round-trips exactly, and a decode rounds to the nearest level, so
-// it holds against any error short of a sixth of the range. Each flag's value is its bit's level,
-// so flags combine by addition: write SurfaceFlagNoShadowReception + SurfaceFlagNoEnvironmentLighting
-// for both, or SurfaceFlagsNone (0) for neither.
+// Encoding. The channel is the alpha of an RGBA8Unorm target and holds a three-bit code spread over
+// eight evenly spaced levels, code / 7. UNORM8 stores each within half a step of its level, and a
+// decode rounds to the nearest level, so it holds against any error short of a fourteenth of the
+// range. Each flag's value is its bit's level, so flags combine by addition: write
+// SurfaceFlagNoShadowReception + SurfaceFlagNoEnvironmentLighting for both, or SurfaceFlagsNone (0)
+// for none.
 //
 // A reader takes the flags with a point load (LoadSurfaceFlags), never through a filtering sampler:
-// no scalar encoding of two independent flags survives a blend — halfway between "neither" and
+// no scalar encoding of independent flags survives a blend — halfway between "neither" and
 // "both" is a level one of the other codes owns — so a tap straddling two surfaces would report a
 // flag set neither carries.
 
@@ -31,7 +31,7 @@ static const float SurfaceFlagsNone = 0.0;
 // proxy" is a property of how a surface shades: the same material is right for every mesh drawn
 // through it, while a caster is a property of a draw. The fragment is still lit — the flag
 // removes shadow-map occlusion and nothing else.
-static const float SurfaceFlagNoShadowReception = 1.0 / 3.0;
+static const float SurfaceFlagNoShadowReception = 1.0 / 7.0;
 
 // Written into ORM.a by a material that is not lit by the view's sky: the image-based (split-sum
 // IBL) and SH skylight ambient arms are replaced, for this surface alone, by the flat ambient floor
@@ -39,12 +39,21 @@ static const float SurfaceFlagNoShadowReception = 1.0 / 3.0;
 // interior lit by its own fill, a body far from the probe the environment was captured at, an
 // object the sky would tint wrongly — keeps a dim, uniform ambient instead, so in shadow it reads
 // dim rather than black. Direct lights and their shadows are untouched.
-static const float SurfaceFlagNoEnvironmentLighting = 2.0 / 3.0;
+static const float SurfaceFlagNoEnvironmentLighting = 2.0 / 7.0;
 
-// The two-bit code a flags value holds: bit 0 declines shadow maps, bit 1 environment lighting.
+// Written into ORM.a by a material whose emission is a source of light — a lamp, a light panel, a
+// lit sign — that the auto-exposure meter does not read. The meter then exposes for the light such a
+// surface casts on what is round it rather than for the surface itself, which may blow out, as a
+// lamp does to a camera exposed for its room. Without it a few bright fixtures in view hold the
+// exposure down (the highlight cap, or simply their weight in the average) and the room they light
+// renders dark. The surface's own shading is untouched.
+static const float SurfaceFlagExcludedFromMetering = 4.0 / 7.0;
+
+// The three-bit code a flags value holds: bit 0 declines shadow maps, bit 1 environment lighting,
+// bit 2 the exposure meter.
 uint SurfaceFlagsCode(float ormAlpha)
 {
-    return uint(round(saturate(ormAlpha) * 3.0));
+    return uint(round(saturate(ormAlpha) * 7.0));
 }
 
 // True when a flags value carries SurfaceFlagNoShadowReception.
@@ -57,6 +66,12 @@ bool GBufferDeclinesShadowMaps(float ormAlpha)
 bool GBufferDeclinesEnvironmentLighting(float ormAlpha)
 {
     return (SurfaceFlagsCode(ormAlpha) & 2u) != 0u;
+}
+
+// True when a flags value carries SurfaceFlagExcludedFromMetering.
+bool GBufferExcludedFromMetering(float ormAlpha)
+{
+    return (SurfaceFlagsCode(ormAlpha) & 4u) != 0u;
 }
 
 // The flags value of the ORM texel under a UV, read by a point load of the texel the UV falls in,

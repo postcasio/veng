@@ -36,10 +36,13 @@ namespace Veng::Renderer
         /// @brief Creates the metering pipeline, ring, sampler, and set (bound to @p hdrView).
         /// @param context The render context the resources are created on.
         /// @param assets  Asset manager used to load the metering compute shader.
-        /// @param hdrView The HDR target the metering pass reads; rebindable via RebindHdr.
+        /// @param hdrView The HDR target the metering pass reads; rebindable via Rebind.
+        /// @param ormView The g-buffer ORM target whose surface flags exclude texels from the
+        ///                meter, or null where there is no g-buffer; rebindable via Rebind.
         /// @return A new AutoExposureMeter.
         static Unique<AutoExposureMeter> Create(Context& context, AssetManager& assets,
-                                                const Ref<ImageView>& hdrView);
+                                                const Ref<ImageView>& hdrView,
+                                                const Ref<ImageView>& ormView);
 
         /// @brief Destroys the owned resources through the deferred-destruction retire path.
         ~AutoExposureMeter();
@@ -47,13 +50,14 @@ namespace Veng::Renderer
         AutoExposureMeter(const AutoExposureMeter&) = delete;
         AutoExposureMeter& operator=(const AutoExposureMeter&) = delete;
 
-        /// @brief Rebuilds the metering set against a recreated HDR target.
+        /// @brief Rebuilds the metering set against a recreated HDR target or g-buffer.
         ///
         /// Allocates a fresh set rather than rewriting the old one, which an in-flight frame's
         /// command buffer may still reference (the bindings are not update-after-bind); the
         /// replaced set retires through the deferred-destruction path.
         /// @param hdrView The live HDR target to bind as the metering source.
-        void RebindHdr(const Ref<ImageView>& hdrView);
+        /// @param ormView The live g-buffer ORM target the surface flags are read from, or null.
+        void Rebind(const Ref<ImageView>& hdrView, const Ref<ImageView>& ormView);
 
         /// @brief Snaps the next adaptation to the metered value rather than easing toward it.
         ///
@@ -82,16 +86,20 @@ namespace Veng::Renderer
         /// @brief Declares the metering compute pass into the graph ahead of tonemap.
         ///
         /// One thread per lit-HDR texel scatters into this frame's log-luminance histogram ring
-        /// region (a StorageBufferWrite, so the pass is scheduled and ordered after the HDR write).
-        /// @param graph       The renderer's internal graph being rebuilt.
-        /// @param hdrId       The HDR target import the pass samples.
-        /// @param histogramId The histogram buffer import the pass scatters into.
-        /// @param allocExtent The allocation extent, for the dynamic-resolution sub-rect mapping.
-        void Declare(RenderGraph& graph, ResourceId hdrId, ResourceId histogramId,
-                     uvec2 allocExtent);
+        /// region (a StorageBufferWrite, so the pass is scheduled and ordered after the HDR write),
+        /// skipping a texel whose surface carries SurfaceFlagExcludedFromMetering.
+        /// @param graph          The renderer's internal graph being rebuilt.
+        /// @param hdrId          The HDR target import the pass samples.
+        /// @param ormId          The g-buffer ORM import the flags are read from; invalid for none.
+        /// @param histogramId    The histogram buffer import the pass scatters into.
+        /// @param allocExtent    The HDR allocation extent, for its dynamic-resolution sub-rect.
+        /// @param ormAllocExtent The g-buffer's allocation extent, for its rendered sub-rect.
+        void Declare(RenderGraph& graph, ResourceId hdrId, ResourceId ormId, ResourceId histogramId,
+                     uvec2 allocExtent, uvec2 ormAllocExtent);
 
     private:
-        AutoExposureMeter(Context& context, AssetManager& assets, const Ref<ImageView>& hdrView);
+        AutoExposureMeter(Context& context, AssetManager& assets, const Ref<ImageView>& hdrView,
+                          const Ref<ImageView>& ormView);
 
         Context& m_Context;
 
@@ -119,5 +127,7 @@ namespace Veng::Renderer
         f32 m_ResolvedExposure = 1.0f;
         /// @brief Whether the next adaptation snaps to the metered value rather than easing.
         bool m_Reset = true;
+        /// @brief Whether a g-buffer is bound for the surface flags.
+        bool m_ReadsFlags = false;
     };
 }

@@ -382,7 +382,8 @@ namespace Veng::Renderer
             RecreateExtentSubsystems();
             // The metering set binds the scene colour the tail reads, so the meter is created after
             // the promotion's own target exists.
-            m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, PostSceneView());
+            m_AutoExposure =
+                AutoExposureMeter::Create(m_Context, m_Assets, PostSceneView(), m_OrmView);
         }
         Rebuild();
     }
@@ -1691,8 +1692,10 @@ namespace Veng::Renderer
                     // Meter the scene color the tonemap consumes, ahead of the pre-bloom overlays
                     // composited into it in place below: an interface is not scene light, and
                     // metering it would let a bright panel set the exposure of the world behind it.
-                    m_AutoExposure->RebindHdr(ppEffectFinalView);
-                    m_AutoExposure->Declare(graph, ppEffectFinalId, m_AutoExposureId, m_Extent);
+                    m_AutoExposure->Rebind(ppEffectFinalView, m_OrmView);
+                    m_AutoExposure->Declare(graph, ppEffectFinalId,
+                                            m_OrmView != nullptr ? m_OrmId : ResourceId{},
+                                            m_AutoExposureId, m_Extent, m_RenderAllocExtent);
                 }
                 // The GUI-overlay slot: after the post-process effects, before bloom. It loads and
                 // stores the effect chain's output (ppEffectFinalId) in place, blending the overlays
@@ -2475,7 +2478,7 @@ namespace Veng::Renderer
         RecreateExtentSubsystems();
         // The scene colour the tail reads moved; rebind the metering source and re-snap the
         // adaptation so the resized frame is not mis-exposed off a stale ring value.
-        m_AutoExposure->RebindHdr(PostSceneView());
+        m_AutoExposure->Rebind(PostSceneView(), m_OrmView);
         m_AutoExposure->RequestReset();
         m_Shadows->Reconfigure(m_Settings);
         Rebuild();
@@ -2648,7 +2651,7 @@ namespace Veng::Renderer
         // which RecreateExtentSubsystems applies.
         m_Bloom->Reconfigure(m_Settings.Kernel);
         RecreateExtentSubsystems();
-        m_AutoExposure->RebindHdr(PostSceneView());
+        m_AutoExposure->Rebind(PostSceneView(), m_OrmView);
         m_Shadows->Reconfigure(m_Settings);
         Rebuild();
     }

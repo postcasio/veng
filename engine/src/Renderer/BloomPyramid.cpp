@@ -368,7 +368,7 @@ namespace Veng::Renderer
         // The bright pass samples the source at level 0, so it must track Declare's hdrId. A Rebuild
         // can re-point the source while a prior frame's command buffer still references the set,
         // which is not update-after-bind, so recreate it fresh rather than writing in place — the
-        // old set retires through the per-frame path. The AutoExposureMeter::RebindHdr /
+        // old set retires through the per-frame path. The AutoExposureMeter::Rebind /
         // ShadowSystem::RebuildSets precedent.
         if (!m_DownSets.empty())
         {

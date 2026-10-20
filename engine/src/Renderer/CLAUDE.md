@@ -2019,6 +2019,15 @@ is the device-free `MeterAutoExposureHistogram` (`AutoExposureMetering.h`, pinne
   average and `Highlight · Key / HighlightLuminance`. So a small bright subject in a large dim field
   — a lit planet against a sky — sets the exposure rather than being blown out by the field's average,
   while a frame of only the field meters its average.
+- **A surface flagged `SurfaceFlagExcludedFromMetering` is not metered at all** (the g-buffer's
+  surface-flags channel, `Veng/surface_flags.slang`): the meter point-loads the flag at each texel's
+  place in the frame, mapped into the g-buffer's rendered sub-rect since the scene colour it reads may
+  be at the resolved resolution, and skips the texel before it is binned. It is for a light source
+  drawn as a surface. A lamp's emission is far brighter than what it lights, so without the flag a
+  few fixtures in view are the frame's highlight and its weight in the average, and the room they
+  light exposes dark; with it the meter exposes for the room and the fixtures blow out, as a camera
+  shows them. A forward-shaded surface writes no g-buffer, so only an opaque one can be excluded, and
+  a renderer with no g-buffer meters everything.
 
 ### Depth of field and the physical camera
 
@@ -2754,7 +2763,7 @@ float2 Velocity : SV_Target3; float3 Emissive : SV_Target4;`). Albedo (G0) is sR
 (sampled back as linear); the normal (G1) is the tangent-space-perturbed world normal in a signed
 float format; ORM (G2) packs occlusion (R), roughness (G), and metallic (B) — the
 metallic-roughness PBR channel set — with **the alpha the surface-flags channel**, whose values and
-predicates live in the core shader header `Veng/surface_flags.slang`. Two independent flags are
+predicates live in the core shader header `Veng/surface_flags.slang`. Three independent flags are
 defined. `SurfaceFlagNoShadowReception` is written by a material whose drawn geometry does not stand
 where its shading says it does (an impostor, a sky proxy, a matte-painting shell, a proxy drawn at a
 compressed distance), so the lighting pass takes full visibility in place of every shadow atlas
@@ -2762,14 +2771,16 @@ lookup — the receiving counterpart of `MeshRenderer::CastsShadows = false`.
 `SurfaceFlagNoEnvironmentLighting` is written by a material the view's sky should not light: the
 split-sum IBL and SH skylight arms are replaced, for that surface alone, by the view's flat ambient
 floor (`SceneView::AmbientFloor`, carried in the view block under every arm), so a flagged surface in
-shadow reads dim rather than black; its direct lights and shadows are untouched. Both are material
-properties rather than per-instance ones because they describe how the surface shades. The channel
-holds a two-bit code over four evenly spaced levels (`code / 3`, each an exact UNORM8 step), each
-flag's value being its bit's level, so a material writes either flag, both
-(`SurfaceFlagNoShadowReception + SurfaceFlagNoEnvironmentLighting`), or `SurfaceFlagsNone`; a
-material writing 0 is unaffected. The lighting pass reads the channel with a **point load**
-(`LoadSurfaceFlags`), not through the g-buffer's linear sampler: no scalar encoding of two
-independent flags survives a filtered blend between surfaces. The forward path carries the same two
+shadow reads dim rather than black; its direct lights and shadows are untouched.
+`SurfaceFlagExcludedFromMetering` is written by a material whose emission is a source of light — a
+lamp, a light panel — that the auto-exposure meter should not read (see "Auto-exposure"); its own
+shading is untouched. All three are material properties rather than per-instance ones because they
+describe how the surface shades. The channel holds a three-bit code over eight evenly spaced levels
+(`code / 7`; UNORM8 holds each within half a step and the decode rounds to the nearest), each flag's
+value being its bit's level, so a material writes any sum of them (`SurfaceFlagNoShadowReception +
+SurfaceFlagNoEnvironmentLighting`), or `SurfaceFlagsNone`; a material writing 0 is unaffected. The
+lighting pass and the meter read the channel with a **point load** (`LoadSurfaceFlags`), not through
+the g-buffer's linear sampler: no scalar encoding of independent flags survives a filtered blend between surfaces. The forward path carries the same two
 flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, which a translucent
 material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears both. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
 vector

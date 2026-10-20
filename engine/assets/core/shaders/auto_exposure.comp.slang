@@ -6,19 +6,26 @@
 // histogram is atomically merged into the frame's global region. The renderer reads the histogram
 // one frame later, averages bins 1..255 (ignoring the black bin) and eases the tonemap exposure
 // toward that value — so a predominantly-black scene with sparse highlights meters on its lit
-// content instead of collapsing to the floor. This pass only measures; it applies nothing.
+// content instead of collapsing to the floor. A texel whose surface carries
+// SurfaceFlagExcludedFromMetering in the g-buffer is not counted at all. This pass only measures;
+// it applies nothing.
+#include "Veng/surface_flags.slang"
+
 [[vk::binding(0, 3)]] Texture2D<float4> g_Hdr;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;
 [[vk::binding(2, 3)]] RWStructuredBuffer<uint> g_Histogram;
+[[vk::binding(3, 3)]] Texture2D<float4> g_Orm;
 
 struct PushConstants
 {
     float2 SourceScaleUV; // HDR validExtent/allocExtent (the dynamic-resolution sub-rect)
     float2 SourceMaxUV;   // (validExtent-0.5)/allocExtent (bilinear-tap clamp)
     uint2  ValidExtent;   // valid region in texels; threads beyond it contribute nothing
+    float2 OrmScaleUV;    // the g-buffer's rendered sub-rect over its own allocation
     float  MinLogLum;     // log2 lower bound; luminance below it falls in the excluded black bin
     float  MaxLogLum;     // log2 upper bound of bin 255
     uint   HistogramBase; // first element of this frame's ring region (bin 0)
+    uint   ReadsFlags;    // 0 when no g-buffer is bound (g_Orm then stands in for nothing)
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -57,10 +64,17 @@ void csMain(uint3 gid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
     {
         // Pixel-center UV over the valid region, mapped into the HDR's valid sub-rect.
         float2 uv = (float2(gid.xy) + 0.5) / float2(g_PC.ValidExtent);
-        float2 src = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
-        float3 hdr = g_Hdr.SampleLevel(g_Sampler, src, 0.0).rgb;
-        float lum = dot(hdr, float3(0.2126, 0.7152, 0.0722));
-        InterlockedAdd(s_Hist[LuminanceBin(lum)], 1u);
+        // The scene colour may be at the resolved resolution and the g-buffer at the rendered one,
+        // so the flag is read at the same place in the frame, mapped into the g-buffer's sub-rect.
+        bool metered = g_PC.ReadsFlags == 0u ||
+                       !GBufferExcludedFromMetering(LoadSurfaceFlags(g_Orm, uv * g_PC.OrmScaleUV));
+        if (metered)
+        {
+            float2 src = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
+            float3 hdr = g_Hdr.SampleLevel(g_Sampler, src, 0.0).rgb;
+            float lum = dot(hdr, float3(0.2126, 0.7152, 0.0722));
+            InterlockedAdd(s_Hist[LuminanceBin(lum)], 1u);
+        }
     }
 
     GroupMemoryBarrierWithGroupSync();
