@@ -73,11 +73,29 @@ float3 LoadAreaVertex(ViewConstants vc, uint index)
     return g_AreaVertices.Load<float4>((vc.LightState.z + index) * AreaVertexStride).xyz;
 }
 
-// A light mask naming every light of a view holding count lights: bit i is the view's i-th light.
-// A view holds at most 16 (the renderer's MaxLights), so one 32-bit word names any subset of them.
-uint AllLightsMask(uint count)
+// The most lights a view holds. Mirrors BindlessRegistry::MaxLights.
+static const uint MaxLights = 128;
+
+// The 32-bit words a LightMask spans, one bit per light a view can hold.
+static const uint LightMaskWords = MaxLights / 32u;
+
+// A subset of a view's lights: bit (i % 32) of word (i / 32) names the view's i-th light.
+struct LightMask
 {
-    return count >= 32u ? 0xFFFFFFFFu : (1u << count) - 1u;
+    uint Words[LightMaskWords];
+};
+
+// A light mask naming every light of a view holding count lights.
+LightMask AllLightsMask(uint count)
+{
+    LightMask mask;
+    for (uint i = 0u; i < LightMaskWords; ++i)
+    {
+        uint first = i * 32u;
+        mask.Words[i] = count >= first + 32u ? 0xFFFFFFFFu
+                                             : (count > first ? (1u << (count - first)) - 1u : 0u);
+    }
+    return mask;
 }
 
 // The attenuation of a point or spot light at worldPos: the inverse-square falloff, its smooth

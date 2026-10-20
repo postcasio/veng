@@ -138,6 +138,11 @@ namespace Veng::Renderer
         {
             builder.Sample(io.PunctualShadowMap);
         }
+        // ...and visits only the lights its tile's forward mask names.
+        if (io.LightTileMasks.IsValid())
+        {
+            builder.StorageBufferRead(io.LightTileMasks);
+        }
         if (m_HalfResolution)
         {
             // The layer is read only by its composite, which skips an idle frame with it, so the

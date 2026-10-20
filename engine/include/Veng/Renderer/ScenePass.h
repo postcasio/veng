@@ -173,6 +173,13 @@ namespace Veng::Renderer
         /// @brief Punctual shadow atlas view for the lighting pass's set 3 binding.
         Ref<ImageView> PunctualShadowView;
 
+        /// @brief The per-tile light masks the light-tile cull writes this frame.
+        ///
+        /// Invalid when the cull is not wired. When valid a pass that reads them through the view
+        /// block — a forward-lit translucent pass — declares a StorageBufferRead on it, so the graph
+        /// orders the cull's write ahead of it.
+        ResourceId LightTileMasks;
+
         /// @brief Imported output id the terminal pass writes.
         ResourceId Output;
     };

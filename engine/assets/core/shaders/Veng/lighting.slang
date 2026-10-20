@@ -451,22 +451,26 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
     direct.Specular += lit.Specular * visibility * light.Response.x;
 }
 
-// The response of the surface to the lights of this view's light region that lightMask names (bit i
-// the region's i-th light), shadowed. The lights are visited in index order, so a mask naming every
-// light sums exactly what the unmasked loop does; a caller that knows a light cannot reach the
-// surface — the deferred pass's per-tile cull — clears its bit and skips it outright.
-LightingResult EvaluateDirectLightingMasked(ViewConstants vc, LightingSurface s, uint lightMask)
+// The response of the surface to the lights of this view's light region that lightMask names,
+// shadowed. The lights are visited in index order, so a mask naming every light sums exactly what
+// the unmasked loop does; a caller that knows a light cannot reach the surface — a per-tile cull —
+// clears its bit and skips it outright.
+LightingResult EvaluateDirectLightingMasked(ViewConstants vc, LightingSurface s, LightMask lightMask)
 {
     LightingResult direct;
     direct.Diffuse = float3(0.0);
     direct.Specular = float3(0.0);
 
-    uint remaining = lightMask & AllLightsMask(vc.LightState.y);
-    while (remaining != 0u)
+    LightMask live = AllLightsMask(vc.LightState.y);
+    for (uint word = 0u; word < LightMaskWords; ++word)
     {
-        uint index = firstbitlow(remaining);
-        remaining &= remaining - 1u;
-        AccumulateLight(vc, s, LoadLight(vc, index), direct);
+        uint remaining = lightMask.Words[word] & live.Words[word];
+        while (remaining != 0u)
+        {
+            uint index = word * 32u + firstbitlow(remaining);
+            remaining &= remaining - 1u;
+            AccumulateLight(vc, s, LoadLight(vc, index), direct);
+        }
     }
     return direct;
 }

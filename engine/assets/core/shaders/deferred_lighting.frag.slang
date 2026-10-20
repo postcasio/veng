@@ -31,7 +31,6 @@
 // every light would give.
 #include "view_constants.slang"
 #include "Veng/surface_flags.slang"
-#include "Veng/light_tiles.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -41,6 +40,7 @@
 // the per-view light state in the view block — the same evaluation a forward-lit translucent
 // fragment runs (Veng/forward_lighting.slang). The shadow system sits at set 3 in this layout.
 #include "Veng/lighting.slang"
+#include "Veng/light_tiles.slang"
 
 struct PushConstants
 {
@@ -59,17 +59,6 @@ struct PushConstants
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
-
-// The lights this pixel's tile can be reached by, or every light when the view has no masks.
-uint TileLightMask(ViewConstants vc, float2 fragCoord)
-{
-    if (!HasLightTiles(vc))
-    {
-        return AllLightsMask(vc.LightState.y);
-    }
-    uint2 tile = uint2(fragCoord) / LightTileSize;
-    return g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load(LightTileWord(vc, tile) * 4u);
-}
 
 // The shading normal's screen-space variance for specular anti-aliasing (MakeLightingSurface), or
 // zero for a pixel whose 2×2 quad holds a background pixel. The cleared g-buffer's zero normal

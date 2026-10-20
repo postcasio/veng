@@ -787,12 +787,13 @@ namespace Veng::Renderer
         /// 255 bytes per material.
         static constexpr u32 MaterialGranuleBytes = 256;
 
-        /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
+        /// @brief The fixed cap on lights one view packs.
         ///
-        /// The light SSBO holds framesInFlight * MaxViewsPerFrame copies of MaxLights
-        /// entries; the pass loops the live count, skipping a light that cannot reach the pixel
-        /// before its shadow lookup and BRDF.
-        static constexpr u32 MaxLights = 16;
+        /// The light SSBO holds framesInFlight * MaxViewsPerFrame copies of MaxLights entries. A
+        /// pass shading a pixel visits only the lights its tile's mask names (the light-tile cull),
+        /// skipping one that cannot reach the pixel before its shadow lookup and BRDF. Mirrors
+        /// MaxLights in Veng/light_buffer.slang; a multiple of 32, one mask bit per light.
+        static constexpr u32 MaxLights = 128;
 
         /// @brief The fixed cap on distinct viewport renders sharing one frame-in-flight.
         ///

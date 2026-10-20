@@ -581,10 +581,13 @@ extern "C"
 /// shifted offsets.
 /// Version 143 grows Interactor by Origin, the point its sweep, cone and ranges are measured from.
 /// A module authors interactors, so a stale one lays the component out short.
+/// Version 144 raises BindlessRegistry::MaxLights from 16 to 128: PackedSceneLights and
+/// LightTileMasks grow, and PassIO grows LightTileMasks. A module packs lights and declares passes,
+/// so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 143u
+#define VENG_MODULE_ABI_VERSION 144u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

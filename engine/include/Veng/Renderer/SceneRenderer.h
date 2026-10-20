@@ -84,15 +84,30 @@ namespace Veng::Renderer
     /// LightTileSize in Veng/light_tiles.slang.
     inline constexpr u32 LightTileSize = 16;
 
+    /// @brief The 32-bit words one light mask spans: a bit per light a view can hold. Mirrors
+    ///        LightMaskWords in Veng/light_buffer.slang.
+    inline constexpr u32 LightMaskWords = BindlessRegistry::MaxLights / 32;
+    static_assert(BindlessRegistry::MaxLights % 32 == 0, "a light mask holds whole words");
+
+    /// @brief The 32-bit words in one tile's record: its opaque mask, then its forward mask. Mirrors
+    ///        LightTileRecordWords in Veng/light_tiles.slang.
+    inline constexpr u32 LightTileRecordWords = 2 * LightMaskWords;
+
+    /// @brief A subset of a view's lights: bit (i % 32) of word (i / 32) names its i-th packed light
+    ///        (PackedSceneLights::Lights order).
+    using LightTileMask = std::array<u32, LightMaskWords>;
+
     /// @brief The per-tile light masks one Execute's light-tile cull wrote.
     struct LightTileMasks
     {
         /// @brief The tile grid covering the frame's rendered extent, in tiles.
         uvec2 Tiles{0};
-        /// @brief One mask per tile, row-major over Tiles. Bit i names the view's i-th packed light
-        ///        (PackedSceneLights::Lights order): set when that light can reach a surface the
-        ///        tile shows.
-        vector<u32> Masks;
+        /// @brief One mask per tile, row-major over Tiles: the lights that can reach an opaque
+        ///        surface the tile shows.
+        vector<LightTileMask> Masks;
+        /// @brief One mask per tile, row-major over Tiles: the lights that can reach anything drawn
+        ///        in the tile's frustum in front of its farthest opaque surface.
+        vector<LightTileMask> ForwardMasks;
     };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.

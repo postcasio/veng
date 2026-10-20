@@ -100,7 +100,8 @@ namespace Veng::Renderer
         // Each frame's set binds its own region alone, so the cull's write is scoped to the words
         // that frame owns rather than the whole ring a frame still in flight is reading; the
         // region stride is therefore a multiple of the storage-buffer offset alignment.
-        const u64 gridBytes = static_cast<u64>(grid.x) * grid.y * sizeof(u32);
+        const u64 gridBytes =
+            static_cast<u64>(grid.x) * grid.y * LightTileRecordWords * sizeof(u32);
         const u64 minAlign =
             GetVkPhysicalDevice(m_Context).getProperties().limits.minStorageBufferOffsetAlignment;
         const u64 alignment = std::max<u64>(minAlign, sizeof(u32));
@@ -181,13 +182,18 @@ namespace Veng::Renderer
             });
     }
 
-    uvec4 LightTileCuller::ViewState(const bool active, const u32 frameSlot) const
+    uvec4 LightTileCuller::ViewState(const bool active, const u32 frameSlot,
+                                     const uvec2 validExtent) const
     {
         if (!active || !IsAllocated())
         {
             return {LightTilesNone, 0u, 0u, 0u};
         }
-        return {m_Handle.Index, m_Grid.x, frameSlot * m_RegionWords, 0u};
+        VE_ASSERT(validExtent.x <= 0xFFFFu && validExtent.y <= 0xFFFFu,
+                  "LightTileCuller::ViewState: extent {}x{} does not pack in half-words",
+                  validExtent.x, validExtent.y);
+        return {m_Handle.Index, m_Grid.x, frameSlot * m_RegionWords,
+                validExtent.x | (validExtent.y << 16u)};
     }
 
     LightTileMasks LightTileCuller::Readback() const
@@ -204,13 +210,23 @@ namespace Veng::Renderer
                   "LightTileCuller::Readback: the mask ring is smaller than its regions");
 
         result.Tiles = m_LastTiles;
-        result.Masks.resize(static_cast<usize>(m_LastTiles.x) * m_LastTiles.y);
+        const usize tileCount = static_cast<usize>(m_LastTiles.x) * m_LastTiles.y;
+        result.Masks.resize(tileCount);
+        result.ForwardMasks.resize(tileCount);
         const usize regionBase = m_LastRegion * regionWords;
         for (u32 y = 0; y < m_LastTiles.y; ++y)
         {
-            const usize source = (regionBase + static_cast<usize>(y) * m_Grid.x) * sizeof(u32);
-            std::memcpy(&result.Masks[static_cast<usize>(y) * m_LastTiles.x], bytes.data() + source,
-                        m_LastTiles.x * sizeof(u32));
+            for (u32 x = 0; x < m_LastTiles.x; ++x)
+            {
+                const usize record =
+                    regionBase + (static_cast<usize>(y) * m_Grid.x + x) * LightTileRecordWords;
+                const usize tile = static_cast<usize>(y) * m_LastTiles.x + x;
+                std::memcpy(result.Masks[tile].data(), bytes.data() + record * sizeof(u32),
+                            sizeof(LightTileMask));
+                std::memcpy(result.ForwardMasks[tile].data(),
+                            bytes.data() + (record + LightMaskWords) * sizeof(u32),
+                            sizeof(LightTileMask));
+            }
         }
         return result;
     }

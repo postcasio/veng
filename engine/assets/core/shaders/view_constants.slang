@@ -102,7 +102,8 @@ struct ViewConstants
     float4 AmbientParams;
     // The view's per-tile light masks (Veng/light_tiles.slang): x the bindless g_Buffers slot of
     // the mask buffer, or LightTilesNone when no cull ran for this view; y the tile grid's row
-    // stride in tiles; z this frame's first mask word in that buffer; w unused.
+    // stride in tiles; z this frame's first mask word in that buffer; w the extent the tiles were
+    // laid over (x in the low half-word, y in the high).
     uint4 LightTiles;
 
     // The temporal-AA projection jitter as an NDC translation: xy this frame's, zw the previous

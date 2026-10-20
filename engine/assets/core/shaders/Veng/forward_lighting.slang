@@ -44,6 +44,7 @@
 // set, where the translucent pass binds it.
 #define VE_SHADOW_SET 5
 #include "Veng/lighting.slang"
+#include "Veng/light_tiles.slang"
 
 // The surface a forward-lit fragment shades, in world space.
 //
@@ -87,7 +88,8 @@ struct ForwardLighting
 };
 
 // Evaluates the scene's lights and ambient for a translucent fragment exactly as the deferred pass
-// would for an opaque surface with the same parameters: every live light in this view (shadowed),
+// would for an opaque surface with the same parameters: every live light in this view that its
+// tile's forward mask names (shadowed),
 // plus the view's ambient arm scaled by s.Occlusion. Returns exposure-scaled linear HDR radiance,
 // each component guarded; a caller that amplifies or sums them re-applies GuardLightingOutput to
 // what it writes.
@@ -103,7 +105,10 @@ ForwardLighting EvaluateForwardLighting(ForwardSurface s)
                                                   s.DeclinesEnvironmentLighting,
                                                   NormalScreenVariance(s.Normal));
 
-    LightingResult direct = EvaluateDirectLighting(vc, surface);
+    // The tile's forward mask, found by projecting the surface: this layer may render at another
+    // resolution than the opaque pass the tiles were laid over.
+    LightingResult direct =
+        EvaluateDirectLightingMasked(vc, surface, ForwardTileLightMask(vc, s.Position));
     LightingResult ambient = EvaluateAmbientLighting(vc, surface, s.Occlusion);
 
     ForwardLighting lit;

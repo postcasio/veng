@@ -38,9 +38,10 @@ namespace Veng::Renderer
     /// The lighting pass loops every packed light at every pixel; most lights reach only part of the
     /// screen. Ahead of it, one compute workgroup per LightTileSize-square tile reduces the tile's
     /// depth to its nearest and farthest geometry, bounds that slice of the tile's frustum by a
-    /// view-space box, and writes one 32-bit mask of the lights whose influence sphere reaches the
-    /// box (light_tile_cull.comp). The lighting pass then visits only its tile's lights. The test is
-    /// conservative, so the image is unchanged; only the work moves.
+    /// view-space box, and writes a record of two light masks (light_tile_cull.comp): the lights
+    /// whose influence sphere reaches the box, which the lighting pass visits, and those reaching the
+    /// tile's frustum anywhere in front of its farthest geometry, which a forward-lit translucent
+    /// fragment visits. The tests are conservative, so the image is unchanged; only the work moves.
     ///
     /// The masks live in a device-local storage buffer with one region per frame in flight — a
     /// renderer executes once per frame, so the region a frame writes is never one a frame still on
@@ -94,11 +95,13 @@ namespace Veng::Renderer
         void DeclareCull(RenderGraph& graph, ResourceId depthId, TextureHandle depthHandle);
 
         /// @brief The view block's LightTiles word for this frame.
-        /// @param active     Whether the cull runs for this view this frame.
-        /// @param frameSlot  The frame-in-flight index selecting the mask region.
-        /// @return The bindless slot, the grid's row stride, and the region's first word — or
-        ///         LightTilesNone in x when inactive, so a reader applies every light.
-        [[nodiscard]] uvec4 ViewState(bool active, u32 frameSlot) const;
+        /// @param active      Whether the cull runs for this view this frame.
+        /// @param frameSlot   The frame-in-flight index selecting the mask region.
+        /// @param validExtent The extent the cull lays its tiles over this frame, in pixels.
+        /// @return The bindless slot, the grid's row stride in tiles, the region's first word, and
+        ///         the extent (x in the low half-word, y in the high) — or LightTilesNone in x when
+        ///         inactive, so a reader applies every light.
+        [[nodiscard]] uvec4 ViewState(bool active, u32 frameSlot, uvec2 validExtent) const;
 
         /// @brief Reads back the masks the last recorded cull wrote. Blocks on a device read.
         /// @return The masks over the tile grid of the extent the cull covered, or empty when no
@@ -120,7 +123,7 @@ namespace Veng::Renderer
         vector<Ref<DescriptorSet>> m_Sets;
 
         /// @brief The mask ring: one region of m_RegionWords words per frame in flight, the first
-        ///        m_Grid.x * m_Grid.y of them the masks.
+        ///        m_Grid.x * m_Grid.y * LightTileRecordWords of them the tiles' records.
         Ref<Buffer> m_Buffer;
         /// @brief Words per region: the grid's, rounded up to the storage-buffer offset alignment.
         u32 m_RegionWords = 0;

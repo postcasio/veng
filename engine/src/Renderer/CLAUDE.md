@@ -735,7 +735,7 @@ every caster through four more cascade viewports, where a punctual tile costs a 
 memory and one traversal.
 
 **A view packs only the lights that can light it, and past the cap the brightest.** One view
-carries `MaxLights` (16) lights, and every pixel the lighting pass shades visits each of them its
+carries `MaxLights` (128) lights, and every pixel the lighting pass shades visits each of them its
 tile has not culled, so a slot spent on a light that adds nothing costs pixels across the screen. `PackSceneLights` skips a light of zero
 radiance, a positioned light of non-positive range, an area light whose emitter has no area, and —
 given the camera frustum — a positioned light whose range sphere (grown by its emitter's reach)
@@ -754,9 +754,11 @@ zero — so it changes cost, never the image.
 workgroup per `LightTileSize` (16) pixel tile — the "Light Tile Cull" pass, declared by the lighting
 pass ahead of itself — reduces the tile's depth to its nearest and farthest geometry, bounds the
 slice of the tile's frustum between them by the view-space box around its eight corners, and writes
-one `u32` per tile: bit *i* set when the view's *i*-th packed light's influence sphere reaches the
+a record per tile of two `LightMask`s, each `MaxLights` bits over `LightMaskWords` (4) `u32` words:
+in the first, bit *i* is set when the view's *i*-th packed light's influence sphere reaches the
 box. The lighting pass (`EvaluateDirectLightingMasked`) then visits only the set bits, in index
-order, so a full mask sums exactly what the unmasked loop does. **The bound is conservative, so the
+order, so a full mask sums exactly what the unmasked loop does. Workgroups are 256 threads and a
+view holds at most 128 lights, so each light is tested by a thread of its own. **The bound is conservative, so the
 image never moves:** a shaded pixel reconstructs its position at a pixel centre strictly inside the
 tile's edges and at a depth inside its range, so it lies in the box; a point or spot light lights
 nothing past its range (a spot stays sphere-bounded, its cone untested); an area light's sphere is
@@ -775,13 +777,22 @@ reallocation. The cull writes through a set binding its frame's region alone (on
 flight, the region stride rounded up to the storage-buffer offset alignment), so its write is scoped
 to the words that frame owns — which is also the range synchronization validation checks it over.
 The buffer is registered in the set-0 storage-buffer array, and the view block's
-`LightTiles` names it — slot, row stride, this frame's first word, or `LightTilesNone` when no cull
-ran — so any pass can find a pixel's mask through `Veng/light_tiles.slang`. It is imported into the
+`LightTiles` names it — slot, row stride in tiles, this frame's first word and the extent the tiles
+cover, or `LightTilesNone` when no cull ran — so any pass can find a pixel's masks through
+`Veng/light_tiles.slang`. It is imported into the
 graph: the cull's `StorageBufferWrite` and the lighting pass's `StorageBufferRead` (which, on a
 graphics pass, is `AccessKind::StorageBufferReadGraphics`, a vertex- and fragment-stage scope) derive the barrier.
-**The masks describe the opaque depth range**, so they serve the deferred pass; a forward-lit
-translucent fragment in front of that depth is not covered by them and still loops every light — a
-forward consumer would want a second word per tile bounding the near plane to the opaque depth.
+**A record's first mask describes the opaque depth range**, so it serves the deferred pass. **Its
+second, the forward mask, serves what is drawn in front of it**: the lights whose sphere reaches the
+tile's frustum anywhere from the camera to the plane through its farthest opaque surface (with no far
+plane where the tile shows only sky). The frustum's side planes are pushed a pixel out, so a fragment
+projected through another jitter — the post-resolve layer's unjittered projection — still lands in a
+tile whose frustum holds it. A forward-lit translucent fragment (`EvaluateForwardLighting`) finds its
+tile by projecting its world position (`ForwardTileLightMask`), since its layer may render at another
+resolution than the opaque pass the tiles were laid over; the view block's `LightTiles.w` carries that
+extent. Every translucent pass declares a `StorageBufferRead` on the masks (`PassIO::LightTileMasks`),
+so the graph orders the cull ahead of it. Sprites and particles are lit per sprite or per particle,
+not per pixel, and loop the view's lights with their own range test.
 `SceneRenderer::ReadbackLightTileMasks()` downloads the last frame's masks for tests and diagnostics,
 and the toggle stays a setting so the two costs can be compared in a capture.
 

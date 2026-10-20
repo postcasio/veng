@@ -1588,6 +1588,7 @@ namespace Veng::Renderer
             .ShadowView = shadowAtlasView,
             .PunctualShadowMap = punctualShadowId,
             .PunctualShadowView = m_Shadows->GetPunctualView(),
+            .LightTileMasks = m_LightTiles->GetMaskId(),
             .Output = m_OutputId,
         };
 
@@ -3002,8 +3003,9 @@ namespace Veng::Renderer
                                       std::max(resolvedView.NormalMapAntiAliasingScale, 0.0f)),
                 // The renderer executes once per frame, so the frame-in-flight index selects a mask
                 // region no frame still on the GPU reads.
-                .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
-                                                      m_Context.GetCurrentFrameInFlight()),
+                .LightTiles =
+                    m_LightTiles->ViewState(m_Topology->LightTileCullActive,
+                                            m_Context.GetCurrentFrameInFlight(), validExtent),
                 .JitterNdc = vec4(jitterNdc, m_PreviousJitterNdc),
                 .PrevFromCurDirection =
                     mat4(m_PreviousDirectionViewProj * glm::inverse(directionViewProj)),

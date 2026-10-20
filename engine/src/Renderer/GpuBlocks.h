@@ -60,7 +60,7 @@ namespace Veng::Renderer
         vec4 AmbientParams;
         // x the per-tile light-mask buffer's bindless storage-buffer slot, or LightTilesNone when
         // no tile cull ran for the view; y the tile grid's row stride in tiles; z this frame's
-        // first mask word; w unused.
+        // first mask word; w the extent the tiles were laid over (x low half-word, y high).
         uvec4 LightTiles;
         // The projection jitter as an NDC translation: xy this frame's, zw the previous frame's.
         vec4 JitterNdc;
