@@ -856,8 +856,9 @@ namespace Veng::Renderer
         /// Rect and Polygon area lights emit their world-space vertices into the
         /// per-view area-vertex buffer (each vertex one vec4); a light records its
         /// base index and count. A Rect contributes four; a Polygon contributes its
-        /// PolygonVertices, clamped so the running total stays within this cap.
-        static constexpr u32 MaxAreaVertices = 256;
+        /// PolygonVertices, and one that would overflow the cap packs with no geometry
+        /// and lights nothing. Eight per light, so a view of MaxLights Rects always fits.
+        static constexpr u32 MaxAreaVertices = 8 * MaxLights;
 
         /// @brief The byte stride of one packed area-light polygon vertex (a vec4).
         static constexpr u32 AreaVertexStride = 16;

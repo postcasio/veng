@@ -742,7 +742,10 @@ given the camera frustum — a positioned light whose range sphere (grown by its
 misses it. The rest are ranked by the radiance each delivers at the camera position (inverse square
 from the emitter's surface, clamped one world unit out; deliberately without the range cutoff, which
 would score zero every light whose range ends short of the camera but not of what it sees), the top
-`MaxLights` are packed in scene iteration order, and the excess is counted in `DroppedLightCount`.
+`MaxLights` are packed in scene iteration order, and the excess is counted in `DroppedLightCount`. A
+Rect or Polygon light also packs its world-space vertices into the view's area-vertex buffer, capped
+at `MaxAreaVertices` (eight per light, so a view of `MaxLights` Rects always fits); a Polygon that would
+overflow it packs with no geometry and lights nothing.
 **The loop skips what cannot light a pixel** (`EvaluateDirectLighting`, `Veng/lighting.slang`): a
 light of zero radiance, a pixel at or past a light's range (for an area light, tested before the LTC
 integral), a pixel outside a spot's cone, and a punctual or directional light behind the surface

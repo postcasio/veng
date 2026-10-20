@@ -584,10 +584,13 @@ extern "C"
 /// Version 144 raises BindlessRegistry::MaxLights from 16 to 128: PackedSceneLights and
 /// LightTileMasks grow, and PassIO grows LightTileMasks. A module packs lights and declares passes,
 /// so a stale one lays them out short.
+/// Version 145 raises BindlessRegistry::MaxAreaVertices from 256 to 8 * MaxLights, so a view of
+/// MaxLights Rect lights packs every one's geometry: PackedSceneLights grows. A module packs lights,
+/// so a stale one lays it out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 144u
+#define VENG_MODULE_ABI_VERSION 145u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

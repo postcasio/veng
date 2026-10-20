@@ -666,6 +666,29 @@ TEST_CASE("PackSceneLights: the packed light count is capped at MaxLights")
     CHECK(packed.LightCount == Renderer::SceneView::MaxLights);
 }
 
+TEST_CASE("PackSceneLights: a view full of Rect lights packs every one with its geometry")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    for (u32 i = 0; i < Renderer::SceneView::MaxLights; ++i)
+    {
+        AddLight(*scene,
+                 Light{.Type = LightType::Rect, .Range = 10.0f, .Width = 0.6f, .Height = 4.0f});
+    }
+
+    const PackedSceneLights packed = PackSceneLights(*scene, false, 1024);
+
+    REQUIRE(packed.LightCount == Renderer::SceneView::MaxLights);
+    u32 withGeometry = 0;
+    for (u32 i = 0; i < packed.LightCount; ++i)
+    {
+        withGeometry += packed.Lights[i].Area.z == 4.0f ? 1u : 0u;
+    }
+    CHECK(withGeometry == packed.LightCount);
+}
+
 TEST_CASE("PackSceneLights: a caster bound tightens a spot light's shadow far plane")
 {
     TypeRegistry types;
