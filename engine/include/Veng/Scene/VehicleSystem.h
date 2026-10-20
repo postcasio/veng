@@ -1,11 +1,28 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
+#include <Veng/Scene/Entity.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
 {
     class Scene;
+
+    /// @brief Seats @p character in @p vehicle's first free seat now, outside any tick.
+    ///
+    /// Performs exactly the entry VehicleSystem performs for an InteractRequest, which drains through
+    /// this function: the controller is disabled and its capsule removed, the character is parented
+    /// at the seat's socket, and a driver seat takes possession and swaps the input context. A caller
+    /// that stands a character in a vehicle calls it directly so the character is seated in the same
+    /// frame, rather than on the next Sim tick that drains a request — the difference between a first
+    /// presented frame drawn from the seat and one drawn from wherever the character was spawned.
+    /// @param scene      The scene holding both entities.
+    /// @param vehicle    An entity carrying a Vehicle.
+    /// @param character  The character to seat; must not already occupy a seat of @p vehicle.
+    /// @return Success, or why the character could not be seated (no vehicle, no free seat, or a seat
+    ///         socket the vehicle's mesh does not resolve yet), the character left on foot.
+    [[nodiscard]] VE_API VoidResult EnterVehicle(Scene& scene, Entity vehicle, Entity character);
 
     /// @brief Builtin Sim system that seats and unseats characters as InteractRequests land on vehicles.
     ///

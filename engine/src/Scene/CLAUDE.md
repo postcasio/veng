@@ -896,7 +896,10 @@ solid geometry, and a blocked exit fails and reports rather than placing a chara
 character's placement: the exit socket's local matrix is resolved through the scene's
 [physics-pose resolver](#the-physics-pose-resolver--when-the-transform-chain-is-not-the-solvers-frame)
 and handed back through its `Place` hook, which is how a consumer holding its authority outside the
-`Transform` records where the character actually landed. A
+`Transform` records where the character actually landed. **`EnterVehicle(scene, vehicle,
+character)`** (`Veng/Scene/VehicleSystem.h`) is the entry itself, callable outside a tick: the drain
+calls it, and a caller standing a character in a vehicle calls it directly, so the character is
+seated in the same frame rather than on the next Sim step. A
 runtime-only **`Seated`** component on the occupant records what entry changed so exit undoes it
 exactly (`VE_TYPE`, never serialized). The `CharacterController` gained an **`Enabled`** flag for
 this: a disabled controller is skipped by `CharacterMovementSystem` and its capsule released, and

@@ -503,3 +503,30 @@ TEST_CASE("A seat whose occupant was destroyed while seated boards the next char
     CHECK(world.Get<VehicleSeat>(seat).Occupant == second);
     CHECK(world.Has<Seated>(second));
 }
+
+TEST_CASE("EnterVehicle seats a character at once, with no tick, and refuses a full vehicle")
+{
+    VehicleScene fixture;
+    Scene& world = *fixture.World;
+    const auto [vehicle, seat] = fixture.AddVehicle(vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.5f, 0.0f),
+                                                    vec3(0.0f, -0.9f, 0.0f), true, false);
+    const Entity first = fixture.AddCharacter(vec3(5.0f, 0.1f, 0.0f));
+    const Entity controlling = fixture.AddControllingSeat(first);
+
+    // Seated by the call itself: no request is stamped and no system runs.
+    REQUIRE(EnterVehicle(world, vehicle, first).has_value());
+    CHECK_FALSE(world.Has<InteractRequest>(vehicle));
+    CHECK(world.Get<VehicleSeat>(seat).Occupant == first);
+    CHECK(world.GetParent(first) == vehicle);
+    CHECK(world.Has<Seated>(first));
+    CHECK(world.Get<Possesses>(controlling).Pawn == vehicle);
+
+    // Seating it again, or a second character in the only seat, is refused and changes nothing.
+    CHECK_FALSE(EnterVehicle(world, vehicle, first).has_value());
+    const Entity second = fixture.AddCharacter(vec3(-5.0f, 0.1f, 0.0f));
+    const VoidResult refused = EnterVehicle(world, vehicle, second);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK_FALSE(refused.error().empty());
+    CHECK(world.Get<VehicleSeat>(seat).Occupant == first);
+    CHECK_FALSE(world.Has<Seated>(second));
+}

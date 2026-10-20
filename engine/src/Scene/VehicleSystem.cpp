@@ -274,14 +274,41 @@ namespace Veng
                 return Exit(scene, vehicleEntity, occupied, interactor, error);
             }
 
-            const Entity free = FreeSeat(scene, vehicle);
-            if (free.IsNull())
+            if (VoidResult entered = EnterVehicle(scene, vehicleEntity, interactor); !entered)
             {
-                error = "vehicle has no free seat";
+                error = std::move(entered.error());
                 return HandleOutcome::Failed;
             }
-            return Enter(scene, vehicleEntity, free, interactor, error);
+            return HandleOutcome::Handled;
         }
+    }
+
+    VoidResult EnterVehicle(Scene& scene, const Entity vehicle, const Entity character)
+    {
+        if (character.IsNull() || !scene.IsAlive(character))
+        {
+            return std::unexpected("no live character to seat");
+        }
+        if (vehicle.IsNull() || !scene.IsAlive(vehicle) || !scene.Has<Vehicle>(vehicle))
+        {
+            return std::unexpected("not a vehicle");
+        }
+        const Vehicle& data = scene.Get<Vehicle>(vehicle);
+        if (!OccupiedSeat(scene, data, character).IsNull())
+        {
+            return std::unexpected("already seated in this vehicle");
+        }
+        const Entity free = FreeSeat(scene, data);
+        if (free.IsNull())
+        {
+            return std::unexpected("vehicle has no free seat");
+        }
+        string error;
+        if (Enter(scene, vehicle, free, character, error) == HandleOutcome::Failed)
+        {
+            return std::unexpected(std::move(error));
+        }
+        return {};
     }
 
     void VehicleSystem::OnUpdate(Scene& scene, f32 /*delta*/, const SystemContext& /*context*/)
