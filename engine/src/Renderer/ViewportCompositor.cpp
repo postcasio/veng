@@ -393,10 +393,11 @@ namespace Veng::Renderer
         ++m_CaptureSurfaceDrive.ScenesDriven;
         for (auto [entity, surface] : scene.View<CaptureSurface>())
         {
-            // A disabled surface holds nothing: releasing its runtime returns the capture to the pool
-            // and clears the slots it bound, as removing the component would.
+            // A disabled surface holds nothing: its entity draws its own material again, and releasing
+            // its runtime returns the capture to the pool, as removing the component would.
             if (!surface.Enabled)
             {
+                surface.RestoreMaterial(scene, entity);
                 surface.Release();
                 ++m_CaptureSurfaceDrive.SurfacesDisabled;
                 continue;

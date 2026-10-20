@@ -59,6 +59,8 @@
 #include <Veng/Scene/Scene.h>
 
 #include <cmath>
+#include <cstring>
+#include <string_view>
 #include <utility>
 
 #include <gpu/fixture.h>
@@ -1301,6 +1303,94 @@ TEST_CASE_FIXTURE(
     CHECK(center.g > 0.6f);
     CHECK(center.g > center.r + 0.3f);
     CHECK(center.g > center.b + 0.3f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: the clone follows the entity's own material, and goes with "
+                  "the capture")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> shell =
+        assets.LoadSync<MaterialInstance>(ShellInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> below =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> ahead =
+        assets.LoadSync<MaterialInstance>(MarkerInstance);
+    REQUIRE(shell.has_value());
+    REQUIRE(below.has_value());
+    REQUIRE(ahead.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity shellEntity;
+    const Unique<Scene> scene =
+        BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity);
+    const AssetHandle<MaterialInstance> source = SurfaceMaterial(*scene, shellEntity);
+
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*viewport);
+    const auto drive = [&]
+    {
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+    };
+    const auto clone = [&]() -> MaterialInstance*
+    {
+        const auto* renderer = std::as_const(*scene).TryGet<MeshRenderer>(shellEntity);
+        return renderer == nullptr || renderer->InstanceMaterials.empty()
+                   ? nullptr
+                   : renderer->InstanceMaterials[0].Get();
+    };
+    const auto readField = [](const MaterialInstance& material, const std::string_view name)
+    {
+        const MaterialFieldHandle field = material.Field(name);
+        REQUIRE(field.IsValid());
+        const u32 offset = material.GetFields()[field.Index].Offset;
+        vec4 value;
+        std::memcpy(&value, material.GetBlock().data() + offset, sizeof(value));
+        return value;
+    };
+    const auto readHandle = [](const MaterialInstance& material, const std::string_view name)
+    {
+        const MaterialFieldHandle field = material.Field(name);
+        REQUIRE(field.IsValid());
+        u32 value = 0;
+        std::memcpy(&value, material.GetBlock().data() + material.GetFields()[field.Index].Offset,
+                    sizeof(value));
+        return value;
+    };
+
+    drive();
+    REQUIRE(clone() != nullptr);
+    REQUIRE(clone() != source.Get());
+    const CaptureSurface& surface = scene->Get<CaptureSurface>(shellEntity);
+    REQUIRE(surface.GetOutputHandle().IsValid());
+
+    // The owner writes the entity's own material, never the clone; the next drive carries the write
+    // into the clone the draw uses, and the capture's binding on the clone survives the copy.
+    const vec4 written(0.25f, 0.5f, -0.75f, 0.0f);
+    source->SetParam("Direction", written);
+    drive();
+    CHECK(readField(*clone(), "Direction") == written);
+    CHECK(readHandle(*clone(), "Texture") == surface.GetOutputHandle().Index);
+    CHECK(readHandle(*source.Get(), "Texture") != surface.GetOutputHandle().Index);
+
+    // Disabling the surface puts the entity's own material back; enabling it installs a clone again.
+    scene->Get<CaptureSurface>(shellEntity).Enabled = false;
+    drive();
+    CHECK(clone() == nullptr);
+    scene->Get<CaptureSurface>(shellEntity).Enabled = true;
+    drive();
+    REQUIRE(clone() != nullptr);
+    CHECK(clone() != source.Get());
+
+    // Removing the component does the same.
+    (void)scene->Remove<CaptureSurface>(shellEntity);
+    CHECK(clone() == nullptr);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

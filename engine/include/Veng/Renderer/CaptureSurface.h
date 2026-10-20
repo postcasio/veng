@@ -345,6 +345,19 @@ namespace Veng::Renderer
         /// surface materializes a fresh one. What the engine's drive does to a disabled surface.
         void Release() const;
 
+        /// @brief Puts the entity's own material back in place of the clone the first drive installed.
+        ///
+        /// A material-output drive clones the sibling MeshRenderer's first material into the entity's
+        /// InstanceMaterials override and binds into the clone, so other entities drawing the mesh
+        /// sample nothing. This undoes that install: the clone's slot reverts to the material it was
+        /// cloned from, and an override left identical to the mesh's own materials is dropped. It does
+        /// nothing when the clone is no longer what the slot holds. The component's removal hook calls
+        /// it, and the engine's drive calls it before releasing a disabled surface, so an entity whose
+        /// capture went draws the material its owner writes.
+        /// @param world   The scene the surface lives in.
+        /// @param entity  The entity carrying the surface.
+        void RestoreMaterial(Scene& world, Entity entity) const;
+
         /// @brief Returns the owned capture, or nullptr before the first Drive materializes it.
         [[nodiscard]] SceneCapture* GetCapture() const;
 
@@ -445,8 +458,10 @@ namespace Veng::Renderer
         /// feeds at — as the capture's position, and its rotation, scale divided out, as the face basis
         /// when Alignment is Entity (the identity otherwise); resolves the sibling MeshRenderer's first
         /// material, on the first drive cloning the mesh asset's into the entity's
-        /// MeshRenderer::InstanceMaterials so no other entity drawing the mesh samples this capture;
-        /// then drives as the pose overload does. A sibling with no resident mesh or material binds
+        /// MeshRenderer::InstanceMaterials so no other entity drawing the mesh samples this capture,
+        /// and on every later drive copying that material's parameters into the clone when its
+        /// revision has moved, so what the owner writes to the entity's material still reaches the
+        /// draw; then drives as the pose overload does. A sibling with no resident mesh or material binds
         /// nothing. A SceneLighting surface resolves no material and installs no clone, and an
         /// Entity-aligned one warns once and renders world-aligned (see CaptureOutput).
         /// @param context  The render context the capture allocates on.
@@ -509,6 +524,11 @@ VE_ENUM(::Veng::Renderer::CaptureOutput, 0xFDB832C5AD445274ULL)
 VE_ENUMERATOR(Material)
 VE_ENUMERATOR(SceneLighting)
 VE_ENUM_END();
+
+// The entity's own material goes back while the MeshRenderer beside the surface still stands.
+VE_ON_REMOVE(::Veng::Renderer::CaptureSurface, [](::Veng::Scene& scene, const ::Veng::Entity owner,
+                                                  const ::Veng::Renderer::CaptureSurface& surface)
+             { surface.RestoreMaterial(scene, owner); });
 
 VE_REFLECT(::Veng::Renderer::CaptureSurface, 0x59B48CAC6127A406ULL)
 VE_FIELD(Enabled, .DisplayName = "Enabled")

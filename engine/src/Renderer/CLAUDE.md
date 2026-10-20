@@ -3322,8 +3322,18 @@ and [../Asset/CLAUDE.md](../Asset/CLAUDE.md)). The probe then writes only the cl
 entity draws the reflective copy and every other sharer keeps the untouched asset instance, sampling
 nothing (its `ProbeCenter.w` stays 0 → the material's no-probe path). The install is one mutable
 component write per capturing entity — it bumps the scene's spatial version once, which the
-broadphase re-gathers on — and the clone is held by the override for the entity's lifetime, so a
-consumer authors no second mesh or material to keep an NPC's copy of a reflective surface flat.
+broadphase re-gathers on — so a consumer authors no second mesh or material to keep an NPC's copy
+of a reflective surface flat.
+
+**The clone follows the material it was cloned from, and goes with the capture.** The owner of a
+captured mesh keeps writing the mesh's own material — it never learns a clone exists — so each drive
+copies that material's parameters into the clone whenever its revision has moved
+(`MaterialInstance::CopyParamsFrom`), before binding the capture's slots over them: a parameter the
+owner writes reaches the draw the frame after, and the capture's own bindings survive the copy. When
+the capture goes — the component removed (its `VE_ON_REMOVE` hook) or the surface disabled (the
+compositor's drive) — `CaptureSurface::RestoreMaterial` puts the source back in the override's slot,
+dropping an override left identical to the mesh's own materials, so the entity draws what its owner
+writes again. Neither runs when another system has since replaced the clone in that slot.
 
 **A capture optionally publishes an octahedral distance map beside the radiance one**
 (`SceneCaptureInfo::CaptureDistance`, off by default). The same six faces are rendered with a depth

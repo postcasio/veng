@@ -52,6 +52,12 @@ namespace Veng::Renderer
 
         /// @brief The material the last drive bound onto, held resident so the unbind can reach it.
         AssetHandle<MaterialInstance> BoundMaterial;
+        /// @brief The per-entity clone this surface installed in its MeshRenderer; empty when none.
+        AssetHandle<MaterialInstance> InstalledClone;
+        /// @brief The mesh material InstalledClone was cloned from, which the owner keeps writing.
+        AssetHandle<MaterialInstance> CloneSource;
+        /// @brief CloneSource's revision when its parameters were last copied into the clone.
+        u32 CloneSourceRevision = 0;
         /// @brief The parent the slots below were resolved against; a change re-resolves every slot.
         const Material* ResolvedParent = nullptr;
         /// @brief The texture slot, resolved from TextureSlot.
@@ -165,8 +171,13 @@ namespace Veng::Renderer
         /// entity drawing that mesh, so binding the capture there would make every sharer sample it.
         /// The first drive clones it into the entity's InstanceMaterials override, which the render
         /// gather honours; later drives find the clone installed and read it const.
+        ///
+        /// The owner keeps writing the mesh's material, not the clone, so a later drive copies the
+        /// source's parameters into its clone whenever the source's revision has moved — before the
+        /// capture's own slots are bound over them.
         AssetHandle<MaterialInstance> ResolveCaptureMaterial(const AssetManager& assets,
-                                                             Scene& world, const Entity entity)
+                                                             Scene& world, const Entity entity,
+                                                             CaptureSurfaceRuntime& runtime)
         {
             const auto* renderer = std::as_const(world).TryGet<MeshRenderer>(entity);
             if (renderer == nullptr || !renderer->Mesh.IsLoaded())
@@ -175,7 +186,16 @@ namespace Veng::Renderer
             }
             if (!renderer->InstanceMaterials.empty())
             {
-                return renderer->InstanceMaterials[0];
+                const AssetHandle<MaterialInstance>& material = renderer->InstanceMaterials[0];
+                MaterialInstance* const clone = material.Get();
+                const MaterialInstance* const source = runtime.CloneSource.Get();
+                if (clone != nullptr && clone == runtime.InstalledClone.Get() &&
+                    source != nullptr && source->GetRevision() != runtime.CloneSourceRevision)
+                {
+                    clone->CopyParamsFrom(*source);
+                    runtime.CloneSourceRevision = source->GetRevision();
+                }
+                return material;
             }
             const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
                 renderer->Mesh.Get()->GetMaterials();
@@ -190,6 +210,9 @@ namespace Veng::Renderer
             overrides[0] = assets.Adopt<MaterialInstance>(
                 meshMaterials[0].Get()->Clone(meshMaterials[0].Get()->GetName() + " (capture)"));
             AssetHandle<MaterialInstance> material = overrides[0];
+            runtime.InstalledClone = material;
+            runtime.CloneSource = meshMaterials[0];
+            runtime.CloneSourceRevision = meshMaterials[0].Get()->GetRevision();
             world.Get<MeshRenderer>(entity).InstanceMaterials = std::move(overrides);
             return material;
         }
@@ -261,6 +284,51 @@ namespace Veng::Renderer
     void CaptureSurface::Release() const
     {
         Runtime.reset();
+    }
+
+    void CaptureSurface::RestoreMaterial(Scene& world, const Entity entity) const
+    {
+        if (!Runtime || !Runtime->InstalledClone.IsValid())
+        {
+            return;
+        }
+        // The slots the drive filled live on the clone, which is going.
+        ClearBoundSlots(*Runtime);
+        const AssetHandle<MaterialInstance> clone = std::move(Runtime->InstalledClone);
+        const AssetHandle<MaterialInstance> source = std::move(Runtime->CloneSource);
+        Runtime->InstalledClone = {};
+        Runtime->CloneSource = {};
+
+        const auto* const renderer = std::as_const(world).TryGet<MeshRenderer>(entity);
+        if (renderer == nullptr || renderer->InstanceMaterials.empty() ||
+            renderer->InstanceMaterials[0].Get() != clone.Get())
+        {
+            return;
+        }
+        vector<AssetHandle<MaterialInstance>> restored = renderer->InstanceMaterials;
+        restored[0] = source;
+        // An override left identical to the mesh's own materials is dropped, so the entity draws the
+        // mesh as it did before the capture.
+        bool matchesMesh = renderer->Mesh.IsLoaded();
+        if (matchesMesh)
+        {
+            const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
+                renderer->Mesh.Get()->GetMaterials();
+            matchesMesh = meshMaterials.size() == restored.size();
+            for (usize i = 0; matchesMesh && i < restored.size(); ++i)
+            {
+                matchesMesh = restored[i].Get() == meshMaterials[i].Get();
+            }
+        }
+        auto& mutableRenderer = world.Get<MeshRenderer>(entity);
+        if (matchesMesh)
+        {
+            mutableRenderer.InstanceMaterials.clear();
+        }
+        else
+        {
+            mutableRenderer.InstanceMaterials = std::move(restored);
+        }
     }
 
     void CaptureSurface::MarkDirty() const
@@ -543,7 +611,11 @@ namespace Veng::Renderer
             faceBasis[2] = glm::normalize(faceBasis[2]);
         }
 
+        if (!Runtime)
+        {
+            Runtime = CreateUnique<CaptureSurfaceRuntime>();
+        }
         return Drive(context, assets, world, entity, position, alpha, faceBasis,
-                     ResolveCaptureMaterial(assets, world, entity));
+                     ResolveCaptureMaterial(assets, world, entity, *Runtime));
     }
 }
