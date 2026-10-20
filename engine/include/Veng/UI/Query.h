@@ -57,6 +57,14 @@ namespace Veng::UI
     ///         no UI at all.
     [[nodiscard]] VE_API bool WantCaptureMouse();
 
+    /// @brief Returns true while the UI is taking typed text — a text field is active.
+    ///
+    /// Narrower than a keyboard claim: a focused window that is not being typed into does not
+    /// count, so a caller reading raw keys (a free camera's movement keys, say) can stand aside
+    /// exactly while those keys are text. Safe to call with no UI present, like WantCaptureMouse.
+    /// @return True when a text field holds the keyboard; false otherwise, or with no UI at all.
+    [[nodiscard]] VE_API bool WantTextInput();
+
     /// @brief Returns true the frame the last item was clicked with the given button.
     /// @param button  Mouse button to query.
     [[nodiscard]] VE_API bool IsItemClicked(MouseButton button = MouseButton::Left);

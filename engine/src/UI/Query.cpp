@@ -62,6 +62,16 @@ namespace Veng::UI
         return ImGui::GetIO().WantCaptureMouse;
     }
 
+    bool WantTextInput()
+    {
+        // Called from update code that runs with no UI pass, as WantCaptureMouse is.
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            return false;
+        }
+        return ImGui::GetIO().WantTextInput;
+    }
+
     bool ItemEdited()
     {
         return ImGui::IsItemDeactivatedAfterEdit();
