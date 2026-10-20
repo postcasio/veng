@@ -237,7 +237,7 @@ namespace Veng::Renderer
         // device limit divided by that grid's larger dimension would overflow it.
         const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(MaxCascades, MaxCascadeSets);
         const u32 factor = std::max(grid.Columns, grid.TotalRows());
-        return context.GetMaxImageDimension2D() / factor;
+        return context.GetMaxAttachmentDimension2D() / factor;
     }
 
     u32 ShadowSystem::GetMaxPunctualShadowResolution(Context& context)
@@ -245,7 +245,7 @@ namespace Veng::Renderer
         // The punctual atlas tiles CubeFaceCount columns × MaxShadowedPunctual rows,
         // so its widest side is CubeFaceCount · resolution.
         const u32 factor = std::max(CubeFaceCount, MaxShadowedPunctual);
-        return context.GetMaxImageDimension2D() / factor;
+        return context.GetMaxAttachmentDimension2D() / factor;
     }
 
     void ShadowSystem::ClampResolutions(Context& context, SceneRendererSettings& settings)

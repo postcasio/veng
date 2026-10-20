@@ -473,12 +473,20 @@ namespace Veng::Renderer
 
         /// @brief The maximum width/height of a 2D image this device supports.
         ///
-        /// The physical device's @c maxImageDimension2D limit (16384 on a typical
-        /// Metal device via MoltenVK). A consumer sizing an image — notably a tiled
-        /// atlas whose extent is a multiple of a per-tile resolution — must keep its
-        /// extent within this bound; exceeding it is a fatal driver-side error.
+        /// The physical device's @c maxImageDimension2D limit. A consumer sizing an image — notably
+        /// a tiled atlas whose extent is a multiple of a per-tile resolution — must keep its
+        /// extent within this bound; exceeding it is a fatal driver-side error. An image that is
+        /// also rendered into is bounded more tightly; see GetMaxAttachmentDimension2D().
         /// @return The device's maximum 2D image edge length, in texels.
         [[nodiscard]] u32 GetMaxImageDimension2D() const;
+
+        /// @brief The maximum width/height of a 2D image this device can render into.
+        ///
+        /// The smallest of @c maxImageDimension2D, @c maxFramebufferWidth and
+        /// @c maxFramebufferHeight. An image created with a color or depth attachment usage must
+        /// keep both edges within this bound, which a device may set below its image limit.
+        /// @return The device's maximum 2D attachment edge length, in texels.
+        [[nodiscard]] u32 GetMaxAttachmentDimension2D() const;
 
         /// @brief The maximum anisotropy sample count this device supports.
         ///

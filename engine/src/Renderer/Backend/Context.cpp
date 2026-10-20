@@ -1236,6 +1236,13 @@ namespace Veng::Renderer
         return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
     }
 
+    u32 Context::GetMaxAttachmentDimension2D() const
+    {
+        const vk::PhysicalDeviceLimits limits = m_Native->PhysicalDevice.getProperties().limits;
+        return std::min(
+            {limits.maxImageDimension2D, limits.maxFramebufferWidth, limits.maxFramebufferHeight});
+    }
+
     f32 Context::GetMaxSamplerAnisotropy() const
     {
         return m_Native->PhysicalDevice.getProperties().limits.maxSamplerAnisotropy;

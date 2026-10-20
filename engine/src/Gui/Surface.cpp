@@ -214,14 +214,14 @@ namespace Veng
                   PixelScale);
 
         // Clamp the scale so the derived target extent is allocatable: at least one pixel on the
-        // smaller axis, and no larger than the device's 2D image limit on the larger one. An
+        // smaller axis, and no larger than the device's 2D attachment limit on the larger one. An
         // authored scale that overshoots on a 4K surface would otherwise ask for hundreds of MB of
         // RGBA16Sfloat and fail the allocation outright.
         const f32 largestAxis = static_cast<f32>(std::max(Resolution.x, Resolution.y));
         const f32 smallestAxis = static_cast<f32>(std::min(Resolution.x, Resolution.y));
         const f32 scale =
             glm::clamp(PixelScale, 1.0f / smallestAxis,
-                       static_cast<f32>(context.GetMaxImageDimension2D()) / largestAxis);
+                       static_cast<f32>(context.GetMaxAttachmentDimension2D()) / largestAxis);
 
         if (!Runtime)
         {
