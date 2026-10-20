@@ -483,6 +483,11 @@ namespace Veng
                 seat != Entity::Null)
             {
                 AdoptViewportSeat(managed, seat);
+                // A binding is a derivation point of the locally-controlled marker, as at a rebind:
+                // marked now, the seat's pawn is this viewport's for the frame it was seated on.
+                vector<Entity> seats;
+                CollectPresentingSeats(managed.Info.World, seats);
+                ReconcileLocalControl(presented->GetScene(), seats);
             }
         }
     }

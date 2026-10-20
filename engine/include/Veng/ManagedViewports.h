@@ -288,7 +288,8 @@ namespace Veng
         /// before the frame's presentation hooks — in a world's arrival hook, for a seat that only
         /// exists while the world is presented — runs it again, so the viewport is seated on the
         /// frame the world is first presented rather than the next, and the presented record
-        /// carries that seat.
+        /// carries that seat. A seat adopted here marks the pawn it possesses with LocalControl at
+        /// once, as a rebind does, so that frame's systems see the pawn as this viewport's.
         /// @param runner  The runner each viewport's presented world resolves through.
         void SeatUnboundViewports(WorldRunner& runner);
 

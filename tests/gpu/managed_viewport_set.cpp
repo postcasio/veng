@@ -618,7 +618,8 @@ TEST_CASE("A completed rebind is reported once, with the seat the viewport ended
     app.Run({});
 }
 
-TEST_CASE("A seat stood after a rebind lands on a seatless world is adopted the same frame")
+TEST_CASE(
+    "A seat stood after a rebind lands on a seatless world is adopted and marked the same frame")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -630,6 +631,7 @@ TEST_CASE("A seat stood after a rebind lands on a seatless world is adopted the 
     WorldInstanceId seatless;
     Entity stood = Entity::Null;
     bool adoptedAtOnce = false;
+    bool markedAtOnce = false;
 
     app.InitFn = [&](MvApp& app)
     {
@@ -649,10 +651,14 @@ TEST_CASE("A seat stood after a rebind lands on a seatless world is adopted the 
             // The world admits its seat only once it is shown, as an arrival hook would stand it.
             CHECK(app.GetManagedViewports().GetViewportViewer(0) == Entity::Null);
             Scene& scene = app.GetWorldRunner().ResolveWorld(seatless)->GetScene();
+            const Entity pawn = scene.CreateEntity();
             stood = scene.CreateEntity();
             scene.Add<Viewer>(stood);
+            scene.Add<Possesses>(stood, Possesses{.Pawn = pawn});
             app.GetManagedViewports().SeatUnboundViewports(app.GetWorldRunner());
             adoptedAtOnce = app.GetManagedViewports().GetViewportViewer(0) == stood;
+            // The pawn is this viewport's before the frame's systems run, not after its tick.
+            markedAtOnce = ResolveLocalControlledPawn(scene, stood) == pawn;
         }
     };
 
@@ -660,6 +666,7 @@ TEST_CASE("A seat stood after a rebind lands on a seatless world is adopted the 
     app.Run({});
     REQUIRE_FALSE(stood.IsNull());
     CHECK(adoptedAtOnce);
+    CHECK(markedAtOnce);
 }
 
 TEST_CASE("An abandoned present-on-ready is reported once, and a later rebind does not repeat it")
