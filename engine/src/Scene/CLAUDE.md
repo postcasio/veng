@@ -810,12 +810,15 @@ design question that has not been settled, so the limit is documented rather tha
 ## Interaction — proximity focus as data, firing as a request
 
 **`Interactable { string Verb; f32 Range; bool Enabled }`** and
-**`Interactor { f32 Reach; f32 ConeAngle; Entity Focused }`** (`Veng/Scene/Interaction.h`) are the
-two halves of "walk up to something and use it". The builtin **`InteractionSystem`** runs an
+**`Interactor { f32 Reach; f32 ConeAngle; vec3 Origin; Entity Focused }`** (`Veng/Scene/Interaction.h`)
+are the two halves of "walk up to something and use it". The builtin **`InteractionSystem`** runs an
 `Overlap` (the physics query) within each interactor's `Reach` every tick, keeps the `Interactable`
 entities that are `Enabled`, fall inside the interactor's view cone (its local −Z is forward,
 matching the socket/camera convention) and within their own `Range`, picks the best by angle then
-distance, and writes it to `Focused` (`Entity::Null` with no candidate). It publishes the resolution
+distance, and writes it to `Focused` (`Entity::Null` with no candidate). **All of it is measured from
+`Origin`**, a point in the interactor's own frame (zero by default): a character whose origin is at
+its feet sets it near eye height, since from the feet anything at hand height a step away lies far
+above a level forward and outside the cone. It publishes the resolution
 and nothing more — a prompt is a UI concern reading `Focused` and `Verb`, so the engine supplies the
 resolution and never the presentation. A no-op scene with no `PhysicsWorld` clears every `Focused`.
 Every pose it reads — the interactor's origin and facing, each candidate's position — comes through

@@ -250,3 +250,16 @@ TEST_CASE("An enclosing interactable is still subject to Enabled and to its own 
     fixture.World->Get<Interactable>(cabin).Range = 14.0f;
     CHECK(fixture.Resolve() == cabin);
 }
+
+TEST_CASE("An interactor's origin lifts the cone to reach something at hand height up close")
+{
+    InteractionScene fixture;
+    // Half a metre ahead and 1.25 m up: from the actor's own origin that is 68 degrees above its
+    // level forward, past the 45 degree cone, and the actor stands inside no body.
+    const Entity button = fixture.AddInteractable(vec3(0.0f, 1.25f, -0.5f), 2.5f, true);
+    CHECK(fixture.Resolve().IsNull());
+
+    // Measured from 1.5 m up the same button lies 27 degrees below forward.
+    fixture.World->Get<Interactor>(fixture.Actor).Origin = vec3(0.0f, 1.5f, 0.0f);
+    CHECK(fixture.Resolve() == button);
+}

@@ -579,10 +579,12 @@ extern "C"
 /// Version 142 grows Scene by the list of entities whose transform history a reparent broke. A
 /// module's inlined scene accessors read members laid out after it, so a stale one reads them at
 /// shifted offsets.
+/// Version 143 grows Interactor by Origin, the point its sweep, cone and ranges are measured from.
+/// A module authors interactors, so a stale one lays the component out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 142u
+#define VENG_MODULE_ABI_VERSION 143u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

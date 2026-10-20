@@ -53,7 +53,8 @@ namespace Veng
                 // Every pose is resolved in the physics world's frame, so the sweep, the cone and the
                 // range filters all agree with the space the overlap test runs in — including when
                 // the consumer's Transform chain is offset from the solver's origin.
-                const PhysicsPose interactorPose = ResolvePhysicsPose(readScene, entity);
+                const PhysicsPose interactorPose = ResolvePhysicsPose(
+                    readScene, entity, glm::translate(mat4{1.0f}, interactor.Origin));
                 const vec3 forward =
                     glm::normalize(interactorPose.Rotation * vec3(0.0f, 0.0f, -1.0f));
 

@@ -29,9 +29,14 @@ namespace Veng
     ///
     /// Authored on the acting entity (a character). Each tick the InteractionSystem sweeps an Overlap
     /// within Reach, keeps the Interactable entities inside the view cone and within their own Range,
-    /// picks the best by angle then distance, and writes it to Focused. Forward is the entity's local
-    /// -Z in world space, matching the socket and camera convention. The resolution is published;
-    /// drawing a prompt from it, and deciding when to fire, are the consumer's.
+    /// picks the best by angle then distance, and writes it to Focused. The sweep, the cone and the
+    /// ranges are all measured from Origin, a point in the entity's own frame; forward is the entity's
+    /// local -Z in world space, matching the socket and camera convention. The resolution is
+    /// published; drawing a prompt from it, and deciding when to fire, are the consumer's.
+    ///
+    /// Origin is what lets a character whose own origin is at its feet use something at hand height
+    /// from close up: measured from the feet, a switch at chest height a step away lies far above a
+    /// level forward and outside any narrow cone.
     ///
     /// The cone is a bearing to the candidate's *origin*, so it is only meaningful for a candidate
     /// the interactor is outside of: a body enclosing the interactor is exempt from it, as is one
@@ -43,6 +48,8 @@ namespace Veng
         f32 Reach = 3.0f;
         /// @brief Half-angle of the view cone a candidate must fall within, in radians.
         f32 ConeAngle = 0.7853982f;
+        /// @brief The point everything is measured from, in the entity's own frame, in metres.
+        vec3 Origin{0.0f};
         /// @brief The best Interactable this tick, or Entity::Null when none qualifies. View output.
         Entity Focused = Entity::Null;
     };
@@ -79,6 +86,8 @@ VE_FIELD(Reach, .DisplayName = "Reach", .Tooltip = "Overlap query distance in me
          .Display = {.Min = 0.0})
 VE_FIELD(ConeAngle, .DisplayName = "Cone Angle",
          .Tooltip = "Radians; how far off-centre a candidate may be", .Display = {.Min = 0.0})
+VE_FIELD(Origin, .DisplayName = "Origin",
+         .Tooltip = "Where reach, cone and range are measured from, in the entity's own frame")
 VE_FIELD(Focused, .DisplayName = "Focused", .ReadOnly = true)
 VE_REFLECT_END();
 
