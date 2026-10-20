@@ -269,3 +269,52 @@ TEST_CASE("scene interpolation: the interpolated pass equals the per-entity walk
     // Another alpha is not the pass's, so it walks and still blends correctly.
     CHECK(equal(scene->GetInterpolatedWorldTransform(child, 1.0f), WorldMatrix(*scene, child)));
 }
+
+TEST_CASE("scene interpolation: a reparent is never blended across its two parents")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A hull moving along +X, and a character standing far from it at the root.
+    const Entity hull = scene->CreateEntity();
+    scene->Add<Transform>(hull, Transform{.Position = {100.0f, 0.0f, 0.0f}});
+    const Entity character = scene->CreateEntity();
+    scene->Add<Transform>(character, Transform{.Position = {-50.0f, 0.0f, 20.0f}});
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(hull).Position = {110.0f, 0.0f, 0.0f};
+    scene->SnapshotTransformHistory();
+
+    // The character the drawn hull carries is its seat offset under that hull, whatever the alpha.
+    const vec3 seat{0.0f, 1.0f, -2.0f};
+    const auto seated = [&](const f32 alpha)
+    { return Translation(scene->GetInterpolatedWorldTransform(hull, alpha)) + seat; };
+
+    // Boarding: parented to the hull and placed at the seat. Until the next snapshot it is live.
+    scene->SetParent(character, hull);
+    scene->Get<Transform>(character).Position = seat;
+    for (const f32 alpha : {0.0f, 0.5f, 1.0f})
+    {
+        CHECK(glm::all(
+            glm::epsilonEqual(Translation(scene->GetInterpolatedWorldTransform(character, alpha)),
+                              seated(alpha), 1e-4f)));
+    }
+
+    // The snapshot after the reparent holds it at the seat while the hull carries on moving.
+    scene->Get<Transform>(hull).Position = {120.0f, 0.0f, 0.0f};
+    scene->SnapshotTransformHistory();
+    for (const f32 alpha : {0.0f, 0.5f, 1.0f})
+    {
+        CHECK(glm::all(
+            glm::epsilonEqual(Translation(scene->GetInterpolatedWorldTransform(character, alpha)),
+                              seated(alpha), 1e-4f)));
+    }
+
+    // Leaving: back at the root and placed beside the hull, where it is drawn at once.
+    const vec3 exit{125.0f, 0.0f, 3.0f};
+    scene->SetParent(character, Entity::Null);
+    scene->Get<Transform>(character).Position = exit;
+    scene->Get<Transform>(hull).Position = {130.0f, 0.0f, 0.0f};
+    scene->SnapshotTransformHistory();
+    CHECK(glm::all(glm::epsilonEqual(
+        Translation(scene->GetInterpolatedWorldTransform(character, 0.5f)), exit, 1e-4f)));
+}

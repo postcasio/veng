@@ -121,7 +121,9 @@ namespace Veng
         /// Adds a Hierarchy component to `child` (and to `parent` when non-null) if
         /// absent. Passing Entity::Null as `parent` reparents `child` to the root
         /// (clears its up-link and detaches it from siblings). Bumps the spatial
-        /// version.
+        /// version. A change of parent breaks `child`'s transform history, so it is
+        /// drawn at its live pose until the next snapshot rather than blended across
+        /// two parents (see GetInterpolatedWorldTransform).
         /// @param child   The entity to reparent; must be alive.
         /// @param parent  The new parent, or Entity::Null for the root; must be alive when non-null.
         /// @pre `parent` is not a descendant of `child`.
@@ -140,7 +142,8 @@ namespace Veng
         /// The editor's drag-reorder / insert-at primitive: reparents `child`
         /// under `sibling`'s parent if they differ, then inserts it directly
         /// before `sibling` in the ordered child list, maintaining all links in
-        /// O(1). Bumps the spatial version.
+        /// O(1). Bumps the spatial version, and breaks `child`'s transform history
+        /// when its parent changes, as SetParent does.
         /// @param child    The entity to move; must be alive.
         /// @param sibling  The entity to insert before; must be alive and non-null.
         /// @pre `sibling`'s parent is not a descendant of `child`.
@@ -445,7 +448,8 @@ namespace Veng
         /// pose is already this frame's — see ViewPose). A View system (a camera rig) reads this so the
         /// camera and the meshes it frames share one interpolated pose. While the interpolated pass is
         /// current at @p alpha (UpdateInterpolatedWorldTransforms) this reads its entry instead of
-        /// walking.
+        /// walking. An entity reparented since the last snapshot also resolves live, and the next
+        /// snapshot holds it still, since the history it had is local to the parent it left.
         ///
         /// **The exemption is the ViewPose tag and nothing else.** An entity whose Transform is written
         /// per frame but which carries no tag is blended from history like any other, which resolves a
@@ -1109,6 +1113,15 @@ namespace Veng
         u64 m_HistoryVersion = ~0ULL;
         /// @brief True while the ring holds two differing ticks (motion to interpolate); false once converged.
         bool m_HistoryDirty = false;
+        /// @brief Entities reparented since the last history snapshot, which seeds their previous tick.
+        vector<Entity> m_HistoryBreaks;
+
+        /// @brief Drops @p entity's history so it resolves live until its next snapshot seeds both ticks.
+        ///
+        /// The history stores parent-local poses, which mean nothing under a different parent: blended
+        /// across a reparent, the old parent's local pose is composed under the new parent.
+        /// @param entity  The entity whose parent changed.
+        void BreakTransformHistory(Entity entity);
 
         /// @brief The simulation driving this scene's systems, or null when none is attached.
         Unique<SceneSimulation> m_Simulation;

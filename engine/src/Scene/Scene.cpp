@@ -319,8 +319,47 @@ namespace Veng
         // live transforms into current. The blend interpolates previous → current.
         std::swap(m_TransformPrev, m_TransformCur);
         CaptureTransforms(m_TransformCur);
+
+        // A reparented entity's previous tick is under its old parent: hold it still at this one.
+        for (const Entity entity : m_HistoryBreaks)
+        {
+            const TransformSnapshot* cur = m_TransformCur.Find(entity);
+            if (cur == nullptr)
+            {
+                continue;
+            }
+            if (m_TransformPrev.Entries.size() <= entity.Index)
+            {
+                m_TransformPrev.Entries.resize(m_TransformCur.Entries.size());
+            }
+            TransformSnapshot& prev = m_TransformPrev.Entries[entity.Index];
+            prev = *cur;
+            prev.Capture = m_TransformPrev.Capture;
+        }
+        m_HistoryBreaks.clear();
+
         m_HistoryVersion = version;
         m_HistoryDirty = true;
+    }
+
+    void Scene::BreakTransformHistory(const Entity entity)
+    {
+        // A scene that has never snapshotted has no history to break, and nothing would clear the list.
+        if (m_HistoryCapture == 0)
+        {
+            return;
+        }
+        for (TransformHistoryBuffer* buffer : {&m_TransformPrev, &m_TransformCur})
+        {
+            if (entity.Index < buffer->Entries.size())
+            {
+                buffer->Entries[entity.Index].Capture = 0;
+            }
+        }
+        if (std::ranges::find(m_HistoryBreaks, entity) == m_HistoryBreaks.end())
+        {
+            m_HistoryBreaks.push_back(entity);
+        }
     }
 
     mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha) const
@@ -723,6 +762,12 @@ namespace Veng
         VE_ASSERT(parent.IsNull() || !IsDescendantOf(parent, child),
                   "SetParent: parent is a descendant of child (cycle)");
 
+        if (const Hierarchy* link = TryHierarchy(child);
+            (link != nullptr ? link->Parent : Entity::Null) != parent)
+        {
+            BreakTransformHistory(child);
+        }
+
         UnlinkFromSiblings(child);
 
         Hierarchy& childLink = HierarchyOf(child);
@@ -775,6 +820,12 @@ namespace Veng
 
         VE_ASSERT(parent.IsNull() || !IsDescendantOf(parent, child),
                   "MoveBefore: sibling's parent is a descendant of child (cycle)");
+
+        if (const Hierarchy* link = TryHierarchy(child);
+            (link != nullptr ? link->Parent : Entity::Null) != parent)
+        {
+            BreakTransformHistory(child);
+        }
 
         UnlinkFromSiblings(child);
 

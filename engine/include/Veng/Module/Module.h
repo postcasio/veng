@@ -576,10 +576,13 @@ extern "C"
 /// exposure: the view-constants block grows ExposureParams (ViewConstantsStride 816 → 832) and
 /// RibbonPath grows CompensateExposure. A module's shaders index view regions by the stride and its
 /// systems author paths, so a stale one reads both at the old layout.
+/// Version 142 grows Scene by the list of entities whose transform history a reparent broke. A
+/// module's inlined scene accessors read members laid out after it, so a stale one reads them at
+/// shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 141u
+#define VENG_MODULE_ABI_VERSION 142u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

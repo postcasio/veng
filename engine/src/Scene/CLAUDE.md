@@ -508,6 +508,13 @@ not run while another thread reads the same scene's matrices. `GatherMeshes`, `S
 `ComputeWorldMatrices` bring it current themselves; any other reader that wants O(1) lookups across
 many entities calls the update once first.
 
+**A reparent breaks an entity's history.** The history holds parent-local poses, so blending one
+across a change of parent composes the old parent's local pose under the new one — a seated
+occupant drawn halfway between where it stood and its seat, for one frame. `SetParent` and
+`MoveBefore` therefore drop the entity's two snapshots when its parent changes: it resolves its live
+pose until the next snapshot, which seeds both ticks with the same pose, and blends normally from
+then on.
+
 `Scene::UpdateInterpolatedWorldTransforms(alpha)` is the same pass over the two-tick history,
 composing each level exactly as `GetInterpolatedWorldTransform` does (a `ViewPose` level live), and
 `GetInterpolatedWorldTransform` at that alpha then reads its entry. It is keyed by the spatial
