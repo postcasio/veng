@@ -60,6 +60,7 @@ namespace Veng
         settings.Shadows = look.Shadows;
         settings.PunctualShadows = look.PunctualShadows;
         settings.MaxShadowDistance = look.MaxShadowDistance;
+        settings.CascadeSplitLambda = look.CascadeSplitLambda;
         settings.ShadowResolution = look.ShadowResolution;
         settings.AutoExposure = look.AutoExposure;
         settings.AO = look.AO;

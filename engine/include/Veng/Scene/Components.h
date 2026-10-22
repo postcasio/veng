@@ -2000,6 +2000,12 @@ namespace Veng
         /// camera, and geometry past it is unshadowed. A large world needs a large value so distant
         /// casters still shadow; the default matches the renderer's own MaxShadowDistance default.
         f32 MaxShadowDistance = 100.0f;
+        /// @brief How the directional cascades split the shadowed range: 0 uniform, 1 logarithmic.
+        ///
+        /// Belongs beside MaxShadowDistance: a long range keeps its near cascades as tight as a short
+        /// one's only by leaning further toward the logarithmic split. The default matches the
+        /// renderer's own CascadeSplitLambda default.
+        f32 CascadeSplitLambda = 0.85f;
         /// @brief Directional cascade shadow-map resolution: the per-cascade tile edge, in texels.
         ///
         /// A larger value sharpens the cascades at a memory/bandwidth cost. Clamped to the device
@@ -2757,6 +2763,8 @@ VE_FIELD(LensDirtIntensity, .DisplayName = "Lens Dirt Intensity", .Display = {.M
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})
+VE_FIELD(CascadeSplitLambda, .DisplayName = "Cascade Split Lambda",
+         .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(EnvironmentLightTint, .DisplayName = "Environment Light Tint")

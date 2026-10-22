@@ -587,10 +587,12 @@ extern "C"
 /// Version 145 raises BindlessRegistry::MaxAreaVertices from 256 to 8 * MaxLights, so a view of
 /// MaxLights Rect lights packs every one's geometry: PackedSceneLights grows. A module packs lights,
 /// so a stale one lays it out short.
+/// Version 146 grows RenderLook by CascadeSplitLambda, beside MaxShadowDistance. A module spawns
+/// looks, so a stale one lays the component out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 145u
+#define VENG_MODULE_ABI_VERSION 146u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

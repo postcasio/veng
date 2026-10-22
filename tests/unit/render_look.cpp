@@ -76,6 +76,24 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK_FALSE(view.LensDirt.IsValid());
 }
 
+TEST_CASE("ApplyRenderLook carries the authored shadow range and its cascade split")
+{
+    RenderLook render;
+    render.MaxShadowDistance = 10000.0f;
+    render.CascadeSplitLambda = 0.955f;
+    Renderer::SceneRendererSettings settings;
+    Renderer::ViewState view;
+    ApplyRenderLook(render, settings, view);
+    CHECK(settings.MaxShadowDistance == doctest::Approx(10000.0f));
+    CHECK(settings.CascadeSplitLambda == doctest::Approx(0.955f));
+
+    // A look authoring no split keeps the renderer's own.
+    const RenderLook defaults;
+    Renderer::SceneRendererSettings fresh;
+    ApplyRenderLook(defaults, fresh, view);
+    CHECK(fresh.CascadeSplitLambda == Renderer::SceneRendererSettings{}.CascadeSplitLambda);
+}
+
 TEST_CASE("ApplyRenderLook clamps the authored depth-of-field quality knobs")
 {
     RenderLook render;
