@@ -149,12 +149,44 @@ namespace Veng
             VE_ASSERT(false, "Unmapped MotionType {}", static_cast<u32>(motion));
         }
 
-        /// @brief Whether two RigidBody settings would produce the same body.
-        [[nodiscard]] bool SameSettings(const RigidBody& a, const RigidBody& b)
+        /// @brief Whether two RigidBody settings build the same body, leaving aside the fields the
+        ///        solver takes on a live one.
+        ///
+        /// Mass, inertia scale, damping, motion quality and speed limits are all changed on the
+        /// body the solver holds, so only the motion type and the layer are built in.
+        [[nodiscard]] bool SameBuild(const RigidBody& a, const RigidBody& b)
         {
-            return a.Motion == b.Motion && a.Layer == b.Layer && a.Mass == b.Mass &&
-                   a.LinearDamping == b.LinearDamping && a.AngularDamping == b.AngularDamping &&
-                   a.InertiaScale == b.InertiaScale;
+            return a.Motion == b.Motion && a.Layer == b.Layer;
+        }
+
+        /// @brief Whether @p collider backs its body with a triangle mesh, a surface with no
+        ///        interior and so no mass properties of its own.
+        [[nodiscard]] bool IsTriangleMesh(const Collider& collider)
+        {
+            return collider.Shape == ColliderShape::Mesh && collider.Geometry.Get() != nullptr &&
+                   collider.Geometry.Get()->ContainsTriangleMesh();
+        }
+
+        /// @brief The mass properties a non-static body of @p shape takes from @p body.
+        ///
+        /// An authored RigidBody::Mass scales the shape's own properties to it; without one they are
+        /// the shape's, derived from its volume. Either way the inertia is scaled by
+        /// RigidBody::InertiaScale. Creation and an in-place edit both build them here, so a body
+        /// whose mass is edited weighs exactly what one created with that mass would.
+        /// @param shape  The body's built shape, scale included.
+        /// @param body   The mass and inertia scale to take.
+        /// @return The mass properties.
+        [[nodiscard]] JPH::MassProperties MassPropertiesOf(const JPH::Shape& shape,
+                                                           const RigidBody& body)
+        {
+            JPH::MassProperties properties = shape.GetMassProperties();
+            if (body.Mass > 0.0f)
+            {
+                properties.ScaleToMass(body.Mass);
+            }
+            properties.mInertia *= body.InertiaScale;
+            properties.mInertia(3, 3) = 1.0f;
+            return properties;
         }
 
         /// @brief Maps the engine's motion quality onto the solver's.
@@ -877,18 +909,61 @@ namespace Veng
             record.Body.MaxAngularSpeed = body.MaxAngularSpeed;
         }
 
+        /// @brief Takes a live body's mass, inertia scale and damping from @p body in place.
+        ///
+        /// The solver changes each on a body it holds, so the edit keeps the body's identity, pose,
+        /// velocities, contacts and sleep state, and wakes nothing: a body taking on or shedding
+        /// load while it moves carries on at the velocity it had. A kinematic body takes the mass
+        /// properties too, as it carries a dynamic one's so that turning it Dynamic weighs what its
+        /// component says. A static body, or one backed by a triangle mesh, has none to change and
+        /// takes the edit into its record alone.
+        /// @param native  The world's backend state.
+        /// @param record  The body's record, updated to match.
+        /// @param body    The settings to take.
+        void ApplyMassSettings(const PhysicsWorld::Native& native, Detail::BodyRecord& record,
+                               const RigidBody& body)
+        {
+            const bool mass =
+                record.Body.Mass != body.Mass || record.Body.InertiaScale != body.InertiaScale;
+            const bool damping = record.Body.LinearDamping != body.LinearDamping ||
+                                 record.Body.AngularDamping != body.AngularDamping;
+            if (!mass && !damping)
+            {
+                return;
+            }
+            if (body.Motion != MotionType::Static)
+            {
+                const JPH::BodyLockWrite lock(native.System.GetBodyLockInterface(), record.Id);
+                if (lock.Succeeded())
+                {
+                    JPH::Body& live = lock.GetBody();
+                    JPH::MotionProperties* motion = live.GetMotionProperties();
+                    motion->SetLinearDamping(body.LinearDamping);
+                    motion->SetAngularDamping(body.AngularDamping);
+                    if (mass && !IsTriangleMesh(record.Shape))
+                    {
+                        motion->SetMassProperties(motion->GetAllowedDOFs(),
+                                                  MassPropertiesOf(*live.GetShape(), body));
+                    }
+                }
+            }
+            record.Body.Mass = body.Mass;
+            record.Body.InertiaScale = body.InertiaScale;
+            record.Body.LinearDamping = body.LinearDamping;
+            record.Body.AngularDamping = body.AngularDamping;
+        }
+
         /// @brief Whether @p body differs from a live body's settings only in turning it between
-        ///        Kinematic and Dynamic, which the solver takes on the body it holds.
+        ///        Kinematic and Dynamic, besides what the solver takes on a live body, which it
+        ///        also takes on the body it holds.
         [[nodiscard]] bool SwitchesMotionInPlace(const Detail::BodyRecord& record,
                                                  const RigidBody& body, const Collider& collider,
                                                  const bool sensor)
         {
             const auto moving = [](const MotionType motion)
             { return motion == MotionType::Kinematic || motion == MotionType::Dynamic; };
-            RigidBody same = body;
-            same.Motion = record.Body.Motion;
             return record.Body.Motion != body.Motion && moving(record.Body.Motion) &&
-                   moving(body.Motion) && SameSettings(record.Body, same) &&
+                   moving(body.Motion) && record.Body.Layer == body.Layer &&
                    SameSettings(record.Shape, collider) && record.SensorComponent == sensor;
         }
 
@@ -936,6 +1011,7 @@ namespace Veng
             record.Body.SyncTransform = body.SyncTransform;
             record.Body.StartAsleep = body.StartAsleep;
             ApplyMotionSettings(native, record, body);
+            ApplyMassSettings(native, record, body);
         }
     }
 
@@ -948,9 +1024,7 @@ namespace Veng
             m_Native->Pending.push_back(entity);
         }
 
-        const bool triangleMesh = collider.Shape == ColliderShape::Mesh &&
-                                  collider.Geometry.Get() != nullptr &&
-                                  collider.Geometry.Get()->ContainsTriangleMesh();
+        const bool triangleMesh = IsTriangleMesh(collider);
         VE_ASSERT(!(triangleMesh && body.Motion == MotionType::Dynamic),
                   "Entity {} carries a triangle-mesh CollisionShape on a Dynamic RigidBody; a "
                   "triangle mesh has no interior and no inertia, so Static and Kinematic are the "
@@ -969,7 +1043,7 @@ namespace Veng
         if (existing != m_Native->Bodies.end())
         {
             Detail::BodyRecord& record = existing->second;
-            if (SameSettings(record.Body, body) && SameSettings(record.Shape, collider) &&
+            if (SameBuild(record.Body, body) && SameSettings(record.Shape, collider) &&
                 record.SensorComponent == sensor)
             {
                 // SyncTransform and StartAsleep build nothing into the body, so an edit to either
@@ -984,6 +1058,7 @@ namespace Veng
                 {
                     ApplyMotionSettings(*m_Native, record, body);
                 }
+                ApplyMassSettings(*m_Native, record, body);
                 SetReportsContacts(*m_Native, entity, record, reportContacts);
                 return;
             }
@@ -1025,8 +1100,6 @@ namespace Veng
         settings.mMotionQuality = ToJoltQuality(body.Quality);
         settings.mMaxLinearVelocity = body.MaxLinearSpeed;
         settings.mMaxAngularVelocity = body.MaxAngularSpeed;
-        // Applies whether the mass is authored or derived from the shape's volume.
-        settings.mInertiaMultiplier = body.InertiaScale;
         // A Trigger-layer body reports overlaps and pushes nothing; that is what the layer means.
         settings.mIsSensor = sensor || body.Layer == PhysicsLayer::Trigger;
         // A sensor is told about non-dynamic bodies too, so a kinematic mover entering a trigger
@@ -1034,10 +1107,10 @@ namespace Veng
         settings.mCollideKinematicVsNonDynamic = settings.mIsSensor;
         // A kinematic body carries the mass a dynamic one would, so one turned Dynamic in place
         // weighs what its component says.
-        if (body.Motion != MotionType::Static && !triangleMesh && body.Mass > 0.0f)
+        if (body.Motion != MotionType::Static && !triangleMesh)
         {
-            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = body.Mass;
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+            settings.mMassPropertiesOverride = MassPropertiesOf(*shape, body);
         }
         else if (triangleMesh && body.Motion == MotionType::Kinematic)
         {

@@ -92,10 +92,14 @@ through the existing pipeline. An entity needs a `RigidBody` and a `Collider` to
 `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at runtime creates the
 backing body on the next step, removing either destroys it, and editing a field re-creates the body
 with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body,
-and `Quality`, `MaxLinearSpeed` and `MaxAngularSpeed`, which the solver changes on a live body; all
-five are taken in place, keeping the body's pose, velocity and sleep state, as is adding or removing
-a `ContactReport`. **Turning a body between `Kinematic` and `Dynamic`, with nothing else changed, is
-taken in place too**: it keeps its identity — so a `Predicted` body's per-tick record runs on through
+and `Quality`, `MaxLinearSpeed`, `MaxAngularSpeed`, `Mass`, `InertiaScale`, `LinearDamping` and
+`AngularDamping`, which the solver changes on a live body; all nine are taken in place, keeping the
+body's identity, pose, velocity, contacts and sleep state, as is adding or removing a
+`ContactReport`. So a body whose mass changes while it moves — a vehicle taking on or dropping load,
+one burning propellant, a crate being filled — carries on at the velocity it had and answers the next
+force at its new mass, rather than stopping dead in a rebuilt body. The mass properties are rebuilt
+from the body's shape exactly as creation builds them. **Turning a body between `Kinematic` and
+`Dynamic`, with nothing else changed but those in-place fields, is taken in place too**: it keeps its identity — so a `Predicted` body's per-tick record runs on through
 the switch — its pose, its velocities and its contacts, and is woken. A body turned `Dynamic`
 integrates from the velocity it holds (a kinematic one's is what its last sweep set), and one turned
 `Kinematic` is driven from its source component from the next step. A kinematic body is built with

@@ -272,15 +272,20 @@ namespace Veng
         /// @brief Brings @p entity's body into line with its components, creating it if absent.
         ///
         /// Idempotent: a body that already exists with settings equal to @p body and @p collider is
-        /// left exactly as it is, pose and velocity included. Any difference re-creates the body
-        /// from @p pose, discarding its velocity and contact state — the components are the
-        /// authority and the body is their shadow. RigidBody::StartAsleep is read only here, at
+        /// left exactly as it is, pose and velocity included. A difference in the motion type, the
+        /// layer, the shape or the sensor flag re-creates the body from @p pose, discarding its
+        /// velocity and contact state: the components are the authority and the body is their
+        /// shadow. RigidBody::StartAsleep is read only here, at
         /// creation, and a difference in it alone re-creates nothing. RigidBody::Quality,
         /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing,
-        /// and so is @p reportContacts. A body turned between Kinematic and Dynamic with nothing
-        /// else changed is turned in place: it keeps its identity, pose, velocities and contacts,
-        /// and is woken — a kinematic one driven from its source component from the next step, a
-        /// dynamic one integrated from the velocities it holds.
+        /// and so is @p reportContacts. RigidBody::Mass, InertiaScale, LinearDamping and
+        /// AngularDamping are taken in place too, keeping the body's identity, pose, velocities,
+        /// contacts and sleep state, so a body whose load changes while it moves carries on at the
+        /// velocity it had and answers forces at its new mass. A body turned between Kinematic and
+        /// Dynamic, with nothing else changed but those in-place fields, is turned in place: it
+        /// keeps its identity, pose, velocities and contacts, and is woken — a kinematic one driven
+        /// from its source component from the next step, a dynamic one integrated from the
+        /// velocities it holds.
         /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
         /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
         ///

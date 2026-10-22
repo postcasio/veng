@@ -994,7 +994,7 @@ TEST_CASE("a body turned between kinematic and dynamic keeps its motion, its mas
     CHECK(fixture.Physics().HasRecordedState(body, driven));
 }
 
-TEST_CASE("motion quality and speed limits are taken in place, and an inertia scale re-creates")
+TEST_CASE("motion quality and speed limits are taken in place, and a layer change re-creates")
 {
     const PhysicsFixture fixture(WeightlessWorld());
     SpawnThinSlab(fixture);
@@ -1020,9 +1020,102 @@ TEST_CASE("motion quality and speed limits are taken in place, and an inertia sc
 
     // A re-created body starts from rest.
     fixture.Physics().SetLinearVelocity(bullet, vec3(0.0f, 0.0f, 3.0f));
-    fixture.World->Get<RigidBody>(bullet).InertiaScale = 0.5f;
+    fixture.World->Get<RigidBody>(bullet).Layer = PhysicsLayer::Character;
     fixture.Tick(1);
     CHECK(glm::length(fixture.Physics().GetLinearVelocity(bullet)) < 1e-4f);
+}
+
+TEST_CASE("a moving body whose mass changes keeps its motion and record, and weighs its new mass")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    const Entity body =
+        SpawnSphere(fixture, vec3(0.0f), 0.5f,
+                    RigidBody{.Mass = 10.0f, .LinearDamping = 0.0f, .AngularDamping = 0.0f});
+    fixture.World->Add<Predicted>(body);
+    fixture.Tick(1);
+    const vec3 linear(3.0f, 0.0f, -2.0f);
+    const vec3 angular(0.0f, 1.5f, 0.0f);
+    fixture.Physics().SetLinearVelocity(body, linear);
+    fixture.Physics().SetAngularVelocity(body, angular);
+    fixture.Tick(2);
+    const u64 before = fixture.SimTick;
+
+    fixture.World->Get<RigidBody>(body).Mass = 20.0f;
+    fixture.Tick(1);
+    CHECK(fixture.Physics().GetStepStats().Reconciled >= 1);
+    CHECK(glm::length(fixture.Physics().GetLinearVelocity(body) - linear) < 1e-4f);
+    CHECK(glm::length(fixture.Physics().GetAngularVelocity(body) - angular) < 1e-4f);
+    CHECK(fixture.Physics().HasRecordedState(body, before));
+
+    fixture.Physics().AddImpulse(body, vec3(0.0f, 20.0f, 0.0f));
+    CHECK(fixture.Physics().GetLinearVelocity(body).y == doctest::Approx(1.0f).epsilon(1e-4));
+}
+
+TEST_CASE("an inertia scale or damping edited on a moving body keeps its motion and takes effect")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    const auto spawn = [&](const f32 z)
+    {
+        const Entity box = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(box, Transform{.Position = vec3(0.0f, 0.0f, z)});
+        fixture.World->Add<RigidBody>(
+            box, RigidBody{.Mass = 10.0f, .LinearDamping = 0.0f, .AngularDamping = 0.0f});
+        fixture.World->Add<Collider>(box, Collider{.Extents = vec3(1.0f, 0.5f, 0.25f)});
+        return box;
+    };
+    const Entity whole = spawn(0.0f);
+    const Entity half = spawn(10.0f);
+    const Entity damped = spawn(20.0f);
+    fixture.Tick(1);
+    constexpr f32 Speed = 10.0f;
+    for (const Entity box : {whole, half, damped})
+    {
+        fixture.Physics().SetLinearVelocity(box, vec3(Speed, 0.0f, 0.0f));
+    }
+    fixture.Tick(1);
+
+    fixture.World->Get<RigidBody>(half).InertiaScale = 0.5f;
+    fixture.World->Get<RigidBody>(damped).LinearDamping = 1.0f;
+    fixture.Tick(1);
+    CHECK(fixture.Physics().GetLinearVelocity(half).x == doctest::Approx(Speed).epsilon(1e-5));
+    // The new damping governs the step it was taken before: dv/dt = -c v over one tick.
+    CHECK(fixture.Physics().GetLinearVelocity(damped).x ==
+          doctest::Approx(Speed * (1.0f - FixedStep)).epsilon(1e-4));
+
+    // The same off-centre impulse spins the halved body twice as fast.
+    for (const Entity box : {whole, half})
+    {
+        const dvec3 at = fixture.Physics().GetBodyPose(box)->Position + dvec3(0.8, 0.0, 0.0);
+        fixture.Physics().AddImpulseAt(box, vec3(0.0f, 2.0f, 0.0f), at);
+    }
+    const f32 wholeSpin = glm::length(fixture.Physics().GetAngularVelocity(whole));
+    const f32 halfSpin = glm::length(fixture.Physics().GetAngularVelocity(half));
+    REQUIRE(wholeSpin > 0.0f);
+    CHECK(halfSpin / wholeSpin == doctest::Approx(2.0f).epsilon(1e-4));
+}
+
+TEST_CASE("a sleeping body whose mass changes stays asleep, and a kinematic one turned dynamic "
+          "with a new mass weighs it")
+{
+    const PhysicsFixture fixture(WeightlessWorld());
+    const Entity sleeper =
+        SpawnSphere(fixture, vec3(0.0f), 0.5f, RigidBody{.Mass = 10.0f, .StartAsleep = true});
+    const Entity mover = SpawnSphere(fixture, vec3(0.0f, 0.0f, 10.0f), 0.5f,
+                                     RigidBody{.Motion = MotionType::Kinematic, .Mass = 10.0f});
+    fixture.Tick(1);
+    REQUIRE_FALSE(fixture.Physics().IsBodyActive(sleeper));
+
+    fixture.World->Get<RigidBody>(sleeper).Mass = 40.0f;
+    auto& moving = fixture.World->Get<RigidBody>(mover);
+    moving.Motion = MotionType::Dynamic;
+    moving.Mass = 5.0f;
+    fixture.Tick(1);
+    CHECK_FALSE(fixture.Physics().IsBodyActive(sleeper));
+
+    fixture.Physics().AddImpulse(sleeper, vec3(40.0f, 0.0f, 0.0f));
+    fixture.Physics().AddImpulse(mover, vec3(5.0f, 0.0f, 0.0f));
+    CHECK(fixture.Physics().GetLinearVelocity(sleeper).x == doctest::Approx(1.0f).epsilon(1e-4));
+    CHECK(fixture.Physics().GetLinearVelocity(mover).x == doctest::Approx(1.0f).epsilon(1e-4));
 }
 
 TEST_CASE("Scatter pairs as its matrix row says, kept apart from movers when a consumer asks")
