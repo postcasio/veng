@@ -473,13 +473,18 @@ each cell of the sub-rect, since the fragment wraps it arithmetically.
 ## The draw floor: a device-free draw list + a `GuiScenePass`
 
 `Gui::DrawList` (`Veng/Gui/DrawList.h`) is a device-free builder of **batched, clipped, textured
-quads** — rounded-rect / border SDF, 9-slice, tint/opacity, round-capped line segments, and MSDF
-text runs — that `Document::Build` appends into. **`DrawList::Line(from, to, width, color)` is the
-one primitive that is not an axis-aligned box**, and it is still one: a capsule — the rounded rect
-of a box `|to − from| + width` long and `width` high, radius `width / 2` — turned onto the segment
-through `PushTransform` about its midpoint, so a line rides the ordinary shape run and batches with
-the fills around it. Consecutive segments meet in round joins because their caps overlap, which is
-also why a translucent line covers each join twice. A `GuiScenePass` records the draw list into an offscreen image
+quads** — rounded-rect / border SDF, 9-slice, tint/opacity, round-capped line segments, joined strokes, and MSDF
+text runs — that `Document::Build` appends into. **Two primitives are not axis-aligned boxes, and both are still the one shape path.
+`DrawList::Line(from, to, width, color)` is a capsule — the rounded rect of a box `|to − from| +
+width` long and `width` high, radius `width / 2` — turned onto the segment through `PushTransform`
+about its midpoint, so a line rides the ordinary shape run and batches with the fills around it; two
+lines sharing an end overlap there, so a translucent pair covers its join twice.
+**`DrawList::Polyline(points, colors, width)` is the joined stroke**: one strip whose every vertex
+reads a single rounded box laid along the line's arc length — the across coordinate anti-aliases the
+sides and the corner radius rounds the two ends — so neighbouring segments share their join's
+vertices (a miter, or a bevel past a 4× miter or where a segment is too short to hold one) and no
+pixel is covered twice. Each point carries its own colour, interpolated along the segments either
+side, which is what lets a stroke fade along its length evenly. A `GuiScenePass` records the draw list into an offscreen image
 blended over the viewport's scene output. Its two fixed pipelines (the rounded-rect shape path and
 the MSDF text path) are built from **core-pack** Slang shaders a consumer reuses rather than
 authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a consumer *does*
@@ -892,17 +897,20 @@ cascade (`Dropdown`, `DropdownArrow`, and the `:hover`/`:focused`/`:selected` va
 **A `Polyline` is a Panel that strokes a line through its points** — a sparkline, a line chart, a
 graph edge, a route. It lays out as a plain flex box (not a measured leaf) with its own background,
 border, and shadow, then draws `Element::Points` — **normalized to its content box**, `(0,0)` the
-top-left and `(1,1)` the bottom-right, y down, so the line scales with the box — as one
-`DrawList::Line` per visible segment, **over its fill and under its border**, in the `stroke` color at
-`stroke-width` (default 1px; `stroke` defaults transparent, which draws nothing). `stroke-trim`
+top-left and `(1,1)` the bottom-right, y down, so the line scales with the box — as one joined
+`DrawList::Polyline` strip, **over its fill and under its border**, in the `stroke` color at
+`stroke-width` (default 1px; `stroke` defaults transparent, which draws nothing), times
+`Element::PointColors` where they are set — a colour per point, so a driver draws a gradient or a
+fading trail along the line. `stroke-trim`
 (default 1, clamped to [0, 1]) draws only that fraction of the line's total length from its first
 point, cutting the segment it lands in part-way — a transition or keyframe clip on it is a draw-on
 reveal. All three animate, and the stroke is **paint only**: it neither sizes the box nor hit-tests,
 and it is not part of an arc-shaped Polyline's silhouette, so the line is drawn uncut. Points author
 as the markup literal `points="x,y x,y …"` (validated at cook by `Gui::ParsePolylinePoints`, carried on
 the recipe's binding table exactly as the widget config attributes are, so the cooked format did not
-move) or at runtime through `Document::SetPolylinePoints(element, span<const vec2>)`, the paint-only,
-early-out-on-unchanged setter a chart driver calls each frame. A `{binding}` on `points` is not
+move) or at runtime through `Document::SetPolylinePoints(element, span<const vec2>[, span<const vec4>])`,
+the paint-only, early-out-on-unchanged setter a chart driver calls each frame — the second span the
+per-point colours, which the points-only form clears. A `{binding}` on `points` is not
 resolved.
 
 **The widget parts live in `Children`, as a trailing tail.** That buys the layout mirror, the

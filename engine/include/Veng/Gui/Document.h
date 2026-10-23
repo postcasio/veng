@@ -405,6 +405,20 @@ namespace Veng::Gui
         /// @param points   The new points, in order; fewer than two draw no line.
         void SetPolylinePoints(Element& element, std::span<const vec2> points);
 
+        /// @brief Sets a Polyline's points and a colour for each — a paint-only write, no layout
+        ///        re-solve.
+        ///
+        /// SetPolylinePoints with Element::PointColors written beside the points: each colour
+        /// multiplies the `stroke` at its point and is interpolated along the segments either side,
+        /// so a driver draws a gradient or a fading trail. Writing what the element already holds is
+        /// a no-op; the points-only overload clears the colours.
+        /// @param element  The Polyline whose points to set.
+        /// @param points   The new points, in order; fewer than two draw no line.
+        /// @param colors   One linear straight-alpha RGBA colour per point; its size must match
+        ///                 @p points.
+        void SetPolylinePoints(Element& element, std::span<const vec2> points,
+                               std::span<const vec4> colors);
+
         /// @brief Pins an element absolutely at a rect, dirtying layout only when its size moved.
         ///
         /// The one-call form of the pin-at-rect idiom: absolute position, Left/Top insets at

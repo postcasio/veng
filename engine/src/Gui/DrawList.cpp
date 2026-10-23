@@ -421,6 +421,158 @@ namespace Veng::Gui
         }
     }
 
+    void DrawList::PushShapeVertex(const vec2 position, const vec4 color, const vec2 rectHalf,
+                                   const vec2 rectCoord, const f32 radius)
+    {
+        const bool arcMasked = !m_ArcStack.empty();
+        vec4 arcLane(0.0f);
+        vec2 arcCoord(0.0f);
+        if (arcMasked)
+        {
+            const ArcShape& arc = m_ArcStack.back();
+            const f32 arcRadius = std::max(arc.Radius, MinArcRadius);
+            arcLane = vec4(arc.StartRadians, std::clamp(arc.SweepRadians, 0.0f, FullTurn),
+                           std::max(arc.Thickness, 0.0f),
+                           arc.Cap == ArcCap::Round ? -arcRadius : arcRadius);
+            arcCoord = position - arc.Center;
+        }
+        m_Vertices.push_back(GuiVertex{
+            .Position = ApplyTransform(position),
+            .Color = color,
+            .RectHalf = rectHalf,
+            .RectCoord = rectCoord,
+            .Params = vec4(radius, 0.0f, UntexturedIndex, UntexturedIndex),
+            .Arc = arcLane,
+            .ArcCoord = arcCoord,
+        });
+    }
+
+    void DrawList::Polyline(const std::span<const vec2> points, const std::span<const vec4> colors,
+                            const f32 width)
+    {
+        VE_ASSERT(colors.size() == points.size(), "Polyline takes one colour per point ({} for {})",
+                  colors.size(), points.size());
+        if (width <= 0.0f || points.size() < 2)
+        {
+            return;
+        }
+
+        // A point closer than this to the one before it adds no direction, and a zero-length
+        // segment has no normal to offset along.
+        constexpr f32 MinSegment = 1e-3f;
+        // A join whose miter would reach past this many half-widths is bevelled: past it the miter
+        // spike outgrows the line.
+        constexpr f32 MiterLimit = 4.0f;
+
+        struct Knot
+        {
+            vec2 Point;
+            vec4 Color;
+            f32 Along;
+        };
+        vector<Knot> knots;
+        knots.reserve(points.size());
+        for (usize i = 0; i < points.size(); ++i)
+        {
+            if (knots.empty())
+            {
+                knots.push_back(Knot{.Point = points[i], .Color = colors[i], .Along = 0.0f});
+                continue;
+            }
+            const f32 length = glm::distance(knots.back().Point, points[i]);
+            if (length > MinSegment)
+            {
+                knots.push_back(Knot{
+                    .Point = points[i], .Color = colors[i], .Along = knots.back().Along + length});
+            }
+        }
+        if (knots.size() < 2)
+        {
+            return;
+        }
+
+        EnsureRun(GuiPipeline::Shape, Renderer::TextureHandle::Invalid);
+
+        // One rounded box laid along the whole line, its long axis the arc length: the SDF's
+        // across coordinate anti-aliases the sides and its corner radius rounds the two ends.
+        const f32 half = width * 0.5f;
+        const f32 total = knots.back().Along;
+        const vec2 rectHalf(total * 0.5f + half, half);
+        const auto along = [total](const f32 s) { return s - total * 0.5f; };
+        const auto normalOf = [](const vec2 d) { return vec2(-d.y, d.x); };
+        const auto directionOf = [&knots](const usize i)
+        { return glm::normalize(knots[i + 1].Point - knots[i].Point); };
+
+        // A pair is the stroke's two edges at one place along it: +offset first, then -offset.
+        const auto pair = [&](const vec2 centre, const vec2 offset, const f32 s, const vec4 color)
+        {
+            const u32 base = static_cast<u32>(m_Vertices.size());
+            PushShapeVertex(centre + offset, color, rectHalf, vec2(along(s), half), half);
+            PushShapeVertex(centre - offset, color, rectHalf, vec2(along(s), -half), half);
+            return base;
+        };
+        const auto bridge = [this](const u32 from, const u32 to)
+        {
+            for (const u32 index : {from, from + 1, to + 1, from, to + 1, to})
+            {
+                m_Indices.push_back(index);
+            }
+            m_Runs.back().IndexCount += 6;
+        };
+
+        const vec2 firstDir = directionOf(0);
+        u32 previous = pair(knots[0].Point - firstDir * half, normalOf(firstDir) * half, -half,
+                            knots[0].Color);
+        for (usize i = 1; i + 1 < knots.size(); ++i)
+        {
+            const Knot& knot = knots[i];
+            const vec2 inDir = directionOf(i - 1);
+            const vec2 outDir = directionOf(i);
+            const vec2 inNormal = normalOf(inDir);
+            const vec2 outNormal = normalOf(outDir);
+            const vec2 bisector = inNormal + outNormal;
+            const f32 bisectorLength = glm::length(bisector);
+            // The cosine of half the turn: the miter is the bisector at 1 / cos half-widths.
+            const f32 cosHalf = bisectorLength * 0.5f;
+            const f32 tanHalf = cosHalf > 0.0f
+                                    ? std::sqrt(std::max(1.0f - cosHalf * cosHalf, 0.0f)) / cosHalf
+                                    : 0.0f;
+            // The inner miter point slides back along both segments by half · tan; a segment
+            // shorter than that would fold the strip over itself.
+            const f32 shorter =
+                std::min(knot.Along - knots[i - 1].Along, knots[i + 1].Along - knot.Along);
+            if (cosHalf * MiterLimit >= 1.0f && half * tanHalf <= shorter)
+            {
+                const vec2 miter = bisector / bisectorLength * (half / cosHalf);
+                const u32 joint = pair(knot.Point, miter, knot.Along, knot.Color);
+                bridge(previous, joint);
+                previous = joint;
+                continue;
+            }
+
+            // A bevel: each segment ends square at the point, and a triangle fills the outside of
+            // the turn from the point to the two square corners there.
+            const u32 inEnd = pair(knot.Point, inNormal * half, knot.Along, knot.Color);
+            bridge(previous, inEnd);
+            const u32 outStart = pair(knot.Point, outNormal * half, knot.Along, knot.Color);
+            const bool outsideIsNegative = glm::dot(inNormal, outDir) > 0.0f;
+            const u32 centre = static_cast<u32>(m_Vertices.size());
+            PushShapeVertex(knot.Point, knot.Color, rectHalf, vec2(along(knot.Along), 0.0f), half);
+            const u32 side = outsideIsNegative ? 1 : 0;
+            for (const u32 index : {centre, inEnd + side, outStart + side})
+            {
+                m_Indices.push_back(index);
+            }
+            m_Runs.back().IndexCount += 3;
+            previous = outStart;
+        }
+        const usize last = knots.size() - 1;
+        const vec2 lastDir = directionOf(last - 1);
+        const u32 end = pair(knots[last].Point + lastDir * half, normalOf(lastDir) * half,
+                             total + half, knots[last].Color);
+        bridge(previous, end);
+    }
+
     void DrawList::Shadow(const Rect& rect, const BoxShadow& shadow, const CornerRadii& radii)
     {
         if (rect.IsEmpty() || shadow.Color.a <= 0.0f)

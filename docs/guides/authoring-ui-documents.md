@@ -811,17 +811,20 @@ box:
 .spark {
     width: 120px; height: 32px; padding: 4px;
     stroke: #4fc3f7;          /* transparent by default, which draws no line */
-    stroke-width: 2px;        /* centred on the points; round caps make round joins */
+    stroke-width: 2px;        /* centred on the points; mitred joins, round ends */
     stroke-trim: 1;           /* the drawn fraction of the length, from the first point */
     transition: stroke-trim 0.6s;
 }
 ```
 
 `stroke`, `stroke-width`, and `stroke-trim` all animate, so easing `stroke-trim` from 0 to 1 draws
-the line on. The stroke is paint only — it neither sizes the box nor takes the pointer — and a
-translucent stroke darkens where its segments meet, since their round caps overlap. The markup list
-is a literal checked at cook time (`x,y` pairs separated by whitespace); to plot data at runtime,
-call `Document::SetPolylinePoints(element, points)`, a paint-only write that skips an unchanged list.
+the line on. The stroke is paint only — it neither sizes the box nor takes the pointer — and it is
+drawn as one joined strip, so a translucent stroke stays even where its segments meet. The markup
+list is a literal checked at cook time (`x,y` pairs separated by whitespace); to plot data at
+runtime, call `Document::SetPolylinePoints(element, points)`, a paint-only write that skips an
+unchanged list. Its `SetPolylinePoints(element, points, colors)` form gives each point a colour that
+multiplies `stroke` and blends along the segments either side, which is how a line fades along its
+length.
 
 ### Worked example: a framed panel with a tiled backdrop and a shader readout
 

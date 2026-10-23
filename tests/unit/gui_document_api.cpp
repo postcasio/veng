@@ -3,6 +3,7 @@
 // hit-test transparency, anchored absolute positioning through unset inset edges, style
 // animations, and style-property bindings. Device-free — a stub text measurer, no font resource.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -883,47 +884,76 @@ namespace
         return line;
     }
 
-    // The emitted quads' long half-extents, one per stroked segment (the stroke is the only
-    // primitive the Polyline above draws).
-    vector<f32> SegmentHalfLengths(const Document& doc)
+    // The stroke's vertices — the stroke is the only primitive the Polyline above draws.
+    vector<GuiVertex> StrokeVertices(const Document& doc)
     {
         DrawList list;
         doc.Build(list);
-        vector<f32> halves;
-        for (usize i = 0; i < list.GetVertices().size(); i += 4)
-        {
-            halves.push_back(list.GetVertices()[i].RectHalf.x);
-        }
-        return halves;
+        return list.GetVertices();
     }
 }
 
 TEST_CASE("gui polyline: stroke-trim draws the leading fraction of the line's length")
 {
     const std::array<vec2, 3> points = {vec2(0.0f, 0.0f), vec2(0.5f, 0.0f), vec2(1.0f, 0.0f)};
-    const auto halvesAt = [&](f32 trim)
+    // How far right the stroke reaches, or nothing when it draws no vertex.
+    const auto reachAt = [&](f32 trim) -> optional<f32>
     {
         Document doc;
         Element& line = AddStrokedPolyline(doc, trim);
         doc.SetPolylinePoints(line, points);
         doc.Solve(vec2(200.0f, 200.0f));
-        return SegmentHalfLengths(doc);
+        const vector<GuiVertex> vertices = StrokeVertices(doc);
+        if (vertices.empty())
+        {
+            return std::nullopt;
+        }
+        f32 reach = vertices.front().Position.x;
+        for (const GuiVertex& vertex : vertices)
+        {
+            reach = std::max(reach, vertex.Position.x);
+        }
+        return reach;
     };
 
-    // Two 50px segments. Nothing at 0; both whole at 1; exactly the first — and no stray dot at
-    // the joint the cut lands on — at 0.5; the first whole and half the second at 0.75. A segment
-    // quad's half-length is half its length plus the half-width cap.
-    CHECK(halvesAt(0.0f).empty());
-    const vector<f32> whole = halvesAt(1.0f);
-    REQUIRE(whole.size() == 2);
-    CHECK(whole[0] == doctest::Approx(26.0f));
-    CHECK(whole[1] == doctest::Approx(26.0f));
-    const vector<f32> half = halvesAt(0.5f);
-    REQUIRE(half.size() == 1);
-    CHECK(half[0] == doctest::Approx(26.0f));
-    const vector<f32> threeQuarters = halvesAt(0.75f);
-    REQUIRE(threeQuarters.size() == 2);
-    CHECK(threeQuarters[1] == doctest::Approx(13.5f));
+    // A 100px line: nothing at 0, and otherwise the trimmed length plus the round cap's
+    // half-width — exactly the first segment at 0.5, with no stray dot past the joint.
+    CHECK_FALSE(reachAt(0.0f).has_value());
+    CHECK(reachAt(1.0f).value_or(0.0f) == doctest::Approx(101.0f));
+    CHECK(reachAt(0.5f).value_or(0.0f) == doctest::Approx(51.0f));
+    CHECK(reachAt(0.75f).value_or(0.0f) == doctest::Approx(76.0f));
+}
+
+TEST_CASE("gui polyline: a stroke is one strip that colours each point and bevels a sharp turn")
+{
+    Document doc;
+    Element& line = AddStrokedPolyline(doc, 1.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // A gentle bend joins with a miter: two vertices per point, so no two segments overlap, and
+    // each point's own colour on its pair.
+    const std::array<vec2, 3> bend = {vec2(0.0f, 0.0f), vec2(0.5f, 0.0f), vec2(1.0f, 0.1f)};
+    const std::array<vec4, 3> fade = {vec4(1.0f), vec4(1.0f, 1.0f, 1.0f, 0.5f), vec4(0.0f)};
+    doc.SetPolylinePoints(line, bend, fade);
+    const vector<GuiVertex> mitred = StrokeVertices(doc);
+    REQUIRE(mitred.size() == 6);
+    CHECK(mitred[2].Color.a == doctest::Approx(0.5f));
+    CHECK(mitred[3].Color.a == doctest::Approx(0.5f));
+    CHECK(mitred[5].Color.a == doctest::Approx(0.0f));
+    // Every vertex reads one rounded box along the line, so the sides and ends are one shape.
+    for (const GuiVertex& vertex : mitred)
+    {
+        CHECK(vertex.RectHalf == mitred.front().RectHalf);
+        CHECK(std::abs(vertex.RectCoord.y) == doctest::Approx(1.0f));
+    }
+
+    // Doubling back is past any miter: the turn is bevelled, its triangle hung off a vertex on the
+    // line itself.
+    const std::array<vec2, 3> hairpin = {vec2(0.0f, 0.0f), vec2(0.5f, 0.0f), vec2(0.0f, 0.05f)};
+    doc.SetPolylinePoints(line, hairpin);
+    const vector<GuiVertex> bevelled = StrokeVertices(doc);
+    CHECK(std::ranges::any_of(bevelled,
+                              [](const GuiVertex& vertex) { return vertex.RectCoord.y == 0.0f; }));
 }
 
 TEST_CASE("gui polyline: SetPolylinePoints is a paint-only write that early-outs when unchanged")
@@ -945,6 +975,17 @@ TEST_CASE("gui polyline: SetPolylinePoints is a paint-only write that early-outs
     doc.Drive(vec2(200.0f, 200.0f), 0.0f, list);
     doc.SetPolylinePoints(line, points);
     CHECK_FALSE(doc.IsPaintDirty());
+
+    // Colours are part of the write: new ones repaint, the same ones again do not, and the
+    // points-only form clears them.
+    const std::array<vec4, 2> colors = {vec4(1.0f), vec4(0.0f)};
+    doc.SetPolylinePoints(line, points, colors);
+    CHECK(doc.IsPaintDirty());
+    doc.Drive(vec2(200.0f, 200.0f), 0.0f, list);
+    doc.SetPolylinePoints(line, points, colors);
+    CHECK_FALSE(doc.IsPaintDirty());
+    doc.SetPolylinePoints(line, points);
+    CHECK(line.PointColors.empty());
 
     // The stroke lies over the box without sizing it: the element keeps its authored extent.
     CHECK(line.Layout.Size.x == doctest::Approx(100.0f));

@@ -104,7 +104,8 @@ namespace Veng::Gui
         ///
         /// Lays out and paints as a Panel (a plain flex box, with its own background, border, and
         /// shadow), then strokes Element::Points — normalized to its content box — in the style's
-        /// `stroke` color at `stroke-width`, drawing the `stroke-trim` fraction of the line's length.
+        /// `stroke` color at `stroke-width` — times a per-point colour where Element::PointColors
+        /// carries one — drawing the `stroke-trim` fraction of the line's length as one joined strip.
         /// The stroke is paint only: it neither sizes the box nor hit-tests. Points author as the
         /// markup `points="x,y x,y …"` attribute or through Document::SetPolylinePoints.
         Polyline,
@@ -562,6 +563,13 @@ namespace Veng::Gui
         /// two draw nothing. Write it through Document::SetPolylinePoints, which marks the paint
         /// dirty without dirtying layout.
         vector<vec2> Points;
+        /// @brief A Polyline's per-point colours, multiplying its `stroke`; empty for a line in the
+        ///        stroke colour alone.
+        ///
+        /// Linear straight-alpha RGBA, one per entry of Points when set, each interpolated along the
+        /// segments either side of its point — a gradient along the line, or a trail fading out.
+        /// Written with the points through Document::SetPolylinePoints.
+        vector<vec4> PointColors;
 
         /// @brief Named bound-value slots a binding layer resolves against a context.
         map<string, string> Bindings;

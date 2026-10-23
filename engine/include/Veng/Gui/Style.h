@@ -531,8 +531,8 @@ namespace Veng::Gui
         /// @brief A Polyline's line color, linear straight-alpha RGBA; a zero alpha (the default)
         ///        draws no line.
         ///
-        /// Inert on every kind but Polyline. A translucent stroke covers each join twice, since
-        /// the round-capped segments overlap there.
+        /// Inert on every kind but Polyline, whose Element::PointColors, when set, multiply it point
+        /// by point.
         vec4 Stroke{0.0f};
         /// @brief A Polyline's line width, in pixels.
         ///

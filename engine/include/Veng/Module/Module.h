@@ -593,10 +593,12 @@ extern "C"
 /// intensity, length and chromatic spread, after LensDirtIntensity, and SceneRenderer by the streak
 /// battery and its imports. A module spawns looks, builds views and owns renderers, so a stale one
 /// lays them out short.
+/// Version 148 grows Gui::Element by PointColors, a Polyline's per-point colours, after Points. A
+/// module's drivers reach elements, so a stale one reads every field after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 147u
+#define VENG_MODULE_ABI_VERSION 148u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -1819,11 +1819,22 @@ namespace Veng::Gui
 
     void Document::SetPolylinePoints(Element& element, const std::span<const vec2> points)
     {
-        if (std::ranges::equal(element.Points, points))
+        SetPolylinePoints(element, points, std::span<const vec4>{});
+    }
+
+    void Document::SetPolylinePoints(Element& element, const std::span<const vec2> points,
+                                     const std::span<const vec4> colors)
+    {
+        VE_ASSERT(colors.empty() || colors.size() == points.size(),
+                  "a Polyline takes one colour per point ({} for {})", colors.size(),
+                  points.size());
+        if (std::ranges::equal(element.Points, points) &&
+            std::ranges::equal(element.PointColors, colors))
         {
             return;
         }
         element.Points.assign(points.begin(), points.end());
+        element.PointColors.assign(colors.begin(), colors.end());
         MarkPaintDirty(element);
     }
 
@@ -4509,9 +4520,9 @@ namespace Veng::Gui
 
     namespace
     {
-        // Strokes a Polyline's points across its content box, drawing the trimmed fraction of the
-        // line's length from the first point: whole segments up to the cut, then the one segment the
-        // cut lands in part-way, then nothing.
+        // Strokes a Polyline's points across its content box as one joined strip, drawing the
+        // trimmed fraction of the line's length from the first point: whole segments up to the cut,
+        // then the one segment the cut lands in part-way, its colour taken at the cut.
         void BuildPolylineStroke(const Element& element, DrawList& list, const f32 opacity)
         {
             const Style& style = element.ComputedStyle;
@@ -4524,29 +4535,46 @@ namespace Veng::Gui
 
             const Rect box = ToContentBox(element.Layout, style).Box;
             const auto place = [&box](vec2 point) { return box.Min + point * box.Size; };
+            const bool tinted = element.PointColors.size() == element.Points.size();
+            const auto colorAt = [&](const usize i)
+            {
+                vec4 color = tinted ? style.Stroke * element.PointColors[i] : style.Stroke;
+                color.a *= opacity;
+                return color;
+            };
+
             f32 total = 0.0f;
             for (usize i = 1; i < element.Points.size(); ++i)
             {
                 total += glm::distance(place(element.Points[i - 1]), place(element.Points[i]));
             }
 
-            vec4 color = style.Stroke;
-            color.a *= opacity;
             // A cut closer than this to a segment's start leaves nothing of it to draw; without the
             // slack, rounding would put a cap-sized dot at the start of the segment after a cut that
             // lands exactly on a joint.
             constexpr f32 CutSlack = 1e-4f;
+            vector<vec2> points{place(element.Points[0])};
+            vector<vec4> colors{colorAt(0)};
             f32 remaining = trim * total;
             for (usize i = 1; i < element.Points.size() && remaining > CutSlack; ++i)
             {
                 const vec2 from = place(element.Points[i - 1]);
                 const vec2 to = place(element.Points[i]);
                 const f32 length = glm::distance(from, to);
-                const vec2 end =
-                    length > remaining ? from + (to - from) * (remaining / length) : to;
-                list.Line(from, end, style.StrokeWidth, color);
+                if (length > remaining)
+                {
+                    const f32 t = remaining / length;
+                    points.push_back(from + (to - from) * t);
+                    colors.push_back(glm::mix(colorAt(i - 1), colorAt(i), t));
+                }
+                else
+                {
+                    points.push_back(to);
+                    colors.push_back(colorAt(i));
+                }
                 remaining -= length;
             }
+            list.Polyline(points, colors, style.StrokeWidth);
         }
     }
 

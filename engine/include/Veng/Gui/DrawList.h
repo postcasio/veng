@@ -483,6 +483,23 @@ namespace Veng::Gui
         /// @param color  Line color, linear straight-alpha RGBA; a zero alpha draws nothing.
         void Line(vec2 from, vec2 to, f32 width, vec4 color);
 
+        /// @brief Appends a joined stroke through a run of points, coloured point by point.
+        ///
+        /// One continuous strip rather than a capsule per segment: neighbouring segments meet in a
+        /// mitred join that shares its two vertices, so no pixel of the line is covered twice and a
+        /// translucent or fading stroke reads evenly along its length. A join turning sharper than
+        /// the miter allows, or too tight for its segments to hold the miter, is bevelled instead.
+        /// The two ends are round caps of the stroke's own width. Each point's colour is
+        /// interpolated along the segments either side of it. Every vertex shares one rounded box
+        /// laid along the line's length, so the shape path anti-aliases its sides and rounds its
+        /// ends with no shader of its own; under PushArc it is masked like any other shape quad.
+        /// Consecutive equal points are skipped, and fewer than two distinct points draw nothing.
+        /// @param points  The points the stroke passes through, in framebuffer pixels.
+        /// @param colors  One linear straight-alpha RGBA colour per point; its size must match
+        ///                @p points.
+        /// @param width   The line width in pixels; a non-positive width draws nothing.
+        void Polyline(std::span<const vec2> points, std::span<const vec4> colors, f32 width);
+
         /// @brief Appends a soft drop or inset shadow of a rounded rectangle.
         ///
         /// One extra quad on the same shape pipeline: an outer shadow's quad is the box translated
@@ -808,6 +825,14 @@ namespace Veng::Gui
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                       vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0,
                       vec4 shadow = vec4(0.0f), vec4 uvWrap = vec4(0.0f));
+
+        /// @brief Appends one untextured shape vertex, masked by the top arc when one is open.
+        /// @param position   The vertex position in framebuffer pixels, before the transform.
+        /// @param color      Its colour, linear straight-alpha RGBA.
+        /// @param rectHalf   The shape SDF's half-extent.
+        /// @param rectCoord  The vertex's signed coordinate in the SDF's local box.
+        /// @param radius     The SDF's corner radius.
+        void PushShapeVertex(vec2 position, vec4 color, vec2 rectHalf, vec2 rectCoord, f32 radius);
 
         /// @brief Ensures one shaped glyph resident and emits its quad, recording it when asked.
         /// @param pen        Top-left origin of the shaped block, in framebuffer pixels.
