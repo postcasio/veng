@@ -73,6 +73,8 @@ TEST_CASE("A look authoring no metering or specular AA keeps the engine ViewStat
     CHECK(settings.SSR == Renderer::SceneRendererSettings{}.SSR);
     // No dirt unless a look asks for it.
     CHECK(view.LensDirtIntensity == 0.0f);
+    // No streak unless a look asks for it.
+    CHECK(view.StreakIntensity == 0.0f);
     CHECK_FALSE(view.LensDirt.IsValid());
 }
 
@@ -172,6 +174,9 @@ namespace
         look.BloomIntensity = 1.7f;
         look.BloomRadius = 2.0f;
         look.LensDirtIntensity = 0.35f;
+        look.StreakIntensity = 6.0f;
+        look.StreakLength = 0.4f;
+        look.StreakChromaticSpread = 0.2f;
         look.AmbientFloor = vec3(0.4f, 0.5f, 0.6f);
         look.SpecularAntiAliasingVariance = 0.45f;
         look.SpecularAntiAliasingThreshold = 0.35f;
@@ -232,6 +237,10 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.LensDirt == direct.LensDirt);
     CHECK(carried.LensDirtIntensity == direct.LensDirtIntensity);
     CHECK(carried.LensDirtIntensity == doctest::Approx(0.35f));
+    CHECK(carried.StreakIntensity == direct.StreakIntensity);
+    CHECK(carried.StreakLength == direct.StreakLength);
+    CHECK(carried.StreakChromaticSpread == direct.StreakChromaticSpread);
+    CHECK(carried.StreakIntensity == doctest::Approx(6.0f));
     CHECK(carried.AmbientFloor == direct.AmbientFloor);
     CHECK(carried.SpecularAntiAliasingVariance == direct.SpecularAntiAliasingVariance);
     CHECK(carried.SpecularAntiAliasingThreshold == direct.SpecularAntiAliasingThreshold);

@@ -375,6 +375,7 @@ add_library(veng SHARED
         src/Renderer/Passes/PunctualShadowScenePass.cpp
         src/Renderer/Passes/DepthNormalPrepassScenePass.cpp
         src/Renderer/ShadowSystem.cpp
+        src/Renderer/AnamorphicStreak.cpp
         src/Renderer/BloomPyramid.cpp
         src/Renderer/AutoExposureMeter.cpp
         src/Renderer/TextureReadback.cpp

@@ -1987,6 +1987,21 @@ namespace Veng
         /// The default of zero draws no dirt and costs nothing, whatever LensDirt names.
         /// @see Renderer::SceneView::LensDirtIntensity
         f32 LensDirtIntensity = 0.0f;
+        /// @brief How strongly the anamorphic streak adds to the scene, fed into the per-frame
+        ///        SceneView.
+        ///
+        /// Bright sources stretched into thin horizontal lines in their own colour. The default of
+        /// zero draws no streak and costs nothing.
+        /// @see Renderer::SceneView::StreakIntensity
+        f32 StreakIntensity = 0.0f;
+        /// @brief How far the anamorphic streak reaches, as a share of the frame's width, fed into
+        ///        the per-frame SceneView.
+        /// @see Renderer::SceneView::StreakLength
+        f32 StreakLength = 0.25f;
+        /// @brief How differently the anamorphic streak's colour channels spread, fed into the
+        ///        per-frame SceneView.
+        /// @see Renderer::SceneView::StreakChromaticSpread
+        f32 StreakChromaticSpread = 0.0f;
         /// @brief Whether the directional cascaded-shadow battery is enabled.
         bool Shadows = true;
         /// @brief Whether the punctual shadow atlas is enabled.
@@ -2760,6 +2775,15 @@ VE_FIELD(BloomRadius, .DisplayName = "Bloom Radius", .Display = {.Min = 0.0})
 VE_FIELD(LensDirt, .DisplayName = "Lens Dirt",
          .Tooltip = "Greyscale mask the bloom lights, fitted over the frame")
 VE_FIELD(LensDirtIntensity, .DisplayName = "Lens Dirt Intensity", .Display = {.Min = 0.0})
+VE_FIELD(StreakIntensity, .DisplayName = "Streak Intensity",
+         .Tooltip = "Anamorphic streak: bright sources stretched into horizontal lines",
+         .Display = {.Min = 0.0})
+VE_FIELD(StreakLength, .DisplayName = "Streak Length",
+         .Tooltip = "Share of the frame's width the streak falls to 1/e over",
+         .Display = {.Min = 0.01, .Max = 1.0})
+VE_FIELD(StreakChromaticSpread, .DisplayName = "Streak Chromatic Spread",
+         .Tooltip = "Positive shortens red and blue against green: violet near the source",
+         .Display = {.Min = -0.9, .Max = 0.9})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})

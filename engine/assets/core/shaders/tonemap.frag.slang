@@ -1,7 +1,7 @@
 // Tonemap fragment stage: the engine's first PostProcess-domain material. It samples the HDR
 // scene colour through the bindless set-0 array (the HDR input is a runtime-bound handle field
-// the post pass rewrites each frame), adds the accumulated bloom when bloom is active and the
-// lens dirt that bloom lights when a dirt mask is set, applies an
+// the post pass rewrites each frame), adds the accumulated bloom when bloom is active, the lens
+// dirt that bloom lights when a dirt mask is set, and the anamorphic streak, applies an
 // exposure scale, and maps the linear HDR color to the display range with a selectable tone curve
 // (the Tonemapper param, written each frame from the SceneView). The terminal stage of the deferred
 // chain — it replaces a plain clamp with a curve that rolls off highlights instead of hard-clipping
@@ -43,6 +43,10 @@ struct MaterialParams
     uint   LensDirtBloom;    // bindless index of the dirt term's bloom level (runtime-bound)
     uint   LensDirtBloomSampler; // bindless sampler for that level (runtime-bound)
     float  LensDirtIntensity; // the dirt term's mix, set per frame; 0 when no dirt is drawn
+    float4 StreakScale;      // the anamorphic streak's sub-rect map: xy scale, zw clamp
+    uint   Streak;           // bindless index of the streak's final image (runtime-bound)
+    uint   StreakSampler;    // bindless sampler for the streak read (runtime-bound)
+    float  StreakIntensity;  // the streak's mix, set per frame; 0 when no streak is drawn
 };
 
 MaterialParams LoadMaterialParams(uint offset)
@@ -189,6 +193,15 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
         const float3 wide = SampleBloomBSpline(p.LensDirtBloom, p.LensDirtBloomSampler, wideUv,
                                                p.LensDirtBloomTexel);
         hdr += wide * (dirt * p.LensDirtIntensity);
+    }
+    // The anamorphic streak: bright sources stretched along their rows, at a quarter of the width and
+    // half the height, magnified by one bilinear tap. Uniform, and unindexed with no streak.
+    if (p.StreakIntensity > 0.0)
+    {
+        const float2 streakUv = min(input.v_UV * p.StreakScale.xy, p.StreakScale.zw);
+        hdr += g_Textures[NonUniformResourceIndex(p.Streak)].Sample(
+                   g_Samplers[NonUniformResourceIndex(p.StreakSampler)], streakUv).rgb *
+               p.StreakIntensity;
     }
     float3 exposed = max(hdr * p.Exposure, 0.0);
 

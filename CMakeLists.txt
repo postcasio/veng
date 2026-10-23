@@ -1127,6 +1127,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/frame_topology.cpp
             tests/unit/bloom_mips.cpp
             tests/unit/lens_dirt.cpp
+            tests/unit/anamorphic_streak.cpp
             tests/unit/mip_tail.cpp
             tests/unit/render_layer.cpp
             tests/unit/post_process_effect.cpp

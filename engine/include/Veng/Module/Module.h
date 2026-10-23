@@ -589,10 +589,14 @@ extern "C"
 /// so a stale one lays it out short.
 /// Version 146 grows RenderLook by CascadeSplitLambda, beside MaxShadowDistance. A module spawns
 /// looks, so a stale one lays the component out short.
+/// Version 147 grows RenderLook, SceneView and Viewport::ViewState by the anamorphic streak's
+/// intensity, length and chromatic spread, after LensDirtIntensity, and SceneRenderer by the streak
+/// battery and its imports. A module spawns looks, builds views and owns renderers, so a stale one
+/// lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 146u
+#define VENG_MODULE_ABI_VERSION 147u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

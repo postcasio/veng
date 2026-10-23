@@ -51,6 +51,7 @@ namespace Veng::Renderer
     class PunctualShadowScenePass;
     class ShadowSystem;
     class BloomPyramid;
+    class AnamorphicStreak;
     class AutoExposureMeter;
     class TaaResolve;
     class PostResolveUpscale;
@@ -1198,6 +1199,9 @@ namespace Veng::Renderer
         /// Its down/up set layout is reserved by the depth-of-field chain's pipeline layouts, so it is
         /// constructed before that chain; Resize rebuilds the extent-sized pyramid after the HDR target.
         Unique<BloomPyramid> m_Bloom;
+        /// @brief The anamorphic streak — its two images, pipelines and sets, built and released with
+        ///        the bloom pyramid, whose set layout it shares.
+        Unique<AnamorphicStreak> m_Streak;
 
         /// @brief The auto-exposure metering battery — histogram pipeline, ring, and adaptation state.
         Unique<AutoExposureMeter> m_AutoExposure;
@@ -1458,6 +1462,8 @@ namespace Veng::Renderer
         ResourceId m_EmissiveId;
         /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
         MipChainId m_BloomChainId;
+        /// @brief Imported ids for the anamorphic streak's two ping-pong images; valid with bloom.
+        std::array<ResourceId, 2> m_StreakIds{};
         /// @brief Imported id for the scene-side bloom-mask target the translucent pass writes.
         ///
         /// Invalid when bloom is off, which is what takes the mask attachment off the translucent

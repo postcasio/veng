@@ -3,6 +3,7 @@
 
 #include "AtmospherePrecompute.h"
 #include "AutoExposureMeter.h"
+#include "AnamorphicStreak.h"
 #include "BloomPyramid.h"
 #include "CaptureRotation.h"
 #include "DebugBlitPipelines.h"
@@ -344,6 +345,7 @@ namespace Veng::Renderer
         // bloom is constructed before that chain; its extent-sized pyramid is built by Resize below
         // (after the HDR target). TAA is grouped with it; both build their pipelines in their ctors.
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
+        m_Streak = AnamorphicStreak::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout());
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
         m_Upscale = PostResolveUpscale::Create(m_Context, m_Assets);
         m_Aa = AaResolve::Create(m_Context, m_Assets, m_OutputFormat);
@@ -709,6 +711,10 @@ namespace Veng::Renderer
             // per-level access on these, and the tonemap samples level 0).
             m_BloomChainId =
                 graph.ImportImageMips("SceneRenderer Bloom Pyramid", m_Bloom->GetMipCount());
+            // The streak is wired with the bloom whose bright pass it shares; its passes skip a
+            // frame that draws none, so a per-frame intensity never recompiles.
+            m_StreakIds = {graph.Import("SceneRenderer Streak 0"),
+                           graph.Import("SceneRenderer Streak 1")};
             // The mask is wired with the sweep that reads it: with bloom off nothing consumes it,
             // so the translucent pass drops the attachment rather than clearing a dead target.
             m_BloomMaskId = graph.Import("SceneRenderer Bloom Mask");
@@ -716,6 +722,7 @@ namespace Veng::Renderer
         else
         {
             m_BloomMaskId = ResourceId{};
+            m_StreakIds = {};
         }
 
         m_BloomMaskPromotedId = ResourceId{};
@@ -1290,6 +1297,13 @@ namespace Veng::Renderer
                     .TextureField = "LensDirtBloom",
                     .SamplerField = "LensDirtBloomSampler",
                 });
+                tonemapPass->AddExtraInput({
+                    .Source = m_StreakIds[AnamorphicStreak::GetFinalImage()],
+                    .Texture = m_Streak->GetFinalHandle(),
+                    .Sampler = m_SamplerHandle,
+                    .TextureField = "Streak",
+                    .SamplerField = "StreakSampler",
+                });
             }
             m_Passes.push_back(std::move(tonemapPass));
 
@@ -1713,6 +1727,8 @@ namespace Veng::Renderer
                     m_Bloom->SetSourceView(ppEffectFinalView);
                     m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, *m_AutoExposure,
                                      PostMaskId(), PostMaskHandle(), m_SamplerHandle);
+                    m_Streak->SetSourceView(ppEffectFinalView);
+                    m_Streak->Declare(graph, ppEffectFinalId, m_StreakIds, *m_AutoExposure);
                 }
             }
 
@@ -2526,10 +2542,12 @@ namespace Veng::Renderer
         if (ResolveBloomActive(m_Settings))
         {
             m_Bloom->Resize(m_Extent, PostSceneView());
+            m_Streak->Resize(m_Extent, PostSceneView());
         }
         else
         {
             m_Bloom->Release();
+            m_Streak->Release();
         }
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
@@ -2731,6 +2749,8 @@ namespace Veng::Renderer
         const Texture* const dirt = view.LensDirt.Get();
         const bool lensDirtActive =
             m_Topology->BloomActive && view.LensDirtIntensity > 0.0f && dirt != nullptr;
+        const bool streakActive = m_Topology->BloomActive && view.StreakIntensity > 0.0f;
+        m_Streak->SetActive(streakActive);
 
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
@@ -2768,6 +2788,14 @@ namespace Veng::Renderer
                 tonemap.SetParam("LensDirtBloomScale",
                                  m_Bloom->GetLevelSampleMap(level, postResolveExtent));
                 tonemap.SetParam("LensDirtBloomTexel", vec4(levelExtent, 1.0f / levelExtent));
+            }
+
+            // The anamorphic streak; a zero intensity is the shader's gate and skips its passes.
+            tonemap.SetParam("StreakIntensity", streakActive ? view.StreakIntensity : 0.0f);
+            if (streakActive)
+            {
+                tonemap.SetParam("StreakScale",
+                                 StreakSampleMap(postResolveExtent, m_Streak->GetSceneExtent()));
             }
         }
 
@@ -3236,6 +3264,8 @@ namespace Veng::Renderer
             tonemap.SetSamplerHandle("BloomSampler", m_SamplerHandle);
             tonemap.SetTextureHandle("LensDirtBloom", m_TonemapSourceHandle);
             tonemap.SetSamplerHandle("LensDirtBloomSampler", m_SamplerHandle);
+            tonemap.SetTextureHandle("Streak", m_TonemapSourceHandle);
+            tonemap.SetSamplerHandle("StreakSampler", m_SamplerHandle);
         }
         // Likewise the dirt mask while its term is gated off: never indexed, but never left on a
         // slot a released texture held.
@@ -3785,6 +3815,10 @@ namespace Veng::Renderer
                 bindings.push_back({.Id = m_BloomChainId.Level(level), .View = bloomMips[level]});
             }
             bindings.push_back({.Id = m_BloomMaskId, .View = m_BloomMaskView});
+            for (u32 index = 0; index < 2; index++)
+            {
+                bindings.push_back({.Id = m_StreakIds[index], .View = m_Streak->GetViews()[index]});
+            }
         }
         if (m_Topology->AutoExposureActive)
         {

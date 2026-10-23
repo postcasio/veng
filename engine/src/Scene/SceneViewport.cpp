@@ -86,6 +86,9 @@ namespace Veng
         view.BloomRadius = look.BloomRadius;
         view.LensDirt = look.LensDirt;
         view.LensDirtIntensity = look.LensDirtIntensity;
+        view.StreakIntensity = look.StreakIntensity;
+        view.StreakLength = look.StreakLength;
+        view.StreakChromaticSpread = look.StreakChromaticSpread;
         view.SpecularAntiAliasingVariance = look.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = look.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = look.NormalMapAntiAliasingScale;
@@ -128,6 +131,9 @@ namespace Veng
         view.BloomRadius = resolved.BloomRadius;
         view.LensDirt = resolved.LensDirt;
         view.LensDirtIntensity = resolved.LensDirtIntensity;
+        view.StreakIntensity = resolved.StreakIntensity;
+        view.StreakLength = resolved.StreakLength;
+        view.StreakChromaticSpread = resolved.StreakChromaticSpread;
         view.SpecularAntiAliasingVariance = resolved.SpecularAntiAliasingVariance;
         view.SpecularAntiAliasingThreshold = resolved.SpecularAntiAliasingThreshold;
         view.NormalMapAntiAliasingScale = resolved.NormalMapAntiAliasingScale;

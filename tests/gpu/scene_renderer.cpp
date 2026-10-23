@@ -3084,6 +3084,121 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+// The anamorphic streak stretches each bright source along its row. A bright specular cube fills the
+// middle of the frame; at zero intensity the frame is byte-identical whatever the length and spread,
+// and with an intensity the streak never darkens a pixel, is linear in the intensity, and lights the
+// frame beside the cube far more than the same distance above or below it.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: the anamorphic streak lights a source's row, and at zero it changes nothing")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_streak.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+    auto& mat = const_cast<MaterialInstance&>(*material->Get());
+    mat.SetParam("RoughnessFactor", 0.08f);
+    mat.SetParam("MetallicFactor", 1.0f);
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(0.6f, *material), "Streak Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(8.0f),
+    };
+
+    constexpr uvec2 extent{256, 256};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = true},
+    });
+
+    const auto Render = [&](f32 intensity, f32 length, f32 spread) -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Tonemapper = Tonemapper::None,
+                                                           .BloomThreshold = 1.0f,
+                                                           .BloomIntensity = 1.0f,
+                                                           .BloomRadius = 1.0f,
+                                                           .StreakIntensity = intensity,
+                                                           .StreakLength = length,
+                                                           .StreakChromaticSpread = spread});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    const vector<u8> plain = Render(0.0f, 0.25f, 0.0f);
+    CHECK(Render(0.0f, 0.8f, 0.5f) == plain);
+
+    const vector<u8> half = Render(0.5f, 0.5f, 0.0f);
+    const vector<u8> unit = Render(1.0f, 0.5f, 0.0f);
+
+    f32 worstNegative = 0.0f;
+    f32 worstIntensity = 0.0f;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 base = DecodeTexel(plain, extent.x, x, y);
+            const vec3 a = DecodeTexel(half, extent.x, x, y);
+            const vec3 b = DecodeTexel(unit, extent.x, x, y);
+            for (i32 ch = 0; ch < 3; ++ch)
+            {
+                if (b[ch] >= 0.99f)
+                {
+                    continue;
+                }
+                const f32 step = 4.0f * std::max(b[ch], 1.0e-4f) * 0x1p-10f;
+                worstNegative = std::max(worstNegative, base[ch] - a[ch] - step);
+                worstIntensity =
+                    std::max(worstIntensity,
+                             std::abs((b[ch] - base[ch]) - 2.0f * (a[ch] - base[ch])) - step);
+            }
+        }
+    }
+    CHECK(worstNegative <= 0.0f);
+    CHECK(worstIntensity <= 0.0f);
+
+    // Beside the cube, at either edge of its row, against the same distance above and below it.
+    const auto Rise = [&](u32 x, u32 y)
+    {
+        const vec3 lit = DecodeTexel(unit, extent.x, x, y) - DecodeTexel(plain, extent.x, x, y);
+        return lit.r + lit.g + lit.b;
+    };
+    constexpr u32 Middle = 128;
+    constexpr u32 Edge = 12;
+    const f32 beside = std::min(Rise(Edge, Middle), Rise(extent.x - 1 - Edge, Middle));
+    const f32 across = std::max(Rise(Middle, Edge), Rise(Middle, extent.y - 1 - Edge));
+    CHECK(beside > 0.005f);
+    CHECK(beside > 10.0f * std::max(across, 0.0f));
+
+    std::filesystem::remove(outArchive);
+}
+
 // The directional-shadow property assertion (this plan's property pin beyond the
 // re-blessed golden). A caster cube floats above a large receiver plane, lit by a
 // directional light traveling straight down. With Shadows ON the plane texel

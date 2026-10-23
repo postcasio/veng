@@ -140,6 +140,18 @@ namespace Veng::Renderer
         ///
         /// @see SceneView::LensDirtIntensity
         f32 LensDirtIntensity = 0.0f;
+        /// @brief How strongly the anamorphic streak adds to the scene; zero draws none.
+        ///
+        /// @see SceneView::StreakIntensity
+        f32 StreakIntensity = 0.0f;
+        /// @brief How far the anamorphic streak reaches, as a share of the frame's width.
+        ///
+        /// @see SceneView::StreakLength
+        f32 StreakLength = 0.25f;
+        /// @brief How differently the anamorphic streak's colour channels spread.
+        ///
+        /// @see SceneView::StreakChromaticSpread
+        f32 StreakChromaticSpread = 0.0f;
         /// @brief Geometric specular anti-aliasing's screen-space variance scale; zero turns it off.
         ///
         /// @see SceneView::SpecularAntiAliasingVariance
@@ -1460,6 +1472,15 @@ VE_FIELD(LensDirt, .DisplayName = "Lens dirt",
          .Tooltip = "Greyscale mask the bloom lights, fitted over the frame", .Category = "Bloom")
 VE_FIELD(LensDirtIntensity, .DisplayName = "Lens dirt intensity",
          .Display = {.Min = 0.0, .Max = 4.0}, .Category = "Bloom")
+VE_FIELD(StreakIntensity, .DisplayName = "Streak intensity",
+         .Tooltip = "Anamorphic streak: bright sources stretched into horizontal lines",
+         .Display = {.Min = 0.0, .Max = 64.0}, .Category = "Bloom")
+VE_FIELD(StreakLength, .DisplayName = "Streak length",
+         .Tooltip = "Share of the frame's width the streak falls to 1/e over",
+         .Display = {.Min = 0.01, .Max = 1.0}, .Category = "Bloom")
+VE_FIELD(StreakChromaticSpread, .DisplayName = "Streak chromatic spread",
+         .Tooltip = "Positive shortens red and blue against green: violet near the source",
+         .Display = {.Min = -0.9, .Max = 0.9}, .Category = "Bloom")
 VE_FIELD(SpecularAntiAliasingVariance, .DisplayName = "Specular AA variance",
          .Tooltip = "Screen-space normal variance scale; zero turns specular anti-aliasing off",
          .Display = {.Widget = ::Veng::WidgetKind::Slider, .Min = 0.0, .Max = 1.0},

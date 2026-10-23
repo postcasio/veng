@@ -461,6 +461,30 @@ namespace Veng::Renderer
         /// separately. Zero — the default — skips the term in the shader, so a view with no dirt
         /// renders exactly as one without the feature. A per-frame material parameter: no recompile.
         f32 LensDirtIntensity = 0.0f;
+        /// @brief How strongly the anamorphic streak adds to the scene; written to the tonemap material
+        ///        each Execute.
+        ///
+        /// The streak is every bright source stretched into a thin horizontal line, the flare of an
+        /// anamorphic lens: the bloom's bright pass, thresholded and ceilinged as bloom's is, at a
+        /// quarter of the frame's width and half its height, blurred along each row only and added
+        /// in the tonemap beside the bloom. It carries each source's own colour. Zero — the default
+        /// — skips its passes and the tonemap term, so a view with no streak renders exactly as one
+        /// without the feature. Ignored when bloom is inactive.
+        f32 StreakIntensity = 0.0f;
+        /// @brief How far the anamorphic streak reaches either side of a source, as a share of the
+        ///        frame's width.
+        ///
+        /// The distance over which the streak falls to 1/e of its peak; it falls exponentially, so
+        /// a bright source's faint tail runs several times further. Past the kernel's reach, 1023
+        /// streak texels (about 1.6 widths of the frame), nothing is drawn.
+        f32 StreakLength = 0.25f;
+        /// @brief How differently the anamorphic streak's colour channels spread.
+        ///
+        /// Positive values shorten the red and blue channels' reach against green's by this share,
+        /// so near a source the streak shades toward violet, and along its tail toward the source's
+        /// green; negative values do the opposite. Each channel keeps its energy. Zero spreads all
+        /// three alike, the source's own colour along the whole streak.
+        f32 StreakChromaticSpread = 0.0f;
 
         /// @brief Geometric specular anti-aliasing's screen-space variance scale (sigma squared).
         ///

@@ -85,16 +85,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
         result = KawaseAverage(ConditionTap(center), ConditionTap(tl), ConditionTap(tr),
                                ConditionTap(bl), ConditionTap(br));
 
-        // Soft-knee bright-pass: a smooth quadratic ramp over a Threshold-wide band so a
-        // surface near the knee fades in rather than popping (the standard shape). A zero
-        // threshold passes everything through, so the bloom is linear in the scene.
-        float gain = 1.0;
-        if (g_PC.Threshold > 0.0)
-        {
-            const float knee = g_PC.Threshold;
-            const float soft = saturate((Luma(result) - knee) / knee);
-            gain = soft * soft;
-        }
+        // Soft-knee bright-pass (BrightPassGain); a zero threshold passes everything through, so
+        // the bloom is linear in the scene.
+        float gain = BrightPassGain(result, g_PC.Threshold);
 
         if (g_PC.MaskEnabled != 0)
         {

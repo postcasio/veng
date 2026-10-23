@@ -52,6 +52,12 @@ namespace Veng::UI
                         {.Speed = 0.01f, .Min = 0.1f, .Max = 3.0f, .Format = "%.2f"});
         changed |= Drag("Lens dirt intensity", state.LensDirtIntensity,
                         {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f, .Format = "%.2f"});
+        changed |= Drag("Streak intensity", state.StreakIntensity,
+                        {.Speed = 0.05f, .Min = 0.0f, .Max = 64.0f, .Format = "%.2f"});
+        changed |= Drag("Streak length", state.StreakLength,
+                        {.Speed = 0.005f, .Min = 0.01f, .Max = 1.0f, .Format = "%.3f"});
+        changed |= Drag("Streak chromatic spread", state.StreakChromaticSpread,
+                        {.Speed = 0.01f, .Min = -0.9f, .Max = 0.9f, .Format = "%.2f"});
         return changed;
     }
 }

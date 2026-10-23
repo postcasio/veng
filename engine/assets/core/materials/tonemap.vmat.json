@@ -110,6 +110,28 @@
         1.0,
         1.0
       ]
+    },
+    {
+      "name": "Streak",
+      "type": "texture"
+    },
+    {
+      "name": "StreakSampler",
+      "type": "sampler",
+      "texture": "Streak"
+    },
+    {
+      "name": "StreakIntensity",
+      "value": 0.0
+    },
+    {
+      "name": "StreakScale",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
     }
   ]
 }

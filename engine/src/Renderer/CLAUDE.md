@@ -114,7 +114,7 @@ The renderer is split along three conventions, and a new battery follows all of 
 - **A battery's resources live on an owned internal subsystem.** Each cluster of images /
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
-  precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
+  precedent: `ShadowSystem`, `BloomPyramid`, `AnamorphicStreak`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `LightTileCuller`, `SsrChain`, `ParticleSimulation`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
@@ -1748,9 +1748,43 @@ the frame is bit-identical to one without the feature (`tests/gpu/scene_renderer
   no jitter, no dependence on a temporal resolve — and independent of the render scale.
   `tests/unit/lens_dirt.cpp` pins the fit at 4:3 through 21:9.
 
+**The bloom's bright pass also feeds an anamorphic streak.** `SceneView::StreakIntensity`,
+`StreakLength` and `StreakChromaticSpread` — authored on `RenderLook`, overridable through the debug
+layer — stretch every bright source into a thin horizontal line in its own colour, the flare of an
+anamorphic lens, added in the tonemap beside the bloom: `hdr += streak × StreakIntensity`. It is the
+`AnamorphicStreak` battery (`AnamorphicStreak.{h,cpp}`, the arithmetic device-free in
+`StreakKernel.h`), built and released with the bloom pyramid, whose down/up set layout it shares.
+
+- **Two passes.** `Streak Prefilter` bright-passes the scene colour into a buffer a quarter of the
+  frame's width and half its height (`StreakExtent`): each destination texel averages the 4×2 block
+  it covers through two bilinear taps, each tap conditioned and the average soft-kneed by the same
+  `bright_tap.slang` the bloom's level 0 uses, at the same threshold and ceiling, so a source streaks
+  where it blooms. `Streak Filter` then spreads each row along itself, one invocation per row: a
+  forward and a backward recursive sweep give every texel `Σ_d r^|d| · source[x − d]` normalised to
+  keep the light (`StreakFilterRow` is the CPU twin), so each source falls off exactly
+  exponentially, symmetric and monotone, with no reach limit and no comb ripple. Both sweeps run as
+  running averages (the sum times `1 − r`), which bounds the forward one, stored between them in the
+  half-float destination, by the row's brightest texel. Past the row's ends is zero, so light leaves
+  at the frame's edges.
+- **Each channel has its own ratio** (`StreakChannelRatio`): green falls to 1/e over `StreakLength`
+  of the frame's width, red and blue over `1 − StreakChromaticSpread` of that (never under a tenth),
+  so a positive spread keeps red and blue nearer the source — a violet core shading toward green
+  along the tail — and a negative one the reverse, each channel keeping its light.
+- **The line is about two output pixels thick**: the buffer's rows are two scene rows each, and the
+  tonemap magnifies it with one bilinear tap. Nothing is jittered, so it is steady with
+  anti-aliasing off.
+- **Off costs nothing.** With an intensity of 0 (the default) or bloom inactive the tonemap's term is
+  skipped, and both passes skip through `SkipWhenUnread` — the tonemap samples nothing from them that
+  frame — so the frame is byte-identical to one without the feature and no dispatch runs; a
+  per-frame intensity never recompiles. `tests/gpu/scene_renderer.cpp` pins the zero case, linearity
+  in the intensity, and that a source lights its row far more than the same distance across it;
+  `tests/unit/anamorphic_streak.cpp` the filter's conservation, symmetry, monotone falloff and
+  per-channel reach.
+
 **Firefly stability is a per-tap ceiling ahead of a linear average.** On the first downsample,
 each tap (a bilinear average over a 2×2 block of the scene) is conditioned on its own before the
-kernel averages it (`bloom_bright_pass.slang`, shared by both kernels): a non-finite tap becomes
+kernel averages it (`bright_tap.slang`, through `bloom_bright_pass.slang`, shared by both kernels and
+the streak's prefilter): a non-finite tap becomes
 zero, and a tap brighter than half of `BloomFireflyCeiling` is rolled off along a smooth shoulder
 toward the ceiling, scaled whole so its hue is kept. The kernel then takes its plain weights — the
 same COD 13-tap (inner ring 0.5, corner groups 0.125) or Kawase 5-tap the deeper levels use — and
