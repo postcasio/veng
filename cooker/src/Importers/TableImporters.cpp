@@ -389,10 +389,15 @@ namespace Veng::Cook
 
                 // A LocKey cell carries a translation key, not a display string; collect it for the
                 // source-catalog check below so a mistyped key fails the cook rather than showing the
-                // raw key at runtime.
+                // raw key at runtime. An empty cell is the type's default, naming no key, so a row
+                // with nothing to say in a LocKey column authors it empty and nothing is checked.
                 if (column.Type == TypeIdOf<Localization::LocKey>())
                 {
-                    locKeys.push_back(static_cast<const Localization::LocKey*>(cell.Get())->Key);
+                    const string& key = static_cast<const Localization::LocKey*>(cell.Get())->Key;
+                    if (!key.empty())
+                    {
+                        locKeys.push_back(key);
+                    }
                 }
 
                 WriteFieldValue(rows, cell.Get(), field, types);

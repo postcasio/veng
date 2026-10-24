@@ -417,6 +417,29 @@ TEST_CASE("table cook: a missing column in a row is a located error")
     CHECK(cooked.error().find("column 'weight': missing") != string::npos);
 }
 
+TEST_CASE("table cook: an empty LocKey cell names no key and needs no catalog")
+{
+    // Every LocKey cell is empty and the pack declares no locale index: a set key would fail the
+    // cook for want of a catalog to check it against, and an empty one names nothing to check.
+    json schema = FixedSchema();
+    schema["columns"].push_back({{"name", "label"}, {"type", "::Veng::Localization::LocKey"}});
+    json table = FixedTable();
+    for (json& row : table["rows"])
+    {
+        row["label"] = "";
+    }
+
+    const path packJson = WriteTablePack("table_empty_lockey", schema, table);
+    const Result<CookedPack> cooked = CookTablePack(packJson);
+    CHECK_MESSAGE(cooked.has_value(), (cooked.has_value() ? string{} : cooked.error()));
+
+    table["rows"][0]["label"] = "menu.absent";
+    const Result<CookedPack> keyed =
+        CookTablePack(WriteTablePack("table_set_lockey", schema, table));
+    REQUIRE_FALSE(keyed.has_value());
+    CHECK(keyed.error().find("source-locale catalog") != string::npos);
+}
+
 TEST_CASE("table cook: a cell of the wrong type is a located error naming the column")
 {
     json table = FixedTable();
