@@ -1066,6 +1066,13 @@ resolution and any render scale. Frosted glass, ground glass, a backdrop blur be
   setting off the chain is one level and `SampleSceneColorBlurred` returns the sharp copy at any
   `blur` — a degradation rather than a read of a level that was never generated.
 
+**The colour copy and its chain are a `SceneColorChain`** (`SceneColorChain.{h,cpp}`), which owns
+the image, its per-level views and slots, the chain sampler, the copy, halving and coarse-tail
+pipelines, and declares the passes that fill it. The grab owns one at the render allocation, filled
+over the frame's sub-rect (`SceneColorChainRegion::RenderSubRect`); the pre-bloom GUI overlay pass is
+handed another at the post-resolve allocation, filled whole (`WholeAllocation`) — see "The pre-bloom
+GUI overlay".
+
 **Replacing what is behind a surface is the fragment's job, not the blend's.** The blend can only
 reach the sharp scene already in the target, so a fragment wanting a *different* backdrop fetches it,
 composites itself over it, and emits at full coverage. At `blur` 0 that is the surface over the scene
@@ -2952,6 +2959,22 @@ scene and a material's bloom-mask amplitude are untouched. The direct path recor
 overlays as a second merged list. Separately, the auto-exposure meter is declared **ahead of** this
 pass and reads the same target, so it meters the scene without any overlay: a bright panel never sets
 the exposure of the world behind it.
+
+**A composite may replace the scene beneath its document with a blurred copy of it.** A material
+declaring `Backdrop` (texture), `BackdropSampler` and `BackdropParams` (`float4`: the level count,
+the reciprocal of the composite's colour weight, the reciprocal of the extent) reads, through
+`SampleOverlayBackdrop` (`Veng/overlay_composite.slang`), the tail's scene colour as it stood before
+any overlay composited this frame, at a blur in [0, 1] across a `SceneColorChain`
+(`BlurLevelsFor` levels) at the post-resolve allocation. It composites its document over the
+sample and emits at full coverage, so the blend replaces what was there; the sample is pre-divided
+by the blend constant, so at blur 0 a `CompensateExposure` overlay restores the scene exactly too.
+The chain and its copy passes are wired while a conveyed composite declares `Backdrop`
+(`ResolveHdrOverlays`, structural like the composite count) and record only on a frame such a
+composite has a non-empty rect (`GetBackdropSampledFlag`, `SkipWhenUnread`); they are declared at
+the head of the pass's contribution, so the backdrop holds no overlay and one frosted overlay never
+blurs another. Every composite declares a sampled read of each level.
+`tests/gpu/gui_hdr_overlay.cpp` holds that blur 0 changes nothing (compensating or not), and that a
+blur softens a silhouette inside the document's rect and moves nothing outside it.
 
 **The composite-material contract.** A composite material declares `Document` (texture handle) and
 `DocumentRect` (`float4`: origin, size, in scene pixels), both written per frame into the pass's

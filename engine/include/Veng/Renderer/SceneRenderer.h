@@ -76,6 +76,7 @@ namespace Veng::Renderer
     class PointField;
     class PostProcessEffectScenePass;
     class GuiHdrOverlayScenePass;
+    class SceneColorChain;
     struct DebugBlitPipelines;
     struct FrameTopology;
 
@@ -1300,6 +1301,11 @@ namespace Veng::Renderer
         /// place (a load). Created lazily the first frame an overlay is present and kept resident (it
         /// owns a GuiScenePass recorder); declared only while m_HdrOverlayActive.
         Unique<GuiHdrOverlayScenePass> m_GuiHdrOverlayPass;
+        /// @brief The blurred copy of the tail's scene colour a backdrop-reading composite samples.
+        ///
+        /// Allocated at the post-resolve allocation while such a composite is conveyed
+        /// (m_HdrOverlayReadsBackdrop), released otherwise.
+        Unique<SceneColorChain> m_HdrOverlayBackdrop;
 
         /// @brief The scene-color point-field pass, for fields placed in the lit scene color.
         ///
@@ -1521,6 +1527,8 @@ namespace Veng::Renderer
         ResourceId m_PpEffectIdB;
         /// @brief Imported id for the overlay-document intermediate; unset when no material overlay composites.
         ResourceId m_HdrOverlayDocId;
+        /// @brief Imported ids for the overlay backdrop chain's levels, base first; empty while unwired.
+        vector<ResourceId> m_HdrOverlayBackdropMipIds;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 
@@ -1734,6 +1742,12 @@ namespace Veng::Renderer
         /// Structural like the composite count: the direct pass is declared only while it holds, so
         /// a frame of only material overlays carries no load and store of the scene color for it.
         bool m_HdrOverlayHasDirect = false;
+
+        /// @brief Whether the last resolved SceneView conveyed a composite material reading the
+        ///        backdrop (one declaring `Backdrop`).
+        ///
+        /// Structural: the backdrop chain and its copy passes are wired only while it holds.
+        bool m_HdrOverlayReadsBackdrop = false;
 
         /// @brief The overlay-document intermediate's extent — its high-water mark; zero while none.
         uvec2 m_HdrOverlayDocExtent{0, 0};

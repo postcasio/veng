@@ -25,6 +25,16 @@
       "id": "0x3F3AAD77FE57B42D",
       "type": "Material",
       "source": "materials/overlay_composite_no_rect.vmat.json"
+    },
+    {
+      "id": "0xF94314F33A7B9189",
+      "type": "Shader",
+      "source": "shaders/overlay_backdrop.frag.shader.json"
+    },
+    {
+      "id": "0x389A54011164AD2C",
+      "type": "Material",
+      "source": "materials/overlay_backdrop.vmat.json"
     }
   ]
 }

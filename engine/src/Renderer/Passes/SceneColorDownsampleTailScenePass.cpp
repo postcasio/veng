@@ -4,19 +4,15 @@
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/DescriptorSet.h>
 
-#include <fmt/format.h>
-
 namespace Veng::Renderer
 {
     SceneColorDownsampleTailScenePass::SceneColorDownsampleTailScenePass(
-        Ref<ComputePipeline> pipeline, Ref<DescriptorSet> set, const ResourceId sourceId,
-        const std::span<const ResourceId> levelIds, const u32 firstLevel, const uvec2 extent,
-        const bool* sampled)
+        string name, Ref<ComputePipeline> pipeline, Ref<DescriptorSet> set,
+        const ResourceId sourceId, const std::span<const ResourceId> levelIds, const u32 firstLevel,
+        const uvec2 extent, const bool* sampled, const SceneColorChainRegion region)
         : m_Pipeline(std::move(pipeline)), m_Set(std::move(set)), m_SourceId(sourceId),
           m_LevelIds(levelIds.begin(), levelIds.end()), m_FirstLevel(firstLevel), m_Extent(extent),
-          m_Sampled(sampled),
-          m_Name(fmt::format("Scene Color Downsample Tail {}-{}", firstLevel,
-                             firstLevel + static_cast<u32>(levelIds.size()) - 1))
+          m_Sampled(sampled), m_Region(region), m_Name(std::move(name))
     {
     }
 
@@ -40,7 +36,8 @@ namespace Veng::Renderer
                     .PipelineBindPoint = PipelineBindPoint::Compute,
                 });
                 cmd.PushConstants(SceneColorDownsampleTailPush{
-                    .RenderExtent = Wrap(inner).View().RenderExtent,
+                    .RenderExtent =
+                        SceneColorChainValidExtent(m_Region, m_Extent, Wrap(inner).View()),
                     .AllocBase = m_Extent,
                     .FirstLevel = m_FirstLevel,
                     .LevelCount = static_cast<u32>(m_LevelIds.size()),

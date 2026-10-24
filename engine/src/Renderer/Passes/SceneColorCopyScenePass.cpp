@@ -16,15 +16,15 @@ namespace Veng::Renderer
                 .Clear = m_Clear,
             })
             .Sample(m_SourceId)
-            // The grab's only readers are the translucent draws, so a frame none of them samples
-            // it leaves the target unread and the clear unobserved.
+            // A frame nothing samples the target leaves it unread and the clear unobserved.
             .SkipWhenUnread([sampled = m_Sampled] { return !*sampled; })
             .Execute(
                 [this](PassContext& inner)
                 {
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
-                    const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
+                    const uvec2 renderExtent =
+                        SceneColorChainValidExtent(m_Region, m_Extent, Wrap(inner).View());
                     cmd.SetViewport({0, 0}, renderExtent);
                     cmd.SetScissor({0, 0}, renderExtent);
                     m_Context.GetBindlessRegistry().Bind(cmd);

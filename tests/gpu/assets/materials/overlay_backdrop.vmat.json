@@ -1,0 +1,16 @@
+{
+  "defaultInstance": "0x50C4EEB4875CF697",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x00000000008A0001",
+    "fragment": "0xF94314F33A7B9189"
+  },
+  "fields": [
+    { "name": "Blur", "type": "float", "value": 0.0 },
+    { "name": "Document", "type": "texture" },
+    { "name": "DocumentRect", "type": "vec4" },
+    { "name": "Backdrop", "type": "texture" },
+    { "name": "BackdropSampler", "type": "sampler", "texture": "Backdrop" },
+    { "name": "BackdropParams", "type": "vec4" }
+  ]
+}

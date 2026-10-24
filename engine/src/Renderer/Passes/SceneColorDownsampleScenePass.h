@@ -8,6 +8,8 @@
 
 #include <string>
 
+#include "SceneColorCopyScenePass.h"
+
 namespace Veng::Renderer
 {
     class Context;
@@ -27,35 +29,50 @@ namespace Veng::Renderer
         vec2 TexelSize;
     };
 
-    /// @brief Halves one level of the refraction scene-color grab into the next.
+    /// @brief Construction parameters for one level's SceneColorDownsampleScenePass.
+    struct SceneColorDownsamplePassInfo
+    {
+        /// @brief The graph pass name (what DidRecordPassLastFrame reports).
+        string Name;
+        /// @brief The single-attachment downsample pipeline.
+        Ref<GraphicsPipeline> Pipeline;
+        /// @brief The parent level's resource id (declared sampled for barrier order).
+        ResourceId SourceId;
+        /// @brief Bindless slot for the parent level.
+        TextureHandle SourceHandle;
+        /// @brief The level this pass writes.
+        ResourceId TargetId;
+        /// @brief The chain sampler's bindless slot.
+        SamplerHandle Sampler;
+        /// @brief This pass's destination level, 1 or deeper.
+        u32 Level = 1;
+        /// @brief The chain's base allocation extent; updated via Resize.
+        uvec2 Extent{0, 0};
+        /// @brief The frame's flag, set when something samples the chain this frame; the pass skips
+        ///        every other frame, with the chain.
+        const bool* Sampled = nullptr;
+        /// @brief Which part of the chain's base holds content each frame.
+        SceneColorChainRegion Region = SceneColorChainRegion::RenderSubRect;
+    };
+
+    /// @brief Halves one level of a scene-colour chain into the next.
     ///
     /// One of these per level below the base, run in order straight after the copy pass, so a
-    /// translucent material can sample the scene behind it blurred by reading a coarser level. Each
-    /// renders only the sub-rect its parent occupied, halved, and clamps its reads inside the
-    /// parent's valid region — the same dynamic-resolution discipline the copy takes, applied at
-    /// every level so the cleared area outside the sub-rect never works its way inward.
+    /// consumer can sample the scene behind it blurred by reading a coarser level. Each renders only
+    /// the sub-rect its parent occupied, halved, and clamps its reads inside the parent's valid
+    /// region — the same dynamic-resolution discipline the copy takes, applied at every level so the
+    /// cleared area outside the sub-rect never works its way inward.
     class SceneColorDownsampleScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs one level's pass.
-        /// @param context       Renderer context for bindless access.
-        /// @param pipeline      The single-attachment downsample pipeline.
-        /// @param sourceId      The parent level's resource id (declared sampled for barrier order).
-        /// @param sourceHandle  Bindless slot for the parent level.
-        /// @param targetId      The level this pass writes.
-        /// @param sampler       The chain sampler's bindless slot.
-        /// @param level         This pass's destination level, 1 or deeper.
-        /// @param extent        The grab's base allocation extent; updated via Resize.
-        /// @param sampled       The frame's flag, set when a draw this frame samples the grab; the
-        ///                      pass skips every other frame, with the grab.
-        SceneColorDownsampleScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
-                                      ResourceId sourceId, TextureHandle sourceHandle,
-                                      ResourceId targetId, SamplerHandle sampler, u32 level,
-                                      uvec2 extent, const bool* sampled)
-            : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
-              m_SourceHandle(sourceHandle), m_TargetId(targetId), m_Sampler(sampler),
-              m_Level(level), m_Extent(extent), m_Sampled(sampled),
-              m_Name("Scene Color Downsample " + std::to_string(level))
+        /// @param context Renderer context for bindless access.
+        /// @param info    The level's source, target, pipeline and per-frame flag.
+        SceneColorDownsampleScenePass(Context& context, SceneColorDownsamplePassInfo info)
+            : m_Context(context), m_Pipeline(std::move(info.Pipeline)), m_SourceId(info.SourceId),
+              m_SourceHandle(info.SourceHandle), m_TargetId(info.TargetId), m_Sampler(info.Sampler),
+              m_Level(info.Level), m_Extent(info.Extent), m_Sampled(info.Sampled),
+              m_Region(info.Region), m_Name(std::move(info.Name))
         {
         }
 
@@ -86,6 +103,8 @@ namespace Veng::Renderer
         uvec2 m_Extent;
         /// @brief The frame's grab-sampled flag (borrowed from the renderer).
         const bool* m_Sampled;
+        /// @brief Which part of the chain's base holds content each frame.
+        SceneColorChainRegion m_Region;
         /// @brief This pass's graph name, owned here because AddPass takes a view.
         string m_Name;
     };

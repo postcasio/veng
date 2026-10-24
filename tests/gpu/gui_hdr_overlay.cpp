@@ -14,11 +14,14 @@
 // Material overlays cost what their documents cover: a frame of only material overlays declares no
 // direct pass, a document moving and growing across frames composites as a fresh renderer would, and a
 // composite material that cannot be told where its document lies is reported by name, not drawn.
+// A composite reading the backdrop replaces the scene beneath its document with a copy of it: sharp
+// at blur zero, so nothing changes, and softened above it, inside the document's rect alone.
 //
 // A separate case drives a real GuiOverlay component through a Viewport to prove per-component
 // placement routing: a SceneHdrPreBloom component composites into the scene HDR and never joins the
 // post-tonemap layer stack, while a PostTonemap component does.
 
+#include <algorithm>
 #include <filesystem>
 
 #include <doctest/doctest.h>
@@ -1096,4 +1099,144 @@ TEST_CASE_FIXTURE(
     CHECK(second == baseline);
 
     std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: a composite reads the scene beneath its document as a backdrop, "
+    "sharp at blur zero and softened above it")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path gbufferDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path gbufferArchive =
+        Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_backdrop_gbuffer.vengpack";
+    const path compositeArchive =
+        Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_backdrop.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, gbufferDir / "gbuffer_pack.json", gbufferArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, compositeDir / "overlay_composite_pack.json",
+                                          compositeArchive, {}, nullptr, nullptr, nullptr, nullptr,
+                                          {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(gbufferArchive).has_value());
+    REQUIRE(assets.Mount(compositeArchive).has_value());
+
+    constexpr AssetId BrickMaterial{0x895443};
+    constexpr AssetId BackdropInstance{0x50C4EEB4875CF697ULL};
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(BrickMaterial);
+    REQUIRE(brick.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(backdrop.has_value());
+    MaterialInstance* const material = backdrop->Get();
+
+    // A lit cube against black, its left edge inside the document's rect.
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(0.8f, brick.value()), "Backdrop Cube");
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{.Direction = vec3(0.0f, 0.0f, -1.0f),
+                                           .Color = vec3(1.0f, 1.0f, 1.0f),
+                                           .Intensity = 1.0f / LuminousAnchor};
+    const CameraView camera = FrontCamera();
+
+    // A fully transparent document over the left half: its rect is exactly [0, 64) x [0, 128), and
+    // everything the composite draws there is the backdrop.
+    const Gui::DrawList list = OverlayQuad(vec2(0.0f), vec2(64.0f, 128.0f), vec4(0.0f));
+    constexpr u32 RectEnd = 64;
+
+    const auto render = [&](const optional<f32> blur, const bool compensate, const f32 exposure)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+        });
+        GuiHdrOverlayView view = ScreenSpaceView(list);
+        view.Material = material;
+        view.CompensateExposure = compensate;
+        if (blur.has_value())
+        {
+            material->SetParam("Blur", *blur);
+        }
+        const GuiHdrOverlayView views[] = {view};
+        const std::span<const GuiHdrOverlayView> conveyed =
+            blur.has_value() ? std::span<const GuiHdrOverlayView>(views)
+                             : std::span<const GuiHdrOverlayView>();
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = exposure,
+                                                           .HdrOverlays = conveyed});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // The largest per-channel difference between two frames over columns [x0, x1).
+    const auto maxDifference =
+        [](const vector<u8>& a, const vector<u8>& b, const u32 x0, const u32 x1)
+    {
+        f32 worst = 0.0f;
+        for (u32 y = 0; y < Extent.y; ++y)
+        {
+            for (u32 x = x0; x < x1; ++x)
+            {
+                const vec3 d =
+                    glm::abs(DecodeTexel(a, Extent.x, x, y) - DecodeTexel(b, Extent.x, x, y));
+                worst = std::max({worst, d.r, d.g, d.b});
+            }
+        }
+        return worst;
+    };
+
+    const vector<u8> plain = render(std::nullopt, false, 1.0f);
+    const vector<u8> sharp = render(0.0f, false, 1.0f);
+    const vector<u8> blurred = render(1.0f, false, 1.0f);
+
+    // At blur zero the backdrop is the scene: replacing it at full coverage changes nothing.
+    CHECK(maxDifference(sharp, plain, 0, Extent.x) < 1e-3f);
+    // Blurred, nothing outside the rect moves.
+    CHECK(maxDifference(blurred, plain, RectEnd, Extent.x) < 1e-3f);
+
+    // Inside the rect the cube's silhouette softens: light spreads out past its edge, and the edge
+    // of the face takes in the black beside it.
+    u32 edge = 0;
+    while (edge < RectEnd && DecodeTexel(plain, Extent.x, edge, Extent.y / 2).r < 0.05f)
+    {
+        ++edge;
+    }
+    REQUIRE(edge >= 16);
+    REQUIRE(edge + 6 < RectEnd);
+    const u32 outside = edge - 4;
+    const u32 inside = edge + 2;
+    CHECK(DecodeTexel(blurred, Extent.x, outside, Extent.y / 2).r >
+          DecodeTexel(plain, Extent.x, outside, Extent.y / 2).r + 0.01f);
+    CHECK(DecodeTexel(blurred, Extent.x, inside, Extent.y / 2).r <
+          DecodeTexel(plain, Extent.x, inside, Extent.y / 2).r - 0.01f);
+
+    // An overlay holding its brightness against the exposure is blended at 1/exposure, and the
+    // backdrop comes back divided by that weight: at blur zero it still restores the scene exactly.
+    const vector<u8> plainExposed = render(std::nullopt, false, 2.0f);
+    const vector<u8> sharpCompensated = render(0.0f, true, 2.0f);
+    CHECK(maxDifference(sharpCompensated, plainExposed, 0, Extent.x) < 1e-3f);
+
+    std::filesystem::remove(gbufferArchive);
+    std::filesystem::remove(compositeArchive);
 }

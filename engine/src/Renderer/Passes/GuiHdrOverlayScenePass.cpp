@@ -16,6 +16,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Scene/Camera.h>
 
+#include "../SceneColorChain.h"
 #include "GuiScenePass.h"
 
 namespace Veng::Renderer
@@ -72,6 +73,20 @@ namespace Veng::Renderer
             m_CompositePipelines.clear();
             m_PipelinesHaveMask = hasMask;
         }
+    }
+
+    void GuiHdrOverlayScenePass::SetBackdrop(const SceneColorChain* chain,
+                                             vector<ResourceId> mipIds,
+                                             vector<Unique<ScenePass>> passes)
+    {
+        m_Backdrop = chain;
+        m_BackdropMipIds = std::move(mipIds);
+        m_BackdropPasses = std::move(passes);
+    }
+
+    bool GuiHdrOverlayScenePass::ReadsBackdrop(const MaterialInstance& material)
+    {
+        return material.Field("Backdrop").IsValid();
     }
 
     const GuiHdrOverlayView* GuiHdrOverlayScenePass::MaterialOverlay(const SceneView& view,
@@ -165,6 +180,7 @@ namespace Veng::Renderer
         m_DocRects.assign(m_CompositeCount, GuiOverlayDocumentRect{});
 
         uvec2 required{0, 0};
+        m_BackdropSampled = false;
         for (u32 i = 0; i < m_CompositeCount; ++i)
         {
             Gui::DrawList& projected = m_DocLists[i];
@@ -188,6 +204,8 @@ namespace Veng::Renderer
             }
             m_DocRects[i] = ComputeGuiOverlayDocumentRect(lo, hi, view.PostResolveExtent);
             required = glm::max(required, m_DocRects[i].Size);
+            m_BackdropSampled = m_BackdropSampled ||
+                                (!m_DocRects[i].IsEmpty() && ReadsBackdrop(*overlay->Material));
         }
         return required;
     }
@@ -262,6 +280,35 @@ namespace Veng::Renderer
         }
     }
 
+    void GuiHdrOverlayScenePass::WriteBackdrop(MaterialInstance& material,
+                                               const f32 colorScale) const
+    {
+        const MaterialFieldHandle backdropField = material.Field("Backdrop");
+        if (!backdropField.IsValid())
+        {
+            return;
+        }
+        // No wired chain reads as zero levels, which SampleOverlayBackdrop answers with black.
+        const bool wired = m_Backdrop != nullptr && m_Backdrop->IsAllocated();
+        if (wired)
+        {
+            material.SetTextureHandle(backdropField, m_Backdrop->GetHandle());
+            const MaterialFieldHandle samplerField = material.Field("BackdropSampler");
+            if (samplerField.IsValid())
+            {
+                material.SetSamplerHandle(samplerField, m_Backdrop->GetSamplerHandle());
+            }
+        }
+        const MaterialFieldHandle paramsField = material.Field("BackdropParams");
+        if (paramsField.IsValid())
+        {
+            const vec2 extent = wired ? vec2(m_Backdrop->GetExtent()) : vec2(1.0f);
+            material.SetParam(paramsField,
+                              vec4(wired ? f32(m_Backdrop->GetMipCount()) : 0.0f, 1.0f / colorScale,
+                                   1.0f / extent.x, 1.0f / extent.y));
+        }
+    }
+
     void GuiHdrOverlayScenePass::RecordComposite(const ScenePassContext& ctx, const u32 index)
     {
         const SceneView& view = ctx.View();
@@ -308,6 +355,8 @@ namespace Veng::Renderer
         material.SetTextureHandle("Document", m_DocTargetHandle);
         material.SetParam(rectField, vec4(vec2(rect.Origin), vec2(rect.Size)));
         WriteDocumentFrame(material, *overlay, view);
+        const f32 colorScale = overlay->CompensateExposure ? m_ExposureScale : 1.0f;
+        WriteBackdrop(material, colorScale);
 
         // The viewport stays the full target so sv_position is a scene pixel; the scissor keeps the
         // fragment to the pixels the document can cover.
@@ -315,15 +364,20 @@ namespace Veng::Renderer
         cmd.BindPipeline(pipeline);
         cmd.SetViewport({0, 0}, view.PostResolveExtent);
         cmd.SetScissor(ivec2(rect.Origin), rect.Size);
-        const f32 colorScale = overlay->CompensateExposure ? m_ExposureScale : 1.0f;
         cmd.SetBlendConstants(vec4(vec3(colorScale), 1.0f));
         m_Context.GetBindlessRegistry().Bind(cmd);
         material.Bind(cmd);
         cmd.DrawFullscreenTriangle();
     }
 
-    void GuiHdrOverlayScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    void GuiHdrOverlayScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
+        // The backdrop is copied before any overlay draws, so it holds the scene and no overlay.
+        for (const Unique<ScenePass>& pass : m_BackdropPasses)
+        {
+            pass->Declare(graph, io);
+        }
+
         // The direct path: merge every overlay WITHOUT a composite material and blend it into the scene
         // color in place. Declared only while such an overlay is conveyed.
         if (m_HasDirect)
@@ -402,6 +456,10 @@ namespace Veng::Renderer
                     .Load = LoadOp::Load,
                     .Store = StoreOp::Store,
                 });
+            }
+            for (const ResourceId level : m_BackdropMipIds)
+            {
+                composite.Sample(level);
             }
             composite.Sample(m_DocTargetId)
                 .Execute([this, i](PassContext& inner) { RecordComposite(Wrap(inner), i); });

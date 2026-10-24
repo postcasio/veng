@@ -44,6 +44,7 @@
 #include "ShadowCasters.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
+#include "SceneColorChain.h"
 #include "GuiOverlayProjection.h"
 #include "HalfResTranslucency.h"
 #include <Veng/Renderer/BakedSkyCube.h>
@@ -657,8 +658,8 @@ namespace Veng::Renderer
             }
             if (m_Topology->RefractionActive)
             {
-                m_Refraction->DeclareColorCopy(m_Passes, litId, litHandle, m_RefractionSceneId,
-                                               m_SamplerHandle, extent, m_RefractionMipIds,
+                m_Refraction->DeclareColorCopy(m_Passes, litId, litHandle, m_SamplerHandle,
+                                               m_RefractionMipIds,
                                                &m_Internal->GrabRecording.ColorCopy);
             }
         };
@@ -1219,6 +1220,48 @@ namespace Veng::Renderer
                 m_GuiHdrOverlayPass->SetDocTarget(m_HdrOverlayDocHandle, m_HdrOverlayDocExtent);
                 m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
                 m_GuiHdrOverlayPass->SetHasDirect(m_HdrOverlayHasDirect);
+
+                // A composite reading what lies under its document is handed a blurred copy of the
+                // tail's scene colour, taken ahead of every overlay. Content-driven like the doc
+                // intermediate: allocated while such a composite is conveyed, released otherwise.
+                m_HdrOverlayBackdropMipIds.clear();
+                vector<Unique<ScenePass>> backdropPasses;
+                if (m_HdrOverlayCompositeCount > 0 && m_HdrOverlayReadsBackdrop)
+                {
+                    if (m_HdrOverlayBackdrop == nullptr)
+                    {
+                        m_HdrOverlayBackdrop = SceneColorChain::Create(
+                            m_Context, m_Assets, "SceneRenderer Gui Overlay Backdrop");
+                    }
+                    if (m_HdrOverlayBackdrop->GetExtent() != tailExtent)
+                    {
+                        m_HdrOverlayBackdrop->Recreate(tailExtent,
+                                                       SceneColorChain::BlurLevelsFor(tailExtent));
+                    }
+                    const u32 levels = m_HdrOverlayBackdrop->GetMipCount();
+                    for (u32 level = 0; level < levels; level++)
+                    {
+                        m_HdrOverlayBackdropMipIds.push_back(graph.Import(
+                            fmt::format("SceneRenderer Gui Overlay Backdrop Level {}", level)));
+                    }
+                    m_HdrOverlayBackdrop->Declare(backdropPasses, "Gui Overlay Backdrop",
+                                                  ppEffectFinalId, ppEffectFinalHandle,
+                                                  m_SamplerHandle, m_HdrOverlayBackdropMipIds,
+                                                  SceneColorChainRegion::WholeAllocation,
+                                                  m_GuiHdrOverlayPass->GetBackdropSampledFlag());
+                }
+                else
+                {
+                    m_HdrOverlayBackdrop.reset();
+                }
+                m_GuiHdrOverlayPass->SetBackdrop(m_HdrOverlayBackdrop.get(),
+                                                 m_HdrOverlayBackdropMipIds,
+                                                 std::move(backdropPasses));
+            }
+            else
+            {
+                m_HdrOverlayBackdropMipIds.clear();
+                m_HdrOverlayBackdrop.reset();
             }
 
             // Post-resolve ribbon paths draw into the effect chain's output at the tail anchor,
@@ -1925,15 +1968,19 @@ namespace Veng::Renderer
         // per-frame content reaches the pass through the SceneView with no recompile. The count of
         // material-composited overlays is structural too — each needs its own render-to-intermediate +
         // composite pass pair — and so is whether any overlay is direct, which alone declares the
-        // direct pass; a change in either recompiles alongside presence.
+        // direct pass, and whether any composite reads the backdrop, which alone wires its chain; a
+        // change in any recompiles alongside presence.
         const bool present = !view.HdrOverlays.empty();
         u32 materialCount = 0;
         bool hasDirect = false;
+        bool readsBackdrop = false;
         for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
         {
             if (overlay.Material != nullptr)
             {
                 ++materialCount;
+                readsBackdrop =
+                    readsBackdrop || GuiHdrOverlayScenePass::ReadsBackdrop(*overlay.Material);
             }
             else
             {
@@ -1941,11 +1988,12 @@ namespace Veng::Renderer
             }
         }
         if (present != m_HasHdrOverlay || materialCount != m_HdrOverlayCompositeCount ||
-            hasDirect != m_HdrOverlayHasDirect)
+            hasDirect != m_HdrOverlayHasDirect || readsBackdrop != m_HdrOverlayReadsBackdrop)
         {
             m_HasHdrOverlay = present;
             m_HdrOverlayCompositeCount = materialCount;
             m_HdrOverlayHasDirect = hasDirect;
+            m_HdrOverlayReadsBackdrop = readsBackdrop;
             Rebuild();
         }
     }
@@ -3886,6 +3934,16 @@ namespace Veng::Renderer
         if (m_HdrOverlayDocId.IsValid())
         {
             bindings.push_back({.Id = m_HdrOverlayDocId, .View = m_HdrOverlayDocView});
+        }
+        if (m_HdrOverlayBackdrop != nullptr)
+        {
+            const vector<Ref<ImageView>>& mipViews = m_HdrOverlayBackdrop->GetMipViews();
+            for (usize level = 0;
+                 level < m_HdrOverlayBackdropMipIds.size() && level < mipViews.size(); level++)
+            {
+                bindings.push_back(
+                    {.Id = m_HdrOverlayBackdropMipIds[level], .View = mipViews[level]});
+            }
         }
         if (m_Topology->DofComposited())
         {

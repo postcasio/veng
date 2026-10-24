@@ -7,6 +7,8 @@
 #include <span>
 #include <string>
 
+#include "SceneColorCopyScenePass.h"
+
 namespace Veng::Renderer
 {
     class ComputePipeline;
@@ -32,17 +34,21 @@ namespace Veng::Renderer
     {
     public:
         /// @brief Constructs the tail pass.
+        /// @param name       The graph pass name.
         /// @param pipeline   The tail compute pipeline.
         /// @param set        The tail set: the level before the tail sampled, a storage view per slot.
         /// @param sourceId   The level before the tail (declared sampled for barrier order).
         /// @param levelIds   The tail's levels, first to coarsest (declared storage-written).
         /// @param firstLevel The tail's first level, 1 or deeper.
         /// @param extent     The grab's base allocation extent; updated via Resize.
-        /// @param sampled    The frame's flag, set when a draw this frame samples the grab; the pass
-        ///                   skips every other frame, with the grab.
-        SceneColorDownsampleTailScenePass(Ref<ComputePipeline> pipeline, Ref<DescriptorSet> set,
-                                          ResourceId sourceId, std::span<const ResourceId> levelIds,
-                                          u32 firstLevel, uvec2 extent, const bool* sampled);
+        /// @param sampled    The frame's flag, set when something samples the chain this frame; the
+        ///                   pass skips every other frame, with the chain.
+        /// @param region     Which part of the chain's base holds content each frame.
+        SceneColorDownsampleTailScenePass(string name, Ref<ComputePipeline> pipeline,
+                                          Ref<DescriptorSet> set, ResourceId sourceId,
+                                          std::span<const ResourceId> levelIds, u32 firstLevel,
+                                          uvec2 extent, const bool* sampled,
+                                          SceneColorChainRegion region);
 
         /// @brief Updates the grab's base allocation extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
@@ -64,6 +70,8 @@ namespace Veng::Renderer
         uvec2 m_Extent;
         /// @brief The frame's grab-sampled flag (borrowed from the renderer).
         const bool* m_Sampled;
+        /// @brief Which part of the chain's base holds content each frame.
+        SceneColorChainRegion m_Region;
         /// @brief This pass's graph name, owned here because AddComputePass takes a view.
         string m_Name;
     };

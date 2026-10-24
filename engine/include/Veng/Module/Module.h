@@ -595,10 +595,12 @@ extern "C"
 /// lays them out short.
 /// Version 148 grows Gui::Element by PointColors, a Polyline's per-point colours, after Points. A
 /// module's drivers reach elements, so a stale one reads every field after it at a shifted offset.
+/// Version 149 grows SceneRenderer by the pre-bloom overlay backdrop (the chain, its level ids and its
+/// structural flag): its layout is in a public header a module compiles against.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 148u
+#define VENG_MODULE_ABI_VERSION 149u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

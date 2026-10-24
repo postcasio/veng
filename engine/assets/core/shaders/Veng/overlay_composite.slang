@@ -22,8 +22,23 @@
 // through either with OverlayMapPoint, and read a document point with LoadOverlayDocumentPoint. The engine scissors the composite to the rect; the helper's
 // transparent outside it keeps a read past the rect inert all the same.
 //
-// It declares no binding of its own: it reads g_Textures from the PostProcess contract, so a
-// material includes it after Veng/postprocess.slang.
+// A material that replaces what lies under its document — frosted glass, a screen that stops being a
+// window — also declares
+//
+//   uint   Backdrop;        // bindless index of the backdrop chain
+//   uint   BackdropSampler; // bindless index of the chain's sampler
+//   float4 BackdropParams;  // x the chain's level count, y the reciprocal of the composite's colour
+//                           // weight, zw the reciprocal of the chain's extent
+//
+// and reads it through SampleOverlayBackdrop: the scene colour as it stood before any overlay
+// composited this frame, at the post-resolve allocation, with a halving blur chain. The blend can only
+// reach the sharp scene already in the target, so a material wanting a different backdrop composites
+// its document over the sample and emits at full coverage; the sample comes back divided by the colour
+// weight the composite is blended at, so at blur 0 that restores the scene exactly whether or not the
+// overlay compensates the exposure.
+//
+// It declares no binding of its own: it reads g_Textures and g_Samplers from the PostProcess contract,
+// so a material includes it after Veng/postprocess.slang.
 
 // Loads the document texel under a scene pixel (sv_position.xy), or transparent (premultiplied
 // zero) where the pixel lies outside the document's rect.
@@ -52,4 +67,22 @@ float4 LoadOverlayDocumentPoint(uint documentHandle, float4 documentRect,
 {
     return LoadOverlayDocument(documentHandle, documentRect,
                                OverlayMapPoint(sceneFromDocument, point));
+}
+
+// Samples the backdrop under a scene pixel, blurred by `blur` in [0, 1] across whatever chain the
+// frame has: 0 is the sharp copy, 1 the coarsest level (roughly an 8-pixel edge across the long axis,
+// a wash rather than a blur). Returns black where no backdrop is wired (`BackdropParams.x` zero).
+float3 SampleOverlayBackdrop(uint backdrop, uint backdropSampler, float4 backdropParams, float2 pixel,
+                             float blur)
+{
+    if (backdropParams.x < 1.0)
+    {
+        return float3(0.0);
+    }
+    const float lod = saturate(blur) * (backdropParams.x - 1.0);
+    const float2 uv = saturate(pixel * backdropParams.zw);
+    return g_Textures[NonUniformResourceIndex(backdrop)]
+               .SampleLevel(g_Samplers[NonUniformResourceIndex(backdropSampler)], uv, lod)
+               .rgb *
+           backdropParams.y;
 }

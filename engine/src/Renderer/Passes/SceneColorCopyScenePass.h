@@ -11,6 +11,29 @@ namespace Veng::Renderer
     class Context;
     class GraphicsPipeline;
 
+    /// @brief Which part of a scene-colour chain's allocation holds content each frame.
+    enum class SceneColorChainRegion : u8
+    {
+        /// @brief The frame's dynamic-resolution sub-rect (`SceneView::RenderExtent`): a chain in the
+        ///        render allocation, copied from what the scene rasterized.
+        RenderSubRect,
+        /// @brief The whole allocation: a chain in the post-resolve allocation, which the resolved
+        ///        scene colour always fills.
+        WholeAllocation,
+    };
+
+    /// @brief The extent of a chain's level 0 that holds content this frame.
+    /// @param region      Which part of the allocation holds content.
+    /// @param allocation  The chain's level-0 allocation extent.
+    /// @param view        The frame's view, whose RenderExtent a sub-rect chain fills.
+    /// @return The valid level-0 extent.
+    [[nodiscard]] inline uvec2 SceneColorChainValidExtent(const SceneColorChainRegion region,
+                                                          const uvec2 allocation,
+                                                          const SceneView& view)
+    {
+        return region == SceneColorChainRegion::WholeAllocation ? allocation : view.RenderExtent;
+    }
+
     // The grab copy push block, matching scene_color_copy.frag PushConstants: the source slot, the
     // shared sampler, and the frame's dynamic-resolution sub-rect mapping (source and destination
     // share one allocation extent, so one mapping serves the sample and the clamp).
@@ -46,6 +69,8 @@ namespace Veng::Renderer
         /// @brief The frame's flag, set when a draw this frame samples the target; the pass skips
         ///        every other frame.
         const bool* Sampled = nullptr;
+        /// @brief Which part of the target holds content each frame.
+        SceneColorChainRegion Region = SceneColorChainRegion::RenderSubRect;
     };
 
     /// @brief Copies one pre-translucent source — the lit scene color or the opaque depth — into its
@@ -66,7 +91,7 @@ namespace Veng::Renderer
             : m_Context(context), m_Name(info.Name), m_Pipeline(info.Pipeline),
               m_SourceId(info.SourceId), m_SourceHandle(info.SourceHandle),
               m_TargetId(info.TargetId), m_Clear(info.Clear), m_Sampler(info.Sampler),
-              m_Extent(info.Extent), m_Sampled(info.Sampled)
+              m_Extent(info.Extent), m_Sampled(info.Sampled), m_Region(info.Region)
         {
         }
 
@@ -96,5 +121,7 @@ namespace Veng::Renderer
         uvec2 m_Extent;
         /// @brief The frame's target-sampled flag (borrowed from the renderer).
         const bool* m_Sampled;
+        /// @brief Which part of the target holds content each frame.
+        SceneColorChainRegion m_Region;
     };
 }

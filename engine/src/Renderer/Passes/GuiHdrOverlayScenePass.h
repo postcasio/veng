@@ -21,6 +21,7 @@ namespace Veng::Renderer
     class Context;
     class GuiScenePass;
     class GraphicsPipeline;
+    class SceneColorChain;
     struct GuiHdrOverlayView;
 
     /// @brief Composites scene-HDR-pre-bloom GUI overlays into the scene color at the pre-bloom anchor.
@@ -54,6 +55,15 @@ namespace Veng::Renderer
     /// followed by its composite, declared in order — the graph serializes the reuse. The count of
     /// material overlays is a structural quantity: the renderer recompiles the pass set when it changes
     /// (SetCompositeCount), so a frame's material overlays each get their declared pass pair.
+    ///
+    /// **A composite may read what lies under its document, blurred.** A material declaring a
+    /// `Backdrop` field is handed the renderer's backdrop chain (SetBackdrop): a copy of the scene
+    /// colour as it stood before any overlay composited this frame, with a halving blur chain, read
+    /// through `SampleOverlayBackdrop` (`Veng/overlay_composite.slang`) at a level the material
+    /// chooses. The copy is declared at the head of this pass's contribution and runs only on a frame
+    /// some composite that reads it has a non-empty rect (GetBackdropSampledFlag), so a frosted pane
+    /// replaces the scene beneath it with a blurred copy by emitting at full coverage. The backdrop
+    /// holds no overlay: one frosted overlay never blurs another.
     ///
     /// The renderer inserts this after any post-process effect passes and before bloom, and points it
     /// at the resolved scene-color id (the effect chain's output, or the raw HDR when no effect ran),
@@ -94,6 +104,24 @@ namespace Veng::Renderer
         /// @param bloomMask        The tail-side bloom-mask target, or invalid when bloom is off.
         /// @param bloomMaskFormat  The bloom-mask target's format.
         void SetComposite(ResourceId docTarget, ResourceId bloomMask, Format bloomMaskFormat);
+
+        /// @brief Wires the backdrop a composite material may read (per Rebuild).
+        /// @param chain   The renderer's backdrop chain at the post-resolve allocation, or nullptr to
+        ///                wire none (a material declaring `Backdrop` then reads no levels).
+        /// @param mipIds  The chain's level ids, base first, each declared sampled by every composite.
+        /// @param passes  The copy and halving passes that fill the chain from the scene colour,
+        ///                declared ahead of every overlay this pass draws.
+        void SetBackdrop(const SceneColorChain* chain, vector<ResourceId> mipIds,
+                         vector<Unique<ScenePass>> passes);
+
+        /// @brief The flag the backdrop's passes skip on: set by PrepareDocuments when a composite
+        ///        this frame reads the backdrop over a non-empty document rect.
+        [[nodiscard]] const bool* GetBackdropSampledFlag() const { return &m_BackdropSampled; }
+
+        /// @brief Whether a composite material reads the backdrop (it declares a `Backdrop` field).
+        /// @param material  The overlay's composite material.
+        /// @return True when the material asks for the backdrop.
+        [[nodiscard]] static bool ReadsBackdrop(const MaterialInstance& material);
 
         /// @brief Sets how many material overlays are composited this Rebuild (declares that many pass pairs).
         /// @param count  The number of SceneHdrPreBloom overlays naming a material.
@@ -147,6 +175,12 @@ namespace Veng::Renderer
         /// `float4` rows; a field the material does not declare is skipped.
         static void WriteDocumentFrame(MaterialInstance& material, const GuiHdrOverlayView& overlay,
                                        const SceneView& view);
+        /// @brief Writes the backdrop's handles and parameters into the material's `Backdrop`,
+        ///        `BackdropSampler` and `BackdropParams` fields, where it declares them.
+        /// @param material     The per-view mirror the composite draws through.
+        /// @param colorScale   The blend constant the composite's colour is weighted by, which the
+        ///                     backdrop is pre-divided by so full coverage restores it exactly.
+        void WriteBackdrop(MaterialInstance& material, f32 colorScale) const;
         /// @brief Composites the @p index-th material overlay's document through its material.
         void RecordComposite(const ScenePassContext& ctx, u32 index);
         /// @brief Returns the @p index-th overlay naming a material this frame, or nullptr.
@@ -189,6 +223,14 @@ namespace Veng::Renderer
         u32 m_CompositeCount = 0;
         /// @brief Whether an overlay without a material is conveyed (the direct pass is declared).
         bool m_HasDirect = false;
+        /// @brief The backdrop chain composites read, or nullptr when none is wired.
+        const SceneColorChain* m_Backdrop = nullptr;
+        /// @brief The backdrop chain's level ids, base first.
+        vector<ResourceId> m_BackdropMipIds;
+        /// @brief The copy and halving passes that fill the backdrop, declared ahead of the overlays.
+        vector<Unique<ScenePass>> m_BackdropPasses;
+        /// @brief Whether a composite this frame reads the backdrop (the backdrop passes skip otherwise).
+        bool m_BackdropSampled = false;
         /// @brief The owned recorder supplying GuiScenePass's geometry rings, pipelines, and blend.
         Unique<GuiScenePass> m_Gui;
         /// @brief The per-frame merged/projected screen-space draw list a record draws from.

@@ -386,6 +386,7 @@ add_library(veng SHARED
         src/Renderer/DofChain.cpp
         src/Renderer/HalfResTranslucency.cpp
         src/Renderer/RefractionGrab.cpp
+        src/Renderer/SceneColorChain.cpp
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/InstanceSet.cpp
         src/Renderer/InstancedCull.cpp

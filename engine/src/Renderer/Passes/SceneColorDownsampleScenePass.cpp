@@ -36,7 +36,8 @@ namespace Veng::Renderer
                     // Every level renders the sub-rect its parent occupied, halved — so the valid
                     // fraction is the same at every level and a material's one sub-rect mapping
                     // serves a sample at any of them.
-                    const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
+                    const uvec2 renderExtent =
+                        SceneColorChainValidExtent(m_Region, m_Extent, Wrap(inner).View());
                     const uvec2 parentAlloc = LevelExtent(m_Extent, m_Level - 1);
                     const uvec2 parentValid = LevelExtent(renderExtent, m_Level - 1);
                     const uvec2 targetValid = LevelExtent(renderExtent, m_Level);
