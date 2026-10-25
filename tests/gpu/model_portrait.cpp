@@ -406,6 +406,54 @@ TEST_CASE_FIXTURE(PortraitFixture,
 }
 
 TEST_CASE_FIXTURE(PortraitFixture,
+                  "model portrait: an explicit camera framed for another instance holds the last "
+                  "render")
+{
+    const Entity entity = AddPortrait(*Host);
+    auto& portrait = Host->Get<ModelPortrait>(entity);
+    portrait.Framing.Mode = PortraitFramingMode::Explicit;
+    portrait.Framing.CameraPosition = vec3(0.0f, 0.0f, 4.0f);
+    portrait.Framing.FramedInstantiation = portrait.GetInstantiationCount();
+
+    // Framed before any instance existed, the first instance never renders.
+    u32 rendered = 0;
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        rendered += Frame().PortraitsRendered;
+    }
+    CHECK(rendered == 0);
+    CHECK(portrait.GetInstantiationCount() == 1);
+    CHECK_FALSE(portrait.GetOutput().Ready);
+
+    portrait.Framing.FramedInstantiation = portrait.GetInstantiationCount();
+    FrameUntilReady({&portrait});
+
+    // A re-pointed model is instantiated at once; the camera framed for the old one is not used.
+    MeshRenderer renderer;
+    MeshSource source;
+    *static_cast<CubeShape*>(source.SetActive(TypeIdOf<CubeShape>())) =
+        CubeShape{.Extent = 1.0f, .Material = Material};
+    renderer.Source = source;
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({.Components = {Comp(Types, Transform{}), Comp(Types, renderer)}});
+    portrait.Model = Assets->Adopt<Prefab>(Prefab::Create(std::move(entities), {}));
+    portrait.Framing.CameraPosition = vec3(0.0f, 0.0f, 6.0f);
+    rendered = 0;
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        rendered += Frame().PortraitsRendered;
+    }
+    CHECK(rendered == 0);
+    CHECK(portrait.GetInstantiationCount() == 2);
+    REQUIRE(portrait.GetOutput().Ready);
+    CHECK(glm::length(portrait.GetOutput().Camera.GetPosition() - vec3(0.0f, 0.0f, 4.0f)) < 1e-4f);
+
+    portrait.Framing.FramedInstantiation = portrait.GetInstantiationCount();
+    CHECK(Frame().PortraitsRendered == 1);
+    CHECK(glm::length(portrait.GetOutput().Camera.GetPosition() - vec3(0.0f, 0.0f, 6.0f)) < 1e-4f);
+}
+
+TEST_CASE_FIXTURE(PortraitFixture,
                   "model portrait: a released renderer is reused without a build, create/destroy "
                   "cycles hold the bindless occupancy, and an unpresented scene renders nothing")
 {

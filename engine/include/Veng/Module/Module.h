@@ -599,10 +599,12 @@ extern "C"
 /// structural flag): its layout is in a public header a module compiles against.
 /// Version 150 grows MaterialInfo and Material by a translucent material's metering exclusion, after
 /// WritesReactive. A module builds materials and reads them, so a stale one lays both out short.
+/// Version 151 grows PortraitFraming by FramedInstantiation, after CameraRotation. A module frames
+/// portraits, so a stale one lays ModelPortrait out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 150u
+#define VENG_MODULE_ABI_VERSION 151u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

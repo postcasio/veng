@@ -3620,6 +3620,12 @@ the capture pre-pass's, extended:
 - **Static and silent.** The private scene has no systems and no presentation scope; it is posed by
   `ModelPose` and by what the populate callback attaches, and lit by one key light and an ambient
   floor (`SceneView::AmbientFloor`). Its clip planes are fitted to everything in it each frame.
+- **An explicit camera can be tied to the instance it was framed for.** A caller framing by the
+  model it measured runs before the drive, which instantiates a re-pointed `Model` and renders it in
+  the same `Prepare` — so that camera fits the previous instance. Stamping
+  `PortraitFraming::FramedInstantiation` with the `GetInstantiationCount()` it measured makes the
+  portrait hold its last render (pose, bounds and camera included) while the instance differs, and
+  render once the caller frames the new one. Unset, any instance renders.
 - **The level of detail its size on screen calls for.** A portrait frames its model to fill its
   image, so selecting from its own camera alone would always pick full detail however small the
   panel showing it. `ModelPortrait::LodScreenScale` — the fraction of the screen's height the image

@@ -74,6 +74,15 @@ namespace Veng::Renderer
         vec3 CameraPosition{0.0f, 0.0f, 3.0f};
         /// @brief Explicit: the camera's rotation in the private scene; it looks down its local -Z.
         quat CameraRotation{1.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Explicit: the instantiation this camera was framed against, or nullopt for any.
+        ///
+        /// A caller framing by the model it measured cannot have measured an instance the drive
+        /// creates after its update — a re-pointed Model is instantiated and rendered in the same
+        /// Prepare. Set to ModelPortrait::GetInstantiationCount() as read when measuring (0 before
+        /// the first instance), the portrait does not render while its current instance differs,
+        /// keeping its last render until the caller frames the new one. Runtime-only: not
+        /// reflected, so an authored portrait renders with any instance.
+        optional<u32> FramedInstantiation;
     };
 
     /// @brief The light a ModelPortrait's private scene is lit by: one key light and an ambient floor.
@@ -275,7 +284,9 @@ namespace Veng::Renderer
         /// Instantiates Model when it is resident and not yet (or no longer) the instance, runs the
         /// populate callback after an instantiation, re-arms an OnDemand render after a frame the
         /// portrait was not driven on, writes ModelPose and Lighting into the private scene, and
-        /// frames the camera. A portrait whose renderer no longer matches Extent or Output releases
+        /// frames the camera — or, while an explicit camera names another instance
+        /// (PortraitFraming::FramedInstantiation), stops short of the pose and declines to render.
+        /// A portrait whose renderer no longer matches Extent or Output releases
         /// it first, and the caller materializes a matching one.
         /// @param context  The render context (its frame serial re-arms after a gap).
         /// @param assets   The asset manager the model spawns through.

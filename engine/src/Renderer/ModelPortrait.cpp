@@ -395,6 +395,12 @@ namespace Veng::Renderer
         {
             return false;
         }
+        // Held ahead of the pose, bounds and camera, so the output still describes its last render.
+        if (Framing.Mode == PortraitFramingMode::Explicit && Framing.FramedInstantiation &&
+            *Framing.FramedInstantiation != runtime.InstantiationCount)
+        {
+            return false;
+        }
 
         Scene& stage = *runtime.Stage;
         // Written only on a change: a write moves the scene's spatial version and refits its tree.
