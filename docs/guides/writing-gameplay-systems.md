@@ -198,7 +198,7 @@ device / wire  →  PlayerInput  →  Intent  →  Transform
 ```
 
 The components live in
-[`engine/include/Veng/Scene/Components.h`](../../engine/include/Veng/Scene/Components.h):
+[`engine/include/Veng/Scene/Components/Control.h`](../../engine/include/Veng/Scene/Components/Control.h):
 
 - **`PlayerInput`** — a per-seat snapshot of *this tick's resolved actions*: a set
   of `{ ActionId, vec2 Value, ActionPhase }` samples read by action id
@@ -206,7 +206,7 @@ The components live in
   builtin `InputMappingSystem` fills it for a local seat by resolving that seat's
   active bindings against `Veng::Input`; a remote seat's arrives from the wire.
 - **`Intent`** — an *abstract, source-agnostic command*: `vec3 Move` (in the
-  pawn's local frame), `vec2 Look`, `u32 Actions`. It answers "what does this pawn
+  pawn's local frame), `vec3 Look`, `u32 Actions`. It answers "what does this pawn
   want to do this tick," divorced from who decided it.
 - **`Possesses`** — a seat-to-pawn link: `Entity Pawn`, the pawn this seat
   controls.
@@ -539,7 +539,7 @@ The pawn shuttles between the points — and because it drives `Intent`, it obey
 This example reuses the real shipped pieces:
 
 - **`Intent`** and **`Mover`** — the components from
-  [`Components.h`](../../engine/include/Veng/Scene/Components.h).
+  [`Components/Control.h`](../../engine/include/Veng/Scene/Components/Control.h).
 - **`MovementSystem`** — the engine's `Intent` consumer from
   [`Movement.h`](../../engine/include/Veng/Scene/Movement.h), the exact system
   hello-triangle's `ControlSystem` feeds.

@@ -49,7 +49,7 @@ untouched.
 
 ## 1. A seat names its devices with `SeatInput`
 
-A **`SeatInput`** component (`Veng/Scene/Components.h`) lives on the `Viewer` seat
+A **`SeatInput`** component (`Veng/Scene/Components/Control.h`) lives on the `Viewer` seat
 entity beside `Possesses` and the `InputContextStack`, and names the physical
 devices that feed that seat:
 

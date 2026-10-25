@@ -833,7 +833,7 @@ its cascade frame after frame, while the camera translates or turns, so shadow e
 - **The snap is real, in the frame the scene's content rests in.** The light basis depends on the
   light alone (`CascadeLightBasis`), and the box centre is snapped to whole texels on a grid fixed in
   the **stable frame**: scene space for a fixed-origin scene, or, for a scene carrying a
-  `FloatingOrigin` (`Veng/Scene/Components.h`, read once per `Execute` through
+  `FloatingOrigin` (`Veng/Scene/Components/Environment.h`, read once per `Execute` through
   `SceneFloatingOrigin`), scene space displaced by its `Position`. Only the grid's phase is taken
   from the origin, in double precision; everything else stays in small render-space magnitudes. So a
   consumer that re-centres its world on the viewer each frame still sees its distant scene hold still.
@@ -2222,7 +2222,7 @@ even before an environment arrives), so a scene **without** a lighting sky falls
 flat-ambient path and renders unchanged.
 
 **The sky is one component, and every sky source is a radiance-cube producer.** The scene carries
-one author-opt-in **`Sky` component** (`Veng/Scene/Components.h`): a **source** (`SkySource`
+one author-opt-in **`Sky` component** (`Veng/Scene/Components/Environment.h`): a **source** (`SkySource`
 variant — `EnvironmentSky` an environment map, `AtmosphereSky` the procedural atmosphere,
 `MaterialSky` an authored Sky-domain material, `CubeSky` a caller-owned already-baked radiance
 cube), an `Intensity`, and a **lighting tier**
@@ -2524,7 +2524,7 @@ runtime-built mesh carries levels through `MeshData::Lods`.
   every size in the view and its shadow views, so a view rendered into a small image inside a panel
   (a model portrait) selects what its meshes' size on the actual screen calls for.
 - **Forced levels, most specific first:** a per-entity **`LodOverride`** component
-  (`Veng/Scene/Components.h`, reflected and editor-visible; `GatherMeshes` copies it onto
+  (`Veng/Scene/Components/Mesh.h`, reflected and editor-visible; `GatherMeshes` copies it onto
   `VisibleMesh::ForcedLod`), then **`SceneView::ForcedLod`** (one render's override, no `Configure`),
   then **`SceneRendererSettings::ForcedLod`** (the renderer's; reflected, so the debug override
   layer and `UI::RenderSettingsEditor` reach it and the bias and band with no other change),
@@ -2567,7 +2567,7 @@ runtime-built mesh carries levels through `MeshData::Lods`.
 **An `InstancedMesh` entity draws one mesh with one material at every instance of a store** — the
 tool for scattered debris, vegetation and props, where an entity per copy would cost
 per-entity work every frame and a draw candidate per copy, and the frame's `MaxCullCandidates` is
-far below the copy count. The component (`Veng/Scene/Components.h`) names the mesh, the material,
+far below the copy count. The component (`Veng/Scene/Components/Fields.h`) names the mesh, the material,
 `CastsShadows`, `Visible`, the projected-size band and the minimum shadow caster size, and holds a
 runtime-only `Ref<InstanceSet>` (`Veng/Renderer/InstancedMesh.h`): the CPU store of
 `MeshInstance`s — a 3×4 affine transform into the entity's frame and one `vec4` datum, 64 bytes —
@@ -3094,7 +3094,7 @@ media, a named future increment, not this.
   view + sampler + a **world-space AABB**, `Build`/`BuildSync`-constructed from CPU voxel data
   (worker-legal creation; the march binds it through a dedicated set, below, and `Finalize()`
   separately registers it into the bindless volume set for a material that samples it). The
-  reflected **`VolumeField` scene component** (`Veng/Scene/Components.h`) carries the authored,
+  reflected **`VolumeField` scene component** (`Veng/Scene/Components/Fields.h`) carries the authored,
   live-tunable knobs — `Opacity` (an overall fade scaling emission and extinction toward zero),
   `EmissionScale`, `ExtinctionScale`, `Steps` (the fixed march step count, the quality knob,
   default 64) — plus a **runtime-only `Ref<VolumeField> Field`** (no `VE_FIELD`: never reflected,
@@ -3174,7 +3174,7 @@ barrier).
   `World` renders nothing (a closed document is a no-op, not a null deref). The viewport retains
   the camera for screen-to-world mapping, and the whole view (`GetViewState`).
 - **The viewport resolves the scene's look itself.** In `Render`, before the `SceneView` is built,
-  it reads the presented scene's `RenderLook` (`Veng/Scene/Components.h`; the first walked wins,
+  it reads the presented scene's `RenderLook` (`Veng/Scene/Components/RenderLook.h`; the first walked wins,
   with a warning once if there are several). When the look differs from the last one resolved
   (`RenderLook` has `operator==`) or the owner called `InvalidateLook`, it runs its **look resolver**
   (`SetLookResolver`; a `ViewportCompositor` hands its own to every viewport it registers, and an

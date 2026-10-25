@@ -374,7 +374,7 @@ app with no settings opinion is unchanged; audio is the single exception the eng
 once after `OnInitialize`, when the authored bus graph has been adopted.
 
 **A scene's render look is a component, and every viewport resolves the look of the scene it
-presents.** `RenderLook` (`Veng/Scene/Components.h`; one per scene, the first walked winning with a
+presents.** `RenderLook` (`Veng/Scene/Components/RenderLook.h`; one per scene, the first walked winning with a
 warning, the `Sky` rule) carries the view-wide post and pipeline knobs — exposure and the tone curve,
 auto-exposure, bloom, shadows, AO, refraction, depth of field, the ambient floor. A level's
 `render` block seeds it (`SeedLevel`), a prefab may carry one, and a system may write it. Each

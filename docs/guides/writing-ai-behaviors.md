@@ -50,7 +50,8 @@ A `BehaviorTask` is the leaf you subclass. It has three hooks; only `Tick` is re
 
 ```cpp
 #include <Veng/Behavior/BehaviorTree.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Control.h>
+#include <Veng/Scene/Components/Core.h>
 #include <Veng/Scene/Scene.h>
 
 // Drives the pawn toward a world point by writing Intent; succeeds once it arrives.

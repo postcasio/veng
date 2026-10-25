@@ -324,7 +324,7 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   motion. The origin's owner calls it with the displacement before `RibbonSystem` records the frame;
   entity `Transform`s stay the owner's to re-base.
 - **A floating origin also says where it stands, with `FloatingOrigin`.** One per scene
-  (`Veng/Scene/Components.h`, runtime-only, the first walked winning with a warning), it records at
+  (`Veng/Scene/Components/Environment.h`, runtime-only, the first walked winning with a warning), it records at
   double precision where the scene's coordinate origin stands in the frame its content rests in, and
   how far out (`ViewerFrameReach`, a view depth) the viewer carries geometry of its own. The renderer
   snaps its directional shadow cascades in that frame, and the cascades covering the reach in scene
@@ -339,7 +339,7 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
 
 ## Particle effects
 
-**A `ParticleEffectInstance` plays a `ParticleEffect`** (`Veng/Scene/Components.h`; the asset in
+**A `ParticleEffectInstance` plays a `ParticleEffect`** (`Veng/Scene/Components/Effects.h`; the asset in
 [../Asset/CLAUDE.md](../Asset/CLAUDE.md), the GPU side in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md),
 "Particles"). Presentation, never replicated. Its reflected fields are the effect, a `Seed` (0
 derives one per entity and playback at the latch), an `InheritVelocity` added to every particle's
@@ -645,7 +645,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
   its release is no edge, and the next press is the game's. Keys are not withheld, so a key held
   through the click keeps driving.
 - **`SeatInput` scopes the raw read *per seat*.** A reflected **`SeatInput`** component
-  (`Veng/Scene/Components.h`, `UsesKeyboardMouse` + a `Gamepad` id + `WantsGamepad`) on the
+  (`Veng/Scene/Components/Control.h`, `UsesKeyboardMouse` + a `Gamepad` id + `WantsGamepad`) on the
   `Viewer` seat names that seat's devices; `InputMappingSystem` builds each seat a filtered
   **`SeatInputView`** (`Veng/Input/RawInput.h`) and resolves against it, so two seats with
   different assignments produce distinct `PlayerInput`s. The view's arms route two ways: a

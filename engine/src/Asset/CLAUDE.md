@@ -353,7 +353,7 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   Both primitives keep their own contract; the consumer-facing choice is written up in
   [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#curved-panels-a-display-that-looks-like-a-curved-physical-object).
 - **A mesh reference's source is `cooked AssetId | inline recipe`.** `MeshRenderer`
-  (`Veng/Scene/Components.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
+  (`Veng/Scene/Components/Mesh.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
   `(Transform, MeshRenderer)` and every draw path read it) plus a serialized **`MeshSource
   Source`** — a `Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape, CylinderShape,
   ConeShape, TorusShape, CapsuleShape, AnnulusShape>`, each alternative carrying that shape's parameters plus an

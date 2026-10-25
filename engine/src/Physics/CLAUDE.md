@@ -628,7 +628,7 @@ non-static body's solver state (`SaveBodyState`'s bytes — pose, velocities, sl
 body's push record, under the tick the step ran for: `PhysicsSystem` keys it by
 `SystemContext::Tick`, a bare `StepPhysics` by the scene's change tick, which the Sim phase stamps
 with the same number. Each body keeps a ring of `PredictionWindowTicks` slots
-(`Veng/Scene/Components.h`), the depth the prediction history keeps too, so a tick the history can
+(`Veng/Scene/Components/Net.h`), the depth the prediction history keeps too, so a tick the history can
 replay from is a tick the world can restore. A body records from the first step it is predicted; its
 record is dropped at the first step it is not, or has lost its body, and a body re-created under
 the same entity starts an empty one. The cost is one save per predicted body per step, about a
