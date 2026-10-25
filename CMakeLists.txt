@@ -1993,6 +1993,7 @@ if (VENG_BUILD_TESTS)
             # A post-resolve translucent material draws in its own tail pass, over the opaque scene,
             # at full and reduced render scale, after one transition frame in the scene pass.
             tests/gpu/post_resolve_translucent.cpp
+            tests/gpu/translucent_metering.cpp
             tests/gpu/translucent_reactive.cpp
             tests/gpu/translucent_exposure.cpp
             tests/gpu/dof_battery.cpp

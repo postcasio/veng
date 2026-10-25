@@ -1,0 +1,21 @@
+{
+  "domain": "Translucent",
+  "placement": "postResolve",
+  "cull": "None",
+  "excludedFromMetering": true,
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0xB56D7D55482477F0"
+  },
+  "fields": [
+    {
+      "name": "Color",
+      "value": [
+        0.2,
+        0.6,
+        0.9,
+        0.5
+      ]
+    }
+  ]
+}

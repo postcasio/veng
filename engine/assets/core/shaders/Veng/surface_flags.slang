@@ -46,7 +46,8 @@ static const float SurfaceFlagNoEnvironmentLighting = 2.0 / 7.0;
 // surface casts on what is round it rather than for the surface itself, which may blow out, as a
 // lamp does to a camera exposed for its room. Without it a few bright fixtures in view hold the
 // exposure down (the highlight cap, or simply their weight in the average) and the room they light
-// renders dark. The surface's own shading is untouched.
+// renders dark. The surface's own shading is untouched. A Translucent material raises it over the
+// surface behind it through TranslucentMeteringOutput (Veng/translucent.slang).
 static const float SurfaceFlagExcludedFromMetering = 4.0 / 7.0;
 
 // The three-bit code a flags value holds: bit 0 declines shadow maps, bit 1 environment lighting,

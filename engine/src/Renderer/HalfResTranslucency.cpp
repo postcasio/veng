@@ -185,7 +185,8 @@ namespace Veng::Renderer
         passes.push_back(CreateUnique<TranslucentScenePass>(
             m_Context, HalfResExtent(extent), plan, layerId, halfDepthId, sceneColorId,
             sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined, ResourceId{},
-            Format::Undefined, TranslucentPassKind::HalfLayer, segment, forward, pipelines));
+            Format::Undefined, ResourceId{}, TranslucentPassKind::HalfLayer, segment, forward,
+            pipelines));
         passes.push_back(CreateUnique<HalfResCompositeScenePass>(
             m_Context, m_CompositePipeline, layerId, m_LayerHandle, halfDepthId, m_DepthHandle,
             depthId, depthHandle, targetId, plan, rect, segment));

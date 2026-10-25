@@ -97,7 +97,8 @@ namespace Veng::Renderer
     /// how bright it is, which the bloom pyramid's level 0 folds in. The attachment is bound for
     /// every pipeline the pass records (a render-pass instance and its pipelines must agree on the
     /// attachment count) and its writes are enabled only on the pipelines whose material declares
-    /// the output, so a material returning a bare float4 leaves the mask alone.
+    /// the output, so a material returning a bare float4 leaves the mask alone. The reactive mask
+    /// and the g-buffer's surface flags follow the same rule at locations 2 and 3.
     class TranslucentScenePass final : public ScenePass
     {
     public:
@@ -120,6 +121,11 @@ namespace Veng::Renderer
         ///                     resolve is wired. It is always the third attachment, location 2,
         ///                     with the second left unbound when the frame wires no bloom mask.
         /// @param reactiveFormat Color format of the reactive mask.
+        /// @param surfaceFlagsId The g-buffer ORM target, whose alpha a material declaring
+        ///                     "excludedFromMetering" raises through a MAX blend at location 3, or
+        ///                     invalid when no such material is drawn. Locations 1 and 2 are left
+        ///                     unbound where the frame wires no bloom or reactive mask. Valid only on
+        ///                     a full-resolution scene pass.
         /// @param kind         Which pass this is. A HalfLayer instance renders the
         ///                     reduced-resolution layer: the viewport is the half valid sub-rect and
         ///                     the target is cleared to transparent at pass begin. A PostResolve
@@ -134,8 +140,8 @@ namespace Veng::Renderer
                              ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
                              ResourceId sceneDepthId, Format targetFormat, ResourceId maskId,
                              Format maskFormat, ResourceId reactiveId, Format reactiveFormat,
-                             TranslucentPassKind kind, u32 segment, ForwardLightingSets forward,
-                             Ref<PipelineCache> pipelines = {});
+                             ResourceId surfaceFlagsId, TranslucentPassKind kind, u32 segment,
+                             ForwardLightingSets forward, Ref<PipelineCache> pipelines = {});
 
         /// @brief Creates a pipeline cache passes of one target and mask configuration share.
         [[nodiscard]] static Ref<PipelineCache> CreatePipelineCache();
@@ -206,6 +212,8 @@ namespace Veng::Renderer
         ResourceId m_ReactiveId;
         /// @brief Color format of the reactive mask.
         Format m_ReactiveFormat;
+        /// @brief The g-buffer ORM a metering exclusion writes (invalid when not wired).
+        ResourceId m_SurfaceFlagsId;
         /// @brief Which of the frame's translucent passes this is.
         TranslucentPassKind m_Kind;
         /// @brief The segment the pass belongs to.

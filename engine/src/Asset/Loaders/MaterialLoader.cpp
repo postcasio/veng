@@ -520,12 +520,13 @@ namespace Veng
         const auto sortPriority = header.SortPriority;
         const bool bloomMask = header.BloomMask != 0;
         const bool reactive = header.Reactive != 0;
+        const bool meteringExcluded = header.ExcludedFromMetering != 0;
         const auto layer = static_cast<TranslucentLayer>(header.Layer);
         const bool readsSceneColor = header.ReadsSceneColor != 0;
         const bool readsSceneDepth = header.ReadsSceneDepth != 0;
         const bool instancedSets = header.InstancedSets != 0;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask, reactive,
-                           layer, readsSceneColor, readsSceneDepth,
+                           meteringExcluded, layer, readsSceneColor, readsSceneDepth,
                            instancedSets](AssetManager& manager,
                                           std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
@@ -551,6 +552,7 @@ namespace Veng
                 .SortPriority = sortPriority,
                 .WritesBloomMask = bloomMask,
                 .WritesReactive = reactive,
+                .ExcludesFromMetering = meteringExcluded,
                 .Layer = layer,
                 .Blend = blend,
                 .ReadsSceneColor = readsSceneColor,

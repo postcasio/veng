@@ -205,6 +205,14 @@ namespace Veng
         /// the Translucent domain.
         bool WritesReactive = false;
 
+        /// @brief Whether the fragment stage excludes its pixels from the auto-exposure meter at
+        ///        SV_Target3.
+        ///
+        /// A Translucent material returning TranslucentMeteringOutput sets this, and the
+        /// full-resolution scene translucent passes bind the g-buffer's surface-flags channel there
+        /// for its pipeline alone. Ignored outside the Translucent domain.
+        bool ExcludesFromMetering = false;
+
         /// @brief Which translucent layer the material draws in.
         ///
         /// An expensive per-pixel translucent opts into the half-resolution layer (exclusive with
@@ -315,6 +323,14 @@ namespace Veng
         /// writes for this material's pipeline and leave them off for every other, so a resolve
         /// trusts its history less only where a declaring material draws.
         [[nodiscard]] bool IsReactiveWriter() const { return m_WritesReactive; }
+
+        /// @brief Returns whether the fragment stage excludes its pixels from the auto-exposure
+        ///        meter at SV_Target3.
+        ///
+        /// The scene translucent passes bind the surface-flags channel only on a frame such a
+        /// material is drawn, and enable its writes for this material's pipeline alone, so the
+        /// meter skips exactly the pixels a declaring material flags.
+        [[nodiscard]] bool IsMeteringExcluder() const { return m_ExcludesFromMetering; }
 
         /// @brief Returns which translucent layer the material draws in.
         [[nodiscard]] TranslucentLayer GetTranslucentLayer() const { return m_Layer; }
@@ -535,6 +551,7 @@ namespace Veng
         i32 m_SortPriority = 0;
         bool m_WritesBloomMask = false;
         bool m_WritesReactive = false;
+        bool m_ExcludesFromMetering = false;
         TranslucentLayer m_Layer = TranslucentLayer::Full;
         TranslucentBlend m_Blend = TranslucentBlend::Alpha;
         bool m_ReadsSceneColor = false;

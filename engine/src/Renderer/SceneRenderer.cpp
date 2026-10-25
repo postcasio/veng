@@ -180,6 +180,11 @@ namespace Veng::Renderer
         // unwired and the pool released, for the sprite pass's reason.
         constexpr u32 ParticleIdleFrameLimit = 256;
 
+        // How many consecutive gathers with no metering-excluding translucent draw the surface-flags
+        // slot survives before the scene translucent passes stop binding it, for the sprite pass's
+        // reason: an effect drawing such a surface comes and goes in bursts.
+        constexpr u32 MeteringExclusionIdleFrameLimit = 256;
+
         // Executes at the full allocation before the non-temporal resolve-anchor promotion is
         // unwired. Deactivation hysteresis, the half-res-translucency reason: a dynamic-resolution
         // controller sitting on its ceiling dips below it and recovers within a few frames, and
@@ -221,6 +226,13 @@ namespace Veng::Renderer
         bool PostResolveTranslucentActive = false;
         // Consecutive Executes the post-resolve translucent plan has come back empty while wired.
         u32 PostResolveTranslucentIdleFrames = 0;
+        // Whether the full-resolution scene translucent passes bind the g-buffer's surface flags,
+        // for a material excluding its pixels from the exposure meter. Content-driven with the
+        // sprite pass's hysteresis, so a frame drawing no such material pays no load and store of
+        // the ORM target in each of those passes.
+        bool MeteringExclusionActive = false;
+        // Consecutive Executes that have drawn no metering-excluding translucent while it is wired.
+        u32 MeteringExclusionIdleFrames = 0;
         // The post-resolve translucent pass, declared at the tail anchor rather than held in
         // m_Passes.
         Unique<TranslucentScenePass> PostResolveTranslucentPass;
@@ -858,10 +870,16 @@ namespace Veng::Renderer
             TranslucentSegments& segments = m_Internal->Segments;
             const Ref<TranslucentScenePass::PipelineCache> fullPipelines =
                 TranslucentScenePass::CreatePipelineCache();
+            // Only the meter reads the flags after the lighting pass, so they are bound only for it.
+            const ResourceId flagsId =
+                m_Internal->MeteringExclusionActive && m_Topology->AutoExposureActive
+                    ? m_OrmId
+                    : ResourceId{};
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, extent, &segments.Full[0], litId, depthTargetId, m_RefractionSceneId,
                 m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat, m_ReactiveMaskId,
-                ReactiveMaskFormat, TranslucentPassKind::First, 0, forwardSets, fullPipelines));
+                ReactiveMaskFormat, flagsId, TranslucentPassKind::First, 0, forwardSets,
+                fullPipelines));
             if (!m_HalfResTranslucentActive)
             {
                 return;
@@ -879,7 +897,7 @@ namespace Veng::Renderer
                 m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                     m_Context, extent, &segments.Full[segment + 1], litId, depthTargetId,
                     m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
-                    BloomMaskFormat, m_ReactiveMaskId, ReactiveMaskFormat,
+                    BloomMaskFormat, m_ReactiveMaskId, ReactiveMaskFormat, flagsId,
                     TranslucentPassKind::Continuation, segment, forwardSets, fullPipelines));
             }
         };
@@ -1294,7 +1312,7 @@ namespace Veng::Renderer
                 m_Internal->PostResolveTranslucentPass = CreateUnique<TranslucentScenePass>(
                     m_Context, tailExtent, &m_Internal->PostResolveTranslucentPlan, ppEffectFinalId,
                     ResourceId{}, ResourceId{}, ResourceId{}, HdrFormat, PostMaskId(),
-                    BloomMaskFormat, ResourceId{}, Format::Undefined,
+                    BloomMaskFormat, ResourceId{}, Format::Undefined, ResourceId{},
                     TranslucentPassKind::PostResolve, 0, forwardSets);
             }
 
@@ -2432,6 +2450,30 @@ namespace Veng::Renderer
         {
             m_Internal->PostResolveTranslucentActive = false;
             m_Internal->PostResolveTranslucentIdleFrames = 0;
+            Rebuild();
+        }
+
+        // A metering-excluding material draws only in the full-resolution plan (the cook keeps it
+        // there), so it is the one checked. The pass set binds the surface flags from the frame a
+        // draw is gathered — the rebuild lands ahead of this frame's replay, so the draw writes its
+        // flags on the frame it first appears — and unbinds them after an idle window.
+        const bool meteringExcluded =
+            std::ranges::any_of(translucentPlan.Draws, [](const TranslucentDraw& draw)
+                                { return draw.Material->GetParent()->IsMeteringExcluder(); });
+        if (meteringExcluded)
+        {
+            m_Internal->MeteringExclusionIdleFrames = 0;
+            if (!m_Internal->MeteringExclusionActive)
+            {
+                m_Internal->MeteringExclusionActive = true;
+                Rebuild();
+            }
+        }
+        else if (m_Internal->MeteringExclusionActive &&
+                 ++m_Internal->MeteringExclusionIdleFrames > MeteringExclusionIdleFrameLimit)
+        {
+            m_Internal->MeteringExclusionActive = false;
+            m_Internal->MeteringExclusionIdleFrames = 0;
             Rebuild();
         }
 

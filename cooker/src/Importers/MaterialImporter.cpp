@@ -370,6 +370,32 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1j''. Parse the optional metering exclusion (default false) ---
+
+        // Set by a Translucent material whose fragment flags its pixels as excluded from the
+        // auto-exposure meter at SV_Target3 — a light source drawn as a surface over the scene,
+        // which the meter would otherwise expose for. The scene translucent passes bind the
+        // g-buffer's surface-flags channel there for a declaring material's pipeline alone; the
+        // layer rules below keep it to the full-resolution scene, whose pixels are the g-buffer's.
+        bool excludedFromMetering = false;
+        if (vmat.contains("excludedFromMetering"))
+        {
+            if (!vmat["excludedFromMetering"].is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'excludedFromMetering' must be a boolean",
+                                vmatPath.string()));
+            }
+            excludedFromMetering = vmat["excludedFromMetering"].get<bool>();
+            if (excludedFromMetering && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'excludedFromMetering' requires the "
+                                "Translucent domain",
+                                vmatPath.string()));
+            }
+        }
+
         // --- 1k. Parse the optional translucent placement (default scene) ---
 
         // "postResolve" draws a Translucent material at the HDR tail, at the output resolution
@@ -432,6 +458,14 @@ namespace Veng::Cook
                 "'placement: postResolve' — the reactive mask is the full-resolution scene's, and "
                 "a "
                 "post-resolve surface never enters the temporal history",
+                vmatPath.string()));
+        }
+        if (excludedFromMetering && layer != TranslucentLayer::Full)
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': 'excludedFromMetering' is exclusive with 'resolution: "
+                "half' and 'placement: postResolve' — the surface flags are the g-buffer's, at the "
+                "full-resolution scene's render allocation",
                 vmatPath.string()));
         }
 
@@ -632,6 +666,8 @@ namespace Veng::Cook
             // Declaring "reactive" adds a scalar float SV_Target2, the reactive amount, whether or
             // not the material declares the mask — the pass keeps the reactive attachment at
             // location 2 by leaving location 1 unbound when no mask is wired.
+            // Declaring "excludedFromMetering" adds a float4 SV_Target3, the surface flags it
+            // raises in alpha, at location 3 by the same rule.
             const bool colorOk = !outputs->empty() && (*outputs)[0].TargetIndex == 0 &&
                                  (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
             const auto scalarAt = [&](const usize i, const u32 target)
@@ -639,18 +675,28 @@ namespace Veng::Cook
                 return i < outputs->size() && (*outputs)[i].TargetIndex == target &&
                        (*outputs)[i].IsFloat && (*outputs)[i].ComponentCount == 1;
             };
-            const usize expected = 1 + (bloomMask ? 1 : 0) + (reactive ? 1 : 0);
+            const usize expected =
+                1 + (bloomMask ? 1 : 0) + (reactive ? 1 : 0) + (excludedFromMetering ? 1 : 0);
+            const usize meteringIndex = expected - 1;
+            const bool meteringOk =
+                !excludedFromMetering ||
+                (meteringIndex < outputs->size() && (*outputs)[meteringIndex].TargetIndex == 3 &&
+                 (*outputs)[meteringIndex].IsFloat &&
+                 (*outputs)[meteringIndex].ComponentCount == 4);
             const bool extrasOk = outputs->size() == expected && (!bloomMask || scalarAt(1, 1)) &&
-                                  (!reactive || scalarAt(bloomMask ? 2 : 1, 2));
+                                  (!reactive || scalarAt(bloomMask ? 2 : 1, 2)) && meteringOk;
             if (!colorOk || !extrasOk)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': translucent material must write a single float4 "
-                    "SV_Target0 (HDR color + alpha){}{} and no further targets — not the g-buffer "
-                    "MRT; its fragment shader does not",
+                    "SV_Target0 (HDR color + alpha){}{}{} and no further targets — not the "
+                    "g-buffer MRT; its fragment shader does not",
                     vmatPath.string(),
                     bloomMask ? ", a float SV_Target1 (the bloom mask it declares)" : "",
-                    reactive ? ", a float SV_Target2 (the reactive amount it declares)" : ""));
+                    reactive ? ", a float SV_Target2 (the reactive amount it declares)" : "",
+                    excludedFromMetering
+                        ? ", a float4 SV_Target3 (the surface flags its metering exclusion writes)"
+                        : ""));
             }
         }
         else if (domainValue == MaterialDomain::GuiFill)
@@ -1145,6 +1191,7 @@ namespace Veng::Cook
         header.ReadsSceneDepth = readsSceneDepth ? 1u : 0u;
         header.InstancedSets = instancedSets ? 1u : 0u;
         header.Reactive = reactive ? 1u : 0u;
+        header.ExcludedFromMetering = excludedFromMetering ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

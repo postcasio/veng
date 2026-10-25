@@ -121,7 +121,9 @@ at cook time:
   scene reads; the cooked header's layer word carries it and the half-resolution choice alike. A
   Translucent material may declare `"reactive": true` when its fragment writes the temporal resolve's
   reactive mask at SV_Target2, Translucent-only and exclusive with `"resolution": "half"` and
-  `"placement": "postResolve"`; every fragment output must compile to the location its SV_Target index
+  `"placement": "postResolve"`, and `"excludedFromMetering": true` when it writes the surface flags
+that keep the exposure meter from reading it at a float4 SV_Target3, under the same two exclusions;
+every fragment output must compile to the location its SV_Target index
   names, which Slang's declaration-order numbering breaks for a struct with a gap unless every output
   carries an explicit `[[vk::location(N)]]`, and the importer refuses one that does not. A Surface
   material may declare `"instancedSets": true` when an instanced mesh set may draw it, a located cook

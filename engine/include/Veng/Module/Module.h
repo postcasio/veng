@@ -597,10 +597,12 @@ extern "C"
 /// module's drivers reach elements, so a stale one reads every field after it at a shifted offset.
 /// Version 149 grows SceneRenderer by the pre-bloom overlay backdrop (the chain, its level ids and its
 /// structural flag): its layout is in a public header a module compiles against.
+/// Version 150 grows MaterialInfo and Material by a translucent material's metering exclusion, after
+/// WritesReactive. A module builds materials and reads them, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 149u
+#define VENG_MODULE_ABI_VERSION 150u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

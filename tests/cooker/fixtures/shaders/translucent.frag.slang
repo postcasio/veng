@@ -67,3 +67,19 @@ ImplicitReactiveOutput fsMainReactiveImplicit(VSOutput input)
     output.Reactive = p.Color.a;
     return output;
 }
+
+struct MeteringOutput
+{
+    [[vk::location(0)]] float4 Color : SV_Target0;
+    [[vk::location(3)]] float4 MeteringFlags : SV_Target3;
+};
+
+[shader("fragment")]
+MeteringOutput fsMainMetering(VSOutput input)
+{
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
+    MeteringOutput output;
+    output.Color = p.Color;
+    output.MeteringFlags = float4(0.0, 0.0, 0.0, 4.0 / 7.0);
+    return output;
+}

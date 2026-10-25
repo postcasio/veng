@@ -41,3 +41,15 @@ float4 fsMainCompensated(SurfaceFragmentInput input) : SV_Target0
     const ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     return float4(CompensateExposure(vc, p.Color.rgb), p.Color.a);
 }
+
+// The same colour, flagging every pixel it draws as excluded from the auto-exposure meter, for a
+// material declaring "excludedFromMetering".
+[shader("fragment")]
+TranslucentMeteringOutput fsMainMetering(SurfaceFragmentInput input)
+{
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
+    TranslucentMeteringOutput output;
+    output.Color = p.Color;
+    output.MeteringFlags = TranslucentMeteringFlags(true);
+    return output;
+}

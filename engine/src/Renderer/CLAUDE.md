@@ -1230,6 +1230,28 @@ unbound, and enable its writes for a declaring material's pipeline alone. It is 
 animating surface the history would drop or smear; a large surface should not declare it, since a
 reactive pixel keeps little of its history.
 
+**A Translucent material may keep the exposure meter from reading it** — `"excludedFromMetering":
+true` (Translucent domain, full-resolution scene layer only: exclusive with `"resolution": "half"`
+and `"placement": "postResolve"`, each a cook error), read as `Material::IsMeteringExcluder()`. Its
+fragment returns `TranslucentMeteringOutput` (`Veng/translucent.slang`), whose SV_Target3 is
+`TranslucentMeteringFlags(excluded)`: zero colour and, where it flags, `SurfaceFlagExcludedFromMetering`
+in alpha. The full-resolution translucent passes then bind the g-buffer's ORM as a fourth attachment,
+locations 1 and 2 being the bloom and reactive masks or left unbound, and blend it with MAX on every
+channel, with writes enabled for a declaring material's pipeline alone: the zero colour leaves the
+stored occlusion, roughness and metallic as they are, and the alpha raises the flags code to one
+carrying the meter's bit. That can clear the two lighting flags beneath it, which only the deferred
+lighting pass reads, and it has run; the screen-space reflection chain and SSAO read ORM before the
+translucent passes too, so the meter is the only reader after them. It is for a light source drawn as
+a translucent surface over the scene — a glowing wall, a bright medium — which the meter would expose
+for, and a fragment flags only the pixels it makes bright, since a frame whose every pixel is flagged
+leaves the meter nothing to read and holds the exposure. **The binding is content-driven**:
+`SceneRenderer::Internal::MeteringExclusionActive` is set by the first gather that holds a declaring
+draw — the rebuild lands ahead of that frame's replay, so the draw writes its flags on the frame it
+first appears — and cleared after `MeteringExclusionIdleFrameLimit` gathers with none, so a frame
+drawing no such material pays no load and store of the ORM target in each translucent pass. It binds
+only while auto-exposure is wired. `tests/gpu/translucent_metering.cpp` holds that a bright
+translucent beside a lit cube sets the exposure when plain and does not when declaring.
+
 **An output's location is checked against its SV_Target index at cook.** Slang numbers an entry's
 outputs in declaration order unless every one carries an explicit `[[vk::location(N)]]`, so an
 SV_Target2 after SV_Target0 compiles to location 1; the contract structs pin every location, and the
@@ -2081,8 +2103,10 @@ is the device-free `MeterAutoExposureHistogram` (`AutoExposureMetering.h`, pinne
   drawn as a surface. A lamp's emission is far brighter than what it lights, so without the flag a
   few fixtures in view are the frame's highlight and its weight in the average, and the room they
   light exposes dark; with it the meter exposes for the room and the fixtures blow out, as a camera
-  shows them. A forward-shaded surface writes no g-buffer, so only an opaque one can be excluded, and
-  a renderer with no g-buffer meters everything.
+  shows them. A Translucent material declaring `"excludedFromMetering": true` flags the pixels it
+  chooses the same way, through the g-buffer's surface flags (see "Additive translucent materials"),
+  so a light source drawn as a translucent surface over the scene is excluded too. A renderer with no
+  g-buffer meters everything.
 
 ### Depth of field and the physical camera
 
@@ -2837,7 +2861,9 @@ SurfaceFlagNoEnvironmentLighting`), or `SurfaceFlagsNone`; a material writing 0 
 lighting pass and the meter read the channel with a **point load** (`LoadSurfaceFlags`), not through
 the g-buffer's linear sampler: no scalar encoding of independent flags survives a filtered blend between surfaces. The forward path carries the same two
 flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, which a translucent
-material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears both. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
+material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears both.
+The third reaches the g-buffer from a translucent material through its own output (see "Additive
+translucent materials"), since the meter reads it after the translucent passes have drawn. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
 vector
 (`curUV - prevUV`) the TAA resolve reprojects through, written by the shared `ComputeMotionVector`
 helper from the vertex stage's unjittered current/previous clip positions; emissive (G4,

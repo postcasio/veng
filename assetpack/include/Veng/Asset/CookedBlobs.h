@@ -441,7 +441,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 17u;
+    inline constexpr u32 CookedMaterialVersion = 18u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -551,8 +551,13 @@ namespace Veng
         /// writes for a declaring material's pipeline alone. Translucent domain, full-resolution
         /// scene layer only, enforced at cook.
         u32 Reactive = 0;
-        /// @brief Pads the header to its 8-byte alignment with a determined byte.
-        u32 Pad = 0;
+        /// @brief Whether the fragment stage excludes its pixels from the auto-exposure meter at
+        ///        SV_Target3 (the "excludedFromMetering" key; default 0).
+        ///
+        /// The scene translucent passes bind the g-buffer's surface-flags channel there while a
+        /// declaring material is drawn, and enable its writes for that material's pipeline alone.
+        /// Translucent domain, full-resolution scene layer only, enforced at cook.
+        u32 ExcludedFromMetering = 0;
     };
     static_assert(sizeof(CookedMaterialHeader) == 72,
                   "CookedMaterialHeader carries no unnamed padding");

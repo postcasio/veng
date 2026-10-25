@@ -11,8 +11,9 @@
 //
 // A Translucent material's fragment stage outputs a single float4 SV_Target0: HDR linear color in
 // rgb and coverage in a — or one of the structs below, which add a fragment-written depth
-// (TranslucentDepthOutput), a bloom mask (TranslucentBloomOutput) or a reactive amount
-// (TranslucentReactiveOutput, TranslucentBloomReactiveOutput). The forward translucent pass draws it
+// (TranslucentDepthOutput), a bloom mask (TranslucentBloomOutput), a reactive amount
+// (TranslucentReactiveOutput, TranslucentBloomReactiveOutput) or a metering exclusion
+// (TranslucentMeteringOutput). The forward translucent pass draws it
 // into the lit HDR scene-color target after deferred lighting and the sky composite and before the
 // bloom/tonemap tail, so translucents bloom and tonemap with the scene. The pass depth-TESTs against the opaque depth buffer with depth
 // writes OFF (a translucent surface never occludes another), sorts submeshes back-to-front by view
@@ -117,6 +118,32 @@ struct TranslucentBloomReactiveOutput
     [[vk::location(1)]] float  BloomMask : SV_Target1;  // bloom amplitude, weighted by coverage
     [[vk::location(2)]] float  Reactive  : SV_Target2;  // the reactive amount, in [0, 1]
 };
+
+// A Translucent material that is a light source drawn over the scene — a glowing wall, a beam, a
+// bright medium — may keep the auto-exposure meter from reading it, as an opaque lamp does through
+// its g-buffer surface flags (Veng/surface_flags.slang). It declares `"excludedFromMetering": true`
+// and returns the struct below, whose SV_Target3 carries TranslucentMeteringFlags in alpha: the
+// full-resolution scene translucent passes bind the g-buffer's ORM there, keeping its location fixed
+// as the reactive mask's is, and raise the stored flags to the written value through a MAX blend.
+// RGB must be 0, which leaves the stored occlusion, roughness and metallic unchanged. Raising the
+// code to SurfaceFlagExcludedFromMetering can clear the two lighting flags beneath it, which only the
+// deferred lighting pass reads, before any translucent draws. Only the full-resolution scene layer
+// writes them: the cook refuses "excludedFromMetering" beside "resolution": "half" or "placement":
+// "postResolve". The meter then skips every pixel a fragment flags, so a fragment flags only the
+// pixels it makes bright, leaving the scene it shows through metered. A struct combining this with
+// the bloom mask or the reactive amount pins every location explicitly, as these do.
+struct TranslucentMeteringOutput
+{
+    [[vk::location(0)]] float4 Color         : SV_Target0;  // HDR linear color in rgb, coverage in a
+    [[vk::location(3)]] float4 MeteringFlags : SV_Target3;  // TranslucentMeteringFlags
+};
+
+// The SV_Target3 value of TranslucentMeteringOutput: the pixel excluded from the meter, or left as
+// it was.
+float4 TranslucentMeteringFlags(bool excluded)
+{
+    return float4(0.0, 0.0, 0.0, excluded ? SurfaceFlagExcludedFromMetering : 0.0);
+}
 
 // The reactive amount of a straight color: its coverage, or the luminance of the light it adds where
 // an additive surface carries more light than coverage.

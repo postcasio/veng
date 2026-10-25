@@ -90,6 +90,16 @@
       "id": "0x44A1C22D5AA2A56C",
       "type": "Material",
       "source": "materials/translucent_compensated.vmat.json"
+    },
+    {
+      "id": "0x8D4AA914459D764F",
+      "type": "Shader",
+      "source": "shaders/translucent_metering.frag.shader.json"
+    },
+    {
+      "id": "0x05D95135D3A8BEEF",
+      "type": "Material",
+      "source": "materials/translucent_metering.vmat.json"
     }
   ]
 }

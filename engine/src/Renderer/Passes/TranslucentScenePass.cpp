@@ -26,16 +26,20 @@ namespace Veng::Renderer
         const ResourceId targetId, const ResourceId depthId, const ResourceId sceneColorId,
         const ResourceId sceneDepthId, const Format targetFormat, const ResourceId maskId,
         const Format maskFormat, const ResourceId reactiveId, const Format reactiveFormat,
-        const TranslucentPassKind kind, const u32 segment, ForwardLightingSets forward,
-        Ref<PipelineCache> pipelines)
+        const ResourceId surfaceFlagsId, const TranslucentPassKind kind, const u32 segment,
+        ForwardLightingSets forward, Ref<PipelineCache> pipelines)
         : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
           m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
           m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat),
-          m_ReactiveId(reactiveId), m_ReactiveFormat(reactiveFormat), m_Kind(kind),
-          m_Segment(segment), m_HalfResolution(kind == TranslucentPassKind::HalfLayer),
+          m_ReactiveId(reactiveId), m_ReactiveFormat(reactiveFormat),
+          m_SurfaceFlagsId(surfaceFlagsId), m_Kind(kind), m_Segment(segment),
+          m_HalfResolution(kind == TranslucentPassKind::HalfLayer),
           m_PostResolve(kind == TranslucentPassKind::PostResolve), m_Forward(std::move(forward)),
           m_Pipelines(pipelines ? std::move(pipelines) : std::make_shared<PipelineCache>())
     {
+        VE_ASSERT(!m_SurfaceFlagsId.IsValid() || kind == TranslucentPassKind::First ||
+                      kind == TranslucentPassKind::Continuation,
+                  "TranslucentScenePass: only a full-resolution scene pass writes surface flags");
     }
 
     Ref<TranslucentScenePass::PipelineCache> TranslucentScenePass::CreatePipelineCache()
@@ -97,16 +101,28 @@ namespace Veng::Renderer
         {
             builder.Color({.Resource = m_MaskId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
+        // A reactive material writes location 2 and a metering exclusion location 3 whatever the
+        // frame wires before them.
+        const bool flags = m_SurfaceFlagsId.IsValid();
+        if (!m_MaskId.IsValid() && (m_ReactiveId.IsValid() || flags))
+        {
+            builder.UnboundColor();
+        }
         if (m_ReactiveId.IsValid())
         {
-            // A reactive material writes location 2 whether or not the frame wires a bloom mask.
-            if (!m_MaskId.IsValid())
-            {
-                builder.UnboundColor();
-            }
             // Cleared ahead of the scene's composited layers; a declaring material adds to it.
             builder.Color(
                 {.Resource = m_ReactiveId, .Load = LoadOp::Load, .Store = StoreOp::Store});
+        }
+        else if (flags)
+        {
+            builder.UnboundColor();
+        }
+        if (flags)
+        {
+            // The g-buffer's surface flags, raised in place for the auto-exposure meter after it.
+            builder.Color(
+                {.Resource = m_SurfaceFlagsId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
         // The post-resolve allocation has no depth buffer and the grab predates it, so that layer
         // binds neither and draws over the scene.
@@ -213,7 +229,8 @@ namespace Veng::Renderer
              .Blend = parent->GetTranslucentBlend() == TranslucentBlend::Additive
                           ? BlendState::AlphaAdditive()
                           : BlendState::AlphaBlend()}};
-        if (m_MaskId.IsValid() || m_ReactiveId.IsValid())
+        const bool flags = m_SurfaceFlagsId.IsValid();
+        if (m_MaskId.IsValid() || m_ReactiveId.IsValid() || flags)
         {
             // The mask accumulates additively, so two declaring surfaces over one pixel glow by
             // the sum of the amplitudes they ask for rather than by the nearer one's alone. The
@@ -227,13 +244,33 @@ namespace Veng::Renderer
                 .Write = m_MaskId.IsValid() && parent->IsBloomMaskWriter(),
             });
         }
-        if (m_ReactiveId.IsValid())
+        if (m_ReactiveId.IsValid() || flags)
         {
             // Reactive amounts sum like the mask's, saturating in the R8 target.
             attachments.push_back({
-                .Format = m_ReactiveFormat,
+                .Format = m_ReactiveId.IsValid() ? m_ReactiveFormat : Format::Undefined,
                 .Blend = BlendState::Additive(),
-                .Write = parent->IsReactiveWriter(),
+                .Write = m_ReactiveId.IsValid() && parent->IsReactiveWriter(),
+            });
+        }
+        if (flags)
+        {
+            // The fragment writes zero colour and a flags code in alpha, so a MAX blend leaves the
+            // stored occlusion, roughness and metallic as they are and raises the code to one
+            // carrying the meter's bit.
+            attachments.push_back({
+                .Format = GBuffer::ORMFormat,
+                .Blend =
+                    BlendState{
+                        .Enable = true,
+                        .SrcColorFactor = BlendFactor::One,
+                        .DstColorFactor = BlendFactor::One,
+                        .ColorOp = BlendOp::Max,
+                        .SrcAlphaFactor = BlendFactor::One,
+                        .DstAlphaFactor = BlendFactor::One,
+                        .AlphaOp = BlendOp::Max,
+                    },
+                .Write = parent->IsMeteringExcluder(),
             });
         }
 

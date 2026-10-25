@@ -814,6 +814,42 @@ TEST_CASE("Cooker: a reactive translucent material cooks with the flag set; the 
               .find("is SV_Target2 but compiles to location 1") != string::npos);
 }
 
+TEST_CASE("Cooker: a translucent material excluded from metering cooks with the flag set; the "
+          "misuses are located cook errors")
+{
+    const Result<ArchiveReader> reader =
+        CookMaterialPack(FixtureDir / "material_translucent_metering_pack.json",
+                         Veng::TestSupport::TempDir() / "veng_cooker_material_metering.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x6666522E09CA2470ULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.ExcludedFromMetering == 1u);
+    CHECK(header.Reactive == 0u);
+
+    // The flags are the g-buffer's, written by the full-resolution scene passes at SV_Target3, so
+    // another domain, another layer, or a flag without the output is refused.
+    const auto CookError = [](const char* pack)
+    {
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        const VoidResult result =
+            cooker.CookPack(FixtureDir / pack, Veng::TestSupport::TempDir() /
+                                                   "veng_cooker_material_metering_err.vengpack");
+        REQUIRE_FALSE(result.has_value());
+        return result.error();
+    };
+    CHECK(CookError("material_surface_metering_pack.json")
+              .find("'excludedFromMetering' requires the Translucent domain") != string::npos);
+    CHECK(CookError("material_translucent_metering_post_resolve_pack.json")
+              .find("'excludedFromMetering' is exclusive with 'resolution: half'") != string::npos);
+    CHECK(CookError("material_translucent_metering_no_output_pack.json")
+              .find("SV_Target3 (the surface flags its metering exclusion writes)") !=
+          string::npos);
+}
+
 TEST_CASE("Cooker: a scene-depth-reading translucent material cooks with the flag set; other "
           "domains refuse it")
 {
