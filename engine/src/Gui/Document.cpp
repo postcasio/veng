@@ -7112,9 +7112,20 @@ namespace Veng::Gui
             {
                 SetState(*target, WithBit(target->State, ElementState::Active, true));
             }
-            if (pressTarget->Focusable)
+            // Focus goes to the nearest focusable element on the path from the hit up to the
+            // claimant, so a field inside a scrolling pane takes focus as it would anywhere else;
+            // the claimant keeps the capture either way.
+            for (Element* e = target; e != nullptr; e = e->Parent)
             {
-                SetFocus(pressTarget);
+                if (e->Focusable)
+                {
+                    SetFocus(e);
+                    break;
+                }
+                if (e == pressTarget)
+                {
+                    break;
+                }
             }
             // A press on a Slider sets its value from where the pointer landed.
             static_cast<void>(DriveWidgetPointer(*pressTarget, event));

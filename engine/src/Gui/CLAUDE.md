@@ -848,7 +848,8 @@ work the row; taking the *click* from it as well would mean nothing inside a scr
 ever be clicked, since the release hit-tests the row while the capture holds the container and the
 two never match. So the press records both — the claimant, which owns the drag, and its own hit
 target, which owns the click — and each wears `:active`, so a row lights under the finger like any
-other control. What the capture does legitimately consume is a press that *became* a scroll: a
+other control. Focus follows the hit too: the nearest focusable element on the path from the hit up
+to the claimant takes it, so a text field inside a scrolling pane can be clicked into and typed in. What the capture does legitimately consume is a press that *became* a scroll: a
 gesture that actually moved the content completes no click, even when released over the row it
 started on. The content moving is the test, rather than how far the pointer travelled, because it is
 the gesture itself rather than a threshold standing in for one.

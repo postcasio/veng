@@ -560,6 +560,37 @@ TEST_CASE("gui scroll: a row inside a scroll container is still clickable")
     CHECK(picks == 1);
 }
 
+TEST_CASE("gui scroll: a field inside a scroll container takes focus on a press")
+{
+    // The container claims the press for its drag, but a TextInput under the pointer is what was
+    // pressed, and it has to take focus or nothing typed reaches it.
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+
+    Element& field = fixture.Doc.Add(*fixture.Content, ElementKind::TextInput);
+    fixture.Doc.InitWidget(field);
+    Style style;
+    style.Width = Length{.Kind = LengthKind::Percent, .Value = 100.0f};
+    style.Height = Points(30.0f);
+    style.FlexShrink = 0.0f;
+    fixture.Doc.SetStyle(field, style);
+    // A plain label beside it, which focuses nothing: the walk stops at the claimant.
+    Element& label = fixture.Doc.Add(*fixture.Content, ElementKind::Panel);
+    fixture.Doc.SetStyle(label, style);
+    fixture.Settle();
+
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = field.Layout.Center()};
+    fixture.Doc.DispatchPointer(down);
+    CHECK(fixture.Doc.GetFocused() == &field);
+    CHECK((fixture.View->State & ElementState::Active) == ElementState::Active);
+    PointerEvent up{.Kind = PointerEventKind::Up, .Position = field.Layout.Center()};
+    fixture.Doc.DispatchPointer(up);
+
+    fixture.Doc.SetFocus(nullptr);
+    down.Position = label.Layout.Center();
+    fixture.Doc.DispatchPointer(down);
+    CHECK(fixture.Doc.GetFocused() == nullptr);
+}
+
 TEST_CASE("gui scroll: the range reaches the content's end however it was travelled")
 {
     // The children of a scrollable are laid out shifted by its offset, so their solved boxes
