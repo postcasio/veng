@@ -66,9 +66,10 @@ namespace Veng
     }
 
     SeatInputView::SeatInputView(const Input& input, const SeatInput& seat,
-                                 const PointerRouting& pointer, Entity viewer)
+                                 const PointerRouting& pointer, Entity viewer,
+                                 const std::span<const Key> claimed)
         : m_Input(input), m_Pointer(pointer), m_Viewer(viewer),
-          m_UsesKeyboardMouse(seat.UsesKeyboardMouse), m_Gamepad(seat.Gamepad)
+          m_UsesKeyboardMouse(seat.UsesKeyboardMouse), m_Gamepad(seat.Gamepad), m_Claimed(claimed)
     {
     }
 
@@ -84,7 +85,8 @@ namespace Veng
         {
             return false;
         }
-        return m_Input.IsKeyDown(static_cast<Key>(code));
+        const auto key = static_cast<Key>(code);
+        return m_Input.IsKeyDown(key) && std::ranges::find(m_Claimed, key) == m_Claimed.end();
     }
 
     bool SeatInputView::IsButtonDown(InputDeviceType device, u32 code) const

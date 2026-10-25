@@ -91,7 +91,8 @@ namespace Veng
                 // pointer routing, so two seats with different assignments produce distinct
                 // PlayerInputs and only the pointer's current owner reads the mouse. Phase comes
                 // from last tick's resolved state, so the system holds no cross-tick state of its own.
-                const SeatInputView raw{context.Input, devices, context.Pointer, seat};
+                const SeatInputView raw{context.Input, devices, context.Pointer, seat,
+                                        context.ClaimedKeys};
                 ActionState resolved = ResolveActions(active, raw, input.State);
 
                 // Accumulate the per-tick action edges across the frame's Sim steps: on any step

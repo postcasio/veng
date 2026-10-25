@@ -87,6 +87,9 @@ namespace Veng::Gui
         /// @brief The pointer position in window framebuffer pixels, from the snapshot × content scale.
         [[nodiscard]] ivec2 PointerPixels() const;
 
+        /// @brief Whether a shown viewport's interactive document has a TextInput focused.
+        [[nodiscard]] bool IsTextFieldFocused() const;
+
         /// @brief The router whose per-seat focus and pointer routing scope every routed event.
         InputRouter& m_Router;
         /// @brief The input snapshot the pointer position and button/key state read from.

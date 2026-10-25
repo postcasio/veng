@@ -137,6 +137,13 @@ namespace Veng::Gui
                 return std::nullopt;
             }
         }
+
+        // Whether the key carries a character: every key below Escape in the key table, which is
+        // where the printable ones sit.
+        bool TypesText(const Key key)
+        {
+            return static_cast<u16>(key) < static_cast<u16>(Key::Escape);
+        }
     }
 
     GuiConsumer::GuiConsumer(InputRouter& router, Input& input, Window* window,
@@ -155,6 +162,27 @@ namespace Veng::Gui
                                                            PlatformScreenCoordinateUnit())
                                : vec2(1.0f);
         return ivec2(point * scale);
+    }
+
+    bool GuiConsumer::IsTextFieldFocused() const
+    {
+        for (Renderer::Viewport* viewport : m_Viewports)
+        {
+            if (!viewport->IsShown())
+            {
+                continue;
+            }
+            for (const Gui::Document* document : viewport->GetInputDocuments())
+            {
+                const Gui::Element* const focused = document->GetFocused();
+                if (document->IsInteractive() && focused != nullptr &&
+                    focused->Kind == Gui::ElementKind::TextInput)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     bool GuiConsumer::ForwardEvent(const Event& event)
@@ -265,9 +293,11 @@ namespace Veng::Gui
 
         // A key reaches the documents only as text editing; navigation arrives as roles
         // (ForwardRole). A focused text field owns the editing keys — Backspace and Delete edit
-        // around its caret, Left/Right/Home/End move it — and accepting one claims the key, so the
-        // role resolution reads it as up and the field keeps it until release. A platform auto-repeat
-        // takes the same route, so a held key walks the caret or erases the way any text field does.
+        // around its caret, Left/Right/Home/End move it — and the keys that type a character, whose
+        // character arrives separately as typed text. Accepting one claims the key, so the role
+        // resolution and every seat's actions read it as up and the field keeps it until release. A
+        // platform auto-repeat takes the same route, so a held key walks the caret or erases the
+        // way any text field does.
         if (type == EventType::KeyPressed || type == EventType::KeyRepeat)
         {
             const Key code = type == EventType::KeyRepeat
@@ -276,7 +306,7 @@ namespace Veng::Gui
             const optional<TextEditAction> edit = ToTextEditAction(code);
             if (!edit)
             {
-                return false;
+                return TypesText(code) && IsTextFieldFocused();
             }
             for (Renderer::Viewport* viewport : m_Viewports)
             {

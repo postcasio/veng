@@ -154,6 +154,25 @@ TEST_CASE("A keyboard seat sees the keyboard and no pad")
     CHECK_FALSE(state.IsHeld(Jump));
 }
 
+TEST_CASE("A keyboard seat reads a claimed key as up")
+{
+    Input input(nullptr);
+    input.BeginFrame();
+    SeedDevices(input);
+
+    // W is held and drives Move.y; a router consumer holding it (a focused text field) takes it.
+    const std::array claimed{Key::W};
+    const SeatInputView view{
+        input,
+        SeatInput{.UsesKeyboardMouse = true, .Gamepad = GamepadId::None, .WantsGamepad = false},
+        PointerRouting{}, Entity::Null, claimed};
+    const ResolvedContext context = MixedContext();
+    const std::array active{context};
+
+    const ActionState state = ResolveActions(active, view, {});
+    CHECK(state.GetValue(Move).y == doctest::Approx(0.0f));
+}
+
 TEST_CASE("A pad-0 seat sees pad 0 and no keyboard")
 {
     Input input(nullptr);

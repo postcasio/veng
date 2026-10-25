@@ -248,6 +248,14 @@ namespace Veng
         /// the builtin FocusRequest component (Veng/Scene/Requests.h), the engine owning the token.
         bool GameplayFocused = false;
 
+        /// @brief The keys a router consumer holds this frame, which every seat reads as up.
+        ///
+        /// Borrowed from InputRouter::GetClaimedKeys for the tick: a key the immediate-mode layer or
+        /// a focused text field took is that consumer's until it is released, so typing into a field
+        /// never also presses a gameplay action bound to the same key. Empty outside a live step and
+        /// headless.
+        std::span<const Key> ClaimedKeys;
+
         /// @brief Whether this is the first Sim step of the frame's fixed-step sequence.
         ///
         /// A frame runs 0..N Sim steps under the fixed-timestep accumulator; this is true only on

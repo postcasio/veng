@@ -601,10 +601,13 @@ extern "C"
 /// WritesReactive. A module builds materials and reads them, so a stale one lays both out short.
 /// Version 151 grows PortraitFraming by FramedInstantiation, after CameraRotation. A module frames
 /// portraits, so a stale one lays ModelPortrait out short.
+/// Version 152 grows SystemContext by ClaimedKeys, after GameplayFocused, the keys a router consumer
+/// holds, which a seat's actions read as up. A module's systems read the context every tick, so a
+/// stale one reads every field after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 151u
+#define VENG_MODULE_ABI_VERSION 152u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

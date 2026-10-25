@@ -653,6 +653,12 @@ released.** That is how the two key consumers ahead of navigation keep their key
   end still consumes the key, so a held arrow walks the caret, runs into the end, and never leaks out
   into focus navigation however long the role's repeat timer would run. The platform's auto-repeat
   takes the same editing route, so a held key erases or walks the way any text field does.
+- **A focused text field also claims every key that types a character** (every key below `Escape` in
+  the key table, the space included). The character itself arrives separately as typed text; the
+  claim is what stops the same press from also being a gameplay action bound to that key — the claim
+  reaches every seat's Sim actions too (`SystemContext::ClaimedKeys`, read as up by `SeatInputView`),
+  so typing a name never also fires a hotkey. A key that types nothing (Escape, Enter, Tab, the
+  function keys) is left to the seat, so a field can still be confirmed or left by its role keys.
 
 A pad is never claimed, so a pad still navigates out of a focused field. The caret indexes
 **codepoints**, so a move steps one whole glyph and a delete removes one whole glyph of the UTF-8

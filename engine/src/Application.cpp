@@ -2617,6 +2617,7 @@ namespace Veng
             // The focus gate every seat's input resolution reads: true only while the router reports
             // the cursor seat gameplay-focused, false headless (no window owns focus).
             .GameplayFocused = m_InputRouter->IsGameplayFocused(),
+            .ClaimedKeys = live ? m_InputRouter->GetClaimedKeys() : std::span<const Key>{},
             .FirstStepThisFrame = request.FirstStep,
             .LastStepThisFrame = request.LastStep,
             .IsReplay = request.Phase == SystemContextPhase::Replay,

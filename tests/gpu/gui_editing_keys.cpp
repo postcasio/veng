@@ -24,7 +24,9 @@
 //   (g) a held arrow on a focused field never moves focus, past the role's repeat delay as well;
 //   (h) a platform repeat never walks focus; a held direction walks it only through the role's own
 //       repeat, at its delay and rate;
-//   (i) a field on a viewport its owner stopped showing takes neither editing keys nor typed text.
+//   (i) a field on a viewport its owner stopped showing takes neither editing keys nor typed text;
+//   (j) a focused field claims a key that types a character, so no seat's action reads it, and
+//       nothing claims it once no field holds focus.
 
 #include <doctest/doctest.h>
 
@@ -547,4 +549,38 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(hidden.Text == "xy");
 
     route.Viewports.erase(route.Viewports.begin());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui editing keys: a focused field claims the keys that type text")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    KeyRoute route(Context, assets, Types);
+    Gui::Document document;
+    AttachFocusedField(route, document, "");
+
+    // A letter and the space (the UI map's Confirm) are the field's while they are held.
+    for (const Key key : {Key::M, Key::Space, Key::Num4})
+    {
+        KeyPressedEvent pressed(key, 0, 0);
+        route.Router.Dispatch(pressed);
+        CHECK(route.Router.IsKeyClaimed(key));
+        route.Release(key);
+        CHECK_FALSE(route.Router.IsKeyClaimed(key));
+    }
+
+    // A key that types nothing stays the seat's.
+    KeyPressedEvent function(Key::F1, 0, 0);
+    route.Router.Dispatch(function);
+    CHECK_FALSE(route.Router.IsKeyClaimed(Key::F1));
+    route.Release(Key::F1);
+
+    // With no field focused, a letter is nobody's.
+    document.SetFocus(nullptr);
+    KeyPressedEvent letter(Key::M, 0, 0);
+    route.Router.Dispatch(letter);
+    CHECK_FALSE(route.Router.IsKeyClaimed(Key::M));
+    route.Release(Key::M);
 }

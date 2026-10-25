@@ -657,7 +657,10 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `UsesKeyboardMouse` seat (delta-look needs no position); it applies only for a free cursor. The
   `InputRouter` computes the per-frame `PointerRouting` (which seat owns the free pointer,
   hit-testing `WindowToViewport` against each associated viewport's region in association order);
-  `Application` threads it onto the `SystemContext`. A **`DeviceAssignmentSystem`** (a Sim system
+  `Application` threads it onto the `SystemContext`. A **keyboard** arm also reads a key a router
+  consumer has claimed as up (`SystemContext::ClaimedKeys`, the router's claims for the live step):
+  a focused Gui text field holds the keys it types, so typing into one never also drives a seat's
+  bound action. A **`DeviceAssignmentSystem`** (a Sim system
   registered before `InputMappingSystem`) reconciles each seat's `Gamepad` against
   `Veng::Input::ConnectedGamepads`: a connected-but-unheld pad is auto-assigned to the first
   `WantsGamepad` seat with a `None` slot, a disconnected slot is cleared, a level-authored slot is

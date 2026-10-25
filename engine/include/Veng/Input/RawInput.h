@@ -119,12 +119,14 @@ namespace Veng
         /// @param seat     The seat's device assignment: gates keyboard/mouse and scopes the pad.
         /// @param pointer  This frame's pointer owner + region-local position, shared across all seats.
         /// @param viewer   The seat this view is for, so it can ask whether it owns the pointer.
+        /// @param claimed  The keys to read as up this tick (SystemContext::ClaimedKeys); borrowed
+        ///                 for the resolve call.
         SeatInputView(const Input& input, const SeatInput& seat, const PointerRouting& pointer,
-                      Entity viewer);
+                      Entity viewer, std::span<const Key> claimed = {});
 
         /// @brief Whether a keyboard key is down this tick; neutral unless the seat holds the keyboard.
         /// @param code  The Key code.
-        /// @return True while the key is held and the seat sets UsesKeyboardMouse.
+        /// @return True while the key is held, unclaimed, and the seat sets UsesKeyboardMouse.
         [[nodiscard]] bool IsKeyDown(u32 code) const override;
 
         /// @brief Whether a device button is down this tick.
@@ -156,6 +158,8 @@ namespace Veng
         bool m_UsesKeyboardMouse;
         /// @brief The pad slot this seat's gamepad arms read, or GamepadId::None.
         GamepadId m_Gamepad;
+        /// @brief The keys read as up this tick.
+        std::span<const Key> m_Claimed;
     };
 
     /// @brief A RawInputView over Veng::Input for a once-per-frame reader of one seat's actions.
