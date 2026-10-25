@@ -539,6 +539,14 @@ in-scene camera and the editor's external orbit `EditorCamera` (its own non-ECS 
 can preview the scene's authored `Viewer` camera through `ResolvePrimaryCameraView` instead of its
 orbit camera.
 
+**A camera can shift its projection centre off the middle of the target** (`Camera::LensShift`, in
+NDC, +x right and +y down). It is a clip-space translation folded into the projection, so the field
+of view, the aspect and the depth mapping stand, and everything that reads the matrices — picking,
+`ProjectToScreen`, the background-ray reconstruction — follows it with no change. A consumer that
+aims at the view's centre (a reticle, a centre pick) aims at `ProjectionCentre(view, extent)`
+rather than the extent's middle. It exists for a view that keeps its subject centred in the part of
+the target a panel leaves uncovered.
+
 ## Input → actions → PlayerInput → Intent
 
 **Control flows raw input → actions → `PlayerInput` → Intent → Movement.** Raw device state is

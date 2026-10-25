@@ -232,6 +232,40 @@ TEST_CASE("ProjectToScreen maps world points to top-left-origin pixels and rejec
     CHECK(!ProjectToScreen(camera, vec3(0.0f, 0.0f, 10.0f), extent).has_value());
 }
 
+TEST_CASE("a lens shift moves the projection centre and keeps the image's scale")
+{
+    // A quarter-width shift right: the view axis lands a quarter of the way past the middle, and a
+    // point off the axis keeps its pixel offset from that centre, at any depth.
+    Camera lens;
+    lens.FovY = glm::radians(60.0f);
+    lens.LensShift = vec2{0.5f, 0.0f};
+    const CameraView shifted = MakeCameraView(lens, 2.0f, mat4{1.0f});
+    lens.LensShift = vec2{0.0f};
+    const CameraView centred = MakeCameraView(lens, 2.0f, mat4{1.0f});
+    const vec2 extent{400.0f, 200.0f};
+
+    const vec2 centre = ProjectionCentre(shifted, extent);
+    CHECK(centre.x == doctest::Approx(300.0f));
+    CHECK(centre.y == doctest::Approx(100.0f));
+    CHECK(ProjectionCentre(centred, extent) == vec2{200.0f, 100.0f});
+
+    for (const f32 depth : {1.0f, 50.0f})
+    {
+        const vec3 point{0.3f * depth, -0.2f * depth, -depth};
+        const optional<vec2> a = ProjectToScreen(shifted, point, extent);
+        const optional<vec2> b = ProjectToScreen(centred, point, extent);
+        REQUIRE(a.has_value());
+        REQUIRE(b.has_value());
+        CHECK(a->x - centre.x == doctest::Approx(b->x - 200.0f));
+        CHECK(a->y == doctest::Approx(b->y));
+    }
+
+    // The depth mapping and the vertical scale are the lens's, untouched by the shift.
+    CHECK(shifted.Projection()[1][1] == doctest::Approx(centred.Projection()[1][1]));
+    CHECK(shifted.Projection()[2][2] == doctest::Approx(centred.Projection()[2][2]));
+    CHECK(shifted.Projection()[3][2] == doctest::Approx(centred.Projection()[3][2]));
+}
+
 TEST_CASE("background view-direction reconstruction survives extreme Far/Near ratios")
 {
     // The sky, TAA, and volume-field shaders reconstruct a background pixel's view ray as

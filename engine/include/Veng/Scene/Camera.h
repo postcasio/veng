@@ -69,6 +69,7 @@ namespace Veng
             m_Projection = ReverseZClip() * projection;
             m_Near = near;
             m_Far = far;
+            m_LensShift = vec2{0.0f};
         }
 
         /// @brief Sets an orthographic projection.
@@ -88,6 +89,28 @@ namespace Veng
             m_Projection = ReverseZClip() * projection;
             m_Near = near;
             m_Far = far;
+            m_LensShift = vec2{0.0f};
+        }
+
+        /// @brief Moves the projection's centre off the middle of the target, keeping its scale.
+        ///
+        /// A lens shift: every projected point moves by `shift` in normalized device units, so the
+        /// view axis lands at `(shift * 0.5 + 0.5) * extent` in pixels rather than at the extent's
+        /// centre. The field of view, the aspect and the depth mapping are untouched — only where
+        /// the image sits on the target moves — which is how a view keeps its subject centred in the
+        /// part of the target an overlay leaves uncovered. Applied to the projection already set, so
+        /// call it after SetPerspective / SetOrthographic, which reset it.
+        /// @param shift  The offset in NDC, +x rightward and +y downward (the screen's pixel axes);
+        ///               1 moves the centre half the target's width (or height).
+        void SetLensShift(const vec2 shift)
+        {
+            // clip.xy += shift * clip.w, so NDC moves by shift whatever the depth.
+            for (i32 column = 0; column < 4; ++column)
+            {
+                m_Projection[column][0] += shift.x * m_Projection[column][3];
+                m_Projection[column][1] += shift.y * m_Projection[column][3];
+            }
+            m_LensShift += shift;
         }
 
         /// @brief Sets the view matrix from eye, target, and up vectors.
@@ -130,6 +153,9 @@ namespace Veng
         /// @brief Returns the far clip distance.
         [[nodiscard]] f32 GetFar() const { return m_Far; }
 
+        /// @brief Returns the lens shift the projection carries, in NDC (see SetLensShift).
+        [[nodiscard]] vec2 GetLensShift() const { return m_LensShift; }
+
         /// @brief Sets the lens this view was resolved from, marking it physically authored.
         void SetLens(const CameraLens& lens) { m_Lens = lens; }
 
@@ -150,6 +176,8 @@ namespace Veng
         f32 m_Near = 0.1f;
         /// @brief Far clip distance, mirroring the value passed to SetPerspective.
         f32 m_Far = 100.0f;
+        /// @brief The lens shift baked into the projection, mirroring SetLensShift's argument.
+        vec2 m_LensShift{0.0f};
         /// @brief The lens this view resolved from; empty unless the source camera was physical.
         optional<CameraLens> m_Lens;
     };
@@ -194,6 +222,12 @@ namespace Veng
         f32 FStop = 2.8f;
         /// @brief Distance to the plane in perfect focus, in metres (Physical only).
         f32 FocusDistance = 10.0f;
+        /// @brief Where the projection's centre sits on the target, as an offset from its middle in
+        ///        normalized device units (+x rightward, +y downward; see CameraView::SetLensShift).
+        ///
+        /// Zero centres the view axis on the target. A view framing a subject beside a panel shifts
+        /// by the panel's share of the target, so the subject stays centred in the uncovered part.
+        vec2 LensShift{0.0f};
     };
 
     /// @brief Normalizes a physical camera's authored lens fields into a metres-only CameraLens.
@@ -314,6 +348,7 @@ namespace Veng
         {
             result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
         }
+        result.SetLensShift(camera.LensShift);
         result.SetViewFromWorld(world);
         return result;
     }
@@ -340,6 +375,18 @@ namespace Veng
         }
         const vec2 ndc = vec2(clip) / clip.w;
         return (ndc * 0.5f + 0.5f) * extent;
+    }
+
+    /// @brief The pixel a view's axis lands on: the target's centre, moved by the view's lens shift.
+    ///
+    /// The point a centre-aimed consumer — a reticle, a pick at the middle of the view — aims at,
+    /// since with a lens shift the extent's middle is no longer where the camera looks.
+    /// @param camera  The view whose lens shift places the centre.
+    /// @param extent  The target pixel extent, as ProjectToScreen takes it.
+    /// @return The projection centre, top-left-origin pixels over the extent.
+    [[nodiscard]] inline vec2 ProjectionCentre(const CameraView& camera, const vec2 extent)
+    {
+        return (camera.GetLensShift() * 0.5f + 0.5f) * extent;
     }
 
     /// @brief Seat-to-camera selection: names the camera entity a seat renders through.
@@ -421,6 +468,9 @@ VE_FIELD(FStop, .DisplayName = "F-Stop",
 VE_FIELD(FocusDistance, .DisplayName = "Focus Distance",
          .Tooltip = "Distance to the plane in perfect focus, in metres.", .Display = {.Min = 0.01},
          .Category = "Lens")
+VE_FIELD(LensShift, .DisplayName = "Lens Shift",
+         .Tooltip = "Moves the projection's centre off the middle of the view, in normalized "
+                    "device units (+x right, +y down); 1 is half the view's width or height.")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Viewer, 0x879A9712E090AC19ULL)
