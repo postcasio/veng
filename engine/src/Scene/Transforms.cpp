@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
+#include <Veng/Scene/Components/Mesh.h>
 #include <Veng/Scene/Scene.h>
 
 #include <glm/gtc/matrix_transform.hpp>

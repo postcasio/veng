@@ -5,7 +5,8 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/ResidencyBatch.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Core.h>
+#include <Veng/Scene/Components/RenderLook.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng

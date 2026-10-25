@@ -2,7 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Math/AABB.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Core.h>
 #include <Veng/Scene/Entity.h>
 
 namespace Veng

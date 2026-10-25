@@ -123,8 +123,11 @@ namespace Veng
         }
 
         /// @brief Registers every alternative type into `registry` (the dependency recursion).
+        /// @tparam Registry The registry type, a parameter so the body compiles where TypeRegistry
+        ///         is only forward-declared.
         /// @param registry The registry receiving each alternative's registration.
-        static void RegisterAlternatives(TypeRegistry& registry)
+        template <class Registry = TypeRegistry>
+        static void RegisterAlternatives(Registry& registry)
         {
             (registry.template Register<Ts>(), ...);
         }

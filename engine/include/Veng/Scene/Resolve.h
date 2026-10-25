@@ -2,7 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Mesh.h>
 
 namespace Veng
 {

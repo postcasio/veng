@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <Veng/Scene/Components/Net.h>
 #include <Veng/Scene/ParticleEffectSystem.h>
 #include <Veng/Scene/Scene.h>
 

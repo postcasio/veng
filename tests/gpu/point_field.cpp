@@ -27,6 +27,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components/Fields.h>
 #include <Veng/Scene/Scene.h>
 
 #include <gpu/fixture.h>
@@ -171,7 +172,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Bloom = false, .Shadows = false, .AO = false},
     });
 
-    auto RenderFrom = [&](vec3 eye) -> vector<u8>
+    const auto RenderFrom = [&](vec3 eye) -> vector<u8>
     {
         CameraView camera;
         camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 2000.0f);
@@ -210,7 +211,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // component removes it next frame with no consumer call and no teardown ordering.
     constexpr uvec2 extent{200, 200};
 
-    auto MakeCluster = [this](vec3 center) -> Unique<Renderer::PointField>
+    const auto MakeCluster = [this](vec3 center) -> Unique<Renderer::PointField>
     {
         vector<FieldPoint> points;
         for (u32 i = 0; i < 2000; ++i)
@@ -252,7 +253,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 2000.0f);
     camera.SetView(vec3(0.0f, 0.0f, 40.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -358,7 +359,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                           2000.0f);
     camera.SetView(vec3(0.0f, 0.0f, 250.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -469,7 +470,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 2000.0f);
     camera.SetView(clusterCenter + vec3(0.0f, 0.0f, 12.0f), clusterCenter, vec3(0.0f, 1.0f, 0.0f));
 
-    auto Render = [&]() -> vector<u8>
+    const auto Render = [&]() -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -511,7 +512,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // A grid of resolvable points on a plane in front of the camera, all in one cull cell (CellSize
     // covers the whole span). Placed at positive coordinates so the single-cell bucketing is
     // unambiguous, and sized generously so each projects to several pixels (a robust brightness).
-    auto MakeGrid = [](f32 zPlane) -> vector<FieldPoint>
+    const auto MakeGrid = [](f32 zPlane) -> vector<FieldPoint>
     {
         vector<FieldPoint> points;
         for (i32 xi = -20; xi <= 20; ++xi)
@@ -556,7 +557,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     frontCamera.SetView(vec3(100.0f, 100.0f, 100.0f), vec3(100.0f, 100.0f, 0.0f),
                         vec3(0.0f, 1.0f, 0.0f));
 
-    auto Render = [&](const CameraView& cam) -> vector<u8>
+    const auto Render = [&](const CameraView& cam) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)

@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Veng/Reflection/TypeId.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Control.h>
+#include <Veng/Scene/Components/Net.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
 

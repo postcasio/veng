@@ -2,12 +2,13 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/MeshLod.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Camera.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Core.h>
 #include <Veng/Scene/Entity.h>
 
 namespace Veng

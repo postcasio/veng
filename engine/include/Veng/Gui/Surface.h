@@ -7,7 +7,7 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/ViewportId.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Mesh.h>
 #include <Veng/Scene/Entity.h>
 
 namespace Veng

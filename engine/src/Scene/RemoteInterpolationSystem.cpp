@@ -1,6 +1,7 @@
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 
 #include <Veng/Math/Ease.h>
+#include <Veng/Scene/Components/Net.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>

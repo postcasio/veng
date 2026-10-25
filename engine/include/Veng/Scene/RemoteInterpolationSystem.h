@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Core.h>
 #include <Veng/Scene/SceneSystem.h>
 
 #include <span>

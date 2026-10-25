@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer

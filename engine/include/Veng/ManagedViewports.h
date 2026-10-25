@@ -7,7 +7,6 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportRegion.h>
-#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 
 #include <span>

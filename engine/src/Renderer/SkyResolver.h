@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Scene/Components/Environment.h>
 #include <Veng/Veng.h>
 
 #include "SkySourceKind.h"

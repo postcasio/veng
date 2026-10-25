@@ -15,7 +15,6 @@
 #include <Veng/Renderer/SceneView.h>
 #include <Veng/Renderer/VolumeMarch.h>
 
-#include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneBroadphase.h>
 
 #include <array>

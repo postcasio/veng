@@ -6,7 +6,7 @@
 #include <Veng/Asset/AssetError.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Mesh.h>
-#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/Core.h>
 #include <Veng/Scene/Entity.h>
 
 /// @file

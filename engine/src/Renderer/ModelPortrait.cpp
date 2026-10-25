@@ -6,6 +6,7 @@
 #include <Veng/Asset/ResidencyBatch.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/SceneView.h>
+#include <Veng/Scene/Components/Light.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Visibility.h>
 
