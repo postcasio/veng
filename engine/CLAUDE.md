@@ -494,7 +494,10 @@ viewport association whose seat names the world and **retires** each dropped ent
 token is not live, and its holder's `PopFocus` is a silent no-op that forgets it, so a holder
 outliving the world (a `SeatFocusScope`, an editor capture) keeps its pop-exactly-once discipline,
 while a never-issued or double-popped token still asserts. A held cursor capture on the world's seat
-releases; where the cursor seat goes next is presentation's call.
+releases; where the cursor seat goes next is presentation's call. **The focus is forgotten before the
+overlays the world opened unwind**, since its scene is already gone by then: an overlay's
+`SeatFocusScope` over one of its seats finds its token retired and restores nothing into the dead
+scene.
 
 **A world can be opened over a scene its caller built.** `WorldRunner::OpenWorld(info, Unique<Scene>)`
 adopts a ready scene as the world's own (`info.Source` empty): an engaged `info.Systems` builds and

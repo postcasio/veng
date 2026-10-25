@@ -371,13 +371,13 @@ namespace Veng
         m_WorldRunner->SetWorldClosedHook(
             [this](const WorldInstanceId world)
             {
-                // First, while the closed world's focus entries stand: the overlays it opened unwind
-                // their scopes over its seats in order.
+                // The world's scene is already destroyed, so its focus is retired before the overlays
+                // it opened unwind: a scope whose seat lives there then restores nothing into it.
+                ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world);
                 if (m_Overlays)
                 {
                     m_Overlays->OnWorldClosed(world);
                 }
-                ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world);
                 ForgetWorldPause(m_PauseRequestScopes, world);
                 m_RequestPolicies.erase(world.Value);
             });
