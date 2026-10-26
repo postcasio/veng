@@ -13,20 +13,23 @@ namespace Veng
     /// so it stays inside the public/backend include-hygiene split.
     struct VE_API Frustum
     {
-        /// @brief The six clip planes — left, right, bottom, top, near, far.
+        /// @brief The six clip planes — left, right, bottom, top, then depth 0 and depth 1.
+        ///
+        /// Under the engine's reverse-Z camera projection the depth-0 plane is the far plane and the
+        /// depth-1 plane the near one; under a forward-Z projection they are the other way round.
         ///
         /// Each plane is vec4(nx, ny, nz, d) with an inward-pointing normal; a point p is
         /// inside the frustum when dot(plane.xyz, p) + plane.w >= 0 for all six planes.
         /// The normals are NOT normalized: Intersects is a sign-only test, so unit length
-        /// is unnecessary (normalizing for a true signed distance is a trivial addition
-        /// if a distance-based consumer ever needs it).
+        /// is unnecessary.
         std::array<vec4, 6> Planes;
 
         /// @brief Extracts the six frustum planes from a view-projection matrix (Gribb-Hartmann, Vulkan ZO).
         ///
         /// Each plane is one clip-volume inequality read straight off the matrix rows.
-        /// left/right/bottom/top are row4 ±/+ {row1,row2}; the Vulkan ZO near plane is the third
-        /// clip row alone (clip.z >= 0) and far is row4 - row3 (not the OpenGL row4 +/- row3 pair).
+        /// left/right/bottom/top are row4 ±/+ {row1,row2}; the Vulkan ZO depth-0 plane is the third
+        /// clip row alone (clip.z >= 0) and the depth-1 plane is row4 - row3 (not the OpenGL
+        /// row4 +/- row3 pair).
         /// The inward orientation is automatic by construction for any ZO projection, including the
         /// engine's Y-flipped one (the flip swaps which plane is geometrically "top" vs "bottom",
         /// which a cull testing all six never names). The planes land in the space the matrix maps

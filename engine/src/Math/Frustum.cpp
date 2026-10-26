@@ -17,8 +17,8 @@ namespace Veng
         frustum.Planes[1] = row4 - row1; // right  (clip.x <=  clip.w)
         frustum.Planes[2] = row4 + row2; // bottom (clip.y >= -clip.w)
         frustum.Planes[3] = row4 - row2; // top    (clip.y <=  clip.w)
-        frustum.Planes[4] = row3;        // near   (clip.z >=  0, Vulkan ZO)
-        frustum.Planes[5] = row4 - row3; // far    (clip.z <=  clip.w)
+        frustum.Planes[4] = row3;        // depth 0 (clip.z >=  0, Vulkan ZO)
+        frustum.Planes[5] = row4 - row3; // depth 1 (clip.z <=  clip.w)
         return frustum;
     }
 
