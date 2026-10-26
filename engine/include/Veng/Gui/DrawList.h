@@ -194,6 +194,21 @@ namespace Veng::Gui
         Tile,
     };
 
+    /// @brief How a textured fill's texels carry their alpha.
+    ///
+    /// A straight texel's colour is independent of its alpha, so the fill weights it by the alpha
+    /// it composites with; a premultiplied texel's colour is already weighted by its own alpha (a
+    /// render over transparent black), so the fill weights it by the tint's alpha and coverage
+    /// alone. A premultiplied texel of zero alpha and non-zero colour adds light without covering
+    /// what is behind it. Tint, opacity and clipping compose the same way in either mode.
+    enum class ImageAlphaMode : u8
+    {
+        /// @brief Colour and alpha are independent (an authored texture).
+        Straight,
+        /// @brief Colour is already multiplied by alpha (a render composited over transparent black).
+        Premultiplied,
+    };
+
     /// @brief The shape of a gradient fill: how a fragment's box-local position maps to a ramp offset.
     ///
     /// Every kind reduces the fragment's normalized box coordinate (RectCoord / RectHalf, in [-1, 1])
@@ -350,8 +365,13 @@ namespace Veng::Gui
         /// a quad whose own centre and half-extent are not the element's, and each is masked by the
         /// one arc all the same. Zero when the Arc lane is inactive.
         vec2 ArcCoord{0.0f};
+        /// @brief 1 when the sampled texels carry premultiplied alpha, 0 when straight.
+        ///
+        /// The shape path's textured fill reads it (see ImageAlphaMode); every other path leaves it
+        /// zero and ignores it.
+        u32 TexelPremultiplied = 0;
     };
-    static_assert(sizeof(GuiVertex) == 124, "GuiVertex must stay packed with no padding");
+    static_assert(sizeof(GuiVertex) == 128, "GuiVertex must stay packed with no padding");
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, texture, and material.
     ///
@@ -560,10 +580,12 @@ namespace Veng::Gui
         /// @param uv       UV rectangle to sample (defaults to the whole texture).
         /// @param tint     Multiplied over the sampled texel, linear straight-alpha RGBA.
         /// @param radii    Per-corner radius; the shape path uses the uniform radius (zero for square).
+        /// @param alpha    Whether the texels carry straight (the default) or premultiplied alpha.
         void Texture(const Rect& rect, Renderer::TextureHandle texture,
                      Renderer::SamplerHandle sampler,
                      const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
-                     vec4 tint = vec4(1.0f), const CornerRadii& radii = {});
+                     vec4 tint = vec4(1.0f), const CornerRadii& radii = {},
+                     ImageAlphaMode alpha = ImageAlphaMode::Straight);
 
         /// @brief Appends a nine-slice frame: a texture split into corners, edges, and center.
         ///
@@ -590,11 +612,13 @@ namespace Veng::Gui
         /// @param sourcePx The sampled sub-rect's size in texels, which is what a repeating cell's
         ///                 count is measured against; ignored when the cells stretch, and a
         ///                 degenerate (non-positive) axis stretches rather than dividing by zero.
+        /// @param alpha    Whether the texels carry straight (the default) or premultiplied alpha.
         void NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                        Renderer::SamplerHandle sampler, const Insets& sliceUv, const Insets& sizePx,
                        vec4 tint = vec4(1.0f),
                        const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
-                       ImageRepeat repeat = ImageRepeat::Stretch, vec2 sourcePx = vec2(0.0f));
+                       ImageRepeat repeat = ImageRepeat::Stretch, vec2 sourcePx = vec2(0.0f),
+                       ImageAlphaMode alpha = ImageAlphaMode::Straight);
 
         /// @brief Appends a run of shaped text at a pen origin.
         ///
@@ -822,9 +846,11 @@ namespace Veng::Gui
         /// @param selector   Gradient record selector (record index plus one); zero for no gradient.
         /// @param shadow     Shadow parameters (see GuiVertex::Shadow); zero for an ordinary quad.
         /// @param uvWrap     UV sub-rect to wrap within (see GuiVertex::UvWrap); zero for no wrap.
+        /// @param alpha      How the sampled texels carry alpha (see GuiVertex::TexelPremultiplied).
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                       vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0,
-                      vec4 shadow = vec4(0.0f), vec4 uvWrap = vec4(0.0f));
+                      vec4 shadow = vec4(0.0f), vec4 uvWrap = vec4(0.0f),
+                      ImageAlphaMode alpha = ImageAlphaMode::Straight);
 
         /// @brief Appends one untextured shape vertex, masked by the top arc when one is open.
         /// @param position   The vertex position in framebuffer pixels, before the transform.
@@ -846,9 +872,11 @@ namespace Veng::Gui
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
         /// @param radii   Per-corner radius; the shape path uses the uniform radius (zero for square).
         /// @param uvWrap  UV sub-rect the fragment wraps sampling within; zero samples the UV as-is.
+        /// @param alpha   How the texels carry alpha.
         void EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
                               Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
-                              const CornerRadii& radii = {}, vec4 uvWrap = vec4(0.0f));
+                              const CornerRadii& radii = {}, vec4 uvWrap = vec4(0.0f),
+                              ImageAlphaMode alpha = ImageAlphaMode::Straight);
 
         /// @brief The interleaved vertex stream.
         vector<GuiVertex> m_Vertices;

@@ -59,6 +59,8 @@ namespace Veng::Renderer
         u32 PortraitsDeferred = 0;
         /// @brief Disabled portraits, whose runtime is released and left empty.
         u32 PortraitsDisabled = 0;
+        /// @brief Retain portraits holding their kept image, which take no renderer and no render.
+        u32 PortraitsRetained = 0;
     };
 
     /// @brief Renders the registered viewports and composites them to the swapchain each frame.

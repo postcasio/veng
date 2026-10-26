@@ -3601,7 +3601,8 @@ the capture pre-pass's, extended:
   budget (`MaxNewCapturesPerFrame`) — and `Prepare` brings the private scene current (instantiate,
   populate, pose, light, frame) and says whether this frame renders (`EveryFrame`, or an `OnDemand`
   portrait that owes one — after `MarkDirty`, an instantiation, a pose change, or a frame its scene
-  went unrendered, the capture re-arm rule). The tally is `GetModelPortraitDrive`.
+  went unrendered, the capture re-arm rule). A `Retain` portrait holding its kept image is skipped
+  before any of that (`PortraitWantsRenderer`). The tally is `GetModelPortraitDrive`.
 - **Rendered first, inside the view budget.** `RenderRegistered` renders the queued portraits
   before the captures and the viewports (`DrivePortraits`), each claiming its view slot only while
   one is left beyond the viewports' reserved ones; a portrait the budget cannot seat keeps its last
@@ -3613,13 +3614,42 @@ the capture pre-pass's, extended:
   The pool holds released renderers by configuration (`PortraitRendererConfig`: extent and output),
   so a UI opening and closing a portrait builds once; a returned renderer drops the scene it last
   gathered (`SceneRenderer::ReleaseScene`) before the private scene it drew is destroyed.
-- **Coverage from depth.** The tonemap leaves alpha opaque, so a shaded portrait runs one more
-  fullscreen pass (`portrait_coverage.frag`) into its own colour target: the output's colour, alpha 1
-  where the render's depth holds geometry and 0 where it holds the reverse-Z clear. An `Image`
-  painting it composites the model over whatever the UI draws behind it.
+- **Coverage counts every layer, and the output is premultiplied.** The deferred lighting pass
+  writes the scene's coverage into the HDR target's alpha — 1 on geometry, 0 on the cleared
+  background — and every translucent draw accumulates into it by its blend: an alpha draw (the
+  `AlphaBlend` and `PremultipliedAlpha` states) by `over`, an additive one (`AlphaAdditive`, `One,
+  One` keeping destination alpha) not at all. Nothing else in a frame reads that alpha. The tonemap
+  leaves alpha opaque, so a shaded portrait runs one more fullscreen pass (`portrait_coverage.frag`)
+  into its own colour target: the tonemapped colour and the HDR target's alpha. The colour is the
+  subject tonemapped over black, so it already carries its coverage: the output is premultiplied
+  (`ModelPortraitOutput::Premultiplied`), and composited `over` a background it reproduces the
+  subject exactly as it rendered over black — a halo outside the solid shape covers partly, and an
+  additive glow adds light without covering. A Gui `Image` paints it with
+  `ImageAlphaMode::Premultiplied`.
 - **Static and silent.** The private scene has no systems and no presentation scope; it is posed by
   `ModelPose` and by what the populate callback attaches, and lit by one key light and an ambient
   floor (`SceneView::AmbientFloor`). Its clip planes are fitted to everything in it each frame.
+- **A look of its own.** `Render` reads a `RenderLook` in the private scene — one a populate callback
+  attaches — for the per-frame knobs a lean renderer honours: `Exposure`, `Tonemapper`,
+  `AmbientFloor` (in place of `PortraitLighting::Ambient`) and `EnvironmentLightTint`. The renderer's
+  batteries stay off whatever the look says, since they are its topology and it is pooled by extent
+  and output alone. With no look a portrait renders at exposure 1 through the default curve.
+- **Model-less.** A portrait whose `Model` is empty and whose populate callback is set builds its
+  private scene from the callback alone, run on an empty root posed by `ModelPose`; `AutoFit` frames
+  everything the callback attached (`ModelBounds` is empty), and each build counts as an
+  instantiation. With neither, it renders nothing.
+- **`Retain`: an image without a renderer.** `CaptureRefresh::Retain` renders as `OnDemand`; on the
+  frame its render lands, `Render` copies the Shaded colour into an image the portrait owns
+  (`RetainOutput`), returns the renderer to the pool and drops the private scene. `GetOutput` then
+  reads `Ready` with that image and the shared portrait sampler, and the drive skips the portrait —
+  no renderer, no `Prepare`, no view slot — until `MarkDirty` (which takes a renderer, rebuilds the
+  scene and renders into the same image, the kept one showing until then), a change of `Extent`,
+  `Output` or `Refresh`, or a release. **The cost model:** a still portrait costs one image of its
+  extent in the output format and one bindless slot; the pool holds at most its capacity of
+  renderers, so a gallery of N stills built one or two a frame costs N images and a handful of
+  renderers, where `OnDemand` costs N renderers (each a full lean `SceneRenderer`). The price is a
+  re-render on every change, which instantiates the model afresh. A `GeometryDepthNormal` portrait
+  treats `Retain` as `OnDemand`.
 - **An explicit camera can be tied to the instance it was framed for.** A caller framing by the
   model it measured runs before the drive, which instantiates a re-pointed `Model` and renders it in
   the same `Prepare` — so that camera fits the previous instance. Stamping

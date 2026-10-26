@@ -4,9 +4,13 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/ResidencyBatch.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneView.h>
 #include <Veng/Scene/Components/Light.h>
+#include <Veng/Scene/Components/RenderLook.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Visibility.h>
 
@@ -24,7 +28,7 @@ namespace Veng::Renderer
     /// @brief The private scene, the renderer and the render state a ModelPortrait materializes.
     struct ModelPortraitRuntime
     {
-        /// @brief Detaches the renderer from the private scene and hands it back to its pool.
+        /// @brief Hands the renderer back to its pool and releases the retained image's slot.
         ~ModelPortraitRuntime();
 
         /// @brief The populate callback; survives a release (see ModelPortrait::Release).
@@ -40,6 +44,8 @@ namespace Veng::Renderer
         Entity KeyLight = Entity::Null;
         /// @brief The prefab instantiated under Root, held so a re-pointed Model is noticed.
         AssetHandle<Prefab> Instance;
+        /// @brief Whether Root was built for a model-less portrait, with no Model under it.
+        bool ModelLess = false;
         /// @brief What the spawn left streaming in; the portrait renders once it is resident.
         ResidencyBatch Pending;
         /// @brief Root and every entity the spawn put under it, sorted by EntityKey.
@@ -64,6 +70,17 @@ namespace Veng::Renderer
         AABB Bounds = AABB::Empty();
         /// @brief World bounds of the instantiated model alone this frame.
         AABB ModelBounds = AABB::Empty();
+
+        /// @brief A Retain portrait's kept copy of its Shaded colour; null until the first copy.
+        Ref<Image> RetainedImage;
+        /// @brief View over RetainedImage.
+        Ref<ImageView> RetainedView;
+        /// @brief Bindless slot of RetainedView, released by the destructor.
+        TextureHandle RetainedHandle;
+        /// @brief The clamped linear sampler handed out with the retained image.
+        SamplerHandle RetainedSampler;
+        /// @brief The registry RetainedHandle was registered in.
+        BindlessRegistry* Registry = nullptr;
     };
 
     namespace
@@ -141,30 +158,120 @@ namespace Veng::Renderer
             runtime.Owed = true;
         }
 
-        /// @brief Replaces the instance under Root with a fresh spawn of @p model.
-        void Instantiate(ModelPortraitRuntime& runtime, const AssetHandle<Prefab>& model,
+        /// @brief Destroys the root and everything under it, leaving no instance.
+        void DropRoot(ModelPortraitRuntime& runtime)
+        {
+            ClearPopulated(runtime);
+            if (!runtime.Root.IsNull() && runtime.Stage->IsAlive(runtime.Root))
+            {
+                runtime.Stage->DestroyEntity(runtime.Root);
+            }
+            runtime.Root = Entity::Null;
+            runtime.Instance = {};
+            runtime.ModelLess = false;
+            runtime.ModelEntities.clear();
+        }
+
+        /// @brief Replaces the root with a fresh one posed by @p pose and, given a model, a spawn of
+        ///        it beneath; then runs the populate callback.
+        void Instantiate(ModelPortraitRuntime& runtime, const AssetHandle<Prefab>* model,
                          const Transform& pose, AssetManager& assets)
         {
             Scene& stage = *runtime.Stage;
-            ClearPopulated(runtime);
-            if (!runtime.Root.IsNull() && stage.IsAlive(runtime.Root))
-            {
-                stage.DestroyEntity(runtime.Root);
-            }
+            DropRoot(runtime);
 
             runtime.Root = stage.CreateEntity();
             stage.Add<Transform>(runtime.Root, pose);
-            Prefab::SpawnResult spawned = model->SpawnInto(stage, assets);
-            for (const Entity root : spawned.Roots)
+            if (model != nullptr)
             {
-                stage.SetParent(root, runtime.Root);
+                Prefab::SpawnResult spawned = (*model)->SpawnInto(stage, assets);
+                for (const Entity root : spawned.Roots)
+                {
+                    stage.SetParent(root, runtime.Root);
+                }
+                runtime.Pending = std::move(spawned.Pending);
+                runtime.Instance = *model;
             }
-            runtime.Pending = std::move(spawned.Pending);
-            runtime.Instance = model;
+            else
+            {
+                runtime.Pending = ResidencyBatch{};
+                runtime.ModelLess = true;
+            }
             runtime.ModelEntities = Subtree(stage, runtime.Root);
             ++runtime.InstantiationCount;
             runtime.Owed = true;
             Populate(runtime);
+        }
+
+        /// @brief Hands the renderer back to its pool, or drops it when the pool is gone.
+        void ReturnRenderer(ModelPortraitRuntime& runtime)
+        {
+            // The renderer retains the scene it last gathered, which may be destroyed next.
+            runtime.Renderer->ResetForReuse();
+            if (const Ref<ModelPortraitPool> pool = runtime.Pool.lock(); pool != nullptr)
+            {
+                pool->Return(std::move(runtime.Renderer));
+            }
+            runtime.Renderer.reset();
+        }
+
+        /// @brief Releases the retained image and its slot.
+        void ReleaseRetained(ModelPortraitRuntime& runtime)
+        {
+            if (runtime.RetainedHandle.IsValid())
+            {
+                runtime.Registry->Release(runtime.RetainedHandle);
+            }
+            runtime.RetainedHandle = {};
+            runtime.RetainedSampler = {};
+            runtime.RetainedView.reset();
+            runtime.RetainedImage.reset();
+        }
+
+        /// @brief Copies the renderer's Shaded colour into the retained image, then returns the
+        ///        renderer to its pool and drops the private scene.
+        void RetainOutput(ModelPortraitRuntime& runtime, CommandBuffer& cmd)
+        {
+            const PortraitRenderer& renderer = *runtime.Renderer;
+            Context& context = renderer.GetContext();
+            const Ref<Image>& source = renderer.GetColorView()->GetImage();
+            if (runtime.RetainedImage == nullptr ||
+                runtime.RetainedImage->GetExtent() != source->GetExtent() ||
+                runtime.RetainedImage->GetFormat() != source->GetFormat())
+            {
+                ReleaseRetained(runtime);
+                const uvec3 extent = source->GetExtent();
+                runtime.RetainedImage = Image::Create(
+                    context, {
+                                 .Name = "ModelPortrait Retained",
+                                 .Extent = extent,
+                                 .Format = source->GetFormat(),
+                                 .Usage = ImageUsage::TransferDst | ImageUsage::TransferSrc |
+                                          ImageUsage::Sampled,
+                             });
+                runtime.RetainedView =
+                    ImageView::Create(context, {.Name = "ModelPortrait Retained View",
+                                                .Image = runtime.RetainedImage});
+                runtime.Registry = &context.GetBindlessRegistry();
+                runtime.RetainedHandle = runtime.Registry->Register(runtime.RetainedView);
+            }
+            runtime.RetainedSampler = renderer.GetSampler();
+
+            cmd.PrepareForAccess(renderer.GetColorView(), AccessKind::TransferSrc);
+            cmd.PrepareForAccess(runtime.RetainedView, AccessKind::TransferDst);
+            cmd.CopyImage(source, runtime.RetainedImage);
+            cmd.PrepareForAccess(runtime.RetainedView, AccessKind::SampleGraphics);
+
+            // The renderer goes before the scene it drew; the kept output state stays.
+            ReturnRenderer(runtime);
+            runtime.Populated.clear();
+            runtime.Stage.reset();
+            runtime.Root = Entity::Null;
+            runtime.KeyLight = Entity::Null;
+            runtime.Instance = {};
+            runtime.ModelLess = false;
+            runtime.Pending = ResidencyBatch{};
+            runtime.ModelEntities.clear();
         }
 
         /// @brief Frames the camera from @p framing over this frame's bounds.
@@ -230,15 +337,10 @@ namespace Veng::Renderer
 
     ModelPortraitRuntime::~ModelPortraitRuntime()
     {
-        if (Renderer == nullptr)
+        ReleaseRetained(*this);
+        if (Renderer != nullptr)
         {
-            return;
-        }
-        // The renderer retains the scene it last gathered, which dies with this runtime.
-        Renderer->ResetForReuse();
-        if (const Ref<ModelPortraitPool> pool = Pool.lock(); pool != nullptr)
-        {
-            pool->Return(std::move(Renderer));
+            ReturnRenderer(*this);
         }
     }
 
@@ -278,7 +380,8 @@ namespace Veng::Renderer
 
     void ModelPortrait::Release() const
     {
-        if (!Runtime || (Runtime->Renderer == nullptr && Runtime->Stage == nullptr))
+        if (!Runtime || (Runtime->Renderer == nullptr && Runtime->Stage == nullptr &&
+                         !Runtime->RetainedHandle.IsValid()))
         {
             return;
         }
@@ -291,24 +394,49 @@ namespace Veng::Renderer
 
     ModelPortraitOutput ModelPortrait::GetOutput() const
     {
-        if (!Runtime || Runtime->Renderer == nullptr || !Runtime->Renderer->HasRendered())
+        if (!Runtime)
         {
             return {};
         }
         const ModelPortraitRuntime& runtime = *Runtime;
-        const PortraitRenderer& renderer = *runtime.Renderer;
-        return ModelPortraitOutput{
-            .Ready = true,
-            .Color = renderer.GetColorHandle(),
-            .Depth = renderer.GetDepthHandle(),
-            .Normal = renderer.GetNormalHandle(),
-            .Sampler = renderer.GetSampler(),
-            .Extent = renderer.GetConfig().Extent,
-            .Camera = runtime.Camera,
-            .ModelTransform = runtime.ModelTransform,
-            .Bounds = runtime.Bounds,
-            .ModelBounds = runtime.ModelBounds,
-        };
+        if (runtime.Renderer != nullptr && runtime.Renderer->HasRendered())
+        {
+            const PortraitRenderer& renderer = *runtime.Renderer;
+            return ModelPortraitOutput{
+                .Ready = true,
+                .Color = renderer.GetColorHandle(),
+                .Depth = renderer.GetDepthHandle(),
+                .Normal = renderer.GetNormalHandle(),
+                .Sampler = renderer.GetSampler(),
+                .Premultiplied = renderer.GetConfig().Output == PortraitOutput::Shaded,
+                .Extent = renderer.GetConfig().Extent,
+                .Camera = runtime.Camera,
+                .ModelTransform = runtime.ModelTransform,
+                .Bounds = runtime.Bounds,
+                .ModelBounds = runtime.ModelBounds,
+            };
+        }
+        if (runtime.RetainedHandle.IsValid())
+        {
+            const uvec3 extent = runtime.RetainedImage->GetExtent();
+            return ModelPortraitOutput{
+                .Ready = true,
+                .Color = runtime.RetainedHandle,
+                .Sampler = runtime.RetainedSampler,
+                .Premultiplied = true,
+                .Extent = uvec2(extent.x, extent.y),
+                .Camera = runtime.Camera,
+                .ModelTransform = runtime.ModelTransform,
+                .Bounds = runtime.Bounds,
+                .ModelBounds = runtime.ModelBounds,
+            };
+        }
+        return {};
+    }
+
+    bool ModelPortrait::IsRetained() const
+    {
+        return Runtime && Runtime->RetainedHandle.IsValid();
     }
 
     Scene* ModelPortrait::GetScene() const
@@ -364,20 +492,15 @@ namespace Veng::Renderer
         }
         runtime.LastDrivenSerial = serial;
 
-        if (!Model.IsLoaded())
+        const bool modelLess = !Model.IsValid() && runtime.OnPopulate;
+        if (!modelLess && !Model.IsLoaded())
         {
             // An emptied (or re-pointed, still loading) Model shows nothing rather than the old one.
-            if (runtime.Instance.Get() != nullptr)
+            if (!runtime.Root.IsNull())
             {
-                ClearPopulated(runtime);
-                if (runtime.Stage->IsAlive(runtime.Root))
-                {
-                    runtime.Stage->DestroyEntity(runtime.Root);
-                }
-                runtime.Root = Entity::Null;
-                runtime.Instance = {};
-                runtime.ModelEntities.clear();
+                DropRoot(runtime);
                 runtime.Renderer->ResetForReuse();
+                ReleaseRetained(runtime);
             }
             return false;
         }
@@ -387,9 +510,16 @@ namespace Veng::Renderer
             runtime.KeyLight = runtime.Stage->CreateEntity();
             runtime.Stage->Add<Light>(runtime.KeyLight);
         }
-        if (runtime.Instance.Get() != Model.Get())
+        if (modelLess)
         {
-            Instantiate(runtime, Model, ModelPose, assets);
+            if (!runtime.ModelLess || runtime.Root.IsNull())
+            {
+                Instantiate(runtime, nullptr, ModelPose, assets);
+            }
+        }
+        else if (runtime.ModelLess || runtime.Instance.Get() != Model.Get())
+        {
+            Instantiate(runtime, &Model, ModelPose, assets);
         }
         if (!runtime.Pending.IsResident())
         {
@@ -431,15 +561,52 @@ namespace Veng::Renderer
     void ModelPortrait::Render(CommandBuffer& cmd) const
     {
         ModelPortraitRuntime& runtime = *Runtime;
-        const SceneView view{
+        SceneView view{
             .World = *runtime.Stage,
             .Camera = runtime.Camera,
             .ForcedLod = ForcedLod,
             .LodScreenScale = LodScreenScale,
             .AmbientFloor = Lighting.Ambient,
         };
+        // The look's per-frame knobs a lean renderer honours; its batteries stay off.
+        if (const auto* look = std::as_const(*runtime.Stage).TryGetFirst<RenderLook>();
+            look != nullptr)
+        {
+            view.Exposure = look->Exposure;
+            view.Tonemapper = look->Tonemapper;
+            view.AmbientFloor = look->AmbientFloor;
+            view.EnvironmentLightTint = look->EnvironmentLightTint;
+        }
         runtime.Renderer->Render(cmd, view);
         runtime.Owed = false;
+
+        const bool retains = Refresh == CaptureRefresh::Retain &&
+                             runtime.Renderer->GetConfig().Output == PortraitOutput::Shaded;
+        if (retains)
+        {
+            RetainOutput(runtime, cmd);
+        }
+        else
+        {
+            ReleaseRetained(runtime);
+        }
+    }
+
+    Ref<ImageView> GetRetainedView(const ModelPortrait& portrait)
+    {
+        return portrait.Runtime ? portrait.Runtime->RetainedView : nullptr;
+    }
+
+    bool PortraitWantsRenderer(const ModelPortrait& portrait)
+    {
+        const ModelPortraitRuntime* const runtime = portrait.Runtime.get();
+        if (runtime == nullptr || !runtime->RetainedHandle.IsValid() ||
+            portrait.Refresh != CaptureRefresh::Retain || portrait.Output != PortraitOutput::Shaded)
+        {
+            return true;
+        }
+        const uvec3 extent = runtime->RetainedImage->GetExtent();
+        return uvec2(extent.x, extent.y) != portrait.Extent || runtime->Owed;
     }
 
     void ReleaseMismatchedRenderer(const ModelPortrait& portrait)
@@ -451,12 +618,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        runtime->Renderer->ResetForReuse();
-        if (const Ref<ModelPortraitPool> pool = runtime->Pool.lock(); pool != nullptr)
-        {
-            pool->Return(std::move(runtime->Renderer));
-        }
-        runtime->Renderer.reset();
+        ReturnRenderer(*runtime);
     }
 
     ModelPortraitPool::ModelPortraitPool(const usize capacity) : m_Capacity(capacity) {}

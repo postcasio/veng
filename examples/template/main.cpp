@@ -132,7 +132,9 @@ public:
             frame.Document.ClearImageTexture(*m_Portrait);
             return;
         }
-        frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent);
+        frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent,
+                                       output.Premultiplied ? Gui::ImageAlphaMode::Premultiplied
+                                                            : Gui::ImageAlphaMode::Straight);
         if (!m_Reported)
         {
             Log::Info("template: model portrait painted into the HUD at {}x{}", output.Extent.x,

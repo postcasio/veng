@@ -95,6 +95,16 @@
       "id": "0x00000000000024E1",
       "type": "Material",
       "source": "materials/capture_distance_probe.vmat.json"
+    },
+    {
+      "id": "0xC0ACBE2300BB4B55",
+      "type": "Material",
+      "source": "materials/portrait_translucent.vmat.json"
+    },
+    {
+      "id": "0x98947D6E57AD7B32",
+      "type": "Material",
+      "source": "materials/portrait_additive.vmat.json"
     }
   ]
 }

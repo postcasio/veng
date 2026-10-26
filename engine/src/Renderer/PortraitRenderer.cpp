@@ -23,7 +23,7 @@ namespace Veng::Renderer
         struct CoveragePush
         {
             u32 Color;
-            u32 Depth;
+            u32 Coverage;
         };
 
         /// @brief The lean battery set a portrait renders with: what a UI thumbnail shows, no more.
@@ -93,6 +93,9 @@ namespace Veng::Renderer
 
         // The renderer never resizes or reconfigures, so one registration of its output holds.
         m_OutputHandle = bindless.Register(m_Renderer->GetOutput());
+        // With every battery off, the HDR target is what the tonemap reads and what the
+        // translucent passes accumulated coverage into.
+        m_HdrHandle = bindless.Register(m_Renderer->GetHdrView());
 
         const Format format = context.GetOutputFormat();
         m_Color = Image::Create(context, {
@@ -141,6 +144,10 @@ namespace Veng::Renderer
         {
             bindless.Release(m_ColorHandle);
         }
+        if (m_HdrHandle.IsValid())
+        {
+            bindless.Release(m_HdrHandle);
+        }
     }
 
     TextureHandle PortraitRenderer::GetDepthHandle() const
@@ -174,10 +181,10 @@ namespace Veng::Renderer
             return;
         }
 
-        // The tonemap leaves alpha opaque, so coverage is rebuilt from depth: a portrait is drawn
-        // over a UI's own background, and only the model may cover it.
+        // The tonemap leaves alpha opaque, so the coverage the HDR target accumulated is carried
+        // over: a portrait is drawn over a UI's own background, and only the subject may cover it.
         cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::SampleGraphics);
-        cmd.PrepareForAccess(m_Renderer->GetDepthView(), AccessKind::SampleGraphics);
+        cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::SampleGraphics);
         cmd.PrepareForAccess(m_ColorView, AccessKind::ColorAttachment);
         cmd.BeginRendering({
             .Extent = m_Config.Extent,
@@ -193,7 +200,7 @@ namespace Veng::Renderer
         m_Context.GetBindlessRegistry().Bind(cmd);
         cmd.PushConstants(CoveragePush{
             .Color = m_OutputHandle.Index,
-            .Depth = m_Renderer->GetDepthHandle().Index,
+            .Coverage = m_HdrHandle.Index,
         });
         cmd.DrawFullscreenTriangle();
         cmd.EndRendering();

@@ -15,6 +15,8 @@
 // Veng/guisilhouette.slang) in every one of those reads — the fill, the border ring, and
 // both shadows — so an arc-shaped element is the same fill, ring, and shadow on a different
 // silhouette.
+// A textured fill's texels are straight or premultiplied (v_TexelPremultiplied); a premultiplied
+// texel's colour already carries its own alpha, so only the tint's alpha and the coverage weight it.
 // Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
 // space.
 
@@ -33,6 +35,7 @@ struct VSOutput
     nointerpolation uint v_GradientSelector : TEXCOORD4;
     nointerpolation float4 v_Shadow : TEXCOORD5;
     nointerpolation float4 v_UvWrap : TEXCOORD6;
+    nointerpolation uint v_TexelPremultiplied : TEXCOORD9;
 };
 
 // The leading members of GuiScenePass's push block, matching the vertex stage: the gradient-record
@@ -133,6 +136,9 @@ float4 fsMain(VSOutput input) : SV_Target
     // a ramp offset t, and samples the record's ramp; a plain textured quad samples by UV instead.
     uint selector = input.v_GradientSelector;
     float4 color = input.v_Color;
+    // The alpha the colour is weighted by on output: the fill's own, unless the texel is
+    // premultiplied, when it is the tint's alone.
+    float colorAlphaSource = -1.0;
     if (selector > 0)
     {
         GpuGradient grad = g_Buffers[NonUniformResourceIndex(g_PC.GradientBuffer)]
@@ -177,6 +183,10 @@ float4 fsMain(VSOutput input) : SV_Target
         // exactly the place a tiled frame has to read as continuous.
         float4 texel = g_Textures[NonUniformResourceIndex(textureIndex)].SampleGrad(
             g_Samplers[NonUniformResourceIndex(samplerIndex)], uv, ddx(unwrapped), ddy(unwrapped));
+        if (input.v_TexelPremultiplied != 0)
+        {
+            colorAlphaSource = color.a;
+        }
         color *= texel;
     }
 
@@ -204,5 +214,6 @@ float4 fsMain(VSOutput input) : SV_Target
     }
 
     float alpha = color.a * coverage;
-    return float4(color.rgb * alpha, alpha);
+    float colorWeight = colorAlphaSource >= 0.0 ? colorAlphaSource * coverage : alpha;
+    return float4(color.rgb * colorWeight, alpha);
 }

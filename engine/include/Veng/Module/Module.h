@@ -604,10 +604,15 @@ extern "C"
 /// Version 152 grows SystemContext by ClaimedKeys, after GameplayFocused, the keys a router consumer
 /// holds, which a seat's actions read as up. A module's systems read the context every tick, so a
 /// stale one reads every field after it at a shifted offset.
+/// Version 153 lets a model portrait keep a premultiplied still of a translucent subject without a
+/// renderer: ModelPortraitOutput grows Premultiplied, ModelPortraitDriveResult PortraitsRetained,
+/// CaptureRefresh the Retain enumerator, Gui::Element ImageAlpha and Gui::GuiVertex
+/// TexelPremultiplied (124 → 128 bytes). A module reads portrait outputs, reaches elements and
+/// builds draw lists, so a stale one reads them at the old layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 152u
+#define VENG_MODULE_ABI_VERSION 153u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

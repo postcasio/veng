@@ -300,6 +300,12 @@ namespace Veng::Renderer
             }
 
             ReleaseMismatchedRenderer(portrait);
+            // A still portrait holding its kept image needs nothing until it is marked dirty.
+            if (!portrait.HasRenderer() && !PortraitWantsRenderer(portrait))
+            {
+                ++m_PortraitDrive.PortraitsRetained;
+                continue;
+            }
             if (!portrait.HasRenderer() && !MaterializePortrait(portrait, assets, built))
             {
                 ++m_PortraitDrive.PortraitsDeferred;

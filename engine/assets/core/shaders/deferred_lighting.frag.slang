@@ -108,10 +108,11 @@ float4 fsMain(VSOutput input) : SV_Target
     // belong to the skybox pass. Leave them black. The cleared g-buffer (occlusion 1, normal 0)
     // otherwise drives the IBL specular term — reflect(-V, 0) = -V samples the prefiltered
     // (low-resolution) environment along the view ray — which would paint a blurry skybox over the
-    // background even when the skybox pass is disabled.
+    // background even when the skybox pass is disabled. Alpha is the scene's coverage: 0 here and 1
+    // on geometry, which the translucent passes then accumulate into by `over`.
     if (depth <= 0.0)
     {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
 
     float occlusion = orm.r;

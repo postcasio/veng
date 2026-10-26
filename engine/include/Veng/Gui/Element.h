@@ -542,6 +542,11 @@ namespace Veng::Gui
         Renderer::TextureHandle ImageTexture;
         /// @brief The bindless sampler slot an Image paints with.
         Renderer::SamplerHandle ImageSampler;
+        /// @brief How the texels an Image paints carry alpha; straight for a resident texture.
+        ///
+        /// Set with Document::SetImageTexture; a premultiplied render (a model portrait's shaded
+        /// output) composites without its colour being multiplied by its alpha a second time.
+        ImageAlphaMode ImageAlpha = ImageAlphaMode::Straight;
         /// @brief The source texture's size in pixels — an Image's intrinsic size, zero when unknown.
         ///
         /// Filled from the resolved texture's extent, and the only size the layout measure reads:

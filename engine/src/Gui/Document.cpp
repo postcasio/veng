@@ -1734,25 +1734,28 @@ namespace Veng::Gui
     }
 
     void Document::SetImageTexture(Element& element, const Renderer::TextureHandle texture,
-                                   const Renderer::SamplerHandle sampler, const uvec2 extent)
+                                   const Renderer::SamplerHandle sampler, const uvec2 extent,
+                                   const ImageAlphaMode alpha)
     {
         const vec2 size = vec2(extent);
         if (size != element.ImageSize)
         {
             element.ImageTexture = texture;
             element.ImageSampler = sampler;
+            element.ImageAlpha = alpha;
             element.ImageSize = size;
             // The measure reads the intrinsic size, so the element re-measures as a text leaf does.
             MarkTextDirty(element);
             return;
         }
         if (element.ImageTexture.Index == texture.Index &&
-            element.ImageSampler.Index == sampler.Index)
+            element.ImageSampler.Index == sampler.Index && element.ImageAlpha == alpha)
         {
             return;
         }
         element.ImageTexture = texture;
         element.ImageSampler = sampler;
+        element.ImageAlpha = alpha;
         MarkPaintDirty(element);
     }
 
@@ -4754,7 +4757,7 @@ namespace Veng::Gui
                     const Insets& slice = style.ImageSlice;
                     list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler,
                                    SliceToUv(slice, sampled), slice, tint, element.ImageUv,
-                                   style.ImageRepeatMode, sampled);
+                                   style.ImageRepeatMode, sampled, element.ImageAlpha);
                 }
                 else if (style.ImageRepeatMode == ImageRepeat::Tile)
                 {
@@ -4762,14 +4765,14 @@ namespace Veng::Gui
                                   .Size = TileUvSize(content.Box.Size, element.ImageSize,
                                                      element.ImageUv.Size)};
                     list.Texture(content.Box, element.ImageTexture, element.ImageSampler, uv, tint,
-                                 content.Radii);
+                                 content.Radii, element.ImageAlpha);
                 }
                 else
                 {
                     const FittedFill fill =
                         FitTexture(content.Box, sampled, style.ObjectFit, element.ImageUv);
                     list.Texture(fill.Dest, element.ImageTexture, element.ImageSampler, fill.Uv,
-                                 tint, content.Radii);
+                                 tint, content.Radii, element.ImageAlpha);
                 }
             }
         }

@@ -50,6 +50,11 @@ namespace Veng::Renderer
         EveryFrame,
         /// @brief Render once (a full-face refresh) then idle until MarkDirty is called again.
         OnDemand,
+        /// @brief Render once into an image kept without a renderer, until MarkDirty.
+        ///
+        /// For a ModelPortrait, whose renderer returns to the pool once its image is copied (see
+        /// ModelPortrait::Refresh). A CaptureSurface treats it as OnDemand.
+        Retain,
     };
 
     /// @brief Which frame the capture's six faces are oriented in.
@@ -513,6 +518,7 @@ VE_ENUM_END();
 VE_ENUM(::Veng::Renderer::CaptureRefresh, 0x604C3FD0FE4F9840ULL)
 VE_ENUMERATOR(EveryFrame)
 VE_ENUMERATOR(OnDemand)
+VE_ENUMERATOR(Retain)
 VE_ENUM_END();
 
 VE_ENUM(::Veng::Renderer::CaptureAlignment, 0xBF0441F13ADF33AFULL)

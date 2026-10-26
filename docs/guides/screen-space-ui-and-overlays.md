@@ -518,15 +518,24 @@ void OnUpdate(const GuiDriverFrame& frame) override
     const Renderer::ModelPortraitOutput output =
         portrait != nullptr ? portrait->GetOutput() : Renderer::ModelPortraitOutput{};
     if (!output.Ready) { frame.Document.ClearImageTexture(*m_Portrait); return; }
-    frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent);
+    frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent,
+                                   output.Premultiplied ? Gui::ImageAlphaMode::Premultiplied
+                                                        : Gui::ImageAlphaMode::Straight);
 }
 ```
 
 `SetImageTexture` sizes an unsized `Image` at the render's extent and costs a repaint, not a layout,
-when only the handle moves. The colour carries the model's coverage in alpha, so the HUD's own
-background shows around it. Read the output every frame rather than holding its handles: they belong
+when only the handle moves. The colour is the subject over transparent black with its coverage in
+alpha — translucent layers included — and premultiplied, so the HUD's own background shows around it
+and through a glass part. Read the output every frame rather than holding its handles: they belong
 to the portrait's renderer, which goes back to a pool the moment the component is disabled or
 destroyed.
+
+A still portrait — a thumbnail in a list, a gallery of previews — sets `Refresh` to `Retain`: it
+renders once, keeps its image and hands its renderer back, so many stills cost many images rather
+than many renderers; `MarkDirty` renders it again. A portrait with no `Model` and a populate
+callback builds its whole subject in the callback, and a `RenderLook` the callback attaches sets its
+exposure, tone curve and ambient floor.
 
 ## Verifying it
 

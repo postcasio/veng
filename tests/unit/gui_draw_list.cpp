@@ -150,6 +150,30 @@ TEST_CASE("gui draw list: a distinct texture opens a distinct run")
     }
 }
 
+TEST_CASE("gui draw list: a premultiplied texture marks every vertex it emits, and only those")
+{
+    DrawList list;
+    list.Texture(UnitRect, Texture(3), Sampler(1));
+    list.Texture(UnitRect, Texture(3), Sampler(1), {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
+                 vec4(1.0f), {}, ImageAlphaMode::Premultiplied);
+    list.NineSlice(UnitRect, Texture(3), Sampler(1), Insets::All(0.25f), Insets::All(8.0f),
+                   vec4(1.0f), {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Stretch,
+                   vec2(0.0f), ImageAlphaMode::Premultiplied);
+    list.Quad(UnitRect, vec4(1.0f));
+
+    const vector<GuiVertex>& vertices = list.GetVertices();
+    REQUIRE(vertices.size() == 4 + 4 + 9 * 4 + 4);
+    u32 straightMarked = 0;
+    u32 premultipliedMarked = 0;
+    for (usize i = 0; i < vertices.size(); ++i)
+    {
+        const bool premultiplied = i >= 4 && i < 4 + 4 + 9 * 4;
+        (premultiplied ? premultipliedMarked : straightMarked) += vertices[i].TexelPremultiplied;
+    }
+    CHECK(straightMarked == 0);
+    CHECK(premultipliedMarked == 4 + 9 * 4);
+}
+
 TEST_CASE("gui draw list: push/pop clip nests and intersects, opening runs at boundaries")
 {
     DrawList list;

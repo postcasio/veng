@@ -3,7 +3,11 @@
 //   - RenderToTarget records the document and its >1.0 background survives into the HDR target;
 //   - the dirty-gate skips an idle frame (nothing changed), and GetOutputHandle is stable across the
 //     skip (the target is not reallocated);
-//   - a resolution change re-allocates the target (new extent) and re-records unconditionally.
+//   - a resolution change re-allocates the target (new extent) and re-records unconditionally;
+//   - a premultiplied Image composites to the same pixel as the straight Image of the same subject.
+
+#include <array>
+#include <span>
 
 #include <doctest/doctest.h>
 
@@ -14,9 +18,11 @@
 #include <Veng/Gui/DocumentTexture.h>
 #include <Veng/Gui/RenderTarget.h>
 #include <Veng/Gui/Style.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Sampler.h>
 
 #include <gpu/fixture.h>
 
@@ -117,4 +123,88 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture.WasRenderedLastDrive());
     CHECK(texture.GetTarget()->GetExtent() == Larger);
     CHECK(texture.GetOutputHandle().IsValid());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "document texture: a premultiplied image composites as the straight image of the "
+                  "same subject does")
+{
+    AssetManager assets(Context, Tasks, Types);
+    BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    // One texel of the same subject twice: straight (colour, half coverage), and that colour
+    // already multiplied by its coverage.
+    const vec4 straight{0.8f, 0.4f, 0.2f, 0.5f};
+    const vec4 premultiplied{straight.r * straight.a, straight.g * straight.a,
+                             straight.b * straight.a, straight.a};
+    const auto MakeTexel = [&](const vec4 texel)
+    {
+        const Ref<Image> image =
+            Image::Create(Context, {.Name = "Alpha Mode Texel",
+                                    .Extent = {1, 1, 1},
+                                    .Format = Format::RGBA16Sfloat,
+                                    .Usage = ImageUsage::Sampled | ImageUsage::TransferDst});
+        const std::array<u16, 4> halves = {glm::packHalf1x16(texel.r), glm::packHalf1x16(texel.g),
+                                           glm::packHalf1x16(texel.b), glm::packHalf1x16(texel.a)};
+        image->UploadSync(
+            std::span<const u8>(reinterpret_cast<const u8*>(halves.data()), sizeof(halves)));
+        return ImageView::Create(Context, {.Name = "Alpha Mode Texel View", .Image = image});
+    };
+    const Ref<ImageView> straightView = MakeTexel(straight);
+    const Ref<ImageView> premultipliedView = MakeTexel(premultiplied);
+    const TextureHandle straightHandle = bindless.Register(straightView);
+    const TextureHandle premultipliedHandle = bindless.Register(premultipliedView);
+    const SamplerHandle sampler = bindless
+                                      .AcquireSampler({.Name = "Alpha Mode Sampler",
+                                                       .MagFilter = Filter::Nearest,
+                                                       .MinFilter = Filter::Nearest,
+                                                       .AddressModeU = AddressMode::ClampToEdge,
+                                                       .AddressModeV = AddressMode::ClampToEdge,
+                                                       .AddressModeW = AddressMode::ClampToEdge})
+                                      .Handle;
+
+    // Two images side by side over an opaque ground.
+    const vec4 ground{0.2f, 0.3f, 0.4f, 1.0f};
+    Gui::Document document;
+    Gui::Style root;
+    root.Width = Gui::Length::Points(static_cast<f32>(Extent.x));
+    root.Height = Gui::Length::Points(static_cast<f32>(Extent.y));
+    root.Background = ground;
+    document.SetStyle(document.Root(), root);
+    const auto AddImage =
+        [&](const f32 left, const TextureHandle texture, const Gui::ImageAlphaMode alpha)
+    {
+        Gui::Element& image = document.Add(document.Root(), Gui::ElementKind::Image);
+        Gui::Style style;
+        style.Position = Gui::PositionType::Absolute;
+        style.Inset.Left = left;
+        style.Inset.Top = 0.0f;
+        style.Width = Gui::Length::Points(static_cast<f32>(Extent.x) * 0.5f);
+        style.Height = Gui::Length::Points(static_cast<f32>(Extent.y));
+        document.SetStyle(image, style);
+        document.SetImageTexture(image, texture, sampler, uvec2(1, 1), alpha);
+    };
+    AddImage(0.0f, straightHandle, Gui::ImageAlphaMode::Straight);
+    AddImage(static_cast<f32>(Extent.x) * 0.5f, premultipliedHandle,
+             Gui::ImageAlphaMode::Premultiplied);
+
+    Gui::DocumentTexture texture;
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        { texture.RenderToTarget(Context, assets, cmd, document, Extent, 1.0f, 0.016f); });
+    REQUIRE(texture.GetTarget() != nullptr);
+    const vector<u8> pixels = texture.GetTarget()->GetOutput()->GetImage()->Download();
+    const vec4 left = DecodeTexel(pixels, Extent.x, Extent.x / 4, Extent.y / 2);
+    const vec4 right = DecodeTexel(pixels, Extent.x, Extent.x * 3 / 4, Extent.y / 2);
+
+    // Both are the subject over the ground, which the straight one is by construction.
+    const vec3 expected = vec3(straight) * straight.a + vec3(ground) * (1.0f - straight.a);
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        CHECK(left[channel] == doctest::Approx(expected[channel]).epsilon(0.01));
+        CHECK(right[channel] == doctest::Approx(left[channel]).epsilon(0.01));
+    }
+
+    bindless.Release(straightHandle);
+    bindless.Release(premultipliedHandle);
 }

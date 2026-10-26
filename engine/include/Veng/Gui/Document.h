@@ -369,18 +369,24 @@ namespace Veng::Gui
         /// Image with no authored size lays out at it), while a changed handle at the same extent is a
         /// paint-only write, like SetImageUv — so a driver re-reading a render's output each frame
         /// pays nothing when nothing moved. The element's resident texture (Element::Image) is kept,
-        /// for ClearImageTexture to return to. The slots are inert on every kind but Image.
+        /// for ClearImageTexture to return to. The slots are inert on every kind but Image. A
+        /// changed @p alpha is paint-only too.
         /// @param element  The Image to paint the texture.
         /// @param texture  The bindless texture to paint.
         /// @param sampler  The bindless sampler to read it through.
         /// @param extent   The texture's size in pixels — the element's intrinsic size.
+        /// @param alpha    Whether the texels carry straight (the default) or premultiplied alpha;
+        ///                 a premultiplied image composites with tint, opacity and clipping as a
+        ///                 straight one does, without its colour multiplied by its alpha again.
         void SetImageTexture(Element& element, Renderer::TextureHandle texture,
-                             Renderer::SamplerHandle sampler, uvec2 extent);
+                             Renderer::SamplerHandle sampler, uvec2 extent,
+                             ImageAlphaMode alpha = ImageAlphaMode::Straight);
 
         /// @brief Returns an Image to its resident texture, undoing SetImageTexture.
         ///
         /// Restores the slots and intrinsic size from Element::Image — the texture the markup's
-        /// `src` resolved to — or clears them when it names none, under the same layout contract.
+        /// `src` resolved to — or clears them when it names none, under the same layout contract,
+        /// and paints them as straight alpha.
         /// A no-op when the element already paints its resident texture.
         /// @param element  The Image to return to its resident texture.
         void ClearImageTexture(Element& element);

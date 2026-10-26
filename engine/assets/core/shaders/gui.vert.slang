@@ -7,7 +7,8 @@
 // bindless texture/sampler indices), and the shadow parameters (signed blur, spread,
 // and offset) a shadow quad carries, the UV sub-rect a nine-slice cell wraps its
 // sampling within, and the arc silhouette a quad is masked to (its start, sweep,
-// thickness, and signed radius, plus the vertex's coordinate from the arc's centre).
+// thickness, and signed radius, plus the vertex's coordinate from the arc's centre), and whether a
+// textured fill's texels carry premultiplied alpha.
 // Vulkan clip space has Y pointing down, so a top-left pixel (y=0)
 // maps to clip y=-1 with no extra flip.
 
@@ -33,6 +34,7 @@ struct VSInput
     float4 a_UvWrap : TEXCOORD6;
     float4 a_Arc : TEXCOORD7;
     float2 a_ArcCoord : TEXCOORD8;
+    uint a_TexelPremultiplied : TEXCOORD9;
 };
 
 // Varying locations follow declaration order, not the semantics, so a fragment may omit only a
@@ -51,6 +53,7 @@ struct VSOutput
     nointerpolation uint v_GradientSelector : TEXCOORD4;
     nointerpolation float4 v_Shadow : TEXCOORD5;
     nointerpolation float4 v_UvWrap : TEXCOORD6;
+    nointerpolation uint v_TexelPremultiplied : TEXCOORD9;
 };
 
 [shader("vertex")]
@@ -69,5 +72,6 @@ VSOutput vsMain(VSInput input)
     output.v_UvWrap = input.a_UvWrap;
     output.v_Arc = input.a_Arc;
     output.v_ArcCoord = input.a_ArcCoord;
+    output.v_TexelPremultiplied = input.a_TexelPremultiplied;
     return output;
 }

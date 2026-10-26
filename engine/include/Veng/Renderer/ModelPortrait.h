@@ -33,7 +33,8 @@ namespace Veng::Renderer
     /// @brief What a ModelPortrait renders: the shaded model, or its shape alone.
     enum class PortraitOutput : u8
     {
-        /// @brief The lit, tonemapped model, with its coverage in alpha (ModelPortraitOutput::Color).
+        /// @brief The lit, tonemapped subject over transparent black, premultiplied by its coverage
+        ///        (ModelPortraitOutput::Color).
         Shaded,
         /// @brief Depth and world normal only (RenderPath::GeometryDepthNormal), for a stylized or
         ///        outline fill that shades the shape itself.
@@ -100,9 +101,10 @@ namespace Veng::Renderer
 
     /// @brief What a ModelPortrait's last render produced, read through ModelPortrait::GetOutput.
     ///
-    /// Every handle is a runtime bindless slot owned by the portrait's renderer: valid while Ready,
-    /// and handed back (or to the next portrait taking the renderer from the pool) once the
-    /// portrait is disabled or destroyed, so a reader re-reads the struct each frame rather than
+    /// Every handle is a runtime bindless slot owned by the portrait's renderer, or by the portrait
+    /// itself once a CaptureRefresh::Retain portrait has retained its image: valid while Ready, and
+    /// handed back (or to the next portrait taking the renderer from the pool) once the portrait is
+    /// disabled, released or destroyed, so a reader re-reads the struct each frame rather than
     /// holding a handle.
     struct ModelPortraitOutput
     {
@@ -111,8 +113,12 @@ namespace Veng::Renderer
         /// False before the first render and once the component is disabled or destroyed; every
         /// other field is meaningful only while it is true.
         bool Ready = false;
-        /// @brief Shaded: the tonemapped model, coverage in alpha (opaque where the model is drawn,
-        ///        zero elsewhere), so an Image composites it over its own background.
+        /// @brief Shaded: the tonemapped subject over transparent black, with premultiplied alpha.
+        ///
+        /// Alpha is the opaque coverage accumulated with every translucent draw's coverage by
+        /// `over`, so a halo or a haze outside the solid shape is kept; an additive draw adds colour
+        /// and no coverage. Composited `over` a background as premultiplied (see Premultiplied), it
+        /// reproduces the subject exactly as it rendered over black.
         TextureHandle Color;
         /// @brief GeometryDepthNormal: the reverse-Z depth (0 where nothing was drawn).
         TextureHandle Depth;
@@ -120,6 +126,11 @@ namespace Veng::Renderer
         TextureHandle Normal;
         /// @brief A clamped linear sampler to read Color through (depth and normal want a load).
         SamplerHandle Sampler;
+        /// @brief Whether Color carries premultiplied alpha; true for every Shaded output.
+        ///
+        /// A Gui Image painting it passes Gui::ImageAlphaMode::Premultiplied to
+        /// Gui::Document::SetImageTexture.
+        bool Premultiplied = false;
         /// @brief The outputs' size in pixels.
         uvec2 Extent{0, 0};
         /// @brief The camera the render was made through, for a fill reconstructing positions.
@@ -149,12 +160,20 @@ namespace Veng::Renderer
     /// view budget ahead of the captures; a portrait the budget cannot seat keeps its last render.
     /// The renderer is lean — no bloom, AO, shadows, post effects or anti-aliasing. Destroying
     /// or disabling the component returns the renderer to the pool, hands its slots back and drops
-    /// the private scene.
+    /// the private scene. A CaptureRefresh::Retain portrait renders once, keeps a copy of its image
+    /// and hands its renderer back at once, so a still portrait costs an image and no renderer.
+    ///
+    /// The render reads a RenderLook in the private scene (one a populate callback attaches), for
+    /// the knobs a lean renderer honours: Exposure, Tonemapper, AmbientFloor (in place of
+    /// PortraitLighting::Ambient) and EnvironmentLightTint. Every battery stays off whatever the look
+    /// says. A private scene with no look renders at exposure 1 through the default tone curve.
     ///
     /// The private scene has no systems and no presentation scope: it is static and silent, and the
     /// model is posed by ModelPose and by what SetOnPopulate attaches, never animated by systems.
     /// Model is instantiated on the first drive that finds it resident (and again when it is
-    /// re-pointed); the portrait waits, not Ready, until what the spawn streams in is resident.
+    /// re-pointed); the portrait waits, not Ready, until what the spawn streams in is resident. A
+    /// portrait with no Model and a populate callback is model-less: the callback builds the whole
+    /// subject on an empty root.
     ///
     /// Showing one in a document is a driver reading GetOutput each frame and calling
     /// Gui::Document::SetImageTexture (or ClearImageTexture while it is not Ready).
@@ -180,8 +199,11 @@ namespace Veng::Renderer
 
         /// @brief The model instantiated into the private scene.
         ///
-        /// Empty, or a handle still loading, renders nothing: an instance already shown is dropped
-        /// and the output reads not Ready until a resident Model is instantiated.
+        /// A handle still loading renders nothing: an instance already shown is dropped and the
+        /// output reads not Ready until a resident Model is instantiated. Empty with a populate
+        /// callback set, the portrait is model-less: the callback runs on an empty root posed by
+        /// ModelPose and builds the whole subject, and AutoFit frames what it attached. Empty with
+        /// no callback renders nothing.
         AssetHandle<Prefab> Model;
 
         /// @brief The render's size in pixels.
@@ -200,9 +222,21 @@ namespace Veng::Renderer
         Transform ModelPose;
 
         /// @brief The key light and ambient floor (see PortraitLighting).
+        ///
+        /// A RenderLook in the private scene supplies the ambient floor in place of Ambient.
         PortraitLighting Lighting;
 
-        /// @brief Whether the portrait re-renders every driven frame, or once until MarkDirty.
+        /// @brief Whether the portrait re-renders every driven frame, once until MarkDirty, or once
+        ///        into an image it keeps without a renderer.
+        ///
+        /// Retain renders as OnDemand does. On the frame it first renders, its Shaded colour is
+        /// copied into a texture the portrait owns, its renderer returns to the pool and its private
+        /// scene is dropped; GetOutput then reads Ready with that texture until MarkDirty (which
+        /// takes a renderer and renders again, the kept image showing until the new one lands),
+        /// a change of Extent, Output or Refresh, or Release. Nothing else re-renders it: a changed
+        /// Model, pose, framing or light takes effect at the next MarkDirty, and each re-render
+        /// instantiates the model afresh. A GeometryDepthNormal portrait keeps its renderer and
+        /// treats Retain as OnDemand.
         CaptureRefresh Refresh = CaptureRefresh::EveryFrame;
         /// @brief The level of detail the model's meshes draw at.
         ///
@@ -242,25 +276,36 @@ namespace Veng::Renderer
 
         /// @brief Requests a render: an OnDemand portrait renders on its next driven frame.
         ///
-        /// A no-op for an EveryFrame portrait, which renders anyway. Const for the reason
+        /// A no-op for an EveryFrame portrait, which renders anyway. A Retain portrait holding its
+        /// image takes a renderer again and renders once more. Const for the reason
         /// CaptureSurface::MarkDirty is: the request lives in the runtime, not the authored config.
         void MarkDirty() const;
 
-        /// @brief Releases the renderer and the private scene, keeping the settings and callback.
+        /// @brief Releases the renderer, the private scene and any retained image, keeping the
+        ///        settings and callback.
         ///
         /// What the drive does to a disabled portrait; the next drive of an enabled one builds again.
         void Release() const;
 
+        /// @brief Whether the portrait holds a retained image (see CaptureRefresh::Retain).
+        ///
+        /// True from the frame a Retain portrait copies its render until a release; it stays true
+        /// while a MarkDirty re-render is in flight, since the kept image is what GetOutput reads
+        /// until the new one lands.
+        [[nodiscard]] bool IsRetained() const;
+
         /// @brief Returns what the last render produced (see ModelPortraitOutput).
         [[nodiscard]] ModelPortraitOutput GetOutput() const;
 
-        /// @brief Returns the private scene, or null before the model is first instantiated.
+        /// @brief Returns the private scene, or null before the model is first instantiated and
+        ///        once a Retain portrait has dropped it.
         [[nodiscard]] Scene* GetScene() const;
 
         /// @brief Returns the model root in the private scene, or Entity::Null before instantiation.
         [[nodiscard]] Entity GetModelRoot() const;
 
-        /// @brief Returns how many times Model has been instantiated over the runtime's life.
+        /// @brief Returns how many times the private scene's root has been built over the runtime's
+        ///        life: each instantiation of Model, and each model-less build.
         [[nodiscard]] u32 GetInstantiationCount() const;
 
         /// @brief Whether a renderer is installed (Materialize has run and nothing released it).
@@ -281,7 +326,8 @@ namespace Veng::Renderer
 
         /// @brief Brings the private scene current and decides whether this frame renders.
         ///
-        /// Instantiates Model when it is resident and not yet (or no longer) the instance, runs the
+        /// Instantiates Model when it is resident and not yet (or no longer) the instance (or, with
+        /// no Model and a populate callback, builds the model-less root), runs the
         /// populate callback after an instantiation, re-arms an OnDemand render after a frame the
         /// portrait was not driven on, writes ModelPose and Lighting into the private scene, and
         /// frames the camera — or, while an explicit camera names another instance
@@ -295,6 +341,9 @@ namespace Veng::Renderer
         bool Prepare(Context& context, AssetManager& assets) const;
 
         /// @brief Records this frame's render into @p cmd, leaving the outputs sampleable.
+        ///
+        /// A Shaded Retain portrait also records the copy of its colour into its retained image,
+        /// and then hands its renderer back and drops its private scene.
         /// @param cmd  The frame command buffer.
         /// @pre Prepare returned true this frame.
         void Render(CommandBuffer& cmd) const;

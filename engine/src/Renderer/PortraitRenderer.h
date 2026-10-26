@@ -24,8 +24,9 @@ namespace Veng::Renderer
     ///
     /// Owns a SceneRenderer at the portrait's extent — the full lean deferred pipeline for Shaded,
     /// the GeometryDepthNormal path otherwise — and, for Shaded, a colour target its coverage pass
-    /// writes: the tonemapped output with alpha taken from depth, so the model composites over
-    /// whatever a UI draws behind it. Every bindless slot it registers is released by its destructor.
+    /// writes: the tonemapped output with alpha taken from the HDR target's coverage, so the subject
+    /// composites, premultiplied, over whatever a UI draws behind it. Every bindless slot it
+    /// registers is released by its destructor.
     class PortraitRenderer
     {
     public:
@@ -41,6 +42,9 @@ namespace Veng::Renderer
 
         PortraitRenderer(const PortraitRenderer&) = delete;
         PortraitRenderer& operator=(const PortraitRenderer&) = delete;
+
+        /// @brief Returns the render context it allocates on.
+        [[nodiscard]] Context& GetContext() const { return m_Context; }
 
         /// @brief Returns the configuration it was built for.
         [[nodiscard]] const PortraitRendererConfig& GetConfig() const { return m_Config; }
@@ -85,6 +89,8 @@ namespace Veng::Renderer
         Unique<SceneRenderer> m_Renderer;
         /// @brief Bindless slot of the renderer's tonemapped output, read by the coverage pass.
         TextureHandle m_OutputHandle;
+        /// @brief Bindless slot of the renderer's HDR target, whose alpha the coverage pass reads.
+        TextureHandle m_HdrHandle;
         /// @brief The Shaded colour target the coverage pass writes.
         Ref<Image> m_Color;
         /// @brief View over m_Color.
@@ -107,4 +113,18 @@ namespace Veng::Renderer
     /// renderer of its new configuration (from the pool, or built within the frame's budget).
     /// @param portrait  The portrait to check.
     void ReleaseMismatchedRenderer(const ModelPortrait& portrait);
+
+    /// @brief Whether a portrait needs a renderer this frame.
+    ///
+    /// False only for a Shaded Retain portrait holding a kept image of its Extent and owing no
+    /// render, which the compositor then neither materializes nor prepares.
+    /// @param portrait  The portrait to check.
+    /// @return True when the drive should materialize and prepare it.
+    [[nodiscard]] bool PortraitWantsRenderer(const ModelPortrait& portrait);
+
+    /// @brief Returns a portrait's retained image view, or null when it holds none — for
+    ///        diagnostics and tests.
+    /// @param portrait  The portrait to read.
+    /// @return The view over its kept copy, whose image carries TransferSrc so it can be downloaded.
+    [[nodiscard]] VE_API Ref<ImageView> GetRetainedView(const ModelPortrait& portrait);
 }

@@ -1046,3 +1046,30 @@ TEST_CASE("gui document: SetImageTexture measures at its extent and re-solves on
     CHECK(image.Layout.Size.x == doctest::Approx(0.0f));
     CHECK_FALSE(image.ImageTexture.IsValid());
 }
+
+TEST_CASE("gui document: an Image's alpha mode is a paint-only write that a clear resets")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 7},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(32, 32));
+    doc.Solve(vec2(400.0f, 400.0f));
+    CHECK(image.ImageAlpha == ImageAlphaMode::Straight);
+
+    // The same texture as premultiplied repaints without a re-solve; the same call again is free.
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 7},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(32, 32),
+                        ImageAlphaMode::Premultiplied);
+    CHECK_FALSE(doc.IsDirty());
+    CHECK(doc.IsPaintDirty());
+    CHECK(image.ImageAlpha == ImageAlphaMode::Premultiplied);
+    DrawList list;
+    doc.Drive(vec2(400.0f, 400.0f), 0.0f, list);
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 7},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(32, 32),
+                        ImageAlphaMode::Premultiplied);
+    CHECK_FALSE(doc.IsPaintDirty());
+
+    doc.ClearImageTexture(image);
+    CHECK(image.ImageAlpha == ImageAlphaMode::Straight);
+}

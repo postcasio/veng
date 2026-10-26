@@ -319,7 +319,7 @@ namespace Veng::Gui
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                             vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector,
-                            vec4 shadow, vec4 uvWrap)
+                            vec4 shadow, vec4 uvWrap, const ImageAlphaMode alpha)
     {
         // An arc masks the silhouette paths only: a glyph's coverage is its own distance field, so
         // text drawn inside an arc-shaped element is never cut by it.
@@ -354,6 +354,7 @@ namespace Veng::Gui
                 .UvWrap = uvWrap,
                 .Arc = arcLane,
                 .ArcCoord = arcMasked ? corners[i] - arcCenter : vec2(0.0f),
+                .TexelPremultiplied = alpha == ImageAlphaMode::Premultiplied ? 1u : 0u,
             });
         }
 
@@ -694,7 +695,8 @@ namespace Veng::Gui
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
                                     Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
-                                    const CornerRadii& radii, vec4 uvWrap)
+                                    const CornerRadii& radii, vec4 uvWrap,
+                                    const ImageAlphaMode alpha)
     {
         if (rect.IsEmpty())
         {
@@ -722,20 +724,20 @@ namespace Veng::Gui
         const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
         const vec4 params{radius, 0.0f, static_cast<f32>(texture.Index),
                           static_cast<f32>(sampler.Index)};
-        PushQuad(corners, uvs, tint, half, rect.Center(), params, 0, vec4(0.0f), uvWrap);
+        PushQuad(corners, uvs, tint, half, rect.Center(), params, 0, vec4(0.0f), uvWrap, alpha);
     }
 
     void DrawList::Texture(const Rect& rect, Renderer::TextureHandle texture,
                            Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
-                           const CornerRadii& radii)
+                           const CornerRadii& radii, const ImageAlphaMode alpha)
     {
-        EmitTexturedQuad(rect, texture, sampler, uv, tint, radii);
+        EmitTexturedQuad(rect, texture, sampler, uv, tint, radii, vec4(0.0f), alpha);
     }
 
     void DrawList::NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                              Renderer::SamplerHandle sampler, const Insets& sliceUv,
                              const Insets& sizePx, vec4 tint, const Rect& uv, ImageRepeat repeat,
-                             vec2 sourcePx)
+                             vec2 sourcePx, const ImageAlphaMode alpha)
     {
         if (rect.IsEmpty())
         {
@@ -806,7 +808,8 @@ namespace Veng::Gui
                 };
                 if (repeats == vec2(1.0f))
                 {
-                    EmitTexturedQuad(tileRect, texture, sampler, tileUv, tint);
+                    EmitTexturedQuad(tileRect, texture, sampler, tileUv, tint, {}, vec4(0.0f),
+                                     alpha);
                     continue;
                 }
 
@@ -815,7 +818,7 @@ namespace Veng::Gui
                 // instead of letting the sampler run into its neighbour.
                 const Rect spannedUv{.Min = tileUv.Min, .Size = tileUv.Size * repeats};
                 const vec4 wrap{tileUv.Min.x, tileUv.Min.y, tileUv.Size.x, tileUv.Size.y};
-                EmitTexturedQuad(tileRect, texture, sampler, spannedUv, tint, {}, wrap);
+                EmitTexturedQuad(tileRect, texture, sampler, spannedUv, tint, {}, wrap, alpha);
             }
         }
     }

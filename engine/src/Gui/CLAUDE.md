@@ -462,6 +462,18 @@ re-point it every frame. `ClearImageTexture` returns the element to the texture 
 to (`Element::Image`, kept resident throughout), or to none. Writing `ImageTexture`/`ImageSize`
 directly skips the re-measure; the setters are the way in.
 
+**A runtime texture may be premultiplied.** `SetImageTexture`'s last argument is an
+`ImageAlphaMode` — `Straight` (the default, and what a clear returns to) or `Premultiplied`, for a
+render composited over transparent black (`ModelPortrait`'s shaded output says so in
+`ModelPortraitOutput::Premultiplied`). It is a paint-only write held in `Element::ImageAlpha` and
+carried to the draw list (`DrawList::Texture`/`NineSlice`), whose vertices mark it in
+`GuiVertex::TexelPremultiplied`; the shape fragment then weights the texel's colour by the tint's
+alpha and the coverage alone, not by the texel's alpha a second time. So tint, opacity and clipping
+compose exactly as for a straight image, a premultiplied texel of half coverage composites to the
+pixel the straight texel of the same subject does, and one of zero alpha adds its light without
+covering what is behind it. A material fill (`image-material`) samples the texture itself and does
+not read the mode.
+
 **The measure reads the whole texture, never the `uv` sub-rect.** Reading `ImageUv` there would make
 `Document::SetImageUv` a layout input, turning a per-frame atlas flipbook advance into a per-frame
 layout re-solve; the setter keeps its paint-only, no-dirty contract. *Fit* and *slice*, by contrast,
@@ -498,7 +510,7 @@ frame around a tiled `Image`, a material fill inside a clipped scroller, and a s
 open popup — and `gui_box_composition`, where tiled nine-slice frames wrap bordered boxes whose size
 comes from a measure, so the cells' repeat counts are decided by the box model rather than by an
 authored extent. **The vertex format is five files, not one**: the
-`GuiVertex` struct (124 bytes, eleven attributes), the cooked `gui.vlayout.json` the pass loads, the
+`GuiVertex` struct (128 bytes, twelve attributes), the cooked `gui.vlayout.json` the pass loads, the
 `VSInput`/`VSOutput` of `gui.vert.slang`, and the fragments that read a lane —
 `gui_shape.frag.slang` reads all of them, `Veng/guifill.slang`'s `GuiFillInputs` reads the leading
 ones through the two arc lanes, and `gui_msdf.frag.slang` stops at `v_Params`. The shader importer
@@ -508,7 +520,7 @@ interpolants it reads, and may omit only a trailing run of them**: Slang assigns
 in **declaration order, not by semantic**, so the lanes a partial reader needs must precede the ones
 it drops. That is why `VSOutput` puts the two arc lanes directly after `v_Params` — the material
 domain reads them — while the gradient selector, the shadow, and the per-cell UV wrap, which only
-the shape path reads, trail. The validation gate accepts the unread trailing outputs (it logs the
+the shape path reads, trail — the premultiplied-texel flag last of all. The validation gate accepts the unread trailing outputs (it logs the
 SPIR-V interface mismatch at `WARN`); a fragment that skips a lane *in the middle* shifts every
 later location and fails pipeline creation outright with a type mismatch. The convention is stated
 on `GuiFillInputs` itself, so a consumer authoring a fill meets it where it applies.
@@ -1304,10 +1316,15 @@ model in the private scene after each instantiation, and `Repopulate()` destroys
 populate created and runs it again without re-instantiating the model. Its meshes draw at their
 coarsest level of detail unless `ForcedLod` says otherwise (`0` for full detail, `AutomaticLod` to
 select from the portrait's camera). The output carries the colour
-(tonemapped, coverage in alpha) or the depth and normal (`PortraitOutput::GeometryDepthNormal`), the
+(tonemapped over transparent black and premultiplied, with every layer's coverage — translucent
+ones included — in alpha) or the depth and normal (`PortraitOutput::GeometryDepthNormal`), the
 camera, the model transform, and two bounds — `Bounds` over everything, `ModelBounds` over the model
-alone. Showing one is a driver calling `Document::SetImageTexture` with it each frame (and
-`ClearImageTexture` while it is not `Ready`). The renderer side is in
+alone. Showing one is a driver calling `Document::SetImageTexture` with it each frame, passing
+`ImageAlphaMode::Premultiplied` when `Premultiplied` says so (and `ClearImageTexture` while it is not
+`Ready`). A portrait with no `Model` and a populate callback is model-less: the callback builds the
+whole subject. A `RenderLook` in the private scene sets its exposure, tone curve and ambient floor.
+`CaptureRefresh::Retain` keeps one still image and hands the renderer back, so a gallery of stills
+costs images rather than renderers. The renderer side is in
 [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Model portraits".
 
 ## Authoring surfaces

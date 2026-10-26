@@ -9,7 +9,11 @@
 //    only them, and the model-only bounds exclude what a populate attached;
 //  - the lifecycle: a released renderer is reused by the next portrait of its configuration with no
 //    build, create/destroy cycles hold the bindless occupancy steady, and a portrait in a scene no
-//    viewport renders is never rendered.
+//    viewport renders is never rendered;
+//  - a still subject: coverage counts a translucent layer and not an additive one, a model-less
+//    portrait renders what its populate callback stood, a RenderLook's exposure scales the radiance
+//    the output was made from, and a Retain portrait keeps its image with no renderer until marked
+//    dirty.
 
 #include <doctest/doctest.h>
 
@@ -38,6 +42,7 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/RenderLook.h>
 #include <Veng/Scene/Scene.h>
 
 #include <cmath>
@@ -56,6 +61,10 @@ namespace
 
     // An opaque, depth-writing surface material in the capture fixture pack, for the recipe cube.
     constexpr AssetId CubeMaterialInstance{0x24D1};
+    // Unlit translucent materials in the same pack: alpha-blended (0.2, 0.1, 0.05) at coverage 0.5,
+    // and additive (0.5, 0.5, 0.5) at full weight.
+    constexpr AssetId TranslucentInstance{0xD30BACB08B05D79DULL};
+    constexpr AssetId AdditiveInstance{0x6F3B40415DE57DBFULL};
 
     // The test shader pack's fullscreen vertex stage and its sample-a-handle fragment.
     constexpr AssetId SampleVertexId{0x1F42};
@@ -191,6 +200,8 @@ namespace
     {
         Unique<AssetManager> Assets;
         AssetHandle<MaterialInstance> Material;
+        AssetHandle<MaterialInstance> Translucent;
+        AssetHandle<MaterialInstance> Additive;
         AssetHandle<Prefab> Cube;
         Unique<Scene> Host;
         Unique<ViewportCompositor> Compositor;
@@ -203,6 +214,8 @@ namespace
             REQUIRE(Assets->Mount(CookMaterialPack()).has_value());
             REQUIRE(Assets->Mount(path(TEST_SHADER_PACK)).has_value());
             Material = *Assets->LoadSync<MaterialInstance>(CubeMaterialInstance);
+            Translucent = *Assets->LoadSync<MaterialInstance>(TranslucentInstance);
+            Additive = *Assets->LoadSync<MaterialInstance>(AdditiveInstance);
 
             MeshRenderer renderer;
             MeshSource source;
@@ -277,6 +290,28 @@ namespace
         vector<u8> ColorPixels(const ModelPortrait& portrait) const
         {
             return portrait.GetRenderer()->GetColorView()->GetImage()->Download();
+        }
+
+        // A portrait with no Model whose populate callback stands one mesh at the root, and
+        // optionally a RenderLook beside it.
+        Entity AddModelLessPortrait(const Ref<Mesh>& mesh, optional<RenderLook> look = {})
+        {
+            const Entity entity = Host->CreateEntity();
+            auto& portrait = Host->Add<ModelPortrait>(entity);
+            portrait.Extent = PortraitExtent;
+            portrait.SetOnPopulate(
+                [this, mesh, look](Scene& scene, const Entity root)
+                {
+                    const Entity part = scene.CreateEntity();
+                    scene.Add<Transform>(part);
+                    scene.Add<MeshRenderer>(part).Mesh = Assets->Adopt(mesh);
+                    scene.SetParent(part, root);
+                    if (look)
+                    {
+                        scene.Add<RenderLook>(scene.CreateEntity(), *look);
+                    }
+                });
+            return entity;
         }
     };
 }
@@ -396,13 +431,20 @@ TEST_CASE_FIXTURE(PortraitFixture,
     CHECK(portrait.GetInstantiationCount() == 1);
     CHECK(portrait.GetOutput().Bounds.Min.x < -2.0f);
 
-    // An emptied model shows nothing; restored, it is instantiated afresh.
+    // An emptied model with a callback leaves the callback's part alone on a fresh root.
     portrait.Model = {};
+    FrameUntilReady({&portrait});
+    CHECK(portrait.GetInstantiationCount() == 2);
+    CHECK(portrait.GetOutput().ModelBounds.IsEmpty());
+    CHECK(portrait.GetOutput().Bounds.Min.x < -2.0f);
+
+    // With no callback either it shows nothing; restored, the model is instantiated afresh.
+    portrait.SetOnPopulate({});
     Frame();
     CHECK_FALSE(portrait.GetOutput().Ready);
     portrait.Model = Cube;
     FrameUntilReady({&portrait});
-    CHECK(portrait.GetInstantiationCount() == 2);
+    CHECK(portrait.GetInstantiationCount() == 3);
 }
 
 TEST_CASE_FIXTURE(PortraitFixture,
@@ -510,4 +552,155 @@ TEST_CASE_FIXTURE(PortraitFixture,
     }
     CHECK(steady);
     CHECK_FALSE(unpresented->Get<ModelPortrait>(hidden).HasRenderer());
+}
+
+namespace
+{
+    // The largest of a texel's four channels at the four corners, inset by a pixel.
+    f32 CornerMax(const vector<u8>& pixels)
+    {
+        f32 largest = 0.0f;
+        for (const uvec2 corner :
+             {uvec2(1, 1), uvec2(PortraitExtent.x - 2, 1), uvec2(1, PortraitExtent.y - 2),
+              uvec2(PortraitExtent.x - 2, PortraitExtent.y - 2)})
+        {
+            const vec4 texel = DecodeTexel(pixels, PortraitExtent.x, corner.x, corner.y);
+            largest = std::max({largest, texel.r, texel.g, texel.b, texel.a});
+        }
+        return largest;
+    }
+
+    vec4 Centre(const vector<u8>& pixels)
+    {
+        return DecodeTexel(pixels, PortraitExtent.x, PortraitExtent.x / 2, PortraitExtent.y / 2);
+    }
+}
+
+TEST_CASE_FIXTURE(PortraitFixture,
+                  "model portrait: a model-less portrait renders what its callback stood, and "
+                  "coverage counts a translucent layer but not an additive one")
+{
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, Material), "Stood Cube");
+    const Ref<Mesh> glass =
+        Mesh::BuildSync(Context, Primitives::Sphere(0.5f, 16, 32, Translucent), "Glass Sphere");
+    const Ref<Mesh> glow =
+        Mesh::BuildSync(Context, Primitives::Sphere(0.5f, 16, 32, Additive), "Glow Sphere");
+    const Entity solidEntity = AddModelLessPortrait(cube);
+    const Entity glassEntity = AddModelLessPortrait(glass);
+    const Entity glowEntity = AddModelLessPortrait(glow);
+    const ModelPortrait& solid = Host->Get<ModelPortrait>(solidEntity);
+    const ModelPortrait& glassPortrait = Host->Get<ModelPortrait>(glassEntity);
+    const ModelPortrait& glowPortrait = Host->Get<ModelPortrait>(glowEntity);
+    FrameUntilReady({&solid, &glassPortrait, &glowPortrait});
+
+    // The callback's cube is the whole subject: framed, opaque at the centre, nothing at the corners.
+    const ModelPortraitOutput solidOut = solid.GetOutput();
+    CHECK(solidOut.Premultiplied);
+    CHECK(solidOut.ModelBounds.IsEmpty());
+    CHECK_FALSE(solidOut.Bounds.IsEmpty());
+    CHECK(solid.GetInstantiationCount() == 1);
+    const vector<u8> solidPixels = ColorPixels(solid);
+    CHECK(Centre(solidPixels).a == doctest::Approx(1.0f));
+    CHECK(CornerMax(solidPixels) == doctest::Approx(0.0f));
+
+    // A translucent layer alone covers partly where it draws.
+    const vector<u8> glassPixels = ColorPixels(glassPortrait);
+    CHECK(Centre(glassPixels).a > 0.25f);
+    CHECK(Centre(glassPixels).a < 0.9f);
+    CHECK(CornerMax(glassPixels) == doctest::Approx(0.0f));
+
+    // An additive layer over empty space adds light and no coverage.
+    const vec4 glowCentre = Centre(ColorPixels(glowPortrait));
+    CHECK(glowCentre.g > 0.05f);
+    CHECK(glowCentre.a == doctest::Approx(0.0f));
+}
+
+TEST_CASE_FIXTURE(PortraitFixture,
+                  "model portrait: a RenderLook's exposure scales the radiance the output was made "
+                  "from")
+{
+    const Ref<Mesh> glass =
+        Mesh::BuildSync(Context, Primitives::Sphere(0.5f, 16, 32, Translucent), "Glass Sphere");
+    RenderLook look;
+    look.Tonemapper = Tonemapper::None;
+    look.Exposure = 1.0f;
+    const Entity entity = AddModelLessPortrait(glass, look);
+    const ModelPortrait& portrait = Host->Get<ModelPortrait>(entity);
+    FrameUntilReady({&portrait});
+
+    // The untonemapped curve is linear below 1, where this unlit layer sits at either exposure.
+    const f32 once = Centre(ColorPixels(portrait)).r;
+    REQUIRE(portrait.GetScene() != nullptr);
+    portrait.GetScene()->TryGetFirst<RenderLook>()->Exposure = 2.0f;
+    Frame();
+    const f32 twice = Centre(ColorPixels(portrait)).r;
+    CHECK(once > 0.02f);
+    CHECK(twice < 0.9f);
+    CHECK(twice == doctest::Approx(2.0f * once).epsilon(0.02));
+}
+
+TEST_CASE_FIXTURE(PortraitFixture,
+                  "model portrait: a Retain portrait keeps its image without a renderer until "
+                  "marked dirty")
+{
+    const Entity entity = AddPortrait(*Host);
+    auto& portrait = Host->Get<ModelPortrait>(entity);
+    portrait.Refresh = CaptureRefresh::Retain;
+    FrameUntilReady({&portrait});
+
+    // Its first ready frame copied the image and handed the renderer and the scene back.
+    CHECK(portrait.IsRetained());
+    CHECK_FALSE(portrait.HasRenderer());
+    CHECK(portrait.GetScene() == nullptr);
+    CHECK(Compositor->GetPortraitPool().GetHeldCount() == 1);
+    const ModelPortraitOutput kept = portrait.GetOutput();
+    CHECK(kept.Ready);
+    CHECK(kept.Premultiplied);
+    CHECK(kept.Extent == PortraitExtent);
+    REQUIRE(kept.Color.IsValid());
+    const Ref<ImageView> retained = GetRetainedView(portrait);
+    REQUIRE(retained != nullptr);
+    const vector<u8> pixels = retained->GetImage()->Download();
+    CHECK(Centre(pixels).a == doctest::Approx(1.0f));
+    CHECK(CornerMax(pixels) == doctest::Approx(0.0f));
+
+    // Later frames cost it nothing and keep the same image.
+    ModelPortraitDriveResult idle;
+    bool steady = true;
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        const ModelPortraitDriveResult result = Frame();
+        idle.PortraitsRetained += result.PortraitsRetained;
+        idle.PortraitsRendered += result.PortraitsRendered;
+        idle.RenderersBuilt += result.RenderersBuilt;
+        idle.RenderersReused += result.RenderersReused;
+        steady = steady && portrait.GetOutput().Ready &&
+                 portrait.GetOutput().Color.Index == kept.Color.Index;
+    }
+    CHECK(steady);
+    CHECK(idle.PortraitsRetained == 3);
+    CHECK(idle.PortraitsRendered == 0);
+    CHECK(idle.RenderersBuilt + idle.RenderersReused == 0);
+
+    // Marked dirty, it takes the pooled renderer, renders once more into the same image, and lets
+    // the renderer go again; the kept image reads Ready throughout.
+    portrait.MarkDirty();
+    ModelPortraitDriveResult again;
+    bool ready = true;
+    for (int frame = 0; frame < 8 && (again.PortraitsRendered == 0 || portrait.HasRenderer());
+         ++frame)
+    {
+        const ModelPortraitDriveResult result = Frame();
+        again.PortraitsRendered += result.PortraitsRendered;
+        again.RenderersBuilt += result.RenderersBuilt;
+        again.RenderersReused += result.RenderersReused;
+        ready = ready && portrait.GetOutput().Ready;
+    }
+    CHECK(ready);
+    CHECK(again.PortraitsRendered == 1);
+    CHECK(again.RenderersReused == 1);
+    CHECK(again.RenderersBuilt == 0);
+    CHECK_FALSE(portrait.HasRenderer());
+    CHECK(portrait.GetOutput().Color.Index == kept.Color.Index);
+    CHECK(portrait.GetInstantiationCount() == 2);
 }
