@@ -7,7 +7,7 @@
 // Veng/surface_vertex.slang — the same one the static stage uses, so both write the identical
 // SurfaceFragmentInput.
 //
-// The palette lives on its own descriptor set (set 2) so the static surface set-1 (DrawData)
+// The palette lives on its own descriptor set (set 4) so the static surface set-3 (DrawData)
 // layout is unchanged; the renderer fills it per skinned instance and DrawData.PaletteBase is
 // the base offset of this instance's bone matrices within it.
 struct VSInput

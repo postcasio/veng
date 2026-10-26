@@ -52,7 +52,7 @@ static const uint LightVisibilityPcf = 1;
 // The packed index of the first light in this view carrying tag (Light::Tag), or LightIndexInvalid
 // when none does. Tag 0 is the untagged default and names no light, so FindLightByTag(vc, 0)
 // returns LightIndexInvalid. Walks the view's live lights, at most the renderer's per-view cap of
-// sixteen; a material finding the same light at every march step calls it once per fragment.
+// MaxLights (128); a material finding the same light at every march step calls it once per fragment.
 uint FindLightByTag(ViewConstants vc, uint tag)
 {
     if (tag == 0u)

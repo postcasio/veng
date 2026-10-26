@@ -23,7 +23,7 @@ namespace Veng::Detail
     /// @brief The core pack's skinned surface vertex stage (surface_skinned.vert).
     ///
     /// The canonical surface vertex stage plus 4-influence linear-blend skinning, reading the
-    /// per-instance palette at set 2. Every skinned g-buffer pipeline is built on it.
+    /// per-instance palette at set 4. Every skinned g-buffer pipeline is built on it.
     inline constexpr AssetId SurfaceSkinnedVertId{0x984BE76D55A4DA7CULL};
 
     /// @brief The core pack's instanced-set surface vertex stage (surface_instanced.vert).
@@ -58,9 +58,9 @@ namespace Veng::Detail
     /// @brief Builds a Surface material's skinned g-buffer pipeline from its fragment shader.
     ///
     /// Pairs the core skinned surface vertex stage (surface_skinned.vert — 4-influence linear-blend
-    /// skinning, the per-instance palette at set 2) with @p fragmentShader against the g-buffer's
-    /// five MRT formats, reflecting a three-set layout (set 0 bindless, set 1 DrawData, set 2 the
-    /// palette). The layout's palette set is what makes the geometry pass's set-2 bind valid for a
+    /// skinning, the per-instance palette at set 4) with @p fragmentShader against the g-buffer's
+    /// five MRT formats, reflecting a layout with the palette set (sets 0–2 bindless, set 3 DrawData,
+    /// set 4 the palette). That set is what makes the geometry pass's set-4 bind valid for a
     /// skinned draw. Called lazily by Material::EnsureSkinnedPipeline on the render thread, so a
     /// material never drawn skinned never builds it. Shares the material loader's own surface-build
     /// path, so a fragment consuming the full surface interpolant set links exactly as the static

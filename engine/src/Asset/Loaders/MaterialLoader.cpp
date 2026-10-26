@@ -259,10 +259,10 @@ namespace Veng
                                         Renderer::CullMode cullMode)
     {
         // The skinned g-buffer pipeline pairs the core skinned surface vertex stage
-        // (surface_skinned.vert — 4-influence linear-blend skinning, the palette at set 2) with
+        // (surface_skinned.vert — 4-influence linear-blend skinning, the palette at set 4) with
         // this material's fragment, targeting the same g-buffer formats as the static pipeline. The
-        // layout it reflects carries the third (palette) set the static surface.vert layout lacks,
-        // which is what makes the geometry pass's set-2 palette bind valid for a skinned draw. It
+        // layout it reflects carries the palette set (set 4) the static surface.vert layout lacks,
+        // which is what makes the geometry pass's set-4 palette bind valid for a skinned draw. It
         // shares the material-loader build path, so a fragment that consumes the full surface
         // interpolant set links here exactly as it does against the static stage.
         const AssetResult<AssetHandle<Veng::Shader>> skinnedVs =
