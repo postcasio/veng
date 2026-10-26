@@ -440,12 +440,12 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   skinned mesh** (`Material::EnsureSkinnedPipeline`, driven by the renderer) and reachable through
   `Material::GetSkinnedPipeline()`, so a material never skinned never pays for it and a static-only
   material (one whose fragment does not consume the full surface interpolant set) still loads. Its
-  layout carries a third descriptor set the
+  layout carries a descriptor set the
   static `surface.vert` layout does not: the per-instance **skinning palette** SSBO (ring-buffered,
-  **set 2**; `DrawData.PaletteBase` is each instance's offset), which the g-buffer pass binds for a
+  **set 4**; `DrawData.PaletteBase` is each instance's offset), which the g-buffer pass binds for a
   skinned draw. The directional `ShadowScenePass` and the
   `PunctualShadowScenePass` both cast a skinned caster's posed shadow through a parallel
-  `shadow_depth_skinned.vert` + the palette at set 1, and `surface_skinned.vert` skins both the
+  `shadow_depth_skinned.vert` + the palette at set 3, and `surface_skinned.vert` skins both the
   current and previous position (the latter through the previous-frame palette base the renderer
   tracks, valid because the palette is ring-buffered) so a skinned mesh's deformation writes its
   motion vector into the g-buffer velocity channel. An entity with no `SkinnedPose` (e.g. the
