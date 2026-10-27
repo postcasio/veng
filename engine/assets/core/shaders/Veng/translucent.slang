@@ -39,7 +39,7 @@
 // Scene depth: the opaque depth is copied beside the colour, and a material that reads only the
 // depth — a soft fade where it meets geometry, a medium marched to the nearest surface — declares
 // "readsSceneDepth": true instead. That records the one depth copy and none of the colour grab,
-// and needs no Refraction setting; SceneDepthAvailable gates SampleSceneDepth. Such a material
+// and needs no Refraction setting; SceneDepthAvailable gates every depth read. Such a material
 // must not call the colour helpers: nothing at cook time stops it, and SceneColorAvailable is
 // false on any frame no colour reader draws. A "readsSceneColor" material reads the depth too.
 //
@@ -47,7 +47,8 @@
 // Veng/postprocess.slang, and Veng/sky.slang.
 
 #include "Veng/surface.slang"
-// SceneScreenUV, SceneDepthAvailable, SampleSceneDepth and ViewDepthFromDeviceDepth.
+// SceneScreenUV, SceneDepthAvailable, the scene-depth reads (filtered, point and footprint) and
+// ViewDepthFromDeviceDepth.
 #include "Veng/scene_depth.slang"
 
 // The Translucent output with a fragment-written depth. A fragment returns this instead of a bare

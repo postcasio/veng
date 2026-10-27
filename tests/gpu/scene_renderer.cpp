@@ -6718,6 +6718,143 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The exact scene-depth reads return depths the copy holds. A screen-filling translucent over a
+// near box against the far plane checks, per fragment, that LoadSceneDepth is one of its
+// footprint's copy texels and the nearest and farthest reads are their extremes, bit for bit, and
+// that the far plane reads back as the far distance or +inf. It runs at full and half resolution,
+// at render scale 1 and below, under a finite and an infinite projection; each fragment returns
+// white where its claims hold, so the frame matches a white reference drawn through the same passes.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the point and footprint depth reads return written depths")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_scene_depth_exact.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The footprint checker's full- and half-resolution default instances.
+    const AssetResult<AssetHandle<MaterialInstance>> fullReader =
+        assets.LoadSync<MaterialInstance>(AssetId{0xE411637BBD955208ULL});
+    REQUIRE(fullReader.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> halfReader =
+        assets.LoadSync<MaterialInstance>(AssetId{0x7D009B56D00C5FE7ULL});
+    REQUIRE(halfReader.has_value());
+    CHECK(halfReader->Get()->GetParent()->IsHalfResolution());
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+
+    const Ref<Mesh> opaqueCube =
+        Mesh::BuildSync(Context, Primitives::Cube(0.6f, *brick), "Exact Depth Opaque Cube");
+    const AssetHandle<Mesh> fullCube = assets.Adopt(
+        Mesh::BuildSync(Context, Primitives::Cube(4.0f, *fullReader), "Exact Depth Full Reader"));
+    const AssetHandle<Mesh> halfCube = assets.Adopt(
+        Mesh::BuildSync(Context, Primitives::Cube(4.0f, *halfReader), "Exact Depth Half Reader"));
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity opaqueEntity = scene->CreateEntity();
+    scene->Add<Transform>(opaqueEntity).Position = vec3(0.0f, 0.0f, -0.5f);
+    scene->Add<MeshRenderer>(opaqueEntity).Mesh = assets.Adopt(opaqueCube);
+    const Entity readerEntity = scene->CreateEntity();
+    scene->Add<Transform>(readerEntity);
+    scene->Add<MeshRenderer>(readerEntity);
+
+    constexpr uvec2 extent{64, 64};
+    constexpr f32 finiteFar = 100.0f;
+    SceneRendererSettings settings;
+    settings.Mode = DebugView::Final;
+    settings.Bloom = false;
+    settings.Shadows = false;
+    settings.AO = false;
+    settings.AutoExposure = false;
+    settings.Refraction = false;
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = settings,
+    });
+
+    struct Configuration
+    {
+        bool Half;
+        bool Infinite;
+        f32 RenderScale;
+    };
+    // Each of resolution, projection and render scale takes both values across the four.
+    constexpr std::array<Configuration, 4> configurations{{
+        {.Half = true, .Infinite = true, .RenderScale = 1.0f},
+        {.Half = true, .Infinite = false, .RenderScale = 0.75f},
+        {.Half = false, .Infinite = true, .RenderScale = 0.75f},
+        {.Half = false, .Infinite = false, .RenderScale = 1.0f},
+    }};
+    uvec3 mismatches{0u};
+    u32 halfSegmentFrames = 0;
+    for (const Configuration& configuration : configurations)
+    {
+        MaterialInstance& reader = configuration.Half ? *halfReader->Get() : *fullReader->Get();
+        scene->Get<MeshRenderer>(readerEntity).Mesh = configuration.Half ? halfCube : fullCube;
+        CameraView camera;
+        camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f,
+                              configuration.Infinite ? InfiniteFar : finiteFar);
+        camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        const f32 valid = std::round(static_cast<f32>(extent.x) * configuration.RenderScale);
+        reader.SetParam("Expect",
+                        vec4(configuration.Infinite ? 0.0f : finiteFar, valid, valid, 0.0f));
+        const f32 block = configuration.Half ? 2.0f : 1.0f;
+        const auto Render = [&](const f32 mode)
+        {
+            reader.SetParam("Select", vec4(mode, block, 0.0f, 0.0f));
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer->Execute(
+                        cmd, Renderer::SceneView{.World = *scene,
+                                                 .Camera = camera,
+                                                 .Delta = 0.0f,
+                                                 .RenderScale = configuration.RenderScale});
+                });
+            return renderer->GetOutput()->GetImage()->Download();
+        };
+
+        // The first frame wires the half-resolution layer; the next two draw through it.
+        Render(1.0f);
+        const vector<u8> reference = Render(1.0f);
+        const vector<u8> checked = Render(0.0f);
+        CHECK(renderer->DidRecordPassLastFrame("Scene Depth Copy"));
+        if (renderer->GetTranslucentSegmentStats().HalfResSegments == 1)
+        {
+            ++halfSegmentFrames;
+        }
+        CHECK(DecodeTexel(reference, extent.x, extent.x / 2, extent.y / 2).g > 0.3f);
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 delta = glm::abs(DecodeTexel(checked, extent.x, x, y) -
+                                            DecodeTexel(reference, extent.x, x, y));
+                mismatches += uvec3(glm::greaterThan(delta, vec3(1e-3f)));
+            }
+        }
+    }
+    CHECK(halfSegmentFrames == 2u);
+    CHECK(mismatches.x == 0u);
+    CHECK(mismatches.y == 0u);
+    CHECK(mismatches.z == 0u);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The view block's frame index counts one view's executed frames, each renderer its own, and its
 // temporal flag follows the view's anti-aliasing mode — read back through a material.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

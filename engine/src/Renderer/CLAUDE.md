@@ -1001,6 +1001,32 @@ pass drawn after the copy may include on its own (the sprite pass does), beside
 projection's depth and w rows.
 The copies predate the translucent pass, so one translucent surface never refracts another.
 
+**The depth has three reads, chosen by what the value must be** (all in `Veng/scene_depth.slang`,
+all returning the far plane, 0, when the copy did not run):
+
+- **`SampleSceneDepth(vc, uv)` is filtered**, through the grab's linear sampler. It is right for a
+  soft fade, which wants a smooth value, and wrong for a ray march's end point: off a texel centre
+  — under a render scale, and at every fragment of the half-resolution layer, whose UV falls on the
+  corner of four texels — it blends neighbours, and across a silhouette the blend is a depth no
+  surface has (a surface at distance D against the far plane reads about 2D).
+- **`LoadSceneDepth(vc, uv)` is a point load** of the copy texel the UV falls in, in the
+  `LoadSurfaceFlags` shape: always a depth some surface wrote.
+- **`SampleSceneDepthNearest` / `SampleSceneDepthFarthest(vc, uv, extent)`** take the nearest or
+  farthest of the copy texels whose centres lie in the footprint of a fragment on a target of
+  `extent` pixels — `vc.ExtentParams.xy` for the drawing fragment's own target, which makes it one
+  texel at full resolution and the 2×2 in the half-resolution layer — as four point loads (the first
+  two texels per axis, so a target coarser than half the copy is under-covered). A march that must
+  agree with the half-resolution composite, which depth-tests and weighs the layer by the farthest
+  of each 2×2, ends at the farthest; one that must never pass through a near surface ends at the
+  nearest. Over an even valid extent the footprint is exactly the reduce's 2×2; over an odd one it
+  sits up to a texel short of the reduce's blocks along that axis's far half, since the layer's UVs
+  divide by the rounded-up half extent while the reduce reads `2·i`.
+
+Each feeds `ViewDepthFromDeviceDepth`, under which the far plane of an infinite projection reads as
+`+inf` and that of a finite one as its far distance. The GPU case "the point and footprint depth
+reads return written depths" holds each read to the copy bit for bit, at both resolutions, both
+render scales and both projections.
+
 **The two copies are separate passes behind separate gates.** The colour copy (`Scene Color Copy`)
 and its blur chain exist only under `Settings.Refraction`. The depth copy (`Scene Depth Copy`) is a
 single-attachment R32 pass wired wherever the translucent composite is — the Final view and the

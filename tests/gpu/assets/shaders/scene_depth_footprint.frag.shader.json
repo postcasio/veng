@@ -1,0 +1,4 @@
+{
+  "source": "scene_depth_footprint.frag.slang",
+  "entry": "fsMain"
+}

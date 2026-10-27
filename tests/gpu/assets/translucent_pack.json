@@ -62,6 +62,21 @@
       "source": "materials/scene_depth_reader.vmat.json"
     },
     {
+      "id": "0x2951369AB8526ECF",
+      "type": "Shader",
+      "source": "shaders/scene_depth_footprint.frag.shader.json"
+    },
+    {
+      "id": "0x9E7168546EA94ECC",
+      "type": "Material",
+      "source": "materials/scene_depth_footprint_full.vmat.json"
+    },
+    {
+      "id": "0x74E1D1C9860D2BF0",
+      "type": "Material",
+      "source": "materials/scene_depth_footprint_half.vmat.json"
+    },
+    {
       "id": "0xC66F784A6194F7B8",
       "type": "Material",
       "source": "materials/translucent_half.vmat.json"
