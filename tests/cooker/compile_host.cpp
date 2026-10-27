@@ -45,12 +45,30 @@ TEST_CASE("compile-host refuses a module declaring a resource, naming it")
     CHECK(compiled.error().find("'u_Albedo'") != string::npos);
 }
 
-TEST_CASE("compile-host refuses an export returning a struct")
+TEST_CASE("compile-host refuses a struct whose field cannot cross, naming the field")
 {
-    const Result<HostShaderModuleOutput> compiled = CompileFixture("struct_return.slang");
+    const Result<HostShaderModuleOutput> compiled = CompileFixture("struct_field.slang");
     REQUIRE_FALSE(compiled);
-    CHECK(compiled.error().find("'MakeSpan'") != string::npos);
-    CHECK(compiled.error().find("'Span'") != string::npos);
+    CHECK(compiled.error().find("'Fade'") != string::npos);
+    CHECK(compiled.error().find("'Visibility.Visible'") != string::npos);
+}
+
+TEST_CASE("compile-host refuses an export returning an array")
+{
+    const Result<HostShaderModuleOutput> compiled = CompileFixture("array_return.slang");
+    REQUIRE_FALSE(compiled);
+    CHECK(compiled.error().find("'Pair'") != string::npos);
+}
+
+TEST_CASE("compile-host mirrors a struct in the header and passes aggregates by reference")
+{
+    const Result<HostShaderModuleOutput> compiled = CompileFixture("aggregate_params.slang");
+    REQUIRE_MESSAGE(compiled, compiled.error());
+    CHECK(compiled->Header.find("struct Span") != string::npos);
+    CHECK(compiled->Header.find("float Low{};") != string::npos);
+    CHECK(compiled->Header.find("float High{};") != string::npos);
+    CHECK(compiled->Header.find("Span Widen(const Span& span, const std::array<glm::vec4, 4>& "
+                                "values, std::array<float, 4>& sums)") != string::npos);
 }
 
 TEST_CASE("compile-host's depfile names an included file")

@@ -905,13 +905,22 @@ is `Cook/HostShaderModule.h` (`HostShaderCompiler`, in the veng-free core).
   `namespace VengHostModule_<Name>` the module's code lands in, closed after it. Two host modules
   therefore define nothing in common and link into one binary.
 - **A veng-owned interface.** Reflection of each `export`ed function generates `<Name>.h`, a
-  declaration per function in `namespace <Name>` over glm types, and appends the matching
-  definitions to `<Name>.cpp`, each converting to and from the prelude's `Vector` and calling the
-  namespaced export. Nothing crosses a C linkage, so no struct layout is punned.
+  declaration per function in `namespace <Name>` over glm types, plus a mirror of every struct the
+  exports reach (Slang name, fields in order, `std::array` for a fixed-size array, glm's matrix for
+  a matrix), and appends the matching definitions to `<Name>.cpp`, each converting to and from the
+  prelude's types and calling the namespaced export. Slang mangles a struct's name and its fields',
+  so the wrapper never names the emitted type: it deduces each aggregate parameter's prelude type
+  from the export's address (`VengHostBridge_<Name>::Param`), passes it by pointer or value as the
+  emitted signature takes it, and converts member by member through a structured binding, a matrix
+  transposed (glm's `m[c][r]` is Slang's `m[r][c]`). Nothing crosses a C linkage, so no struct
+  layout is punned.
 - **Refusals, each naming its subject:** a global shader parameter (a host module is pure), an
   entry point, an exported signature with a type other than `float`/`double`/`int`/`uint` scalars
-  and 2- to 4-vectors, and an export without `__extern_cpp` (its emitted name is mangled — found by
-  looking for the unmangled definition in the emitted text).
+  and 2- to 4-vectors, `float`/`double` matrices, fixed-size arrays and structs of those (a
+  struct's offending field is named by path), an array return (Slang lowers it to an out pointer),
+  an empty struct, two structs sharing a C++ name, an overloaded export taking an aggregate (its
+  address does not deduce), and an export without `__extern_cpp` (its emitted name is mangled —
+  found by looking for the unmangled definition in the emitted text).
 - **The generated unit's build.** C++20 (the prelude includes `<stdfloat>` from C++23 on, which
   Apple's libc++ lacks), warnings not errors, `SKIP_LINTING`, hidden visibility, and no fast math
   or FP contraction. The helper warns at configure time when the installed Slang is not

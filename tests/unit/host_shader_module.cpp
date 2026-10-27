@@ -1,14 +1,17 @@
 // The host build of a Slang module (tests/shaders/host/gradient_noise.slang through
 // veng_add_host_shader_module), checked on the CPU alone: properties of the function itself, in
 // both of the instantiations the exports file declares. Agreement with the GPU is
-// tests/gpu/host_shader_agreement.cpp.
+// tests/gpu/host_shader_agreement.cpp. The aggregate cases (tests/shaders/host/aggregates_host.slang)
+// hold exports taking and returning structs, arrays and matrices to references computed here.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <doctest/doctest.h>
 
 #include <GradientNoise.h>
+#include <HostAggregates.h>
 
 using namespace Veng;
 
@@ -122,4 +125,70 @@ TEST_CASE("host shader module: the float and double instantiations agree")
         }
     }
     CHECK(worst < 1e-5);
+}
+
+namespace
+{
+    // Four values of distinct small integers, a basis with every entry distinct, and a range that
+    // clips the weighted sum's extremes.
+    HostAggregates::Block TestBlock()
+    {
+        HostAggregates::Block block;
+        block.Values = {vec4(1.0f, -2.0f, 3.0f, 4.0f), vec4(5.0f, 6.0f, -7.0f, 8.0f),
+                        vec4(9.0f, 10.0f, 11.0f, -12.0f), vec4(-13.0f, 14.0f, 15.0f, 16.0f)};
+        block.Range = {.Low = -20.0f, .High = 20.0f};
+        // glm names columns first: two columns of three rows, Slang's float3x2.
+        block.Basis = glm::mat2x3(vec3(1.0f, 2.0f, 3.0f), vec3(4.0f, 5.0f, 6.0f));
+        block.Count = 3;
+        return block;
+    }
+}
+
+TEST_CASE("host shader module: a struct and an array cross by value, nested and in order")
+{
+    const HostAggregates::Block block = TestBlock();
+    const std::array<f32, 4> weights{2.0f, -1.0f, 3.0f, 100.0f};
+    vec4 expected(0.0f);
+    for (u32 i = 0; i < block.Count; ++i)
+    {
+        expected += block.Values[i] * weights[i];
+    }
+    expected = glm::clamp(expected, vec4(block.Range.Low), vec4(block.Range.High));
+    CHECK(HostAggregates::SumBlock(block, weights) == expected);
+}
+
+TEST_CASE("host shader module: a matrix crosses as glm's, columns first")
+{
+    const HostAggregates::Block block = TestBlock();
+    const vec2 v(3.0f, -2.0f);
+    // Slang's mul(m, v) over the column-major convention is glm's m * v.
+    CHECK(HostAggregates::ApplyBasis(block, v) == block.Basis * v);
+    CHECK(HostAggregates::ScaledTranspose(block.Basis, 2.0f) == glm::transpose(block.Basis) * 2.0f);
+}
+
+TEST_CASE("host shader module: out arrays and inout structs are written back, structs returned")
+{
+    const HostAggregates::Block block = TestBlock();
+    std::array<f32, 4> sums{};
+    HostAggregates::Span range{.Low = 0.0f, .High = 0.0f};
+    HostAggregates::Summarise(block, sums, range);
+    f32 low = 0.0f;
+    f32 high = 0.0f;
+    for (u32 i = 0; i < 4; ++i)
+    {
+        const vec4 value = block.Values[i];
+        CHECK(sums[i] == value.x + value.y + value.z + value.w);
+        low = std::min(low, sums[i]);
+        high = std::max(high, sums[i]);
+    }
+    CHECK(range.Low == low);
+    CHECK(range.High == high);
+
+    const std::array<HostAggregates::Span, 3> spans{
+        {{.Low = 1.0f, .High = 4.0f}, {.Low = -2.0f, .High = 0.0f}, {.Low = 5.0f, .High = 5.5f}}};
+    CHECK(HostAggregates::TotalWidth(spans) == 5.5f);
+
+    const HostAggregates::Span made = HostAggregates::MakeSpan(4.0f, -1.0f);
+    CHECK(made.Low == -1.0f);
+    CHECK(made.High == 4.0f);
 }

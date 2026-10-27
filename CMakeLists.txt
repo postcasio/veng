@@ -1303,6 +1303,11 @@ if (VENG_BUILD_TESTS)
             MODULE tests/shaders/host/gradient_noise_host.slang
             NAME GradientNoise)
     target_link_libraries(veng_test_unit PRIVATE veng_test_gradient_noise_host)
+    # Exports taking and returning structs, arrays and matrices, checked against references.
+    veng_add_host_shader_module(veng_test_aggregates_host
+            MODULE tests/shaders/host/aggregates_host.slang
+            NAME HostAggregates)
+    target_link_libraries(veng_test_unit PRIVATE veng_test_aggregates_host)
     # The committed trace-format fixtures live in the source tree; the
     # round-trip case reads them by absolute path so it runs from any working directory.
     target_compile_definitions(veng_test_unit PRIVATE

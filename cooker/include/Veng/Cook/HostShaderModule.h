@@ -41,8 +41,10 @@ namespace Veng::Cook
     ///
     /// A host module must be pure: it declares no global shader parameter and no entry point,
     /// and each `export __extern_cpp` function takes and returns only `float`, `double`, `int`
-    /// and `uint` scalars and their 2- to 4-component vectors, returning anything more through
-    /// `out` or `inout` parameters. Anything else is refused with an error naming it.
+    /// and `uint` scalars and their 2- to 4-component vectors, `float` and `double` matrices,
+    /// fixed-size arrays of these and structs of these (an array returns through an `out`
+    /// parameter). Each struct is mirrored in the header under its Slang name, field for field.
+    /// Anything else is refused with an error naming it, down to a struct's field.
     ///
     /// The compiler holds one Slang global session, which is costly to create, so a caller
     /// compiling several modules keeps one compiler. It is not thread-safe.

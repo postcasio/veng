@@ -61,11 +61,61 @@ no Slang and no Vulkan.
 
 ## What may cross the boundary
 
-An exported function takes and returns `float`, `double`, `int` and `uint` scalars and their 2- to
-4-component vectors, which arrive in C++ as `float`/`double`/`std::int32_t`/`std::uint32_t` and
-the matching `glm::vec*`/`dvec*`/`ivec*`/`uvec*`. Anything more comes back through `out` or `inout`
-parameters, which become references. A struct does not cross: its emitted C++ name is mangled.
-`vengc compile-host` refuses any other type with an error naming the function and parameter.
+An exported function's parameters and return value are built from four kinds of type:
+
+- **`float`, `double`, `int` and `uint` scalars and their 2- to 4-component vectors**, which arrive
+  in C++ as `float`/`double`/`std::int32_t`/`std::uint32_t` and the matching
+  `glm::vec*`/`dvec*`/`ivec*`/`uvec*`;
+- **`float` and `double` matrices** from 2×2 to 4×4, as glm's matrix of the same shape. glm names a
+  matrix columns first, so Slang's `float3x2` (three rows, two columns) is `glm::mat2x3`, and the
+  host's `m[c][r]` is Slang's `m[r][c]`: the convention a matrix uploaded from glm is read under on
+  the GPU, so `mul(m, v)` in the module is `m * v` in C++;
+- **fixed-size arrays** of any of these, as `std::array<T, N>` (an array of arrays nests);
+- **structs** whose fields are any of these, nested structs included. Each struct the exports reach
+  is declared in the generated header, in the module's namespace, under its Slang name, with the
+  same fields in the same order under their Slang names, each value-initialised.
+
+A scalar or vector `in` parameter passes by value; a matrix, array or struct `in` parameter passes
+as a `const` reference. `out` and `inout` parameters of any kind become references, written back
+when the call returns. A struct or matrix may be returned; an array is returned through an `out`
+parameter, since Slang lowers an array return to one.
+
+```slang
+// height_fields_host.slang
+struct Octave { float Frequency; float Amplitude; };
+struct FieldParams { float4 Bands[48]; Octave Octaves[8]; float3x3 Frame; uint OctaveCount; };
+
+export __extern_cpp float4 HeightF32(FieldParams params, float3 p) { ... }
+export __extern_cpp void BandsAt(FieldParams params, float3 p, out float weights[48]) { ... }
+```
+
+```cpp
+// HeightFields.h, generated
+namespace HeightFields
+{
+    struct Octave { float Frequency{}; float Amplitude{}; };
+    struct FieldParams
+    {
+        std::array<glm::vec4, 48> Bands{};
+        std::array<Octave, 8> Octaves{};
+        glm::mat3 Frame{};
+        std::uint32_t OctaveCount{};
+    };
+
+    [[nodiscard]] glm::vec4 HeightF32(const FieldParams& params, glm::vec3 p);
+    void BandsAt(const FieldParams& params, glm::vec3 p, std::array<float, 48>& weights);
+}
+```
+
+The generated struct mirrors the Slang declaration rather than Slang's emitted C++, whose struct
+and field names are mangled: the wrapper converts member by member, so nothing is punned and no
+padding has to agree. A struct is copied in and out on every call, which for a block of a few
+hundred bytes costs nothing beside the function it feeds.
+
+`vengc compile-host` refuses anything else with an error naming the function, the parameter and,
+inside a struct, the field (`field 'Params.Visible' has type 'bool'`). It also refuses a struct with
+no fields, two structs that would share a C++ name, and an overloaded export taking a matrix, array
+or struct, whose argument types the wrapper cannot deduce.
 
 ## What a host module may not contain
 
