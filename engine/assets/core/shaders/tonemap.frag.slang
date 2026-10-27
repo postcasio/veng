@@ -103,14 +103,16 @@ float3 TonemapPbrNeutral(float3 color)
 // through an inset matrix into a log2 range, applies a 6th-order sigmoid contrast, and an outset
 // matrix — a neutral filmic curve whose highlight desaturation is gradual and hue-stable. The fit
 // targets a 2.2-gamma display, so the tail undoes that gamma to return linear color.
+// float3x3() takes rows, so these are the reference's column-major literals transposed; each row
+// sums to one, which keeps a neutral grey neutral.
 static const float3x3 AgxInset = float3x3(
-    0.8566271533, 0.1373189729, 0.1118982130,
-    0.0951212405, 0.7612419906, 0.0767994186,
-    0.0482516061, 0.1014390365, 0.8113023684);
+    0.8566271533, 0.0951212405, 0.0482516061,
+    0.1373189729, 0.7612419906, 0.1014390365,
+    0.1118982130, 0.0767994186, 0.8113023684);
 static const float3x3 AgxOutset = float3x3(
-    1.1271005818, -0.1413297635, -0.1413297635,
-    -0.1106066431, 1.1578237022, -0.1106066431,
-    -0.0164939387, -0.0164939387, 1.2519364066);
+    1.1271005818, -0.1106066431, -0.0164939387,
+    -0.1413297635, 1.1578237022, -0.0164939387,
+    -0.1413297635, -0.1106066431, 1.2519364066);
 static const float AgxMinEv = -12.47393;
 static const float AgxMaxEv = 4.026069;
 
