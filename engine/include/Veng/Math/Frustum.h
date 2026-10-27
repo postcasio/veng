@@ -18,6 +18,11 @@ namespace Veng
         /// Under the engine's reverse-Z camera projection the depth-0 plane is the far plane and the
         /// depth-1 plane the near one; under a forward-Z projection they are the other way round.
         ///
+        /// A projection with no far plane (Veng::InfiniteFar) gives a depth-0 plane with a zero
+        /// normal and a positive w, which every point satisfies, so nothing is culled for distance.
+        /// A consumer normalizing the planes must skip a zero-length one, as the sphere Intersects
+        /// does.
+        ///
         /// Each plane is vec4(nx, ny, nz, d) with an inward-pointing normal; a point p is
         /// inside the frustum when dot(plane.xyz, p) + plane.w >= 0 for all six planes.
         /// The normals are NOT normalized: Intersects is a sign-only test, so unit length
@@ -44,4 +49,15 @@ namespace Veng
     /// a plane, or just outside a frustum corner, returns true — a false positive that draws,
     /// never a false negative that culls a visible box.
     [[nodiscard]] VE_API bool Intersects(const Frustum& frustum, const AABB& box);
+
+    /// @brief Conservative sphere-vs-frustum intersection test.
+    ///
+    /// Returns false only when the sphere lies wholly behind one plane. Near a frustum edge a
+    /// sphere outside two planes at once still passes: a false positive, never a false negative.
+    /// A plane with a zero normal (an infinite projection's far plane) is skipped.
+    /// @param frustum  The frustum to test against.
+    /// @param center   The sphere's centre, in the frustum's space.
+    /// @param radius   The sphere's radius.
+    /// @return Whether the sphere may reach inside the frustum.
+    [[nodiscard]] VE_API bool Intersects(const Frustum& frustum, const vec3& center, f32 radius);
 }

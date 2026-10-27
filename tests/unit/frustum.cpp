@@ -172,3 +172,29 @@ TEST_CASE("Ortho extraction yields axis-aligned planes bounding the ortho box")
     CHECK_FALSE(Intersects(frustum, BoxAt(vec3(0.0f, 0.0f, -0.5f), 0.25f)));  // before near (z=-1)
     CHECK_FALSE(Intersects(frustum, BoxAt(vec3(0.0f, 0.0f, -51.0f), 0.25f))); // past far (z=-50)
 }
+
+TEST_CASE("An infinite projection culls nothing for distance and keeps its side and near planes")
+{
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, InfiniteFar);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+    const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
+
+    // The depth-0 plane has a zero normal and a positive w: every point satisfies it.
+    CHECK(glm::length(vec3(frustum.Planes[4])) == 0.0f);
+    CHECK(frustum.Planes[4].w > 0.0f);
+
+    const AABB distant{.Min = vec3(-10.0f, -10.0f, -1.0e9f - 100.0f),
+                       .Max = vec3(10.0f, 10.0f, -1.0e9f + 100.0f)};
+    const AABB behindNear = BoxAt(vec3(0.0f, 0.0f, 1.5f));
+    const AABB outsideSide = BoxAt(vec3(1.0e3f, 0.0f, -10.0f));
+
+    CHECK(Intersects(frustum, distant));
+    CHECK_FALSE(Intersects(frustum, behindNear));
+    CHECK_FALSE(Intersects(frustum, outsideSide));
+
+    // The sphere test skips the zero-normal plane and agrees on the same three.
+    CHECK(Intersects(frustum, distant.Center(), 10.0f));
+    CHECK_FALSE(Intersects(frustum, behindNear.Center(), 0.5f));
+    CHECK_FALSE(Intersects(frustum, outsideSide.Center(), 0.5f));
+}

@@ -53,8 +53,8 @@ namespace
                     static_cast<f32>(local.y) / static_cast<f32>(extent.y));
     }
 
-    // The Viewport::ScreenToWorldRay unproject, isolated from the retained-camera
-    // plumbing so the math is testable without a Viewport. Mirrors the impl.
+    // Viewport::ScreenToWorldRay, isolated from the retained-camera plumbing so the math is
+    // testable without a Viewport.
     optional<Ray> ScreenToWorldRay(const ViewportRegion& region, const CameraView& camera,
                                    ivec2 windowPoint)
     {
@@ -64,18 +64,7 @@ namespace
             return std::nullopt;
         }
 
-        const vec2 ndc = *fraction * 2.0f - 1.0f;
-        const mat4 invViewProj = glm::inverse(camera.ViewProjection());
-        // Reverse-Z: the near plane is NDC z = 1, the far plane z = 0.
-        const vec4 nearClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
-        const vec4 farClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
-        const vec3 nearWorld = vec3(nearClip) / nearClip.w;
-        const vec3 farWorld = vec3(farClip) / farClip.w;
-
-        return Ray{
-            .Origin = nearWorld,
-            .Direction = glm::normalize(farWorld - nearWorld),
-        };
+        return ViewRayThroughNdc(camera, *fraction * 2.0f - 1.0f);
     }
 }
 
@@ -195,6 +184,30 @@ TEST_CASE("ScreenToWorldRay unprojects through the retained camera")
         CHECK(ray->Direction.z < 0.0f);
         CHECK(std::abs(ray->Direction.y) < 1e-4f);
         CHECK(glm::length(ray->Direction) == doctest::Approx(1.0f));
+    }
+
+    SUBCASE("A camera with no far plane casts the same ray")
+    {
+        CameraView infinite;
+        infinite.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, InfiniteFar);
+        infinite.SetView(eye, vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        const optional<Ray> finiteRay = ScreenToWorldRay(region, camera, {1200, 300});
+        const optional<Ray> infiniteRay = ScreenToWorldRay(region, infinite, {1200, 300});
+        REQUIRE(finiteRay.has_value());
+        REQUIRE(infiniteRay.has_value());
+        CHECK(VecApprox(infiniteRay->Origin, finiteRay->Origin));
+        CHECK(VecApprox(infiniteRay->Direction, finiteRay->Direction));
+    }
+
+    SUBCASE("An orthographic ray runs along the view axis from the pixel's near point")
+    {
+        CameraView ortho;
+        ortho.SetOrthographic(8.0f, 4.5f, 0.5f, 50.0f);
+        ortho.SetView(eye, vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        const optional<Ray> ray = ScreenToWorldRay(region, ortho, {1200, 450});
+        REQUIRE(ray.has_value());
+        CHECK(VecApprox(ray->Origin, vec3(4.0f, 0.0f, 4.5f)));
+        CHECK(VecApprox(ray->Direction, vec3(0.0f, 0.0f, -1.0f)));
     }
 
     SUBCASE("A pixel outside the region yields no ray")

@@ -631,10 +631,12 @@ extern "C"
 /// SphereTerrainDropped, and MaterialInfo and Material the sphere-terrain flag. A module subclasses
 /// the generator, spawns terrains and reads selections and stats, so a stale one lays them out
 /// short and dispatches through a short vtable.
+/// Version 158 adds a projection with no far plane: the Camera component grows InfiniteFar. A
+/// module spawns and reads cameras, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 157u
+#define VENG_MODULE_ABI_VERSION 158u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

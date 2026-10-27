@@ -204,7 +204,8 @@ display label), `Transform` (**local** TRS — `Position`/`Rotation`/`Scale`, ne
 mutated through `SetParent`/`Detach`/`MoveBefore`; world matrices compose along the `Parent` edge
 as `parent.world * local` — see [World transforms](#world-transforms) for the per-frame pass), `Camera`
 (the component whose FovY/Near/Far and world transform build a `CameraView`, the value type
-carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
+carrying the view/projection — Y flipped for Vulkan clip space; `InfiniteFar` drops the far plane,
+see the renderer guide's "An infinite far plane"), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material — plus two independent switches, a sort distance and a layer: `CastsShadows` drops it from the shadow views alone, **`SortDistance`** (zero by default) is the
 view depth its translucent submeshes sort at in place of their drawn one — an impostor drawn on a

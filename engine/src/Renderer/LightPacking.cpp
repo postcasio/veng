@@ -333,21 +333,6 @@ namespace Veng::Renderer
             return remap * viewProj;
         }
 
-        // Whether a sphere reaches inside a frustum: no plane has it wholly behind. Conservative
-        // near a frustum edge, where a sphere outside two planes at once still passes.
-        bool SphereMeetsFrustum(const Frustum& frustum, const vec3& center, const f32 radius)
-        {
-            for (const vec4& plane : frustum.Planes)
-            {
-                const f32 length = glm::length(vec3(plane));
-                if (length > 0.0f && glm::dot(vec3(plane), center) + plane.w < -radius * length)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         // Whether a cube face's view can reach the camera frustum. The face's frustum is the hull
         // of its view-projection's clip-space corners plus the light itself (the apex the near
         // plane truncates); it misses when every one of those points is behind a single camera
@@ -429,8 +414,8 @@ namespace Veng::Renderer
                 continue;
             }
             if (positioned && cameraFrustum != nullptr &&
-                !SphereMeetsFrustum(*cameraFrustum, candidate.WorldPos,
-                                    light.Range + EmitterReach(light, candidate.World)))
+                !Intersects(*cameraFrustum, candidate.WorldPos,
+                            light.Range + EmitterReach(light, candidate.World)))
             {
                 continue;
             }

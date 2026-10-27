@@ -656,6 +656,58 @@ TEST_CASE("ComputeCascades: MaxDistance caps the far split")
     CHECK(tiny.SplitFar[tiny.Count - 1] == camera.GetFar());
 }
 
+TEST_CASE("ComputeCascades: an infinite far fits a finite range")
+{
+    // Looking down -Z from the origin, with no far plane.
+    const CameraView camera = MakeCamera(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), 0.1f, InfiniteFar);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+
+    // Every output of every fit below is checked for NaN once, at the end.
+    bool anyNan = false;
+    const auto Scan = [&](const CascadeData& data)
+    {
+        for (u32 k = 0; k < data.Count; ++k)
+        {
+            for (i32 c = 0; c < 4; ++c)
+            {
+                anyNan = anyNan || glm::any(glm::isnan(data.ViewProj[k][c])) ||
+                         glm::any(glm::isnan(data.CullViewProj[k][c]));
+            }
+            anyNan = anyNan || std::isnan(data.SplitFar[k]) || std::isnan(data.TexelWorldSize[k]) ||
+                     std::isnan(data.DepthRange[k]);
+        }
+    };
+
+    // A cap bounds the range.
+    const CascadeData capped =
+        ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 100.0f});
+    Scan(capped);
+    REQUIRE(capped.Count == CascadeSettings{}.Count);
+    for (u32 k = 0; k < capped.Count; ++k)
+    {
+        CHECK(std::isfinite(capped.SplitFar[k]));
+        CHECK(capped.SplitFar[k] > (k == 0 ? 0.1f : capped.SplitFar[k - 1]));
+    }
+    CHECK(capped.SplitFar[capped.Count - 1] == doctest::Approx(100.0f));
+
+    // With no cap the scene bound's farthest corner, 340 units ahead, ends the range.
+    const AABB bound{.Min = vec3(-1.0f, -1.0f, -340.0f), .Max = vec3(1.0f, 1.0f, -300.0f)};
+    const CascadeData bounded =
+        ComputeCascades(camera, lightDir, bound, CascadeSettings{.MaxDistance = 0.0f});
+    Scan(bounded);
+    REQUIRE(bounded.Count > 0);
+    CHECK(bounded.SplitFar[bounded.Count - 1] == doctest::Approx(340.0f).epsilon(1e-5f));
+
+    // With neither, or with a bound wholly behind the camera, there is nothing to shadow.
+    CHECK(ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 0.0f})
+              .Count == 0);
+    const AABB behind{.Min = vec3(-1.0f, -1.0f, 5.0f), .Max = vec3(1.0f, 1.0f, 9.0f)};
+    CHECK(ComputeCascades(camera, lightDir, behind, CascadeSettings{.MaxDistance = 0.0f}).Count ==
+          0);
+
+    CHECK_FALSE(anyNan);
+}
+
 TEST_CASE("ComputeCascades: MinDistance floors the shadow near for a tiny-near camera")
 {
     // A reverse-Z far-field camera: a micron near keeps far-field depth precision while the

@@ -904,9 +904,9 @@ namespace Veng::Renderer
         /// @brief Unprojects a window point into a world-space ray through the retained camera.
         ///
         /// Composes WindowToViewport with the camera retained from the last SetViewState: maps
-        /// the [0,1] point to NDC and unprojects it through glm::inverse(camera.ViewProjection())
-        /// into a world-space Ray whose origin is the camera and whose normalized direction passes
-        /// through the pixel. Self-contained — the viewport already holds the camera, so picking
+        /// the [0,1] point to NDC and casts the camera's ray through it (ViewRayThroughNdc): a
+        /// world-space Ray starting on the near plane, whose normalized direction runs through the
+        /// pixel away from the camera, at any far plane including none. Self-contained — the viewport already holds the camera, so picking
         /// needs no external CameraView. The viewport supplies the ray; what the ray hits (a scene
         /// raycast) is editor or gameplay code, not the viewport.
         /// @param windowPoint  The point to unproject, in window framebuffer pixels.

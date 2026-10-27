@@ -1,11 +1,14 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Assert.h>
+#include <Veng/Math/Ray.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Veng
 {
@@ -43,6 +46,12 @@ namespace Veng
                     0.0f, 1.0f, 1.0f);
     }
 
+    /// @brief The far distance that asks CameraView::SetPerspective for a projection with no far plane.
+    ///
+    /// See CameraView::SetPerspective. A view built with it reports it from GetFar, and
+    /// CameraView::IsFarInfinite names the case.
+    inline constexpr f32 InfiniteFar = std::numeric_limits<f32>::infinity();
+
     /// @brief Plain CPU value type that builds the view and projection matrices a SceneView carries.
     ///
     /// The render-ready view-projection the renderer consumes through SceneView, the
@@ -57,16 +66,35 @@ namespace Veng
     {
     public:
         /// @brief Sets a perspective projection.
+        ///
+        /// With @p far = InfiniteFar the projection has no far plane: it is built in its exact
+        /// infinite reverse-Z form, so device depth is `near / viewDepth` — exactly 1 at the near
+        /// plane, falling toward 0 without reaching it at any finite distance — and the cleared
+        /// depth of 0 remains the background. A float depth buffer keeps a nearly constant
+        /// relative resolution in view depth under reverse-Z whatever the far, so dropping the
+        /// far plane costs essentially no precision.
         /// @param fovYRadians  Vertical field of view in radians.
         /// @param aspect       Width divided by height.
         /// @param near         Positive near clip distance.
-        /// @param far          Positive far clip distance.
+        /// @param far          Far clip distance, greater than @p near, or InfiniteFar.
         void SetPerspective(f32 fovYRadians, f32 aspect, f32 near, f32 far)
         {
-            mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
-            projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
-            // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
-            m_Projection = ReverseZClip() * projection;
+            if (std::isinf(far))
+            {
+                const f32 focal = 1.0f / std::tan(fovYRadians * 0.5f);
+                m_Projection = mat4(0.0f);
+                m_Projection[0][0] = focal / aspect;
+                m_Projection[1][1] = -focal; // Vulkan's clip space has Y pointing down.
+                m_Projection[2][3] = -1.0f;
+                m_Projection[3][2] = near;
+            }
+            else
+            {
+                mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
+                projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
+                // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
+                m_Projection = ReverseZClip() * projection;
+            }
             m_Near = near;
             m_Far = far;
             m_LensShift = vec2{0.0f};
@@ -80,9 +108,11 @@ namespace Veng
         /// @param halfWidth   Half the view volume's width in world units.
         /// @param halfHeight  Half the view volume's height in world units.
         /// @param near        Near clip distance.
-        /// @param far         Far clip distance.
+        /// @param far         Far clip distance; finite, since a parallel volume with no far face
+        ///                    has no depth mapping.
         void SetOrthographic(f32 halfWidth, f32 halfHeight, f32 near, f32 far)
         {
+            VE_ASSERT(std::isfinite(far), "SetOrthographic needs a finite far (got {})", far);
             mat4 projection = glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, near, far);
             projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
             // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
@@ -150,8 +180,10 @@ namespace Veng
         /// so the camera stores them. SetPerspective sets both; a camera whose
         /// projection was set by another path keeps the defaults (0.1 / 100.0).
         [[nodiscard]] f32 GetNear() const { return m_Near; }
-        /// @brief Returns the far clip distance.
+        /// @brief Returns the far clip distance; InfiniteFar for a projection with no far plane.
         [[nodiscard]] f32 GetFar() const { return m_Far; }
+        /// @brief Whether the projection has no far plane (SetPerspective with InfiniteFar).
+        [[nodiscard]] bool IsFarInfinite() const { return std::isinf(m_Far); }
 
         /// @brief Returns the lens shift the projection carries, in NDC (see SetLensShift).
         [[nodiscard]] vec2 GetLensShift() const { return m_LensShift; }
@@ -209,8 +241,13 @@ namespace Veng
         f32 OrthoHeight = 10.0f;
         /// @brief Near clip distance.
         f32 Near = 0.1f;
-        /// @brief Far clip distance.
+        /// @brief Far clip distance; ignored when InfiniteFar is set.
         f32 Far = 100.0f;
+        /// @brief Projects with no far plane (Perspective and Physical only; see Veng::InfiniteFar).
+        ///
+        /// A flag rather than an infinite Far, so Far stays a finite number a JSON record holds.
+        /// An orthographic camera ignores it.
+        bool InfiniteFar = false;
         /// @brief Lens focal length in millimetres (Physical only).
         f32 FocalLength = 50.0f;
         /// @brief Sensor height in millimetres (Physical only).
@@ -325,13 +362,17 @@ namespace Veng
     /// derived from the lens, `2 * atan(SensorHeight / (2 * FocalLength))` — a ratio, so the
     /// authored millimetres cancel — and the resolved view carries the CameraLens a defocus
     /// consumer reads back through CameraView::GetLens.
-    /// @param camera  The component supplying the projection (FovY, OrthoHeight, or the lens, plus Near/Far).
+    ///
+    /// A perspective or physical camera with InfiniteFar set projects with no far plane, and Far is unread.
+    /// @param camera  The component supplying the projection (FovY, OrthoHeight, or the lens, plus
+    ///                Near/Far/InfiniteFar).
     /// @param aspect  Viewport width divided by height.
     /// @param world   The camera entity's world matrix (from WorldMatrix in Transforms.h).
     [[nodiscard]] inline CameraView MakeCameraView(const Camera& camera, f32 aspect,
                                                    const mat4& world)
     {
         CameraView result;
+        const f32 perspectiveFar = camera.InfiniteFar ? InfiniteFar : camera.Far;
         if (camera.Projection == CameraProjection::Orthographic)
         {
             const f32 halfHeight = std::max(camera.OrthoHeight, 1.0e-4f) * 0.5f;
@@ -341,12 +382,12 @@ namespace Veng
         {
             const f32 fovY = 2.0f * std::atan(std::max(camera.SensorHeight, 1.0e-3f) /
                                               (2.0f * std::max(camera.FocalLength, 1.0e-3f)));
-            result.SetPerspective(fovY, aspect, camera.Near, camera.Far);
+            result.SetPerspective(fovY, aspect, camera.Near, perspectiveFar);
             result.SetLens(ComputeCameraLens(camera));
         }
         else
         {
-            result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
+            result.SetPerspective(camera.FovY, aspect, camera.Near, perspectiveFar);
         }
         result.SetLensShift(camera.LensShift);
         result.SetViewFromWorld(world);
@@ -387,6 +428,50 @@ namespace Veng
     [[nodiscard]] inline vec2 ProjectionCentre(const CameraView& camera, const vec2 extent)
     {
         return (camera.GetLensShift() * 0.5f + 0.5f) * extent;
+    }
+
+    /// @brief The view-space point at a view depth that projects to an NDC position.
+    ///
+    /// Solved from the projection's own coefficients, for the skew-free perspective (finite or
+    /// infinite) and orthographic projections a CameraView builds, lens shift included: clip
+    /// w = P[3][3] − P[2][3]·depth. Nothing is inverted and nothing passes through NDC depth, so it
+    /// is exact at any finite depth however small the near plane — where an unprojection through
+    /// the inverse view-projection at the far plane's depth of 0 divides by a w of zero under an
+    /// infinite projection.
+    /// @param projection  The view's projection (CameraView::Projection).
+    /// @param ndc         The NDC position, x rightward and y downward.
+    /// @param depth       Positive view depth along the view's −Z axis.
+    /// @return The view-space point, at z = −depth.
+    [[nodiscard]] inline vec3 ViewPointAtDepth(const mat4& projection, const vec2 ndc,
+                                               const f32 depth)
+    {
+        const f32 w = projection[3][3] - projection[2][3] * depth;
+        return {(ndc.x * w + projection[2][0] * depth - projection[3][0]) / projection[0][0],
+                (ndc.y * w + projection[2][1] * depth - projection[3][1]) / projection[1][1],
+                -depth};
+    }
+
+    /// @brief The world-space ray a view casts through an NDC position of its image.
+    ///
+    /// The ray starts on the near plane and runs away from the camera: through the eye under a
+    /// perspective projection, parallel to the view axis under an orthographic one. Both points
+    /// are solved in view space (ViewPointAtDepth) and only then carried to world space, so the
+    /// ray is exact under an infinite far plane and loses nothing to the camera's distance from
+    /// the world origin.
+    /// @param camera  The view to cast through.
+    /// @param ndc     The NDC position, x rightward and y downward (top-left is (−1, −1)).
+    /// @return The ray, with a unit direction.
+    [[nodiscard]] inline Ray ViewRayThroughNdc(const CameraView& camera, const vec2 ndc)
+    {
+        const mat4 viewToWorld = glm::inverse(camera.View());
+        const mat4 projection = camera.Projection();
+        const f32 near = camera.GetNear();
+        const vec3 nearPoint = ViewPointAtDepth(projection, ndc, near);
+        const vec3 beyond = ViewPointAtDepth(projection, ndc, 2.0f * near);
+        return Ray{
+            .Origin = vec3(viewToWorld[3]) + mat3(viewToWorld) * nearPoint,
+            .Direction = glm::normalize(mat3(viewToWorld) * (beyond - nearPoint)),
+        };
     }
 
     /// @brief Seat-to-camera selection: names the camera entity a seat renders through.
@@ -453,7 +538,11 @@ VE_FIELD(Projection, .DisplayName = "Projection")
 VE_FIELD(FovY, .DisplayName = "Field of View", .Display = {.Min = 0.01})
 VE_FIELD(OrthoHeight, .DisplayName = "Ortho Height", .Display = {.Min = 0.0001})
 VE_FIELD(Near, .DisplayName = "Near", .Display = {.Min = 0.001})
-VE_FIELD(Far, .DisplayName = "Far")
+VE_FIELD(Far, .DisplayName = "Far",
+         .Tooltip = "Far clip distance; ignored when Infinite Far is set.")
+VE_FIELD(InfiniteFar, .DisplayName = "Infinite Far",
+         .Tooltip = "Projects with no far plane, so geometry at any distance draws; Far is "
+                    "ignored. Perspective and Physical cameras only.")
 VE_FIELD(FocalLength, .DisplayName = "Focal Length",
          .Tooltip = "Lens focal length in millimetres; with the sensor height it sets the "
                     "vertical field of view.",

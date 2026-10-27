@@ -330,19 +330,7 @@ namespace Veng
         const vec2 fraction = regionPoint / vec2(view.Region.Extent);
         const vec2 ndc = fraction * 2.0f - 1.0f;
 
-        const mat4 invViewProj = glm::inverse(view.Camera.ViewProjection());
-        const vec4 nearClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
-        const vec4 farClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
-        const vec3 nearWorld = vec3(nearClip) / nearClip.w;
-        const vec3 farWorld = vec3(farClip) / farClip.w;
-
-        // The origin is the unprojected near-plane point, not the camera position: under an
-        // orthographic projection every pixel's ray is parallel and the camera position lies on
-        // none of them; under perspective the near point sits on the eye ray, so both agree.
-        return Ray{
-            .Origin = nearWorld,
-            .Direction = glm::normalize(farWorld - nearWorld),
-        };
+        return ViewRayThroughNdc(view.Camera, ndc);
     }
 
     /// @brief Projects a world point into region-local pixels through a resolved view.

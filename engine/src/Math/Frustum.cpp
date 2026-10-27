@@ -42,4 +42,17 @@ namespace Veng
         }
         return true;
     }
+
+    bool Intersects(const Frustum& frustum, const vec3& center, const f32 radius)
+    {
+        for (const vec4& plane : frustum.Planes)
+        {
+            const f32 length = glm::length(vec3(plane));
+            if (length > 0.0f && glm::dot(vec3(plane), center) + plane.w < -radius * length)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 }

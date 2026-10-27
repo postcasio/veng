@@ -48,9 +48,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float rawDepth = g_Depth.SampleLevel(g_Sampler, uv, 0.0).r;
     // DepthParams is filled from the actual (reverse-Z) projection's depth row, so the
     // reconstruction inverts whatever it maps; the guard floors the divisor's *magnitude*
-    // rather than clamping it to a sign, staying correct as those terms change sign.
+    // rather than clamping it to a sign, staying correct as those terms change sign. The floor
+    // is far below any drawn depth: under an infinite projection x is 0 and a distant surface's
+    // device depth is near / viewDepth, so a larger floor would clamp its depth.
     float denom = rawDepth + g_PC.DepthParams.x;
-    denom = denom >= 0.0 ? max(denom, 1e-6) : min(denom, -1e-6);
+    denom = denom >= 0.0 ? max(denom, 1e-30) : min(denom, -1e-30);
     float viewDepth = g_PC.DepthParams.y / denom;
 
     float coc = 0.0;

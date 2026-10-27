@@ -403,6 +403,7 @@ namespace Veng::Renderer
                 // lines vanishing off the scene, which says nothing about where the camera looks.
                 Camera gizmo = camera;
                 gizmo.Far = glm::min(camera.Far, camera.Near + 5.0f);
+                gizmo.InfiniteFar = false;
                 const CameraView view = MakeCameraView(gizmo, 16.0f / 9.0f, world);
                 debug.DrawFrustum(glm::inverse(view.ViewProjection()), CameraColor);
             }

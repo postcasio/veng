@@ -2432,6 +2432,62 @@ A `ScenePass` reads it back through a typed `ScenePassContext` (`Cmd()` / `View(
 `SceneRenderer` sets it on every `Execute`. Because these are per-frame values, tuning them never
 recompiles.
 
+### An infinite far plane
+
+A perspective camera can project with **no far plane**: `CameraView::SetPerspective(fovY, aspect,
+near, InfiniteFar)`, or a `Camera` component with `InfiniteFar` set (a flag beside `Far`, so `Far`
+stays a finite number a JSON record holds; `MakeCameraView` ignores `Far` under it). The projection
+is built in its exact infinite reverse-Z form — `P[2][2] = 0`, `P[2][3] = −1`, `P[3][2] = near` —
+so device depth is `near / viewDepth`: 1 at the near plane, falling toward 0 without reaching it,
+and the cleared 0 stays the background. `GetFar()` returns `InfiniteFar`; `IsFarInfinite()` names
+the case. An orthographic projection is always finite (`SetOrthographic` asserts it).
+
+**Precision does not change in kind.** Reverse-Z in a float buffer keeps a nearly constant relative
+resolution of about 2⁻²³ in view depth whatever the far: two surfaces resolve apart at about 0.12 m
+at 1,000 km and 120 m at 10⁶ km, and a finite far of 10⁶ resolves essentially the same. At
+`near = 0.1` device depth stays a normal float out to about 10³⁷ m. A consumer writing its own depth
+through `GBufferDepthOutput` (a scaled draw's true depth, `TerrainTrueDeviceDepth`) writes
+`clip.z / clip.w` of the true position through the view's projection, which is representable at any
+finite distance; nothing about the encoding changes.
+
+**What a consumer must not do under it.** Never unproject at device depth 0: the far plane has
+`w = 0`, so `inverse(viewProj) · (ndc, 0, 1)` is a point at infinity and its divide is `inf`/`NaN`.
+Cast a ray with `ViewRayThroughNdc` (or solve a point with `ViewPointAtDepth`) instead, and take a
+direction through `InvViewRotProj` and `normalize`, as the sky does. A `Frustum`'s depth-0 plane has
+a zero normal and passes every point; a consumer normalizing planes skips a zero-length one, as the
+sphere `Intersects` does. And a near floor derived from the far (`Far / ratio`) is infinite here: a
+consumer deriving its near that way takes its own finite floor instead.
+
+**The audit.** Every engine reader of the far distance or of a reconstruction through the
+projection, and how it stands under an infinite far:
+
+- **The cascade fit** — fixed. It finds a finite range before building any corner: the camera's
+  far capped by `MaxDistance`, else the scene bound's farthest corner, else no cascade (Count 0,
+  which the shadow pass and the lighting path already treat as unshadowed).
+- **`Viewport::ScreenToWorldRay` and the `SystemViewInfo` `ScreenToWorldRay`** — fixed. Both
+  unprojected the far plane; both now cast through `ViewRayThroughNdc`. The `SystemViewInfo` form
+  also had its near and far swapped (it took NDC 0 as the near plane), so its ray started on the far
+  plane and pointed back at the camera.
+- **The camera gizmo** — fixed. It pulls the far in for its frustum and now also clears the flag.
+- **The depth-of-field prefilter** — fixed. Its divisor floor of 10⁻⁶ clamped every surface past
+  10⁶ near to that depth (the infinite projection's depth row has no offset); the floor is 10⁻³⁰.
+- **Correct as written:** deferred lighting and the forward loop's world reconstruction (finite at
+  every drawn depth; cleared depth skipped), SSAO (skips cleared depth; inverts the projection, which
+  is invertible), SSR (skips the background; the denoiser's linear depth of a background history
+  texel is `inf`, which weights it to zero), sprites' and particles' soft fade
+  (`ViewDepthFromProjection` reads depth 0 as `+inf`, a full fade-in), the ribbon occlusion test
+  (skips cleared depth), the volume field and the light-tile cull (geometry depth only; the ray
+  through the rotation-only inverse), the sky (`normalize` drops the `w` of 0), the hi-Z pyramid and
+  occlusion test (min-Z, the background never occludes), TAA's background reprojection (depth-free),
+  the LOD metric and instanced-set projected size (`P₁₁`, distance, and the eye from the inverse's
+  z column, which the infinite form keeps), every frustum consumer (the box test, the instanced cull
+  shader's copy, the sphere test, the cube-face reach test and the cascade clip all pass a
+  zero-normal plane), and sphere terrain (its selection reads the four side planes only).
+- **Independent of the camera's far:** punctual shadow views (the light's range), `SceneCapture`
+  and its distance shader, model portraits, the editor fly camera, and the depth debug view.
+- **No MCP tool or editor panel prints a camera's far** other than through the reflected fields,
+  which carry the flag and a finite `Far`.
+
 ### Culling and the BVH broadphase
 
 The scene-drawing passes **cull at submesh granularity through a BVH broadphase**. A

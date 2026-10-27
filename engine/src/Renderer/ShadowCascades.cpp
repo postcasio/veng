@@ -20,20 +20,8 @@ namespace Veng::Renderer
         // own near, so casters between the light and the slice still reach it.
         constexpr f32 EmptyBoundsPullback = 50.0f;
 
-        // The view-space point at view depth `depth` (view looks down -Z) that projects to
-        // `ndc`, solved from the projection's own coefficients for the skew-free perspective
-        // and orthographic matrices a CameraView builds (clip w = P[3][3] − P[2][3]·depth).
-        // Nothing is inverted and nothing is reconstructed through NDC depth, so it is exact at
-        // any depth however small the render near — under reverse-Z a tiny near sends the far
-        // plane to w = 0, where a reconstruction through the inverse view-proj is inf.
-        vec3 ViewPointAtDepth(const mat4& proj, vec2 ndc, f32 depth)
-        {
-            const f32 w = proj[3][3] - proj[2][3] * depth;
-            return {(ndc.x * w + proj[2][0] * depth - proj[3][0]) / proj[0][0],
-                    (ndc.y * w + proj[2][1] * depth - proj[3][1]) / proj[1][1], -depth};
-        }
-
-        // The eight world-space corners of the frustum between two view-space depths:
+        // The eight world-space corners of the frustum between two view-space depths (each solved
+        // by ViewPointAtDepth, exact at any finite depth however small the render near):
         // corners[0..3] the nearDepth plane, [4..7] the farDepth plane, each quad ordered around
         // the ndcXY ring. Each corner is solved in view space and only then placed as
         // eye + rotation·offset, so the offset keeps full precision. Differencing two
@@ -218,11 +206,10 @@ namespace Veng::Renderer
         const mat4 proj = camera.Projection();
 
         const f32 cameraNear = camera.GetNear();
-        const f32 cameraFar = camera.GetFar();
 
         // Every frustum corner below is solved in view space at its depth and carried to world
-        // by the inverse view, so neither the far plane — which reverse-Z sends to infinity when
-        // the render near is tiny — nor the micron near plane is ever reconstructed.
+        // by the inverse view, so neither the far plane nor the micron near plane is ever
+        // reconstructed.
         const mat4 invView = glm::inverse(view);
         const mat3 viewToWorld(invView);
         const vec3 eye(invView[3]);
@@ -233,8 +220,37 @@ namespace Veng::Renderer
         // bounds the fit the near-side way MaxDistance bounds the far.
         const f32 shadowNear = std::max(cameraNear, settings.MinDistance);
 
+        // The finite range the fit works in, found before any corner is built: the camera's far,
+        // capped by MaxDistance, and under an infinite far with no cap the scene bound's farthest
+        // corner. The cap is skipped when it would not leave a valid range (a camera already
+        // inside the cap distance of its near).
+        f32 rangeFar = camera.GetFar();
+        if (settings.MaxDistance > 0.0f && settings.MaxDistance > shadowNear)
+        {
+            rangeFar = std::min(rangeFar, settings.MaxDistance);
+        }
+        if (std::isinf(rangeFar))
+        {
+            rangeFar = 0.0f;
+            if (!sceneBounds.IsEmpty())
+            {
+                for (u32 i = 0; i < 8; ++i)
+                {
+                    const vec3 corner((i & 4u) != 0u ? sceneBounds.Max.x : sceneBounds.Min.x,
+                                      (i & 2u) != 0u ? sceneBounds.Max.y : sceneBounds.Min.y,
+                                      (i & 1u) != 0u ? sceneBounds.Max.z : sceneBounds.Min.z);
+                    rangeFar = std::max(rangeFar, -(view * vec4(corner, 1.0f)).z);
+                }
+            }
+            // No cap and nothing in front of the camera to shadow: no cascade is fit.
+            if (rangeFar <= shadowNear)
+            {
+                return CascadeData{};
+            }
+        }
+
         f32 near = shadowNear;
-        f32 far = cameraFar;
+        f32 far = rangeFar;
 
         // Fit the split range to the *visible* scene: the view-depth extent of the
         // intersection of the camera frustum and the scene bound, not the whole bound.
@@ -243,17 +259,17 @@ namespace Veng::Renderer
         // (zoomed into one corner, or a long view down a corridor) would otherwise spread
         // its cascades across the scene's full depth. Fitting to the visible slab packs
         // every cascade onto on-screen receivers, lifting texel density where it shows. A
-        // bound the frustum misses keeps the camera's own range.
+        // bound the frustum misses keeps the range found above.
         if (!sceneBounds.IsEmpty())
         {
             const std::array<vec3, 8> frustumCorners =
-                FrustumCornersAtDepths(proj, viewToWorld, eye, cameraNear, cameraFar);
+                FrustumCornersAtDepths(proj, viewToWorld, eye, cameraNear, rangeFar);
             const std::optional<vec2> visibleDepth =
                 FrustumSceneDepthRange(frustumCorners, viewProj, view, sceneBounds);
             if (visibleDepth.has_value())
             {
-                const f32 fitNear = std::clamp(visibleDepth->x, shadowNear, cameraFar);
-                const f32 fitFar = std::clamp(visibleDepth->y, shadowNear, cameraFar);
+                const f32 fitNear = std::clamp(visibleDepth->x, shadowNear, rangeFar);
+                const f32 fitFar = std::clamp(visibleDepth->y, shadowNear, rangeFar);
                 // Adopt the tighter range only when it is non-degenerate.
                 if (fitFar > fitNear)
                 {
@@ -261,14 +277,6 @@ namespace Veng::Renderer
                     far = fitFar;
                 }
             }
-        }
-
-        // Cap the shadowed range: a fitted far past MaxDistance spreads cascades over
-        // world the shadows cannot usefully resolve. Skipped when the cap would not
-        // leave a valid range (a camera already inside the cap distance of its near).
-        if (settings.MaxDistance > 0.0f && settings.MaxDistance > near)
-        {
-            far = std::min(far, settings.MaxDistance);
         }
 
         VE_ASSERT(far > near && near > 0.0f,

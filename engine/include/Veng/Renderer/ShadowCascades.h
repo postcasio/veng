@@ -79,7 +79,8 @@ namespace Veng::Renderer
         /// in: one NDC-z unit spans this many world units. [0, Count) valid.
         std::array<f32, MaxCascades> DepthRange;
 
-        /// @brief Number of valid cascades; clamp(settings.Count, 1, MaxCascades).
+        /// @brief Number of valid cascades; clamp(settings.Count, 1, MaxCascades), or 0 when no
+        ///        finite range exists to fit (see ComputeCascades).
         u32 Count = 0;
 
         /// @brief How many leading cascades snap in scene space rather than the stable frame.
@@ -189,6 +190,11 @@ namespace Veng::Renderer
     /// casters are included (the render matrix too, unless settings.PancakeNear keeps it
     /// tight for a depth-clamped shadow pass). settings.MaxDistance additionally caps the
     /// fitted far split.
+    ///
+    /// The fit works in a finite range found before any frustum corner is built: the camera's far
+    /// capped by settings.MaxDistance. Under a camera with no far plane (InfiniteFar) and no
+    /// positive cap, the range ends at the scene bound's farthest corner; with an empty bound, or
+    /// one wholly behind the camera, there is nothing to shadow and no cascade is fit (Count 0).
     ///
     /// Each slice is bounded by a sphere measured in view space, so for given splits its size
     /// does not depend on the camera's orientation. The radius rounds up onto the ladder

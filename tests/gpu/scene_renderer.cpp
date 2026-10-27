@@ -16,6 +16,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <limits>
 
 #include <doctest/doctest.h>
 
@@ -1435,6 +1436,114 @@ namespace
             });
         return renderer.GetOutput()->GetImage()->Download();
     }
+}
+
+// A camera with no far plane draws and lights a surface ten million units away: the frustum keeps
+// it, the depth test passes it, the deferred pass reconstructs a finite position for it, and the
+// cascade fit (shadows on, capped at the default shadow distance) stays finite. The quad covers the
+// pixels its analytic projection covers, and every other pixel is what the empty view draws.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: an infinite-far camera draws and lights a distant surface")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = CookAndMountBrick(assets, "veng_gpu_infinite_far.vengpack");
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the brick default instance
+    REQUIRE(material.has_value());
+    REQUIRE(material->IsLoaded());
+
+    constexpr uvec2 extent{128, 128};
+    constexpr f32 Distance = 1.0e7f;
+    constexpr f32 HalfSize = 2.0e6f;
+
+    // Looking straight down at a +Y-facing quad, lit from straight above.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, InfiniteFar);
+    camera.SetView(vec3(0.0f), vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(1.0f),
+    };
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .AO = false},
+    });
+
+    const vector<u8> empty = RenderOutput(Context, *renderer, *scene, camera);
+
+    const Ref<Mesh> quad = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(1.0f), uvec2(1), *material), "Distant Quad");
+    const Entity quadEntity = scene->CreateEntity();
+    scene->Add<Transform>(quadEntity) = Transform{
+        .Position = vec3(0.0f, -Distance, 0.0f),
+        .Scale = vec3(2.0f * HalfSize, 1.0f, 2.0f * HalfSize),
+    };
+    scene->Add<MeshRenderer>(quadEntity).Mesh = assets.Adopt(quad);
+    const vector<u8> drawn = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(drawn.size() == static_cast<usize>(extent.x) * extent.y * 8);
+
+    // The quad's analytic pixel rect.
+    vec2 rectMin(std::numeric_limits<f32>::max());
+    vec2 rectMax(std::numeric_limits<f32>::lowest());
+    for (const vec2 corner :
+         {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f)})
+    {
+        const optional<vec2> pixel = ProjectToScreen(
+            camera, vec3(corner.x * HalfSize, -Distance, corner.y * HalfSize), vec2(extent));
+        REQUIRE(pixel.has_value());
+        rectMin = glm::min(rectMin, *pixel);
+        rectMax = glm::max(rectMax, *pixel);
+    }
+
+    // A pixel a texel clear inside the rect is lit; one a texel clear outside it is the empty
+    // view's. The band of one texel along the edge is left to the rasterizer.
+    const vec3 background = DecodeTexel(empty, extent.x, 0, 0);
+    u32 inside = 0;
+    u32 insideUnlit = 0;
+    u32 outsideChanged = 0;
+    bool finite = true;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec2 centre(static_cast<f32>(x) + 0.5f, static_cast<f32>(y) + 0.5f);
+            const vec3 colour = DecodeTexel(drawn, extent.x, x, y);
+            finite = finite && std::isfinite(colour.r) && std::isfinite(colour.g) &&
+                     std::isfinite(colour.b);
+            if (glm::all(glm::greaterThan(centre, rectMin + 1.0f)) &&
+                glm::all(glm::lessThan(centre, rectMax - 1.0f)))
+            {
+                ++inside;
+                insideUnlit += colour.r > background.r * 2.0f + 0.05f ? 0u : 1u;
+            }
+            else if (glm::any(glm::lessThan(centre, rectMin - 1.0f)) ||
+                     glm::any(glm::greaterThan(centre, rectMax + 1.0f)))
+            {
+                const vec3 expected = DecodeTexel(empty, extent.x, x, y);
+                outsideChanged +=
+                    glm::all(glm::lessThan(glm::abs(colour - expected), vec3(1e-3f))) ? 0u : 1u;
+            }
+        }
+    }
+    CHECK(finite);
+    CHECK(inside > 1000u);
+    CHECK(insideUnlit == 0u);
+    CHECK(outsideChanged == 0u);
+
+    const vec3 centre = DecodeTexel(drawn, extent.x, extent.x / 2, extent.y / 2);
+    CHECK(centre.r > 0.0f);
+    CHECK(centre.r > centre.b);
+
+    std::filesystem::remove(archive);
 }
 
 // A MeshRenderer's per-entity InstanceMaterials override draws that entity with its own

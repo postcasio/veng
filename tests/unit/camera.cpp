@@ -7,6 +7,9 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
+#include <limits>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
@@ -533,4 +536,114 @@ TEST_CASE("A Physical camera round-trips through the reflection serializer")
     CHECK(fromLegacy.Projection == CameraProjection::Perspective);
     CHECK(fromLegacy.FovY == doctest::Approx(1.0f));
     CHECK(fromLegacy.FocalLength == doctest::Approx(50.0f));
+}
+
+TEST_CASE("An infinite perspective maps view depth to near / depth and never reaches 0")
+{
+    constexpr f32 Near = 0.1f;
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, Near, InfiniteFar);
+    CHECK(std::isinf(camera.GetFar()));
+    CHECK(camera.IsFarInfinite());
+
+    // A finite camera is not infinite.
+    CameraView finite;
+    finite.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, Near, 1.0e6f);
+    CHECK_FALSE(finite.IsFarInfinite());
+
+    const auto DeviceDepth = [&](const f32 viewDepth)
+    {
+        const vec4 clip = camera.Projection() * vec4(0.3f, -0.2f, -viewDepth, 1.0f);
+        return clip.z / clip.w;
+    };
+    // Within two float steps of the exact value.
+    const auto WithinTwoUlp = [](const f32 value, const f32 expected)
+    {
+        const f32 step = std::nextafter(expected, std::numeric_limits<f32>::infinity()) - expected;
+        return std::abs(value - expected) <= 2.0f * step;
+    };
+
+    CHECK(DeviceDepth(Near) == doctest::Approx(1.0f).epsilon(1e-6f));
+    f32 previous = DeviceDepth(Near);
+    for (const f32 depth : {10.0f, 1.0e6f, 1.0e30f})
+    {
+        const f32 device = DeviceDepth(depth);
+        CHECK(device > 0.0f);
+        CHECK(device < previous);
+        CHECK(WithinTwoUlp(device, Near / depth));
+        previous = device;
+    }
+
+    // The x and y rows match the finite projection's: the field of view is unchanged.
+    CHECK(camera.Projection()[0][0] == doctest::Approx(finite.Projection()[0][0]));
+    CHECK(camera.Projection()[1][1] == doctest::Approx(finite.Projection()[1][1]));
+}
+
+TEST_CASE("ViewPointAtDepth round-trips a finite depth through finite and infinite projections")
+{
+    CameraView infinite;
+    infinite.SetPerspective(glm::radians(50.0f), 1.5f, 0.01f, InfiniteFar);
+    infinite.SetLensShift(vec2(0.2f, -0.1f));
+    CameraView finite;
+    finite.SetPerspective(glm::radians(50.0f), 1.5f, 0.01f, 1.0e4f);
+    CameraView ortho;
+    ortho.SetOrthographic(4.0f, 3.0f, 0.5f, 50.0f);
+
+    const vec2 ndc(0.35f, -0.6f);
+    f32 worstNdc = 0.0f;
+    for (const CameraView* camera : {&infinite, &finite, &ortho})
+    {
+        for (const f32 depth : {1.0f, 37.5f})
+        {
+            const vec3 point = ViewPointAtDepth(camera->Projection(), ndc, depth);
+            CHECK(point.z == -depth);
+            const vec4 clip = camera->Projection() * vec4(point, 1.0f);
+            worstNdc = std::max(worstNdc, glm::length(vec2(clip) / clip.w - ndc));
+        }
+    }
+    CHECK(worstNdc < 1e-5f);
+
+    // Far beyond any finite far plane, the infinite projection still solves it.
+    const vec3 distant = ViewPointAtDepth(infinite.Projection(), ndc, 1.0e9f);
+    const vec4 clip = infinite.Projection() * vec4(distant, 1.0f);
+    CHECK(glm::length(vec2(clip) / clip.w - ndc) < 1e-5f);
+}
+
+TEST_CASE("The InfiniteFar flag round-trips through the serializer and resolves an infinite view")
+{
+    TypeRegistry registry;
+    registry.Register<Camera>();
+    const TypeInfo& info = registry.Info(registry.IdOf<Camera>());
+    const JsonFieldHooks hooks;
+
+    Camera src;
+    src.InfiniteFar = true;
+    src.Far = 250.0f;
+    const nlohmann::json doc = JsonWriteFields(&src, info, registry, hooks);
+    CHECK(doc.at("InfiniteFar") == true);
+    // Far stays a finite number a JSON record holds.
+    CHECK(doc.at("Far").is_number());
+    CHECK(doc.at("Far").get<f32>() == doctest::Approx(250.0f));
+
+    Camera dst;
+    REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
+    CHECK(dst.InfiniteFar);
+    CHECK(dst.Far == doctest::Approx(250.0f));
+
+    const CameraView view = MakeCameraView(dst, 16.0f / 9.0f, mat4(1.0f));
+    CHECK(view.IsFarInfinite());
+    dst.Projection = CameraProjection::Physical;
+    CHECK(MakeCameraView(dst, 16.0f / 9.0f, mat4(1.0f)).IsFarInfinite());
+    // An orthographic camera has a far face whatever the flag says.
+    dst.Projection = CameraProjection::Orthographic;
+    const CameraView ortho = MakeCameraView(dst, 16.0f / 9.0f, mat4(1.0f));
+    CHECK_FALSE(ortho.IsFarInfinite());
+    CHECK(ortho.GetFar() == doctest::Approx(250.0f));
+
+    // A record without the field keeps the finite default.
+    nlohmann::json legacy = nlohmann::json::object();
+    legacy["Far"] = 80.0f;
+    Camera fromLegacy;
+    REQUIRE(JsonReadFields(&fromLegacy, info, legacy, registry, hooks));
+    CHECK_FALSE(fromLegacy.InfiniteFar);
 }
