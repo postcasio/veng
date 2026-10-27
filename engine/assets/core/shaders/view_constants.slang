@@ -12,6 +12,7 @@
 // Ring-buffered across frames-in-flight, byte-addressed at index * ViewConstantsStride;
 // mirrors BindlessRegistry::ViewConstantsStride and the CPU ViewConstantsBlock exactly.
 // The lights themselves ride a separate ring-buffered light buffer at binding 6.
+#pragma once
 struct ViewConstants
 {
     float4x4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)
