@@ -620,10 +620,14 @@ extern "C"
 /// CharacterController grows SyncTransform, CharacterState and CharacterMoveResult
 /// GroundSurfaceTag, and RayHit and ShapeHit SurfaceTag. A module builds shapes, spawns sources and
 /// characters and reads hits, so a stale one lays them out short.
+/// Version 156 gives the sky an orientation: Sky grows Rotation, SceneView SkyRotation, and the
+/// view-constants block SkyFromWorld and EnvironmentFromWorld (ViewConstantsStride 832 → 864). A
+/// module spawns skies, builds views and indexes view regions by the stride, so a stale one lays
+/// them out short and reads every region past the first at the wrong offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 155u
+#define VENG_MODULE_ABI_VERSION 156u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

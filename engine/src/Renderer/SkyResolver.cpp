@@ -169,6 +169,7 @@ namespace Veng::Renderer
         view.SkyMaterial = {};
         view.SkyCube = nullptr;
         view.SkylightIntensity = 1.0f;
+        view.SkyRotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
 
         // The toward-sun direction is derived from the scene's first directional light (a sun
         // overhead travels down), so the sky and the direct lighting share one sun. No directional

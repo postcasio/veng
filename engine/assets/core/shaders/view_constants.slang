@@ -37,6 +37,16 @@ struct ViewConstants
     float4 RenderScaleUV; // xy this frame's validExtent/allocExtent, zw previous frame's
     float4 MaxValidUV;    // xy this frame's (validExtent-0.5)/allocExtent, zw previous frame's
 
+    // The sky's orientation, as unit quaternions (xyz the vector part, w the scalar) taking a
+    // world direction to the direction it looks up. SkyFromWorld turns a view ray into the sky
+    // source's own frame — what the background displays, and what the SH skylight is projected in —
+    // and EnvironmentFromWorld turns a lookup into the image-based-lighting maps, which is the same
+    // rotation unless a scene-lighting capture, rendered in the world frame, fills those maps. A
+    // zero quaternion (a block no scene view wrote, such as a sky-bake face) leaves a direction as
+    // it is, exactly as the identity does. Read through SkyDirection and EnvironmentDirection.
+    float4 SkyFromWorld;
+    float4 EnvironmentFromWorld;
+
     // The cosine-convolved sky irradiance SH (order-2, 9 RGB coefficients) the dynamic
     // skylight ambient evaluates per fragment. Each element carries one RGB coefficient in
     // .xyz (.w is std140 padding); a vec4 array, not a vec3 array, so the C++ upload and the
@@ -129,7 +139,28 @@ struct ViewConstants
     float4 ExposureParams;
 };
 
-static const uint ViewConstantsStride = 832;
+static const uint ViewConstantsStride = 864;
+
+// Rotates `v` by the unit quaternion `q` (xyz the vector part, w the scalar). The zero quaternion
+// leaves `v` unchanged.
+float3 RotateByQuaternion(float4 q, float3 v)
+{
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+// The direction a world-space view ray looks up in the sky source: what the background shows and
+// the frame the SH skylight was projected in.
+float3 SkyDirection(ViewConstants vc, float3 worldDirection)
+{
+    return RotateByQuaternion(vc.SkyFromWorld, worldDirection);
+}
+
+// The direction a world-space normal or reflection looks up in the image-based-lighting maps.
+float3 EnvironmentDirection(ViewConstants vc, float3 worldDirection)
+{
+    return RotateByQuaternion(vc.EnvironmentFromWorld, worldDirection);
+}
 
 // The reciprocal of the exposure the tonemap applies to this view: multiplying radiance by it
 // before the tone curve shows that radiance as it would be at an exposure of 1.

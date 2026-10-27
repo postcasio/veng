@@ -41,6 +41,9 @@ float4 fsMain(VSOutput input) : SV_Target
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
     float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
-    float3 radiance = g_Cube.SampleLevel(g_CubeSampler, dir, g_PC.Lod).rgb * g_PC.Intensity;
+    // Both arms show a cube the lighting reads, so the lighting's lookup orients them.
+    float3 radiance =
+        g_Cube.SampleLevel(g_CubeSampler, EnvironmentDirection(vc, dir), g_PC.Lod).rgb *
+        g_PC.Intensity;
     return float4(radiance, 1.0);
 }

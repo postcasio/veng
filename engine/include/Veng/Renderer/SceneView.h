@@ -400,6 +400,15 @@ namespace Veng::Renderer
         /// ray and the g-buffer depth mask. It fills the background only — it feeds no lighting.
         AssetHandle<MaterialInstance> SkyMaterial;
 
+        /// @brief The resolved sky's orientation: a feature its source holds at direction d shows
+        ///        at world direction SkyRotation * d.
+        ///
+        /// Filled from the resolved Sky component's Rotation (normalised) for an environment,
+        /// material or cube source; identity for an atmosphere or no sky. The skybox, a direct sky
+        /// material's view ray and the sky's image-based and SH lighting look up through its
+        /// inverse, so changing it re-bakes and re-convolves nothing.
+        quat SkyRotation{1.0f, 0.0f, 0.0f, 0.0f};
+
         /// @brief Caller-owned baked radiance cube a CubeSky source samples; null for none.
         ///
         /// Filled from the resolved CubeSky source. The sky resolver samples this cube for the skybox

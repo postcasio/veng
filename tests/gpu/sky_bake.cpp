@@ -61,6 +61,11 @@
 #include <Veng/Renderer/BakedSkyCube.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
+
+#include <glm/gtc/quaternion.hpp>
+
 using namespace Veng;
 using namespace Veng::Renderer;
 
@@ -850,6 +855,124 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // validation-clean and non-black — the tier path produces a plausible sky, not a zeroed frame.
     const vector<u8> bakedSh = fixture.Render(SkyMode::Baked, SkyLighting::SH);
     CHECK(MeanLuma(bakedSh, extent) > 0.0);
+}
+
+namespace
+{
+    // The textured cube the gbuffer pack's surface material instance lights.
+    constexpr AssetId BrickInstanceId{0x0000000000895443ULL};
+
+    // The mean per-pixel colour distance between two RGBA16F frames of `extent`.
+    f64 MeanDifference(const vector<u8>& a, const vector<u8>& b, const uvec2 extent)
+    {
+        const auto* ha = reinterpret_cast<const u16*>(a.data());
+        const auto* hb = reinterpret_cast<const u16*>(b.data());
+        f64 sum = 0.0;
+        const usize count = static_cast<usize>(extent.x) * extent.y;
+        for (usize i = 0; i < count; ++i)
+        {
+            const vec3 ca(glm::unpackHalf1x16(ha[i * 4 + 0]), glm::unpackHalf1x16(ha[i * 4 + 1]),
+                          glm::unpackHalf1x16(ha[i * 4 + 2]));
+            const vec3 cb(glm::unpackHalf1x16(hb[i * 4 + 0]), glm::unpackHalf1x16(hb[i * 4 + 1]),
+                          glm::unpackHalf1x16(hb[i * 4 + 2]));
+            sum += glm::length(ca - cb);
+        }
+        return sum / static_cast<f64>(count);
+    }
+}
+
+// A sky turned by R, seen and lit from a camera, must be the unturned sky seen and lit from the
+// camera and the scene turned by R^-1: display = R * the source's direction. Each case checks that
+// equivalence on the background and on a lit surface, and checks the turn is visible at all.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sky orientation: a rotated sky displays and lights from the turned direction, "
+                  "direct and from a cube, and bakes nothing")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(BrickInstanceId);
+    REQUIRE(brick.has_value());
+
+    // A caller-owned cube of the analytic sky, so the case can count every face render it records.
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+    const Ref<BakedSkyCube> cube =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, 64);
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+    cube->RequestBake(service, *material.Get());
+    for (u32 i = 0; i < 8 && cube->IsBakePending(); ++i)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+    }
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { cube->RecordAmortized(cmd); });
+    REQUIRE(cube->IsBaked());
+    const u64 bakedFaces = cube->GetFaceRendersRecorded();
+
+    constexpr uvec2 extent{48, 48};
+    const quat turn = glm::angleAxis(glm::radians(70.0f), glm::normalize(vec3(0.2f, 1.0f, 0.4f)));
+    const quat back = glm::conjugate(turn);
+    const vec3 look = glm::normalize(vec3(0.3f, 0.2f, -1.0f));
+    const vec3 up(0.0f, 1.0f, 0.0f);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    Sky& sky = scene->Add<Sky>(scene->CreateEntity());
+    const Ref<Mesh> box = Mesh::BuildSync(Context, Primitives::Cube(1.5f, *brick), "Lit Box");
+    const Entity object = scene->CreateEntity();
+    scene->Add<MeshRenderer>(object).Mesh = assets.Adopt(box);
+    scene->Add<Transform>(object);
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    // Renders with the sky turned by `skyTurn` and the camera and the box turned by `sceneTurn`.
+    const auto render = [&](const quat skyTurn, const quat sceneTurn)
+    {
+        sky.Rotation = skyTurn;
+        // Through the accessor, so the scene's world-matrix pass sees the move.
+        auto& placement = scene->Get<Transform>(object);
+        placement.Position = sceneTurn * (look * 4.0f);
+        placement.Rotation = sceneTurn;
+        CameraView camera;
+        camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        camera.SetView(vec3(0.0f), sceneTurn * look, sceneTurn * up);
+        return RenderSkyToCompletion(Context, *renderer, *scene, camera, extent);
+    };
+    const quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+
+    SUBCASE("a direct material sky")
+    {
+        auto* source = static_cast<MaterialSky*>(sky.Source.SetActive(TypeIdOf<MaterialSky>()));
+        source->Material = material;
+        source->Mode = SkyMode::Direct;
+        const vector<u8> turned = render(turn, identity);
+        CHECK(MeanDifference(turned, render(identity, back), extent) < 1.0e-3);
+        CHECK(MeanDifference(turned, render(identity, identity), extent) > 0.1);
+    }
+    SUBCASE("a cube sky lighting through SH and through IBL")
+    {
+        auto* source = static_cast<CubeSky*>(sky.Source.SetActive(TypeIdOf<CubeSky>()));
+        source->Cube = cube;
+        for (const SkyLighting tier : {SkyLighting::SH, SkyLighting::IBL})
+        {
+            CAPTURE(static_cast<u32>(tier));
+            sky.Lighting = tier;
+            // The tier's derive (the SH readback lands a frame behind) settles before comparing.
+            (void)render(identity, identity);
+            const vector<u8> turned = render(turn, identity);
+            CHECK(MeanDifference(turned, render(identity, back), extent) < 1.0e-3);
+            CHECK(MeanDifference(turned, render(identity, identity), extent) > 0.1);
+        }
+        // The turn is a lookup: the cube was rendered once, before any of these frames.
+        CHECK(cube->GetFaceRendersRecorded() == bakedFaces);
+    }
 }
 
 #endif

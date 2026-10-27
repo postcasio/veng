@@ -60,6 +60,9 @@ struct SsrConstants
     uint2 DenoiserRenderSize;
     float2 DenoiserInverseRenderSize;
     float4 IblTint;
+    // The quaternion (xyz vector part, w scalar) taking a world direction to its lookup in the
+    // environment map (the view block's EnvironmentFromWorld).
+    float4 EnvironmentFromWorld;
 };
 
 // Every pass that reads the constants binds them at binding 0 of its own set 3, at this frame's
@@ -76,6 +79,15 @@ uint2 RenderSize() { return g_Ssr.RenderSize; }
 float2 InverseRenderSize() { return g_Ssr.InverseRenderSize; }
 float IBLFactor() { return g_Ssr.IblFactor; }
 float3 IBLTint() { return g_Ssr.IblTint.rgb; }
+
+// A world-space reflection direction turned into the environment map's frame, so the fallback
+// reads the same direction the lighting's own image-based term does.
+float3 EnvironmentLookupDirection(float3 direction)
+{
+    float4 q = g_Ssr.EnvironmentFromWorld;
+    float3 t = 2.0 * cross(q.xyz, direction);
+    return direction + q.w * t + cross(q.xyz, t);
+}
 float TemporalStabilityFactor() { return g_Ssr.TemporalStabilityFactor; }
 float DepthBufferThickness() { return g_Ssr.DepthBufferThickness; }
 float RoughnessThreshold() { return g_Ssr.RoughnessThreshold; }

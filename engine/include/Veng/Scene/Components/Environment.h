@@ -135,7 +135,7 @@ namespace Veng
     /// active scene-lighting capture (Renderer::CaptureOutput::SceneLighting) overrides both the
     /// lighting input and the tier while it lights the scene. If several Sky components
     /// exist the first walked wins and a warning logs once. No transform is read — the sky is
-    /// scene-global.
+    /// scene-global; its orientation is Rotation.
     struct Sky
     {
         /// @brief The active sky source, or empty for no sky.
@@ -144,6 +144,19 @@ namespace Veng
         f32 Intensity = 1.0f;
         /// @brief How the sky lights the scene, beyond displaying it.
         SkyLighting Lighting = SkyLighting::None;
+        /// @brief The sky's orientation in the scene: a feature the source holds at direction d is
+        ///        displayed at world direction Rotation * d.
+        ///
+        /// For an application whose rendered frame turns relative to the backdrop — a frame that
+        /// rotates with whatever carries the camera — so the sky turns rather than staying fixed to
+        /// the frame. It turns the displayed sky (direct and baked alike) and the
+        /// image-based and SH lighting the sky casts, so reflections turn with what is shown. It
+        /// turns lookups rather than content: changing it re-bakes no cube and re-convolves no
+        /// lighting, so it may change every frame. A scene-lighting capture's lighting is rendered
+        /// in the scene's own frame and is not turned. An AtmosphereSky ignores it: an atmosphere
+        /// is defined by the frame's up and the scene's sun, which do not turn with a backdrop.
+        /// Identity by default; a non-unit value is normalised.
+        quat Rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
     };
 
     /// @brief Where the scene's coordinate origin stands in the frame its content rests in.
@@ -241,6 +254,8 @@ VE_REFLECT(::Veng::Sky, 0xC7D64305B199222CULL)
 VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Lighting, .DisplayName = "Lighting")
+VE_FIELD(Rotation, .DisplayName = "Rotation",
+         .Tooltip = "Orientation of the sky in the scene; turns the display and its lighting")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::TimeOfDay, 0x3096812B98FEC8D2ULL)

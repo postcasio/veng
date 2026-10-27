@@ -3084,6 +3084,8 @@ namespace Veng::Renderer
             const AmbientArm ambientArm = ResolveAmbientArm(
                 m_Topology->IblAllowed, m_SkyResolver->IsIblSourceResident(resolvedView),
                 m_Topology->SkylightWanted);
+            const SkyLookupRotations skyLookup = ResolveSkyLookupRotations(
+                resolvedView.SkyRotation, m_SkyResolver->IsIblHoldingLightingCube());
             ViewConstantsBlock viewConstants{
                 .InvViewProj = glm::inverse(renderViewProj),
                 .InvViewRotProj = glm::inverse(renderViewRotProj),
@@ -3094,6 +3096,8 @@ namespace Veng::Renderer
                 .CurViewProj = viewProj,
                 .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
                 .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
+                .SkyFromWorld = QuaternionBlock(skyLookup.SkyFromWorld),
+                .EnvironmentFromWorld = QuaternionBlock(skyLookup.EnvironmentFromWorld),
                 // The frame clock is engine-global (Time), frame-locked so every view and material
                 // reads one consistent value; the delta is this view's.
                 .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
@@ -3233,6 +3237,10 @@ namespace Veng::Renderer
                     .IblFactor =
                         ambientArm == AmbientArm::Ibl ? resolvedView.EnvironmentIntensity : 0.0f,
                     .IblTint = resolvedView.EnvironmentLightTint,
+                    .EnvironmentFromWorld =
+                        ResolveSkyLookupRotations(resolvedView.SkyRotation,
+                                                  m_SkyResolver->IsIblHoldingLightingCube())
+                            .EnvironmentFromWorld,
                     .SamplesPerQuad = resolvedView.SsrSamplesPerQuad,
                     .RoughnessThreshold = resolvedView.SsrRoughnessThreshold,
                     .VarianceThreshold = resolvedView.SsrVarianceThreshold,

@@ -102,3 +102,39 @@ TEST_CASE("ResolveAmbientArm: IBL needs its source resident, and SH lights only 
     CHECK(ResolveAmbientArm(false, true, true) == AmbientArm::Skylight);
     CHECK(ResolveAmbientArm(false, true, false) == AmbientArm::Flat);
 }
+
+TEST_CASE("ResolveSkySource: a sky's rotation orients every source but the atmosphere, and its "
+          "lookups invert it")
+{
+    TypeRegistry types;
+    const Unique<Scene> scene = Scene::Create(types);
+    const CameraView camera;
+    const quat turn = glm::angleAxis(1.1f, glm::normalize(vec3(0.3f, 1.0f, -0.2f)));
+    const vec3 feature = glm::normalize(vec3(0.2f, 0.5f, -1.0f));
+
+    const auto resolve = [&](const TypeId source)
+    {
+        Renderer::SceneView view{.World = *scene, .Camera = camera};
+        Sky sky;
+        sky.Rotation = turn * 3.0f; // a non-unit value is normalised
+        sky.Source.SetActive(source);
+        (void)ResolveSkySource(&sky, view);
+        return view.SkyRotation;
+    };
+    for (const TypeId source :
+         {TypeIdOf<EnvironmentSky>(), TypeIdOf<MaterialSky>(), TypeIdOf<CubeSky>()})
+    {
+        const quat orientation = resolve(source);
+        CHECK(glm::length(orientation * feature - turn * feature) < 1.0e-5f);
+    }
+    const quat atmosphere = resolve(TypeIdOf<AtmosphereSky>());
+    CHECK(glm::length(atmosphere * feature - feature) < 1.0e-6f);
+
+    // The sky's lookup takes the displayed direction back to the feature; a capture's world-frame
+    // lighting is looked up unturned.
+    const SkyLookupRotations sky = ResolveSkyLookupRotations(turn, false);
+    CHECK(glm::length(sky.SkyFromWorld * (turn * feature) - feature) < 1.0e-5f);
+    CHECK(glm::length(sky.EnvironmentFromWorld * (turn * feature) - feature) < 1.0e-5f);
+    const SkyLookupRotations captured = ResolveSkyLookupRotations(turn, true);
+    CHECK(glm::length(captured.EnvironmentFromWorld * feature - feature) < 1.0e-6f);
+}

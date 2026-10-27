@@ -81,8 +81,11 @@ namespace Veng::Renderer
         /// @brief rgb the colour multiplying the environment the chain falls back to (the view's
         ///        EnvironmentLightTint); w unused.
         vec4 IblTint{1.0f, 1.0f, 1.0f, 0.0f};
+        /// @brief The quaternion (xyz vector part, w scalar) taking a world direction to its lookup
+        ///        in the environment map (SsrFrameInputs::EnvironmentFromWorld).
+        vec4 EnvironmentFromWorld{0.0f, 0.0f, 0.0f, 1.0f};
     };
-    static_assert(sizeof(SsrConstants) == 480, "SsrConstants must match ssr_common.slang (std140)");
+    static_assert(sizeof(SsrConstants) == 496, "SsrConstants must match ssr_common.slang (std140)");
 
     /// @brief The view-dependent inputs a frame of the reflection chain runs with.
     struct SsrFrameInputs
@@ -101,6 +104,9 @@ namespace Veng::Renderer
         /// @brief The colour multiplying the environment the chain falls back to
         ///        (SceneView::EnvironmentLightTint).
         vec3 IblTint{1.0f};
+        /// @brief The rotation taking a world direction to its lookup in the environment map the
+        ///        chain falls back to, so the fallback turns with the displayed sky.
+        quat EnvironmentFromWorld{1.0f, 0.0f, 0.0f, 0.0f};
         /// @brief Rays per 2×2 quad of glossy pixels (SceneView::SsrSamplesPerQuad).
         u32 SamplesPerQuad = 1;
         /// @brief SceneView::SsrRoughnessThreshold.

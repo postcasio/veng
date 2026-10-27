@@ -506,13 +506,16 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
         float3 fresnel = BrdfFresnelSchlickRoughness(nDotV, s.F0, s.Roughness);
         float3 kd = (1.0 - fresnel) * (1.0 - s.Metallic);
 
-        float3 irradiance = g_Irradiance.SampleLevel(g_IblSampler, N, 0.0).rgb;
+        float3 irradiance =
+            g_Irradiance.SampleLevel(g_IblSampler, EnvironmentDirection(vc, N), 0.0).rgb;
         float3 diffuseIbl = kd * irradiance * s.Albedo;
 
         float3 reflection = reflect(-V, N);
         float maxMip = float(max(vc.LightLuts.w, 1u) - 1u);
-        float3 prefiltered =
-            g_Prefilter.SampleLevel(g_IblSampler, reflection, s.Roughness * maxMip).rgb;
+        float3 prefiltered = g_Prefilter
+                                 .SampleLevel(g_IblSampler, EnvironmentDirection(vc, reflection),
+                                              s.Roughness * maxMip)
+                                 .rgb;
         float2 brdf = g_BrdfLut.SampleLevel(g_IblSampler, float2(nDotV, s.Roughness), 0.0).rg;
         float3 specularIbl = prefiltered * (fresnel * brdf.x + brdf.y);
 
@@ -526,7 +529,8 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
         // clamp the SH ringing below zero before it darkens the surface. The Lambertian
         // albedo/pi turns irradiance into outgoing radiance, matching the direct arm's
         // normalization (the IBL arm folds the same 1/pi into its irradiance convolution).
-        float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
+        float3 irradiance =
+            max(ShEvalIrradiance(vc.SkyShCoeffs, SkyDirection(vc, N)), float3(0.0));
         ambient.Diffuse = irradiance * (s.Albedo / BrdfPi) * vc.AmbientParams.x *
                           vc.EnvironmentLightTint.rgb * ambientOcclusion;
     }

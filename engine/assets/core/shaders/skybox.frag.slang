@@ -66,6 +66,8 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
     float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
 
-    float3 sky = g_Radiance.SampleLevel(g_IblSampler, dir, 0.0).rgb * g_PC.EnvIntensity;
+    // The cube holds the sky in its own frame; the sky's orientation turns the lookup, not the cube.
+    float3 sky =
+        g_Radiance.SampleLevel(g_IblSampler, SkyDirection(vc, dir), 0.0).rgb * g_PC.EnvIntensity;
     return float4(sky, 1.0);
 }

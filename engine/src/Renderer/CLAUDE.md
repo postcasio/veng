@@ -2301,6 +2301,22 @@ A scene-lighting capture is the only input to this arm other than the sky's own 
 baked cube a bake has landed in. **Cost** is authored, as the tiers are: one convolution per
 presenting renderer per completed sweep, plus the capture's own face renders.
 
+**The sky has an orientation, and turning it is a lookup.** `Sky::Rotation` (identity by default)
+orients the source in the scene: a feature the source holds at direction `d` is displayed at world
+direction `Rotation · d` — for an application whose rendered frame turns relative to the backdrop.
+The resolver normalises it into `SceneView::SkyRotation` for an environment, material or cube
+source; an `AtmosphereSky` is not turned, since it is defined by the frame's up and the scene's sun.
+The view block carries two lookup quaternions, **`SkyFromWorld`** (the conjugate: a world ray into
+the source's frame) and **`EnvironmentFromWorld`** (the same, or the identity while the
+image-based-lighting maps hold a scene-lighting capture's convolution, which was rendered in the
+world frame). `Veng/view_constants.slang`'s `SkyDirection` / `EnvironmentDirection` apply them:
+the skybox's cube lookup and `SkyViewDirection` (so a direct material sky and a baked one turn
+alike), the SH skylight's evaluation, the irradiance and prefiltered lookups of the lighting core
+and the sprite ambient, the IBL debug blit, and the reflection chain's environment fallback (its own
+constants carry `EnvironmentFromWorld`). Nothing bakes in the turn: a bake face's view region
+carries a zero quaternion, which turns nothing, so changing the rotation every frame re-bakes no
+cube and re-convolves no lighting.
+
 ### A sky reconstructs its ray without the camera's translation
 
 `SkyViewDirection` (`Veng/sky.slang`) reads **`InvViewRotProj`** — the inverse of
@@ -2387,7 +2403,7 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **832 bytes**. The shadow system's own state — each cascade
+latency instead of starving whichever captures registered last. Its stride is **864 bytes**. The shadow system's own state — each cascade
 set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
 instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 

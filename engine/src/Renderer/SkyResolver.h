@@ -142,6 +142,10 @@ namespace Veng::Renderer
         /// from it whatever the sky's source kind.
         [[nodiscard]] bool IsLightingCubeResolved() const { return m_ResolvedLightingCube; }
 
+        /// @brief Whether the image-based-lighting maps hold a lighting cube's convolution rather
+        ///        than the sky's own, so a lookup into them is in the world frame, not the sky's.
+        [[nodiscard]] bool IsIblHoldingLightingCube() const { return m_IblHoldsLightingCube; }
+
         /// @brief Whether the IBL maps hold a real convolution the lighting pass may sample.
         ///
         /// True while a lighting cube feeds them, for a loaded environment or sky material, and for a

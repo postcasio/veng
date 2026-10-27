@@ -97,6 +97,10 @@ namespace Veng::Renderer
             mat4 CurViewProj;
             vec4 RenderScaleUV;
             vec4 MaxValidUV;
+            // Zeroed: a bake face renders in the sky source's own frame, and a zero quaternion
+            // turns nothing.
+            vec4 SkyFromWorld;
+            vec4 EnvironmentFromWorld;
             std::array<vec4, 9> SkyShCoeffs;
             // Zeroed: a baked source is static (no frame clock) and has no scene behind it. The
             // fields still belong in the write so a bake face's ring slot never inherits a scene

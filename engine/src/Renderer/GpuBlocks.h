@@ -28,6 +28,11 @@ namespace Veng::Renderer
         mat4 CurViewProj;    // this frame's unjittered world → clip (TAA velocity)
         vec4 RenderScaleUV;  // xy this frame's validExtent/allocExtent, zw previous frame's
         vec4 MaxValidUV;     // xy this frame's (validExtent-0.5)/allocExtent, zw previous
+        // The sky's orientation as quaternions (xyz vector part, w scalar) taking a world direction
+        // to its lookup: SkyFromWorld into the sky source's frame (the background and the SH
+        // skylight), EnvironmentFromWorld into the image-based-lighting maps' frame.
+        vec4 SkyFromWorld;
+        vec4 EnvironmentFromWorld;
         // Cosine-convolved sky irradiance SH (9 RGB coefficients, .xyz per element, .w pad).
         // vec4[9] (not vec3[9]) to share one 16-byte std140 stride with the shader.
         std::array<vec4, ShCoefficientCount> SkyShCoeffs;
@@ -99,6 +104,33 @@ namespace Veng::Renderer
             return AmbientArm::Ibl;
         }
         return skylightWanted ? AmbientArm::Skylight : AmbientArm::Flat;
+    }
+
+    // The lookup rotations a view's sky and image-based lighting read through: a world direction to
+    // the sky source's own frame (the conjugate of the sky's orientation), and to the
+    // image-based-lighting maps' frame — the same, unless those maps hold a scene-lighting capture's
+    // convolution, which was rendered in the world frame and turns nothing.
+    struct SkyLookupRotations
+    {
+        quat SkyFromWorld{1.0f, 0.0f, 0.0f, 0.0f};
+        quat EnvironmentFromWorld{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+
+    [[nodiscard]] inline SkyLookupRotations
+    ResolveSkyLookupRotations(const quat skyRotation, const bool iblFromWorldFrameCapture)
+    {
+        const quat skyFromWorld = glm::conjugate(skyRotation);
+        return SkyLookupRotations{
+            .SkyFromWorld = skyFromWorld,
+            .EnvironmentFromWorld =
+                iblFromWorldFrameCapture ? quat(1.0f, 0.0f, 0.0f, 0.0f) : skyFromWorld,
+        };
+    }
+
+    // A quaternion as the view block carries it: xyz the vector part, w the scalar.
+    [[nodiscard]] inline vec4 QuaternionBlock(const quat q)
+    {
+        return {q.x, q.y, q.z, q.w};
     }
 
     // One cascade set: one near-parallel light's cascades, fit to that light's direction.

@@ -64,8 +64,10 @@ bool SkyIsBackground(SkyPushConstants pc, float2 uv)
     return depth <= 0.0;
 }
 
-// The world-space view direction through a background pixel. A sky shader evaluates its radiance
-// along this direction.
+// The view direction through a background pixel, in the sky's own frame. A sky shader evaluates its
+// radiance along this direction. It is the world direction turned into the frame Sky::Rotation
+// orients (SkyDirection), so a rotated sky displays turned, direct and baked alike; an unrotated
+// sky, and a bake face, read the world direction itself.
 //
 // Reconstructed through the translation-free InvViewRotProj rather than InvViewProj. The direction
 // is a property of where the camera *looks*, not where it *is*, and taking it from InvViewProj means
@@ -79,5 +81,5 @@ float3 SkyViewDirection(SkyPushConstants pc, float2 uv)
     ViewConstants vc = LoadViewConstants(pc.ViewConstantsIndex);
     float2 ndcXY = uv * 2.0 - 1.0;
     // normalize removes the 1/w, so w never divides and a far-plane w of zero is harmless.
-    return normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
+    return SkyDirection(vc, normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz));
 }

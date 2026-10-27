@@ -14,6 +14,11 @@ namespace Veng::Renderer
         }
 
         resolved.Lighting = sky->Lighting;
+        // An atmosphere is defined by the frame's own up and the scene's sun, so it does not turn;
+        // every other source is a sky with a frame of its own, oriented by Rotation.
+        const f32 rotationLength = glm::length(sky->Rotation);
+        const quat orientation = rotationLength > 1.0e-6f ? sky->Rotation / rotationLength
+                                                          : quat(1.0f, 0.0f, 0.0f, 0.0f);
         const TypeId active = sky->Source.ActiveType();
         const void* source = sky->Source.ActivePtr();
         if (active == TypeIdOf<EnvironmentSky>())
@@ -22,6 +27,7 @@ namespace Veng::Renderer
             view.Environment = environment->Map;
             view.EnvironmentIntensity = sky->Intensity;
             resolved.Kind = SkySourceKind::Environment;
+            view.SkyRotation = orientation;
         }
         else if (active == TypeIdOf<AtmosphereSky>())
         {
@@ -45,6 +51,7 @@ namespace Veng::Renderer
             // as it scales the atmosphere's; setting only EnvironmentIntensity left the SH knob dead.
             view.SkylightIntensity = sky->Intensity;
             resolved.Kind = SkySourceKind::Material;
+            view.SkyRotation = orientation;
             // Baked runs the material into a radiance cube the skybox path samples; direct runs it
             // per pixel every frame. The two render the same sky; the author picks per the sky's
             // dynamics and the renderer honors it (no silent switch).
@@ -59,6 +66,7 @@ namespace Veng::Renderer
             // scales its ambient exactly as a baked material sky's does.
             view.SkylightIntensity = sky->Intensity;
             resolved.Kind = SkySourceKind::Cube;
+            view.SkyRotation = orientation;
             // A CubeSky is always a baked cube (a caller-owned radiance cube); it is never a direct
             // per-pixel source, so it always drives the skybox path and can light the scene.
             resolved.Baked = true;

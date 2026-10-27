@@ -150,12 +150,13 @@ float3 SpriteAmbientToward(ViewConstants vc, float3 n)
     uint arm = vc.LightState.w;
     if (arm == AmbientArmIbl)
     {
-        return g_Irradiance.SampleLevel(g_IblSampler, n, 0.0).rgb * vc.AmbientFloor.w *
-               vc.EnvironmentLightTint.rgb;
+        return g_Irradiance.SampleLevel(g_IblSampler, EnvironmentDirection(vc, n), 0.0).rgb *
+               vc.AmbientFloor.w * vc.EnvironmentLightTint.rgb;
     }
     if (arm == AmbientArmSkylight)
     {
-        return max(ShEvalIrradiance(vc.SkyShCoeffs, n), float3(0.0)) / SpriteShadingPi *
+        return max(ShEvalIrradiance(vc.SkyShCoeffs, SkyDirection(vc, n)), float3(0.0)) /
+                   SpriteShadingPi *
                vc.AmbientParams.x * vc.EnvironmentLightTint.rgb;
     }
     return vc.AmbientFloor.rgb;
