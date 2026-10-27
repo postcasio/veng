@@ -197,6 +197,42 @@ TEST_CASE("a ray reads a heightfield's heights, cell tags and holes")
     CHECK(onBox->SurfaceTag == 0);
 }
 
+TEST_CASE("a heightfield whose sample count is no multiple of the solver's block builds and reads "
+          "to its last sample")
+{
+    // None of these counts is a multiple of its block (2 for 3 samples, 4 above), so each leaves a
+    // partial block the build pads. Heights rising along x alone leave a block's column flat and
+    // its last row sloped, which is the case where the solver's quantization would otherwise read
+    // whole blocks past the grid's last row.
+    const auto slope = [](const f32 x, const f32 /*z*/) { return 0.25f * x; };
+    for (const u32 count : {3U, 5U, 17U, 63U, 65U})
+    {
+        CAPTURE(count);
+        const Ref<CollisionShape> ground = Grid(count, 1.0f, slope);
+        CollisionHeightField& field = ground->HeightField;
+        field.CellTags.assign(usize{count - 1} * (count - 1), 1);
+        // The last cell's tag, which the padding must leave in place.
+        field.CellTags.back() = 3;
+
+        const Unique<PhysicsWorld> world = PhysicsWorld::Create(PhysicsWorldInfo{});
+        const Entity body{.Index = 1};
+        world->CreateBody(body, StaticBody, GridCollider(ground), PhysicsPose{});
+
+        // Inside the far corner cell, and past the grid's edge, where the padding stands.
+        const f32 last = field.Origin.x + static_cast<f32>(count - 1);
+        const f32 x = last - 0.25f;
+        const f32 z = last - 0.25f;
+        const optional<RayHit> corner =
+            Raycast(world.get(), dvec3(x, 10.0, z), vec3(0.0f, -1.0f, 0.0f), 40.0f);
+        REQUIRE(corner.has_value());
+        CHECK(std::abs(static_cast<f32>(corner->Position.y) - slope(x, z)) <= field.MaxError);
+        CHECK(corner->SurfaceTag == 3);
+        CHECK_FALSE(Raycast(world.get(), dvec3(last + 0.5, 10.0, last + 0.5),
+                            vec3(0.0f, -1.0f, 0.0f), 40.0f)
+                        .has_value());
+    }
+}
+
 TEST_CASE("a heightfield prepared on a worker is adopted without a rebuild, and its entry still "
           "drops once nothing holds it")
 {

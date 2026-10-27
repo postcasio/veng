@@ -383,9 +383,9 @@ namespace Veng
 
             /// @brief The solver's block size for a grid of @p sampleCount samples a side.
             ///
-            /// The solver culls by blocks and needs at least two of them; it pads the grid up to a
-            /// whole number of blocks with no-collision samples, so any count of three or more
-            /// builds.
+            /// The solver culls by blocks and needs at least two of them. BuildHeightFieldShape pads
+            /// the grid up to a whole number of blocks with no-collision samples before the solver
+            /// sees it, so any count of three or more builds.
             [[nodiscard]] u32 HeightFieldBlockSize(const u32 sampleCount)
             {
                 return sampleCount >= 5 ? 4U : 2U;
@@ -405,16 +405,26 @@ namespace Veng
                     new JPH::HeightFieldShapeSettings();
                 settings->mOffset = ToJolt(field.Origin);
                 settings->mScale = JPH::Vec3(field.Spacing, 1.0f, field.Spacing);
-                settings->mSampleCount = field.SampleCount;
-                settings->mBlockSize = HeightFieldBlockSize(field.SampleCount);
-                settings->mHeightSamples.resize(field.Heights.size());
-                for (usize i = 0; i < field.Heights.size(); ++i)
+                // The solver reads whole blocks when it sizes its quantization, past the end of a
+                // grid whose count is no multiple of the block size, so the grid is padded with
+                // no-collision samples (and untagged cells) to one that is.
+                const u32 count = field.SampleCount;
+                const u32 block = HeightFieldBlockSize(count);
+                const u32 padded = (count + block - 1) / block * block;
+                settings->mSampleCount = padded;
+                settings->mBlockSize = block;
+                settings->mHeightSamples.resize(usize{padded} * padded,
+                                                JPH::HeightFieldShapeConstants::cNoCollisionValue);
+                for (u32 z = 0; z < count; ++z)
                 {
-                    const f32 height = field.Heights[i];
-                    settings->mHeightSamples[i] =
-                        height == CollisionHeightField::Hole
-                            ? JPH::HeightFieldShapeConstants::cNoCollisionValue
-                            : height;
+                    for (u32 x = 0; x < count; ++x)
+                    {
+                        const f32 height = field.Heights[(usize{z} * count) + x];
+                        if (height != CollisionHeightField::Hole)
+                        {
+                            settings->mHeightSamples[(usize{z} * padded) + x] = height;
+                        }
+                    }
                 }
                 if (!field.CellTags.empty())
                 {
@@ -426,7 +436,15 @@ namespace Veng
                     {
                         settings->mMaterials.push_back(JPH::PhysicsMaterial::sDefault);
                     }
-                    settings->mMaterialIndices.assign(field.CellTags.begin(), field.CellTags.end());
+                    settings->mMaterialIndices.resize(usize{padded - 1} * (padded - 1), 0);
+                    for (u32 z = 0; z + 1 < count; ++z)
+                    {
+                        for (u32 x = 0; x + 1 < count; ++x)
+                        {
+                            settings->mMaterialIndices[(usize{z} * (padded - 1)) + x] =
+                                field.CellTags[(usize{z} * (count - 1)) + x];
+                        }
+                    }
                 }
                 settings->mBitsPerSample = settings->CalculateBitsPerSampleForError(field.MaxError);
 
