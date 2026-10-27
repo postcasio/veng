@@ -1,0 +1,11 @@
+{
+  "defaultInstance": "0xF9B6DEDD10C45A68",
+  "instancedSets": true,
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x7395162FD1642FCC"
+  },
+  "fields": [
+    { "name": "Select", "type": "vec4", "value": [1.0, 0.0, 0.0, 0.0] }
+  ]
+}

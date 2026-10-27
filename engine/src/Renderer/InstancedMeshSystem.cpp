@@ -1,5 +1,7 @@
 #include "InstancedMeshSystem.h"
 
+#include "SurfaceShadowPipelines.h"
+
 #include "DrawBudget.h"
 #include "GpuBlocks.h"
 #include "InstancedCull.h"
@@ -882,7 +884,8 @@ namespace Veng::Renderer
     }
 
     void InstancedMeshSystem::RecordGBuffer(CommandBuffer& cmd, const SurfacePush& push,
-                                            const Ref<DescriptorSet>& drawDataSet) const
+                                            const Ref<DescriptorSet>& drawDataSet,
+                                            SurfaceShadowPipelines& shadowReaders) const
     {
         if (!m_Prepared || m_ViewJobs.empty())
         {
@@ -895,9 +898,14 @@ namespace Veng::Renderer
         {
             const Job& job = m_Jobs[j];
             const SetEntry& entry = m_Sets[job.Set];
-            entry.Material->BindInstanced(cmd);
+            const bool readsShadowMaps =
+                shadowReaders.BindPipeline(cmd, *entry.Material, SurfacePipelineKind::Instanced);
             registry.Bind(cmd);
             cmd.BindDescriptorSets({drawDataSet.get()}, BindlessRegistry::FirstUserSet);
+            if (readsShadowMaps)
+            {
+                shadowReaders.BindShadowSet(cmd);
+            }
             SurfacePush setPush = push;
             setPush.InstanceBuffer = slot.DataHandle.Index;
             setPush.InstanceDraw = entry.DrawSlot;

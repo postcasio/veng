@@ -16,6 +16,7 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
+    class DescriptorSetLayout;
     struct ShaderInterface;
 }
 
@@ -31,6 +32,26 @@ namespace Veng
     /// A material declaring "sphereTerrain" names it as its vertex shader, and no other material
     /// may; the cook enforces both.
     inline constexpr AssetId SphereTerrainVertexShaderId{0x7D963B7185626B36ULL};
+
+    /// @brief The descriptor set a Surface fragment reads the shadow system at.
+    ///
+    /// Veng/light_visibility.slang declares it there. A Surface fragment declaring it reads the
+    /// shadow maps (Material::ReadsShadowMaps), and the g-buffer pass binds the renderer's shadow
+    /// set to it. Set 3 is the per-draw DrawData and set 4 the skinning palette or a sphere
+    /// terrain's tiles, so a Surface fragment declares no set 4 of its own.
+    inline constexpr u32 SurfaceShadowMapSet = 5;
+
+    /// @brief Which of a Surface material's g-buffer pipelines: the vertex stage it draws through.
+    enum class SurfacePipelineKind : u8
+    {
+        /// @brief The material's own vertex stage, drawing an entity's static mesh (or a sphere
+        ///        terrain, for a sphere-terrain material).
+        Static,
+        /// @brief The core skinned vertex stage, drawing a skinned mesh with its palette at set 4.
+        Skinned,
+        /// @brief The core instanced-set vertex stage, drawing an instanced mesh set.
+        Instanced,
+    };
 
     /// @brief Selects a material's output contract, pipeline shape, standard vertex shader, and invocation site.
     ///
@@ -394,7 +415,33 @@ namespace Veng
         /// declare it is reported and draws nothing.
         [[nodiscard]] bool IsSphereTerrain() const { return m_SphereTerrain; }
 
-        /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
+        /// @brief Returns whether the material's fragment reads the shadow maps.
+        ///
+        /// A Surface fragment declaring SurfaceShadowMapSet (through Veng/light_visibility.slang)
+        /// asks the shadow maps how much of a light reaches a point. Its g-buffer pipelines bind the
+        /// renderer's shadow set, whose layout carries the renderer's comparison sampler, so the
+        /// g-buffer pass builds them (BuildShadowReadingPipeline) and the material holds none:
+        /// GetPipeline and GetInstancedPipeline stay null, and the pipeline layout is the stages'
+        /// sets 3 and 4 alone.
+        [[nodiscard]] bool ReadsShadowMaps() const { return m_ReadsShadowMaps; }
+
+        /// @brief Builds a shadow-reading material's g-buffer pipeline of one kind against a
+        ///        renderer's shadow set layout.
+        ///
+        /// The layout is the kind's vertex stage merged with the fragment at sets 3 and 4 (set 4
+        /// the skinned palette, the terrain's tiles, or empty) and @p shadowLayout at
+        /// SurfaceShadowMapSet; the pipeline otherwise matches the one the material would have
+        /// built itself. Not cached: the caller owns the result.
+        /// @param assets       Asset manager, used to load the vertex stage and its layout.
+        /// @param kind         The pipeline to build.
+        /// @param shadowLayout The renderer's shadow set layout.
+        /// @pre ReadsShadowMaps() is true.
+        /// @return The pipeline, or a recoverable error string.
+        [[nodiscard]] Result<Ref<Renderer::GraphicsPipeline>>
+        BuildShadowReadingPipeline(AssetManager& assets, SurfacePipelineKind kind,
+                                   const Ref<Renderer::DescriptorSetLayout>& shadowLayout) const;
+
+        /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill) and a shadow-reading Surface material.
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
         {
             return m_Pipeline;
@@ -404,7 +451,7 @@ namespace Veng
         ///
         /// Built lazily by EnsureSkinnedPipeline the first time the material is drawn on a skinned
         /// mesh; null before that and for a non-Surface domain. The geometry pass binds it for a
-        /// skinned draw so the set-2 palette bind is valid.
+        /// skinned draw so the set-4 palette bind is valid.
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetSkinnedPipeline() const
         {
             return m_SkinnedPipeline;
@@ -417,7 +464,8 @@ namespace Veng
         /// (one whose fragment does not consume the full surface interpolant set) still loads. A
         /// no-op for a non-Surface domain, and after the first successful build. Fatal if the build
         /// fails — a fragment used on a skinned mesh must be compatible with the skinned vertex
-        /// stage.
+        /// stage. A shadow-reading material builds only the skinned layout (sets 3 and 4), which
+        /// GetSkinnedPipelineLayout returns; its skinned pipeline is the g-buffer pass's.
         /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
         void EnsureSkinnedPipeline(AssetManager& assets);
 
@@ -434,8 +482,9 @@ namespace Veng
         ///
         /// Called on the render thread by the renderer the first time an instanced mesh set draws
         /// this material. A no-op after the first successful build and for a material not declaring
-        /// SupportsInstancedSets(). Fatal if the build fails — a declared material's fragment must
-        /// be compatible with the instanced-set vertex stage.
+        /// SupportsInstancedSets(), and for a shadow-reading material, whose instanced-set
+        /// pipeline is the g-buffer pass's. Fatal if the build fails — a declared material's
+        /// fragment must be compatible with the instanced-set vertex stage.
         /// @param assets  Asset manager used to load the instanced vertex shader and its layout.
         void EnsureInstancedPipeline(AssetManager& assets);
 
@@ -461,10 +510,10 @@ namespace Veng
         BuildFragmentOverridePipeline(AssetManager& assets, const Shader& fragment,
                                       bool skinned) const;
 
-        /// @brief Returns the skinned pipeline's three-set layout, or null when the material has no skinned pipeline.
+        /// @brief Returns the skinned pipeline's layout, or null until EnsureSkinnedPipeline has run.
         ///
-        /// Set 0 bindless, set 1 DrawData, set 2 the skinning palette. The picking pass reuses it to
-        /// build its own skinned id pipeline, so its palette bind at set 2 is valid too.
+        /// Sets 0-2 bindless, set 3 DrawData, set 4 the skinning palette. The picking pass reuses it
+        /// to build its own skinned id pipeline, so its palette bind at set 4 is valid too.
         [[nodiscard]] Ref<Renderer::PipelineLayout> GetSkinnedPipelineLayout() const;
 
         /// @brief Returns the reflected pipeline layout (set 0 reserved for bindless; selector push range at the domain's offset).
@@ -578,8 +627,12 @@ namespace Veng
         bool m_ReadsSceneDepth = false;
         bool m_InstancedSets = false;
         bool m_SphereTerrain = false;
+        /// @brief Whether the fragment declares SurfaceShadowMapSet; resolved at Finalize.
+        bool m_ReadsShadowMaps = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
+        /// @brief The skinned pipeline's layout, set by EnsureSkinnedPipeline.
+        Ref<Renderer::PipelineLayout> m_SkinnedPipelineLayout;
         Ref<Renderer::GraphicsPipeline> m_InstancedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;
 

@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002400",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x67077ECD2D8C4F1A",
+      "type": "Shader",
+      "source": "shaders/forward_opaque.frag.shader.json"
+    },
+    {
+      "id": "0x3AEA87F2E94072A6",
+      "type": "Material",
+      "source": "materials/forward_opaque.vmat.json"
+    },
+    {
+      "id": "0x7395162FD1642FCC",
+      "type": "Shader",
+      "source": "shaders/shadow_visibility.frag.shader.json"
+    },
+    {
+      "id": "0x21638E77489FC4CB",
+      "type": "Material",
+      "source": "materials/shadow_visibility.vmat.json"
+    },
+    {
+      "id": "0x65FD7B4F47018054",
+      "type": "Shader",
+      "source": "shaders/channel_surface.frag.shader.json"
+    },
+    {
+      "id": "0xC5F58D5EF984E613",
+      "type": "Material",
+      "source": "materials/channel_surface.vmat.json"
+    },
+    {
+      "id": "0x12DEF77837E67AB6",
+      "type": "Shader",
+      "source": "shaders/channel_forward.frag.shader.json"
+    },
+    {
+      "id": "0x631819A99AB7EE62",
+      "type": "Material",
+      "source": "materials/channel_forward.vmat.json"
+    },
+    {
+      "id": "0x8D4AA914459D764F",
+      "type": "Shader",
+      "source": "shaders/translucent_metering.frag.shader.json"
+    },
+    {
+      "id": "0x05D95135D3A8BEEF",
+      "type": "Material",
+      "source": "materials/translucent_metering.vmat.json"
+    },
+    {
+      "id": "0x0000000000002402",
+      "type": "Shader",
+      "source": "shaders/skinned_surface.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002404",
+      "type": "Material",
+      "source": "materials/skinned_surface.vmat.json"
+    },
+    {
+      "id": "0x0000000000002D01",
+      "type": "Skeleton",
+      "source": "meshes/skinned.skeleton.json"
+    },
+    {
+      "id": "0x0000000000002D13",
+      "type": "Mesh",
+      "source": "meshes/skinned.mesh.json"
+    }
+  ]
+}

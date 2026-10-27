@@ -382,7 +382,7 @@ namespace Veng::Renderer
                                        .Name = "SceneRenderer GBuffer ORM",
                                        .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
                                        .Format = GBuffer::ORMFormat,
-                                       .Usage = GBuffer::ColorUsage,
+                                       .Usage = GBuffer::ORMUsage,
                                    });
         m_OrmView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer ORM View", .Image = m_OrmImage});

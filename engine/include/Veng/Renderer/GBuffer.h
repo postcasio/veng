@@ -42,11 +42,12 @@ namespace Veng::Renderer
         ///
         /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit. The alpha is the
         /// surface-flags channel a material writes through the values in the core shader header
-        /// `Veng/surface_flags.slang` — three independent flags, one declining shadow-map
-        /// reception, one declining the sky's image-based or SH ambient for the flat floor, and one
-        /// keeping the surface out of the auto-exposure meter, encoded as a three-bit code over
-        /// eight UNORM8 levels and point-loaded by the lighting pass and the meter. A material
-        /// writing 0 there gets the ordinary shading path and is metered.
+        /// `Veng/surface_flags.slang` — one flag declining shadow-map reception, one declining the
+        /// sky's image-based or SH ambient for the flat floor, the surface's light channels, and
+        /// one keeping the surface out of the auto-exposure meter, encoded as an eight-bit code over
+        /// `/255` (which UNORM8 stores exactly) and point-loaded by the lighting pass and the meter.
+        /// A material writing 0 there gets the ordinary shading path, in light channel 0, and is
+        /// metered.
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
         /// @brief G3 — screen-space motion vector, written by the surface pass.
@@ -84,6 +85,12 @@ namespace Veng::Renderer
         /// ColorUsage plus TransferSrc: the screen-space reflection denoiser copies the frame's
         /// normal into its history at the end of the chain.
         inline constexpr ImageUsage NormalUsage = ColorUsage | ImageUsage::TransferSrc;
+
+        /// @brief Usage flags for the packed-material attachment (G2).
+        ///
+        /// ColorUsage plus TransferSrc, so the surface flags a frame wrote can be read back
+        /// (SceneRenderer::GetOrmView) by a diagnostic or a test.
+        inline constexpr ImageUsage ORMUsage = ColorUsage | ImageUsage::TransferSrc;
 
         /// @brief Usage flags for the depth attachment.
         ///

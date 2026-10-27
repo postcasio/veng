@@ -143,13 +143,30 @@ namespace Veng
 
     Ref<Renderer::PipelineLayout> Material::GetSkinnedPipelineLayout() const
     {
-        return m_SkinnedPipeline != nullptr ? m_SkinnedPipeline->GetPipelineLayout() : nullptr;
+        return m_SkinnedPipelineLayout;
     }
 
     void Material::EnsureSkinnedPipeline(AssetManager& assets)
     {
-        if (m_Domain != MaterialDomain::Surface || m_SkinnedPipeline != nullptr)
+        if (m_Domain != MaterialDomain::Surface || m_SkinnedPipelineLayout != nullptr)
         {
+            return;
+        }
+
+        if (m_ReadsShadowMaps)
+        {
+            const AssetResult<AssetHandle<Shader>> skinnedVs =
+                assets.LoadSync<Shader>(Detail::SurfaceSkinnedVertId);
+            VE_ASSERT(
+                skinnedVs.has_value(),
+                "Material::EnsureSkinnedPipeline: '{}' skinned vertex stage failed to load: {}",
+                m_Name, skinnedVs.has_value() ? "" : skinnedVs.error().Detail);
+            Result<Ref<Renderer::PipelineLayout>> layout = Detail::BuildSurfacePipelineLayout(
+                m_Context, m_Id, *skinnedVs->Get(), *m_FragmentShader.Get(), false);
+            VE_ASSERT(layout.has_value(),
+                      "Material::EnsureSkinnedPipeline: '{}' skinned layout build failed: {}",
+                      m_Name, layout.has_value() ? "" : layout.error());
+            m_SkinnedPipelineLayout = std::move(*layout);
             return;
         }
 
@@ -159,11 +176,12 @@ namespace Veng
                   "Material::EnsureSkinnedPipeline: '{}' skinned pipeline build failed: {}", m_Name,
                   built.has_value() ? "" : built.error());
         m_SkinnedPipeline = std::move(*built);
+        m_SkinnedPipelineLayout = m_SkinnedPipeline->GetPipelineLayout();
     }
 
     void Material::EnsureInstancedPipeline(AssetManager& assets)
     {
-        if (!m_InstancedSets || m_InstancedPipeline != nullptr)
+        if (!m_InstancedSets || m_ReadsShadowMaps || m_InstancedPipeline != nullptr)
         {
             return;
         }
@@ -193,7 +211,7 @@ namespace Veng
                 m_PipelineLayout, *m_VertexShader.Get(), fragment, m_CullMode);
         }
 
-        if (m_SkinnedPipeline == nullptr)
+        if (m_SkinnedPipelineLayout == nullptr)
         {
             return std::unexpected(fmt::format(
                 "material '{}': a skinned fragment override needs the skinned pipeline built first",
@@ -207,7 +225,45 @@ namespace Veng
         }
         return Detail::BuildSurfacePipeline(
             assets, m_Context, fmt::format("Material {} Skinned Override Pipeline", m_Id.Value),
-            m_SkinnedPipeline->GetPipelineLayout(), *skinnedVs->Get(), fragment, m_CullMode);
+            m_SkinnedPipelineLayout, *skinnedVs->Get(), fragment, m_CullMode);
+    }
+
+    Result<Ref<Renderer::GraphicsPipeline>> Material::BuildShadowReadingPipeline(
+        AssetManager& assets, const SurfacePipelineKind kind,
+        const Ref<Renderer::DescriptorSetLayout>& shadowLayout) const
+    {
+        if (!m_ReadsShadowMaps)
+        {
+            return std::unexpected(
+                fmt::format("material '{}': its fragment reads no shadow map", m_Name));
+        }
+
+        AssetHandle<Shader> vertex = m_VertexShader;
+        if (kind != SurfacePipelineKind::Static)
+        {
+            AssetResult<AssetHandle<Shader>> stage = assets.LoadSync<Shader>(
+                kind == SurfacePipelineKind::Skinned ? Detail::SurfaceSkinnedVertId
+                                                     : Detail::SurfaceInstancedVertId);
+            if (!stage)
+            {
+                return std::unexpected(stage.error().Detail);
+            }
+            vertex = std::move(*stage);
+        }
+
+        const bool terrain = m_SphereTerrain && kind == SurfacePipelineKind::Static;
+        Result<Ref<Renderer::PipelineLayout>> layout = Detail::BuildSurfacePipelineLayout(
+            m_Context, m_Id, *vertex.Get(), *m_FragmentShader.Get(), terrain, shadowLayout);
+        if (!layout)
+        {
+            return std::unexpected(layout.error());
+        }
+        // The terrain and instanced-set stages find their instance through the instance index.
+        return Detail::BuildSurfacePipeline(
+            assets, m_Context, fmt::format("Material {} Shadow-Reading Pipeline", m_Id.Value),
+            *layout, *vertex.Get(), *m_FragmentShader.Get(), m_CullMode,
+            /*instanceCandidateId=*/kind == SurfacePipelineKind::Skinned ||
+                (kind == SurfacePipelineKind::Static && !m_SphereTerrain));
     }
 
     void Material::Finalize(Ref<Renderer::PipelineLayout> layout,
@@ -219,9 +275,11 @@ namespace Veng
         // A Surface material binds its own pipeline; every pass-built domain is finalized with a
         // null pipeline (its pass builds the GraphicsPipeline against the runtime color format —
         // and, for GuiFill, the gui vertex layout and blend state — and binds it).
+        m_ReadsShadowMaps = m_FragmentShader.IsLoaded() &&
+                            Detail::FragmentReadsShadowMaps(m_Domain, GetFragmentInterface());
         VE_ASSERT(pipeline != nullptr || m_Domain == MaterialDomain::PostProcess ||
                       m_Domain == MaterialDomain::Sky || m_Domain == MaterialDomain::Translucent ||
-                      m_Domain == MaterialDomain::GuiFill,
+                      m_Domain == MaterialDomain::GuiFill || m_ReadsShadowMaps,
                   "Material::Finalize: '{}' given a null pipeline", m_Name);
 
         m_PipelineLayout = std::move(layout);

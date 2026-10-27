@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x00C2932CEF4F6127",
+      "type": "Shader",
+      "source": "shaders/surface_set_four.frag.shader.json"
+    },
+    {
+      "id": "0x89A19D9060F4A1E0",
+      "type": "Material",
+      "source": "materials/surface_set_four.vmat.json"
+    }
+  ]
+}

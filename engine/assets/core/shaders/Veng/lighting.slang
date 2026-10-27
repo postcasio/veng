@@ -26,6 +26,7 @@
 #include "Veng/sh.slang"
 #include "Veng/light_flags.slang"
 #include "Veng/ltc.slang"
+#include "Veng/surface_flags.slang"
 
 #include "Veng/ibl_maps.slang"
 
@@ -60,6 +61,7 @@ struct LightingSurface
     float  ViewDepth;        // positive view-space distance in front of the camera (cascade select)
     bool   DeclinesShadowMaps; // take full visibility in place of every shadow-atlas lookup
     bool   DeclinesEnvironmentLighting; // take the flat ambient floor in place of the sky's arm
+    uint   LightChannels;    // the channels the surface is in (bit c for channel c); a light sharing none skips it
 };
 
 // Diffuse and specular outgoing radiance, kept apart so a caller can weight them independently.
@@ -113,6 +115,7 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     s.ViewDepth = -mul(vc.View, float4(position, 1.0)).z;
     s.DeclinesShadowMaps = declinesShadowMaps;
     s.DeclinesEnvironmentLighting = declinesEnvironmentLighting;
+    s.LightChannels = SurfaceLightChannelsDefault;
     return s;
 }
 
@@ -338,12 +341,17 @@ float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
 
 // Adds one light's shadowed Cook-Torrance response at the surface to direct. Directional lights
 // have no attenuation; point/spot fall off with distance, and spot adds a cone factor; area lights
-// integrate analytically through LTC. A light whose contribution here is exactly zero — zero
-// radiance, the pixel at or past its range or outside its cone, or the light behind the surface —
-// returns before its shadow lookup and BRDF.
+// integrate analytically through LTC. A light whose contribution here is exactly zero — sharing no
+// light channel with the surface, zero radiance, the pixel at or past its range or outside its
+// cone, or the light behind the surface — returns before its shadow lookup and BRDF.
 void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
                      inout LightingResult direct)
 {
+    if ((LightChannels(light.Cone.w) & s.LightChannels) == 0u)
+    {
+        return;
+    }
+
     float3 N = s.Normal;
     float3 worldPos = s.Position;
 

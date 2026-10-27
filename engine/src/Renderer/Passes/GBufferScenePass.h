@@ -18,6 +18,7 @@ namespace Veng::Renderer
     class GBufferShadingOverride;
     class InstancedMeshSystem;
     class SphereTerrainSystem;
+    class SurfaceShadowPipelines;
 
     /// @brief Records a draw group's instanced runs: one DrawIndexed per run.
     ///
@@ -38,7 +39,9 @@ namespace Veng::Renderer
     /// draws issue one DrawIndexedIndirect per group over the cull-written command run;
     /// under CullMode::CPU a direct DrawIndexed per surviving slot. Under the shading override each
     /// group binds its material's override pipeline instead of the material's own, and records the
-    /// same draws.
+    /// same draws. A material whose fragment reads the shadow maps binds the pipeline built for it
+    /// against the renderer's shadow layout, and the shadow set at SurfaceShadowMapSet, so the pass
+    /// declares the shadow atlases sampled.
     class GBufferScenePass final : public ScenePass
     {
     public:
@@ -54,14 +57,17 @@ namespace Veng::Renderer
         /// @param instanced   The instanced mesh sets to draw after the entity draws, or null while
         ///                    the scene carries none.
         /// @param terrain     The renderer's sphere terrains, drawn after the entity draws.
+        /// @param shadowReaders Binds each material's pipeline, and the shadow set for a material
+        ///                    reading the shadow maps.
         GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
                          SceneRendererSettings::CullMode cull, ResourceId indirectId,
                          const GBufferChannelStates& stores,
                          const GBufferShadingOverride* shadingOverride,
-                         const InstancedMeshSystem* instanced, const SphereTerrainSystem* terrain)
+                         const InstancedMeshSystem* instanced, const SphereTerrainSystem* terrain,
+                         SurfaceShadowPipelines& shadowReaders)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
               m_IndirectId(indirectId), m_Stores(stores), m_ShadingOverride(shadingOverride),
-              m_Instanced(instanced), m_Terrain(terrain)
+              m_Instanced(instanced), m_Terrain(terrain), m_ShadowReaders(&shadowReaders)
         {
         }
 
@@ -92,5 +98,7 @@ namespace Veng::Renderer
         const InstancedMeshSystem* m_Instanced = nullptr;
         /// @brief The sphere terrains drawn after the entity draws.
         const SphereTerrainSystem* m_Terrain = nullptr;
+        /// @brief Binds the materials' pipelines, and the shadow set for one reading it.
+        SurfaceShadowPipelines* m_ShadowReaders = nullptr;
     };
 }

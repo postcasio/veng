@@ -400,6 +400,7 @@ add_library(veng SHARED
         src/Renderer/SphereTerrainSystem.cpp
         src/Renderer/SphereTerrainVertex.cpp
         src/Renderer/GBufferShadingOverride.cpp
+        src/Renderer/SurfaceShadowPipelines.cpp
         src/Renderer/LightTileCuller.cpp
         src/Renderer/SsrChain.cpp
         src/Renderer/ParticleSimulation.cpp

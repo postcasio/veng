@@ -14,6 +14,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
@@ -85,11 +86,17 @@ namespace Veng
         // registries, author-declared sets shifted to 3+, the merged push-constant
         // ranges. A drifted shader (no selector push-constant range at the
         // domain's offset) is a recoverable Corrupt failure.
-        Result<Ref<Renderer::PipelineLayout>> BuildPipelineLayout(Renderer::Context& context,
-                                                                  AssetId id, MaterialDomain domain,
-                                                                  const Veng::Shader& vsAsset,
-                                                                  const Veng::Shader& fsAsset)
+        //
+        // A Surface fragment reading the shadow maps declares set 5, which no reflected layout can
+        // stand for (the renderer's carries an immutable comparison sampler), so its reflected
+        // bindings are dropped, set 4 is left empty where the stages declare none, and the set is
+        // shadowLayout when one is given and absent otherwise.
+        Result<Ref<Renderer::PipelineLayout>>
+        BuildPipelineLayout(Renderer::Context& context, AssetId id, MaterialDomain domain,
+                            const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
+                            const Ref<Renderer::DescriptorSetLayout>& shadowLayout = nullptr)
         {
+            const bool readsShadowMaps = Detail::FragmentReadsShadowMaps(domain, fsAsset.Interface);
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
             const Renderer::ShaderInterface& fsInterface = fsAsset.Interface;
 
@@ -125,11 +132,44 @@ namespace Veng
                     }
                 }
 
+                if (readsShadowMaps)
+                {
+                    for (const Renderer::ShaderBinding& binding : merged.Bindings)
+                    {
+                        if (binding.Set > SurfaceShadowMapSet)
+                        {
+                            return std::unexpected(fmt::format(
+                                "material: Surface binding '{}' is in set {}; a Surface material's "
+                                "stages declare no set past the shadow set {}",
+                                binding.Name, binding.Set, SurfaceShadowMapSet));
+                        }
+                    }
+                    std::erase_if(merged.Bindings, [](const Renderer::ShaderBinding& binding)
+                                  { return binding.Set == SurfaceShadowMapSet; });
+                }
+
                 const vector<Ref<Renderer::DescriptorSetLayout>> setLayouts =
                     merged.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
                 for (auto& l : setLayouts)
                 {
                     descLayouts.push_back(l);
+                }
+
+                if (readsShadowMaps)
+                {
+                    constexpr usize shadowIndex =
+                        SurfaceShadowMapSet - Renderer::BindlessRegistry::FirstUserSet;
+                    while (descLayouts.size() < shadowIndex)
+                    {
+                        descLayouts.push_back(Renderer::DescriptorSetLayout::Create(
+                            context, {.Name = fmt::format("Material{} Set {}", id.Value,
+                                                          Renderer::BindlessRegistry::FirstUserSet +
+                                                              descLayouts.size())}));
+                    }
+                    if (shadowLayout != nullptr)
+                    {
+                        descLayouts.push_back(shadowLayout);
+                    }
                 }
             }
 
@@ -192,6 +232,32 @@ namespace Veng
                              .PushConstantRanges = mergedRanges,
                          });
         }
+    }
+
+    bool Detail::FragmentReadsShadowMaps(const MaterialDomain domain,
+                                         const Renderer::ShaderInterface& fragment)
+    {
+        return domain == MaterialDomain::Surface &&
+               std::ranges::any_of(fragment.Bindings, [](const Renderer::ShaderBinding& binding)
+                                   { return binding.Set == SurfaceShadowMapSet; });
+    }
+
+    Result<Ref<Renderer::PipelineLayout>>
+    Detail::BuildSurfacePipelineLayout(Renderer::Context& context, const AssetId id,
+                                       const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
+                                       const bool sphereTerrain,
+                                       const Ref<Renderer::DescriptorSetLayout>& shadowLayout)
+    {
+        Result<Ref<Renderer::PipelineLayout>> layout = BuildPipelineLayout(
+            context, id, MaterialDomain::Surface, vsAsset, fsAsset, shadowLayout);
+        if (!layout || !sphereTerrain)
+        {
+            return layout;
+        }
+        // A terrain pipeline binds the terrain's own set 4, written once a frame for every terrain
+        // material, so its layout carries that set rather than the reflected one.
+        return Renderer::WithSphereTerrainSet(context, **layout,
+                                              fmt::format("Material {} Terrain Layout", id.Value));
     }
 
     Result<Ref<Renderer::GraphicsPipeline>>
@@ -582,26 +648,21 @@ namespace Veng
                              material, sphereTerrain]() -> VoidResult
                 {
                     Result<Ref<Renderer::PipelineLayout>> layout =
-                        BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
+                        domain == MaterialDomain::Surface
+                            ? Detail::BuildSurfacePipelineLayout(context, id, *vsHandle.Get(),
+                                                                 *fsHandle.Get(), sphereTerrain)
+                            : BuildPipelineLayout(context, id, domain, *vsHandle.Get(),
+                                                  *fsHandle.Get());
                     if (!layout)
                     {
                         return std::unexpected(layout.error());
                     }
-                    // A terrain pipeline binds the terrain's own set 4, written once a frame for
-                    // every terrain material, so its layout carries that set rather than the
-                    // reflected one.
-                    if (sphereTerrain)
-                    {
-                        layout = Renderer::WithSphereTerrainSet(
-                            context, **layout, fmt::format("Material {} Terrain Layout", id.Value));
-                        if (!layout)
-                        {
-                            return std::unexpected(layout.error());
-                        }
-                    }
 
+                    // A shadow-reading Surface material's pipelines bind the renderer's shadow set,
+                    // so the g-buffer pass builds them against its layout; the material builds none.
                     Ref<Renderer::GraphicsPipeline> pipeline;
-                    if (domain == MaterialDomain::Surface)
+                    if (domain == MaterialDomain::Surface &&
+                        !Detail::FragmentReadsShadowMaps(domain, fsHandle.Get()->Interface))
                     {
                         // The terrain stage reads its tile through the instance index, not an
                         // instance-rate candidate id.

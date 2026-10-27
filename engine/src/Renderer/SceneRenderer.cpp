@@ -15,6 +15,7 @@
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "GBufferShadingOverride.h"
+#include "SurfaceShadowPipelines.h"
 #include "InstancedMeshSystem.h"
 #include "LensDirt.h"
 #include "LightTileCuller.h"
@@ -373,6 +374,8 @@ namespace Veng::Renderer
         m_SphereTerrain = SphereTerrainSystem::Create(m_Context, m_Assets);
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
+        m_SurfaceShadows =
+            SurfaceShadowPipelines::Create(m_Context, m_Assets, m_Shadows->GetSetLayout());
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
         // The depth-of-field chain's tile and fill pipeline layouts reserve the bloom down/up set
@@ -825,6 +828,8 @@ namespace Veng::Renderer
         // are off, before the passes below copy their Refs.
         m_Shadows->RebuildSets(m_Topology->ShadowActive ? shadowAtlasView
                                                         : m_Shadows->GetDummyView());
+        m_SurfaceShadows->SetShadowSet(m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
+                                       m_Shadows->GetPunctualRingStride());
 
         // A forward-lit translucent draw binds the same IBL and shadow sets the lighting pass does,
         // so they are read after the shadow set is rebuilt above.
@@ -914,7 +919,7 @@ namespace Veng::Renderer
             m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
             m_Topology->GBufferStores,
             m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr, instanced,
-            m_SphereTerrain.get());
+            m_SphereTerrain.get(), *m_SurfaceShadows);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint

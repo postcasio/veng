@@ -106,7 +106,11 @@ namespace Veng::Cook
     /// @param entry       Name of the fragment entry point to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
     ///                         source resolves `#include "Veng/surface.slang"`; empty to skip it.
+    /// @param descriptorSets   When non-null, receives the distinct descriptor sets the linked
+    ///                         program's resource parameters declare at or past the first author
+    ///                         set (3), ascending — the sets the cooked shader's interface carries.
     [[nodiscard]] Result<vector<ReflectedFragmentOutput>>
     ReflectFragmentOutputs(const SlangModuleSource& slangSource, std::string_view entry,
-                           const path& shaderIncludeDir = {});
+                           const path& shaderIncludeDir = {},
+                           vector<u32>* descriptorSets = nullptr);
 }

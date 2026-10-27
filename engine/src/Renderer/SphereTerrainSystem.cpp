@@ -1,5 +1,7 @@
 #include "SphereTerrainSystem.h"
 
+#include "SurfaceShadowPipelines.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -645,7 +647,8 @@ namespace Veng::Renderer
     }
 
     void SphereTerrainSystem::RecordGBuffer(CommandBuffer& cmd, const SurfacePush& push,
-                                            const Ref<DescriptorSet>& drawDataSet) const
+                                            const Ref<DescriptorSet>& drawDataSet,
+                                            SurfaceShadowPipelines& shadowReaders) const
     {
         if (!m_Prepared)
         {
@@ -666,10 +669,15 @@ namespace Veng::Renderer
                 {
                     continue;
                 }
-                drawn.Material->Bind(cmd);
+                const bool readsShadowMaps =
+                    shadowReaders.BindPipeline(cmd, *drawn.Material, SurfacePipelineKind::Static);
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets({drawDataSet.get(), terrain.Set},
                                        BindlessRegistry::FirstUserSet);
+                if (readsShadowMaps)
+                {
+                    shadowReaders.BindShadowSet(cmd);
+                }
                 SurfacePush terrainPush = push;
                 terrainPush.InstanceBuffer = surface;
                 terrainPush.InstanceDraw = drawn.DrawSlot;

@@ -105,11 +105,34 @@ TEST_CASE("PackSceneLights: a lone directional packs into cascade set 0 with no 
     CHECK(light.DirectionType.w == doctest::Approx(0.0f)); // LightType::Directional
     CHECK(light.ColorIntensity.a == doctest::Approx(2.0f * LuminousAnchor));
     CHECK(light.Cone.z == doctest::Approx(-1.0f));
-    CHECK(light.Cone.w == doctest::Approx(0.0f));
+    // Its flags word is the default light channel and nothing else.
+    CHECK(static_cast<u32>(light.Cone.w) == (0x1u << LightFlags::ChannelShift));
     CHECK(light.Area.w == doctest::Approx(-1.0f));
     CHECK(light.AreaNormal.w == doctest::Approx(0.0f));
     CHECK(packed.PunctualCount == 0);
     CHECK(packed.DeniedDirectionalCount == 0);
+}
+
+TEST_CASE("PackSceneLights: a light's channels pack into its flags word, and a light lighting no "
+          "channel is not packed")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    const auto AddDirectional = [&](const u8 channels)
+    {
+        scene->Add<Light>(scene->CreateEntity()) =
+            Light{.Type = LightType::Directional, .Intensity = 1.0f, .Channels = channels};
+    };
+    AddDirectional(0x05);
+    AddDirectional(0x00);
+    // Bits past the three channels are not channels: this one lights none.
+    AddDirectional(0x08);
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+    REQUIRE(packed.LightCount == 1);
+    CHECK(((static_cast<u32>(packed.Lights[0].Cone.w) & LightFlags::ChannelMask) >>
+           LightFlags::ChannelShift) == 0x5u);
 }
 
 TEST_CASE("PackSceneLights: a directional's angular radius packs into Area.x as its sine")

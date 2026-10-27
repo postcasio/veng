@@ -8,6 +8,8 @@
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
+
 #include "SlangSession.h"
 
 namespace Veng::Cook
@@ -465,7 +467,7 @@ namespace Veng::Cook
 
     Result<vector<ReflectedFragmentOutput>>
     ReflectFragmentOutputs(const SlangModuleSource& slangSource, std::string_view entry,
-                           const path& shaderIncludeDir)
+                           const path& shaderIncludeDir, vector<u32>* descriptorSets)
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -547,6 +549,28 @@ namespace Veng::Cook
             return std::unexpected(
                 fmt::format("material importer: '{}': entry point '{}' is not a fragment stage",
                             slangSource.Path.string(), entry));
+        }
+
+        if (descriptorSets != nullptr)
+        {
+            // The parameters the shader importer reflects into the cooked interface: every global
+            // that is not the push block, in an author set.
+            descriptorSets->clear();
+            for (unsigned i = 0; i < layout->getParameterCount(); ++i)
+            {
+                slang::VariableLayoutReflection* param = layout->getParameterByIndex(i);
+                if (param->getCategory() == slang::ParameterCategory::PushConstantBuffer)
+                {
+                    continue;
+                }
+                const u32 set = param->getBindingSpace();
+                if (set >= Veng::Renderer::BindlessRegistry::FirstUserSet &&
+                    std::ranges::find(*descriptorSets, set) == descriptorSets->end())
+                {
+                    descriptorSets->push_back(set);
+                }
+            }
+            std::ranges::sort(*descriptorSets);
         }
 
         return CollectOutputs(entryLayout->getResultVarLayout(), entry);

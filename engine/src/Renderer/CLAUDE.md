@@ -737,7 +737,8 @@ memory and one traversal.
 **A view packs only the lights that can light it, and past the cap the brightest.** One view
 carries `MaxLights` (128) lights, and every pixel the lighting pass shades visits each of them its
 tile has not culled, so a slot spent on a light that adds nothing costs pixels across the screen. `PackSceneLights` skips a light of zero
-radiance, a positioned light of non-positive range, an area light whose emitter has no area, and —
+radiance, a positioned light of non-positive range, a light lighting no light channel, an area light
+whose emitter has no area, and —
 given the camera frustum — a positioned light whose range sphere (grown by its emitter's reach)
 misses it. The rest are ranked by the radiance each delivers at the camera position (inverse square
 from the emitter's surface, clamped one world unit out; deliberately without the range cutoff, which
@@ -747,7 +748,7 @@ Rect or Polygon light also packs its world-space vertices into the view's area-v
 at `MaxAreaVertices` (eight per light, so a view of `MaxLights` Rects always fits); a Polygon that would
 overflow it packs with no geometry and lights nothing.
 **The loop skips what cannot light a pixel** (`EvaluateDirectLighting`, `Veng/lighting.slang`): a
-light of zero radiance, a pixel at or past a light's range (for an area light, tested before the LTC
+light sharing no light channel with the surface (see "Light channels"), a light of zero radiance, a pixel at or past a light's range (for an area light, tested before the LTC
 integral), a pixel outside a spot's cone, and a punctual or directional light behind the surface
 each return before the shadow lookup and the BRDF. Each skip is exact — the term it skips is
 zero — so it changes cost, never the image.
@@ -931,6 +932,25 @@ lane — its reach, tile cull and cascade shadow are unchanged. `tests/gpu/specu
 a mirror plane: a directional highlight's half-maximum radius tracks `AngularRadius` with its
 reflected energy conserved, and a point light's highlight grows with its `Radius`.
 
+**A light lights only the surfaces sharing a light channel with it.** `Light::Channels` (a `u8`,
+default `0x01`) is the set of channels the light lights, three of them (`LightChannelCount`); the
+packed light carries it in bits 6–8 of its flags word (`LightFlags::ChannelMask`, `LightChannels` in
+`Veng/light_flags.slang`), and a light naming no channel is not packed. A surface's membership is a
+material property, written into its surface flags by `SurfaceLightChannels(mask)`
+(`Veng/surface_flags.slang`, see "The deferred opaque material g-buffer contract") or, for a
+forward-lit surface, `ForwardSurface::LightChannels`; every surface is in channel 0 alone unless its
+material says otherwise. `AccumulateLight` returns before its shadow lookup and its BRDF when
+`(light channels & surface channels) == 0`, so the deferred pass, the forward loop and anything else
+built on the core agree, and a skipped light costs one test. Sprites and particles carry no
+membership and are members of channel 0. The tile cull is per tile and ignores channels. It is the
+standard tool for keeping a light off a set of surfaces — an interior fill that must not light the
+exterior seen through a window, a rim light reaching one character — and the half of a self-lit
+surface's contract that keeps the light it computes itself from being added twice (see "A Surface
+fragment may read the shadow maps"). A light either lights a surface or does not: there is no
+per-term exclusion. `tests/gpu/light_channels.cpp` pins the memberships under a channel-0 and a
+channel-0|1 light, deferred and forward, and that naming every channel lights a default surface
+exactly as channel 0 does.
+
 ### The scene-gizmo layer
 
 **Most of what a scene holds draws nothing**, and `Veng/Renderer/SceneGizmos.h` is the one pass
@@ -972,7 +992,7 @@ producer→consumer resource needs no global registration. The set-0 view-consta
 trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an index into the
 punctual record array, or `-1` for unshadowed) rides `Cone.z` and its **flags word** — the
 two-sided bit, the area-light cascade arm, the cascade-set index and the cascade denial — rides
-`Cone.w`, keeping `LightStride` fixed; the bit meanings are `Renderer::LightFlags` and its shader
+`Cone.w` with its light channels, keeping `LightStride` fixed; the bit meanings are `Renderer::LightFlags` and its shader
 mirror `Veng/light_flags.slang`. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution`
 (default 1024) are the directional CSM knobs; `MaxShadowDistance` and `MinShadowDistance`
 bound the fitted cascade range at each end (the far cap, and the near-side mirror that keeps
@@ -1322,7 +1342,8 @@ surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
   ignition gate, the frame blend, the soft fade, and the unlit path — written as functions of plain
   values (and, for the frame blend, a texture and sampler handed in), so a tool previewing a bake
   includes it with no binding of the renderer's. The bound half adds the per-sprite light gather and
-  the ambient, and reaches the scene through `Veng/medium_lighting.slang` (light buffer, shadows at
+  the ambient, and reaches the scene through `Veng/medium_lighting.slang` (which re-exports
+  `Veng/light_visibility.slang`: light buffer, shadows at
   set 5, IBL at set 4) and `Veng/scene_depth.slang`.
 - **Lighting is gathered once per sprite, in the vertex stage.** A six-way sprite's frame is the
   camera's rolled right and up, `Z = X × Y` toward the viewer, centred on the frame centre with a
@@ -1336,7 +1357,8 @@ surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
   (`SpriteAreaLightFalloff`): a Sphere's luminance over its disc, `L·πr²/d²`, and a Rect's or
   Polygon's over its area, foreshortened by the cosine it faces the sprite at (either face when
   two-sided, none behind a one-sided one), with the same distance floor, range fade and blend.
-  Visibility is `LightVisibility` at the centre through the 3×3 PCF kernel, one lookup per light. Every vertex computes the same gather from the same inputs, and
+  Visibility is `LightVisibility` at the centre through the 3×3 PCF kernel, one lookup per light; a
+  sprite is a member of light channel 0, so a light not on it is skipped. Every vertex computes the same gather from the same inputs, and
   it reaches the fragment flat: seven RGB terms, six axes and the ambient. The comparison sample at
   an explicit level of 0 is legal in a vertex function, and runs there on MoltenVK.
 - **The six-way weights are the squared components** of the light's direction in the sprite's
@@ -1705,9 +1727,11 @@ specular term, or divides it out, rather than letting the blend dim both alike.
 
 **A medium a Translucent material marches asks the shadow maps about any point.**
 `Veng/medium_lighting.slang` is the medium's counterpart of the forward loop — volumetric fog with
-light shafts, dust lit through a window, any view-filling medium a material integrates itself. It
-includes `shadow.slang`, `Veng/light_buffer.slang` and `Veng/light_flags.slang`, not the lighting
-core, plus `Veng/ibl_maps.slang`'s set-4 declarations, which it never samples: a material's
+light shafts, dust lit through a window, any view-filling medium a material integrates itself. Its
+queries are `Veng/light_visibility.slang`'s, which declares `shadow.slang` at set 5,
+`Veng/light_buffer.slang` and `Veng/light_flags.slang` and nothing of the lighting core, and which a
+Surface fragment includes too (see "A Surface fragment may read the shadow maps"); the medium header
+adds `Veng/ibl_maps.slang`'s set-4 declarations, which it never samples: a translucent material's
 declared sets must be contiguous (`ShaderInterface::GroupBindingsBySet`), and the forward-lit
 layout binds set 4 ahead of the shadow set. It answers three questions:
 
@@ -1716,7 +1740,9 @@ layout binds set 4 ahead of the shadow set. It answers three questions:
   `AccumulateLight` does — a Directional's cascade set, a near-parallel area light's cascade set,
   any other light's punctual tile — through the same lookups, at the point's own view depth, so a
   surface and a medium at one point agree on whether it is shadowed. A medium has no normal, so the
-  normal-offset bias steps toward the light (`N := L`). An area light's tile is read through the
+  normal-offset bias steps toward the light (`N := L`); the surface overload
+  `LightVisibility(vc, lightIndex, worldPosition, normal, filter)` takes it along the normal, as the
+  deferred loop does. An area light's tile is read through the
   plain comparison lookup, never `AreaShadowSample`'s rotated PCSS disk, so the answer carries no
   per-fragment pattern. The filter is `LightVisibilitySingleTap` (one hardware 2×2 comparison tap,
   the default, for a point integrated along a march) or `LightVisibilityPcf` (the surface lookups'
@@ -2951,15 +2977,24 @@ floor (`SceneView::AmbientFloor`, carried in the view block under every arm), so
 shadow reads dim rather than black; its direct lights and shadows are untouched.
 `SurfaceFlagExcludedFromMetering` is written by a material whose emission is a source of light — a
 lamp, a light panel — that the auto-exposure meter should not read (see "Auto-exposure"); its own
-shading is untouched. All three are material properties rather than per-instance ones because they
-describe how the surface shades. The channel holds a three-bit code over eight evenly spaced levels
-(`code / 7`; UNORM8 holds each within half a step and the decode rounds to the nearest), each flag's
-value being its bit's level, so a material writes any sum of them (`SurfaceFlagNoShadowReception +
-SurfaceFlagNoEnvironmentLighting`), or `SurfaceFlagsNone`; a material writing 0 is unaffected. The
+shading is untouched. Beside them the surface's **light channels** (see "Light channels" under
+Shadows) are written through `SurfaceLightChannels(mask)` and read back by `GBufferLightChannels`. All
+are material properties rather than per-instance ones because they describe how the surface shades
+(a per-instance value reaches a material through an instance parameter). The channel holds an
+eight-bit code over `/255`, which UNORM8 stores exactly: bit 0 shadow reception, bit 1 environment
+lighting, bits 2–4 the channels, bit 7 metering — kept highest, since a translucent material raises it
+by a MAX blend (see "Additive translucent materials"). Membership is stored **relative to the
+default**: bit 2 marks a surface that leaves channel 0, bits 3 and 4 one that joins channels 1 and 2,
+so `SurfaceLightChannels(0x1)` is 0. Each flag's value is its bit's level, so a material writes any
+sum of them (`SurfaceFlagNoShadowReception + SurfaceLightChannels(0x2)`), or `SurfaceFlagsNone`; a
+material writing 0 is unaffected. `tests/gpu/light_channels.cpp` writes all 64 combinations of the
+two flags, the channel bits and the metering bit and reads each back from the target, and the MAX
+blend over a surface carrying every lower bit. The
 lighting pass and the meter read the channel with a **point load** (`LoadSurfaceFlags`), not through
 the g-buffer's linear sampler: no scalar encoding of independent flags survives a filtered blend between surfaces. The forward path carries the same two
-flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, which a translucent
-material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears both.
+flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, and the membership as
+`ForwardSurface::LightChannels`, which a translucent material sets before `EvaluateForwardLighting`;
+`ForwardSurface`'s default constructor clears both flags and starts in channel 0.
 The third reaches the g-buffer from a translucent material through its own output (see "Additive
 translucent materials"), since the meter reads it after the translucent passes have drawn. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
 vector
@@ -2998,6 +3033,50 @@ screen-space reflection chain is wired**; under every other configuration — th
 `AntiAliasingMode::None`, FXAA, CMAA2, every other debug arm, with SSR off — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
 its contents are undefined after the frame. On an immediate-mode GPU the discard costs and saves
 nothing.
+
+### A Surface fragment may read the shadow maps
+
+**An opaque surface computing part of its own lighting keeps the scene's shadows.** A Surface
+fragment including `Veng/light_visibility.slang` declares the shadow system at **set 5**
+(`SurfaceShadowMapSet`) and asks `LightVisibility(vc, lightIndex, worldPosition, normal, filter)`
+how much of a light reaches a point — the deferred loop's own lookups, the bias taken along the
+normal, so at its pixel's position (`SurfaceWorldPosition(sv_position)`, `Veng/surface.slang`, the
+position the deferred pass reconstructs) and with the normal it writes it reads what the deferred
+pass multiplies a Directional, Point or Spot light by; an area light's tile is read through the plain
+lookup rather than PCSS. `FindLightByTag` finds the light. The answer holds the opaque casters only,
+as everywhere.
+
+- **Set 4 is reserved in the Surface domain** — the skinning palette, or a sphere terrain's tiles —
+  so the cook refuses a Surface fragment declaring it outside `"sphereTerrain"`, and any set past 5.
+- **The g-buffer pass builds its pipelines.** The shadow set's layout carries the renderer's
+  immutable comparison sampler, and only an identically-defined layout accepts the renderer's set, so
+  such a material (`Material::ReadsShadowMaps`) holds no pipeline of its own: its layout is the
+  stages' sets 3 and 4 (an empty set 4 where they declare none), the shape the shading override
+  builds against. `SurfaceShadowPipelines` (`src/Renderer/SurfaceShadowPipelines.h`, one per
+  renderer) builds each such material's static, skinned and instanced-set pipeline against
+  `{DrawData, set 4, the renderer's shadow layout}` (`Material::BuildShadowReadingPipeline`) the
+  first time it is drawn that way, keyed on the material's layout and the kind, and binds it with the
+  renderer's shadow set at 5 and the frame-slot dynamic offsets the lighting pass uses. Every other
+  material binds exactly as before. A sphere-terrain material reads it the same way, through its
+  terrain set at 4.
+- **The pass declares the shadow atlases sampled** whenever they exist, so the graph orders the
+  shadow writes ahead of the g-buffer pass rather than ahead of the lighting pass.
+- **What it costs:** the lookups run in the g-buffer pass, per covered pixel (nine comparison taps a
+  lookup under `LightVisibilityPcf`, eighteen in a cascade blend band), on top of what the deferred
+  pass spends.
+
+**The worked case: a self-lit surface.** A surface whose directional light needs terms the deferred
+pass cannot know — an analytic occluder, a closed-form multiple-scattering term, a sky-dependent
+tint — writes its real albedo, leaves that light's channel and joins the channel the local lights
+meant to reach it are on (`SurfaceLightChannels(0x2)`, the directional on channel 0 and those lights
+on channels 0 and 1), writes its own directional term, shadowed through `LightVisibility`, into
+emissive, and computes that light's specular itself with `Veng/brdf.slang`. Every local light then
+lights it through the ordinary deferred path; the ambient is the sky's with SSAO, the flat floor
+under `SurfaceFlagNoEnvironmentLighting`, or none with `ORM.r = 0` (the ambient arm and SSAO scale
+by occlusion, never direct light). `tests/gpu/surface_light_visibility.cpp` holds a shadow-reading
+plane under a box caster to the regions where its default-lit twin reads shadowed and lit, and the
+skinned and instanced-set stages to reading an occluded and an open surface as such;
+`tests/gpu/sphere_terrain.cpp` a terrain material likewise.
 
 ### The g-buffer shading override
 
@@ -4188,7 +4267,9 @@ a budget near 550, about a 700-tile pool.
   dips below it; one more draw per view, casting like the terrain.
 - **Shadows.** Each shadow pass draws each view's lists through a depth-only pipeline of its own
   (`shadow_depth_terrain.vert`, the same `SphereTerrainEvaluate`, both faces, the cascades with
-  depth clamp). A terrain draw binds no shadow set, so a terrain material reads no shadow map.
+  depth clamp). A terrain material may read the shadow maps through `Veng/light_visibility.slang`
+  at set 5, beside its set 4, as any Surface fragment may (see "A Surface fragment may read the
+  shadow maps"); the g-buffer pass then binds the renderer's shadow set for its draw.
 - **What a terrain draw does not do:** it is not pickable, not drawn by the depth-and-normal path or
   under `GBufferShadingOverride` (whose pipelines take neither its stage nor its set 4), and not
   occlusion-tested against the hi-Z pyramid; it draws one material for its own surface plus its

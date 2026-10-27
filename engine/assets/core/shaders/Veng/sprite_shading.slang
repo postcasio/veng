@@ -92,7 +92,8 @@ float SpriteAreaLightFalloff(ViewConstants vc, GpuLight light, float3 worldPos,
 //   centre (SpriteAreaLightFalloff), with the same distance floor and directional blend.
 //
 // Visibility is LightVisibility at the centre through the 3×3 PCF kernel, one lookup per light per
-// sprite, so a sprite drifting across a shadow's edge fades rather than popping.
+// sprite, so a sprite drifting across a shadow's edge fades rather than popping. A sprite is a
+// member of light channel 0, so a light not on channel 0 skips it.
 SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X, float3 Y,
                                        float3 Z, float radius)
 {
@@ -103,7 +104,8 @@ SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X
         GpuLight light = LoadLight(vc, i);
         float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
         float type = light.DirectionType.w;
-        if (all(radiance == float3(0.0)))
+        // A sprite carries no light-channel membership of its own: it is a member of channel 0.
+        if ((LightChannels(light.Cone.w) & 0x1u) == 0u || all(radiance == float3(0.0)))
         {
             continue;
         }

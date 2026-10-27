@@ -151,13 +151,25 @@ namespace Veng
         /// @brief An identity a material can find this light by; 0, the default, is untagged.
         ///
         /// The renderer packs it with the light, and a shader looks the light up by it
-        /// (`FindLightByTag`, Veng/medium_lighting.slang) — so a material lighting itself from one
+        /// (`FindLightByTag`, Veng/light_visibility.slang) — so a material lighting itself from one
         /// particular light, such as a fog lit by the one light standing for its sun, can pick that
         /// light out of the view's list. It changes nothing about how the light shades. The values
         /// mean whatever the code writing them says: the engine assigns none and reserves only 0.
         /// Two lights in one view carrying the same nonzero tag make the lookup return the first
         /// of them, and a debug build warns.
         u32 Tag{0};
+        /// @brief The light channels this light lights: bit c set lights the surfaces in channel c.
+        ///
+        /// Three channels (bits 0-2; higher bits are ignored). The default, channel 0 alone, is the
+        /// channel every surface is in unless its material says otherwise, so a light that says
+        /// nothing lights everything. A surface's material places it in channels through its
+        /// surface flags (`SurfaceLightChannels`, Veng/surface_flags.slang), and a light lights only
+        /// the surfaces sharing a channel with it: an interior fill kept off the exterior seen
+        /// through a window, a rim light reaching one character, a light a self-lit surface
+        /// computes itself and so leaves. A light lighting no channel lights nothing and is not
+        /// packed. Sprites and particles are members of channel 0. Shadows are unaffected: the
+        /// light casts as before, onto whatever it lights.
+        u8 Channels{0x01};
     };
 }
 
@@ -205,4 +217,9 @@ VE_FIELD(SpecularScale, .DisplayName = "Specular Scale",
          .Display = {.Min = 0.0, .Max = 1.0, .Step = 0.05})
 VE_FIELD(Tag, .DisplayName = "Tag",
          .Tooltip = "An identity a material can find this light by; 0 is untagged")
+VE_FIELD(Channels, .DisplayName = "Channels",
+         .Tooltip =
+             "The light channels this light lights, one bit each (bits 0-2); 1 is the default "
+             "channel every surface is in",
+         .Display = {.Min = 0.0, .Max = 7.0})
 VE_REFLECT_END();

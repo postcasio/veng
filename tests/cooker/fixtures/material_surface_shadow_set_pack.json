@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x99100496FE5B5880",
+      "type": "Shader",
+      "source": "shaders/surface_shadow_set.frag.shader.json"
+    },
+    {
+      "id": "0xFEB78D8F2CDA5D0F",
+      "type": "Material",
+      "source": "materials/surface_shadow_set.vmat.json"
+    }
+  ]
+}

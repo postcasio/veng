@@ -78,6 +78,7 @@ namespace
     constexpr AssetId TerrainFlatMaterial{0x053402D8026C9E5FULL};
     constexpr AssetId TerrainTrueDepthMaterial{0x4DA41989565324A3ULL};
     constexpr AssetId PlainSurfaceMaterial{0x754BB28BD3AB91D6ULL};
+    constexpr AssetId TerrainShadowMaterial{0x04204954ED2A9902ULL};
 
     constexpr f64 Radius = 6.4e6;
     constexpr f32 Amplitude = 100.0f;
@@ -1019,6 +1020,56 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     CHECK(scaledCastTiles == 0u);
     CHECK(lit - ambient > 0.1f);
     CHECK(std::abs(shadowed - ambient) < 0.1f * (lit - ambient));
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "sphere terrain: a terrain material reads a light's shadow visibility")
+{
+    TerrainDraw draw(*this, "veng_gpu_sphere_terrain_shadow_reading.vengpack", 0.0f);
+    const AssetHandle<MaterialInstance> reading = draw.Load(TerrainShadowMaterial);
+    CHECK(reading.Get()->GetParent()->ReadsShadowMaps());
+    draw.World->Get<SphereTerrain>(draw.Sphere).Material = reading;
+
+    // A cube floating 3 m over the +Y pole, its shadow thrown 3 m along +X by a sun 45 degrees up.
+    const f32 ground = static_cast<f32>(SmallRadius);
+    const Entity box = draw.World->CreateEntity();
+    draw.World->Add<Transform>(box).Position = vec3(0.0f, ground + 3.0f, 0.0f);
+    draw.World->Add<MeshRenderer>(box).Mesh = draw.Assets->Adopt(Mesh::BuildSync(
+        Context, Primitives::Cube(1.0f, draw.Load(PlainSurfaceMaterial)), "Floating Cube"));
+    draw.World->Add<Light>(draw.World->CreateEntity()) = Light{
+        .Type = LightType::Directional,
+        .Direction = glm::normalize(vec3(1.0f, -1.0f, 0.0f)),
+        .Intensity = 1.0f / LuminousAnchor,
+        .Tag = 1,
+    };
+
+    SceneRendererSettings settings;
+    settings.Mode = DebugView::Final;
+    settings.Bloom = false;
+    settings.AO = false;
+    settings.AutoExposure = false;
+    settings.Occlusion = false;
+    settings.Shadows = true;
+    settings.MaxShadowDistance = 30.0f;
+    const Unique<SceneRenderer> renderer = draw.MakeRenderer(settings);
+    const CameraView camera =
+        LookAt(dvec3(0.0, SmallRadius + 6.0, 0.0), dvec3(0.0, SmallRadius, 0.0),
+               dvec3(0.0, 0.0, -1.0), 0.05f, 4000.0f);
+    draw.Settle(*renderer, camera, 32);
+    draw.Render(*renderer, camera);
+    const vector<u8> lit = renderer->GetHdrView()->GetImage()->Download();
+
+    const auto VisibilityAt = [&](const vec3& world)
+    {
+        const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
+        const uvec2 pixel = uvec2((vec2(clip) / clip.w * 0.5f + 0.5f) * vec2(DrawExtent));
+        return DecodeTexel(lit, pixel.x, pixel.y).r;
+    };
+    const f32 shadowed = VisibilityAt(vec3(3.0f, ground, 0.0f));
+    const f32 open = VisibilityAt(vec3(-2.5f, ground, 0.0f));
+    MESSAGE("terrain visibility in the cube's shadow ", shadowed, ", in the open ", open);
+    CHECK(shadowed < 0.05f);
+    CHECK(open > 0.95f);
 }
 
 TEST_CASE_FIXTURE(Test::GpuFixture,

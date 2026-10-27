@@ -28,6 +28,10 @@ namespace Veng::Cook
         // cooker gains no renderer-header dependency.
         constexpr u32 MaxMaterialBlockBytes = 1280;
 
+        // The set a Surface pipeline binds the skinning palette, or a sphere terrain's tiles, at.
+        // Mirrors the renderer's SphereTerrainSet, restated for the same reason.
+        constexpr u32 SphereTerrainDescriptorSet = 4;
+
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
         void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
@@ -653,11 +657,38 @@ namespace Veng::Cook
         // SV_Target0 (premultiplied UI fill). Mismatch is a located cook error. An SV_Depth
         // member is not a color target and never reaches this check — the reflection drops it,
         // so any domain may write depth alongside its targets.
+        vector<u32> fragmentSets;
         const Result<vector<ReflectedFragmentOutput>> outputs =
-            ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
+            ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir, &fragmentSets);
         if (!outputs)
         {
             return std::unexpected(outputs.error());
+        }
+
+        // A Surface fragment's sets: 3 the per-draw DrawData, 5 the shadow system (read through
+        // Veng/light_visibility.slang). Set 4 is the skinning palette's, or a sphere terrain's
+        // tiles, so only a sphere-terrain fragment declares it, and nothing lies past 5.
+        if (domainValue == MaterialDomain::Surface)
+        {
+            for (const u32 set : fragmentSets)
+            {
+                if (set == SphereTerrainDescriptorSet && !sphereTerrain)
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: '{}': a Surface fragment declares set 4, which is the "
+                        "skinning palette's (and a sphere terrain's tiles under 'sphereTerrain'); "
+                        "a Surface fragment declares set 3 (the per-draw data) and set {} (the "
+                        "shadow system) only",
+                        vmatPath.string(), SurfaceShadowMapSet));
+                }
+                if (set > SurfaceShadowMapSet)
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: '{}': a Surface fragment declares set {}; a Surface "
+                        "fragment declares no set past the shadow system's set {}",
+                        vmatPath.string(), set, SurfaceShadowMapSet));
+                }
+            }
         }
 
         if (domainValue == MaterialDomain::Surface)

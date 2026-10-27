@@ -139,6 +139,7 @@ float4 fsMain(VSOutput input) : SV_Target
     LightingSurface surface = MakeLightingSurface(vc, worldPos, N, V, albedo, roughness, metallic,
                                                   declinesShadowMaps, declinesEnvironmentLighting,
                                                   normalVariance);
+    surface.LightChannels = GBufferLightChannels(surfaceFlags);
 
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade

@@ -9,13 +9,16 @@ namespace Veng
 {
     class AssetManager;
     struct Shader;
+    enum class MaterialDomain : u32;
 }
 
 namespace Veng::Renderer
 {
     class Context;
+    class DescriptorSetLayout;
     class GraphicsPipeline;
     class PipelineLayout;
+    struct ShaderInterface;
 }
 
 namespace Veng::Detail
@@ -31,6 +34,33 @@ namespace Veng::Detail
     /// The canonical surface vertex stage placing each vertex by its instance's transform composed
     /// into the set's frame. Every instanced-set g-buffer pipeline is built on it.
     inline constexpr AssetId SurfaceInstancedVertId{0x2D1ACA1F99BD2790ULL};
+
+    /// @brief Whether a material's fragment reads the shadow maps: a Surface fragment declaring the
+    ///        shadow set (SurfaceShadowMapSet).
+    /// @param domain   The material's domain.
+    /// @param fragment The fragment stage's reflected interface.
+    [[nodiscard]] bool FragmentReadsShadowMaps(MaterialDomain domain,
+                                               const Renderer::ShaderInterface& fragment);
+
+    /// @brief Builds the layout a Surface material's g-buffer pipeline over a vertex stage binds
+    ///        against.
+    ///
+    /// The stages' reflected sets from 3 on, set 4 the terrain's own for a sphere-terrain material.
+    /// For a fragment reading the shadow maps the reflected shadow set is dropped, set 4 is an empty
+    /// layout where the stages declare none, and set 5 is @p shadowLayout when it is given and
+    /// absent otherwise: the material's own layout, which no pipeline reading the maps is built
+    /// against, carries sets 3 and 4 alone.
+    /// @param context       Render context the layouts are created on.
+    /// @param id            The material's AssetId, used only for the debug names.
+    /// @param vsAsset       The (resident) vertex shader.
+    /// @param fsAsset       The (resident) fragment shader.
+    /// @param sphereTerrain Whether the material shades sphere terrain.
+    /// @param shadowLayout  The renderer's shadow set layout, or null.
+    /// @return The layout, or a recoverable error string.
+    [[nodiscard]] Result<Ref<Renderer::PipelineLayout>>
+    BuildSurfacePipelineLayout(Renderer::Context& context, AssetId id, const Veng::Shader& vsAsset,
+                               const Veng::Shader& fsAsset, bool sphereTerrain,
+                               const Ref<Renderer::DescriptorSetLayout>& shadowLayout = nullptr);
 
     /// @brief Builds a g-buffer pipeline from a vertex and a fragment stage over a given layout.
     ///

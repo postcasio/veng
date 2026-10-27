@@ -10,6 +10,7 @@
 #include "../GBufferShadingOverride.h"
 #include "../InstancedMeshSystem.h"
 #include "../SphereTerrainSystem.h"
+#include "../SurfaceShadowPipelines.h"
 
 namespace Veng::Renderer
 {
@@ -96,6 +97,16 @@ namespace Veng::Renderer
         {
             m_Instanced->DeclareReads(builder);
         }
+        // A shadow-reading Surface fragment samples the shadow atlases, so the graph orders the
+        // shadow passes' writes ahead of this pass.
+        if (io.ShadowMap.IsValid())
+        {
+            builder.Sample(io.ShadowMap);
+        }
+        if (io.PunctualShadowMap.IsValid())
+        {
+            builder.Sample(io.PunctualShadowMap);
+        }
 
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
@@ -117,13 +128,13 @@ namespace Veng::Renderer
         // sets are left out of a frame drawn through it.
         if (m_Instanced != nullptr && m_ShadingOverride == nullptr)
         {
-            m_Instanced->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet);
+            m_Instanced->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet, *m_ShadowReaders);
         }
         // Sphere terrain is left out under the override for the same reason: its stages and set 4
         // are the terrain's own, which the override's pipelines do not take.
         if (m_Terrain != nullptr && m_ShadingOverride == nullptr)
         {
-            m_Terrain->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet);
+            m_Terrain->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet, *m_ShadowReaders);
         }
 
         if (plan.Slots.empty() && plan.SkinnedSlots.empty())
@@ -157,16 +168,22 @@ namespace Veng::Renderer
                 {
                     // A Surface material's Bind binds its pipeline and pushes nothing, so binding
                     // the override pipeline in its place leaves the rest of the state alike.
+                    bool readsShadowMaps = false;
                     if (m_ShadingOverride != nullptr)
                     {
                         cmd.BindPipeline(m_ShadingOverride->Get(*group.PipelineMaterial, false));
                     }
                     else
                     {
-                        group.PipelineMaterial->Bind(cmd);
+                        readsShadowMaps = m_ShadowReaders->BindPipeline(
+                            cmd, *group.PipelineMaterial, SurfacePipelineKind::Static);
                     }
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets({plan.DrawDataSet.get()}, 3);
+                    if (readsShadowMaps)
+                    {
+                        m_ShadowReaders->BindShadowSet(cmd);
+                    }
                     cmd.PushConstants(plan.Push);
                     lastPipeline = group.PipelineMaterial;
                 }
@@ -213,16 +230,22 @@ namespace Veng::Renderer
                 {
                     // Bind the material's skinned g-buffer pipeline, not its static one: the skinned
                     // pipeline's layout carries the palette at set 4, so the bind below is valid.
+                    bool readsShadowMaps = false;
                     if (m_ShadingOverride != nullptr)
                     {
                         cmd.BindPipeline(m_ShadingOverride->Get(*group.PipelineMaterial, true));
                     }
                     else
                     {
-                        group.PipelineMaterial->BindSkinned(cmd);
+                        readsShadowMaps = m_ShadowReaders->BindPipeline(
+                            cmd, *group.PipelineMaterial, SurfacePipelineKind::Skinned);
                     }
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets({plan.DrawDataSet.get(), plan.PaletteSet.get()}, 3);
+                    if (readsShadowMaps)
+                    {
+                        m_ShadowReaders->BindShadowSet(cmd);
+                    }
                     cmd.PushConstants(plan.Push);
                     lastPipeline = group.PipelineMaterial;
                 }

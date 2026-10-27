@@ -54,7 +54,8 @@ namespace Veng::Renderer
     /// @brief The bit meanings of a PackedLight's Cone.w flags word, mirrored in light_flags.slang.
     ///
     /// A small integer carried in a float, so every value must stay well inside f32's exact
-    /// integer range — which two flags, a two-bit index and two more flags comfortably do.
+    /// integer range — which two flags, a two-bit index, two more flags and a three-bit channel set
+    /// comfortably do.
     namespace LightFlags
     {
         /// @brief The area light emits from both faces of its shape.
@@ -80,7 +81,14 @@ namespace Veng::Renderer
         /// bit: its cascade-set index reads as set 0 when it holds no set, which would shadow it by
         /// another light's cascades.
         inline constexpr u32 CastsNoShadow = 1u << 5;
+        /// @brief Shift of the three-bit light-channel set within the flags word.
+        inline constexpr u32 ChannelShift = 6u;
+        /// @brief Mask of the light-channel set: the channels whose surfaces the light lights.
+        inline constexpr u32 ChannelMask = 0x7u << ChannelShift;
     }
+
+    /// @brief The number of light channels a light and a surface may be in (Light::Channels).
+    inline constexpr u32 LightChannelCount = 3;
 
     /// @brief One light packed for the ring-buffered light buffer (set-0 binding 6).
     ///

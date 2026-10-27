@@ -242,3 +242,17 @@ struct SurfaceFragmentInput
     // own coordinates, so an effect anchored to the surface stays put as the object moves.
     float3 v_ObjectPosition : TEXCOORD6;
 };
+
+// The world position the deferred lighting pass reconstructs for this fragment's pixel: its
+// SV_Position (and so the rasterized depth) through the view's inverse view-projection, exactly as
+// the lighting pass forms it from the depth attachment. A fragment computing a term the deferred pass
+// would otherwise give it — a light's shadow visibility (Veng/light_visibility.slang) — evaluates it
+// here, so the two agree on the point. A fragment writing its own depth through GBufferDepthOutput
+// reconstructs from that depth instead.
+float3 SurfaceWorldPosition(float4 svPosition)
+{
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    float2 ndcXY = (svPosition.xy / vc.ExtentParams.xy) * 2.0 - 1.0;
+    float4 worldH = mul(vc.InvViewProj, float4(ndcXY, svPosition.z, 1.0));
+    return worldH.xyz / worldH.w;
+}

@@ -732,6 +732,17 @@ reflected set-4 binding the terrain's does not carry), so one set the renderer w
 under every terrain material. A terrain drawn with an undeclared material is reported once and draws
 nothing. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Sphere terrain".
 
+**A Surface fragment declaring the shadow set reads the shadow maps** (`Material::ReadsShadowMaps`:
+its reflected interface declares `SurfaceShadowMapSet`, 5, through `Veng/light_visibility.slang`;
+no key declares it). Such a material builds no g-buffer pipeline of its own — `GetPipeline` and
+`GetInstancedPipeline` stay null, `EnsureSkinnedPipeline` builds only the skinned layout, and its
+layouts carry the stages' sets 3 and 4 (an empty set 4 where they declare none) without set 5 —
+because the renderer's shadow set binds only under a layout carrying the renderer's own comparison
+sampler; the g-buffer pass builds each kind against that layout through
+`Material::BuildShadowReadingPipeline`. The cook refuses a Surface fragment declaring set 4 unless the
+material declares `"sphereTerrain"`, and any set past 5. See
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "A Surface fragment may read the shadow maps".
+
 The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
 index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);
 PostProcess and Sky push it at 0; GuiFill pushes it at **`GuiFillSelectorPushOffset` (20)**,

@@ -633,10 +633,15 @@ extern "C"
 /// short and dispatches through a short vtable.
 /// Version 158 adds a projection with no far plane: the Camera component grows InfiniteFar. A
 /// module spawns and reads cameras, so a stale one lays them out short.
+/// Version 159 lets a Surface fragment read the shadow maps and gives lights channels: Light grows
+/// Channels, Material grows the shadow-reading flag and the skinned layout it holds, SceneRenderer
+/// the shadow-reading pipelines, and the packed light's flags word and the surface-flags code are
+/// re-encoded. A module spawns lights, builds materials and owns renderers, so a stale one lays
+/// them out short, and its cooked shaders write the surface flags at the old levels.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 158u
+#define VENG_MODULE_ABI_VERSION 159u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

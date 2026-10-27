@@ -2,9 +2,10 @@
 // accessors the deferred lighting pass reads them back with. Mirrors the LightFlags constants
 // in Veng/Renderer/LightPacking.h; the two must move together.
 //
-// The word is a small integer carried in a float, exact well past the six bits used here.
+// The word is a small integer carried in a float, exact well past the nine bits used here.
 // A two-sided bit, an arm bit for area lights, a two-bit cascade-set index, a denial bit and a
-// no-shadow bit — which together say, for any light, whether it is shadowed and by which atlas.
+// no-shadow bit — which together say, for any light, whether it is shadowed and by which atlas —
+// and the three-bit set of light channels the light lights.
 
 #pragma once
 
@@ -30,6 +31,11 @@ static const int LightFlagCascadeDenied = 16;
 // visible. A punctual or area light already says so through its -1 slot; a Directional, whose
 // cascade set index reads as set 0 when it holds none, needs this bit.
 static const int LightFlagCastsNoShadow = 32;
+
+// Shift and mask of the light's channels (Light::Channels): bit c set lights the surfaces in channel
+// c (Veng/surface_flags.slang, SurfaceLightChannels). A packed light always carries at least one.
+static const int LightFlagChannelShift = 6;
+static const int LightFlagChannelMask = 7 << LightFlagChannelShift;
 
 // True when an area light emits from both faces of its shape.
 bool LightIsTwoSided(float flags)
@@ -60,4 +66,10 @@ bool LightCastsNoShadow(float flags)
 uint LightCascadeSet(float flags)
 {
     return uint((int(flags) & LightFlagCascadeSetMask) >> LightFlagCascadeSetShift);
+}
+
+// The light channels the light lights, as a mask (bit c for channel c).
+uint LightChannels(float flags)
+{
+    return uint((int(flags) & LightFlagChannelMask) >> LightFlagChannelShift);
 }

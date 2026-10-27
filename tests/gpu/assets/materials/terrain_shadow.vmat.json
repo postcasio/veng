@@ -1,0 +1,11 @@
+{
+  "defaultInstance": "0x04204954ED2A9902",
+  "sphereTerrain": true,
+  "shaders": {
+    "vertex": "0x7D963B7185626B36",
+    "fragment": "0x366128036C2E6053"
+  },
+  "fields": [
+    { "name": "Select", "type": "vec4", "value": [1.0, 0.0, 0.0, 0.0] }
+  ]
+}

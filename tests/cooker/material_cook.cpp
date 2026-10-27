@@ -797,6 +797,26 @@ TEST_CASE("Cooker: a sphere-terrain material must name the core terrain vertex s
           string::npos);
 }
 
+TEST_CASE("Cooker: a Surface fragment may declare the shadow set; set 4 is refused outside sphere "
+          "terrain")
+{
+    // Set 5 is the shadow system a Surface fragment reads the shadow maps through.
+    const Result<ArchiveReader> reader =
+        CookMaterialPack(FixtureDir / "material_surface_shadow_set_pack.json",
+                         Veng::TestSupport::TempDir() / "veng_cooker_material_shadow_set.vengpack");
+    REQUIRE(reader.has_value());
+    CHECK(reader->Find(AssetId{0xFEB78D8F2CDA5D0FULL}).has_value());
+
+    // Set 4 is the skinning palette's in the Surface domain, so a fragment declaring it is refused.
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const VoidResult setFour =
+        cooker.CookPack(FixtureDir / "material_surface_set_four_pack.json",
+                        Veng::TestSupport::TempDir() / "veng_cooker_material_set_four.vengpack");
+    REQUIRE_FALSE(setFour.has_value());
+    CHECK(setFour.error().find("a Surface fragment declares set 4") != string::npos);
+}
+
 TEST_CASE("Cooker: a reactive translucent material cooks with the flag set; the misuses are "
           "located cook errors")
 {

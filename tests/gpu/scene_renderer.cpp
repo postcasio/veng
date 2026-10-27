@@ -3691,10 +3691,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 
     // The flag set: the same geometry, the same light, the same shadow atlas — the lookup
-    // declined. The values are surface_flags.slang's levels (code / 7): bit 0 alone, bit 1 alone,
-    // and both.
-    constexpr f32 NoShadowReception = 1.0f / 7.0f;
-    constexpr f32 NoEnvironmentLighting = 2.0f / 7.0f;
+    // declined. The values are surface_flags.slang's levels (code / 255): bit 0 alone, bit 1
+    // alone, and both.
+    constexpr f32 NoShadowReception = 1.0f / 255.0f;
+    constexpr f32 NoEnvironmentLighting = 2.0f / 255.0f;
     mat.SetParam("SurfaceFlags", NoShadowReception);
     const f32 declinedLuma =
         Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
@@ -3807,7 +3807,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return {Luma(extent.x / 2 - 22), Luma(extent.x / 2 + 22)};
     };
 
-    constexpr f32 ExcludedFromMetering = 4.0f / 7.0f;
+    constexpr f32 ExcludedFromMetering = 128.0f / 255.0f;
     const auto [glowMetered, litBesideGlow] = Converge(0.0f);
     const auto [glowExcluded, litAlone] = Converge(ExcludedFromMetering);
 

@@ -2050,6 +2050,12 @@ if (VENG_BUILD_TESTS)
             # light_visibility.cpp probes a scene light's shadow-map visibility at fixed world points
             # from a Translucent fragment, in both layers and through a cascade and a punctual tile.
             tests/gpu/light_visibility.cpp
+            # surface_light_visibility.cpp has a Surface fragment read the shadow maps through the
+            # static, skinned and instanced-set stages, and agree with the deferred pass's shadow.
+            tests/gpu/surface_light_visibility.cpp
+            # light_channels.cpp lights surfaces only from lights sharing a channel, deferred and
+            # forward, and round-trips every surface-flag combination through the g-buffer.
+            tests/gpu/light_channels.cpp
             # specular_lobe.cpp frames a white metal plane on a directional light's mirror reflection
             # and reads the lit HDR target: the GGX peak rises to the roughness floor, a very bright
             # light's peak stays finite and under the lighting output guard, and specular

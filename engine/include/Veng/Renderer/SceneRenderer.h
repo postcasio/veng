@@ -67,6 +67,7 @@ namespace Veng::Renderer
     class SsrChain;
     class ParticleSimulation;
     class GBufferShadingOverride;
+    class SurfaceShadowPipelines;
     class PickingSystem;
     class Image;
     class Sampler;
@@ -1236,6 +1237,10 @@ namespace Veng::Renderer
 
         /// @brief The g-buffer pass's override pipelines under Settings.GBufferShadingOverride.
         Unique<GBufferShadingOverride> m_ShadingOverride;
+
+        /// @brief The g-buffer pipelines of the materials reading the shadow maps, built against
+        ///        the shadow set layout, and the shadow set they bind.
+        Unique<SurfaceShadowPipelines> m_SurfaceShadows;
 
         /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
         Unique<TaaResolve> m_Taa;

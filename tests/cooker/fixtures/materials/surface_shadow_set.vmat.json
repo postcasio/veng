@@ -1,0 +1,7 @@
+{
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x99100496FE5B5880"
+  },
+  "fields": [{ "name": "Factors", "value": [1.0, 1.0, 1.0, 1.0] }]
+}

@@ -288,7 +288,8 @@ namespace Veng::Renderer
         }
 
         // The Cone.w flags word for a packed light: the two-sided bit, plus how the cascade arm
-        // resolved — which set shadows the light, or that it asked for one and was denied.
+        // resolved — which set shadows the light, or that it asked for one and was denied — and the
+        // light channels it lights.
         u32 PackLightFlags(const Light& light, const LightCandidate& candidate)
         {
             u32 flags = light.TwoSided ? LightFlags::TwoSided : 0u;
@@ -311,6 +312,8 @@ namespace Veng::Renderer
             {
                 flags |= LightFlags::CastsNoShadow;
             }
+            flags |= (static_cast<u32>(light.Channels) << LightFlags::ChannelShift) &
+                     LightFlags::ChannelMask;
             return flags;
         }
 
@@ -397,7 +400,8 @@ namespace Veng::Renderer
             const u32 lightOrder = order++;
             const bool positioned = light.Type != LightType::Directional;
             if (light.Color * IntensityToRadiance(light) == vec3(0.0f) ||
-                (positioned && !(light.Range > 0.0f)))
+                (positioned && !(light.Range > 0.0f)) ||
+                (light.Channels & ((1u << LightChannelCount) - 1u)) == 0u)
             {
                 continue;
             }

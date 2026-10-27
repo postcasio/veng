@@ -48,8 +48,8 @@
 
 // The surface a forward-lit fragment shades, in world space.
 //
-// A declared `ForwardSurface s;` is default-constructed: the two flags start false and Occlusion
-// starts at 1, so a material sets only what it shades with.
+// A declared `ForwardSurface s;` is default-constructed: the two flags start false, Occlusion
+// starts at 1 and LightChannels at channel 0 alone, so a material sets only what it shades with.
 struct ForwardSurface
 {
     float3 Position;   // world position (reconstructable from sv_position via ForwardWorldPosition)
@@ -65,6 +65,9 @@ struct ForwardSurface
     // The forward twin of SurfaceFlagNoEnvironmentLighting (Veng/surface_flags.slang): the view's
     // flat ambient floor in place of the sky's IBL or SH arm.
     bool   DeclinesEnvironmentLighting;
+    // The light channels the surface is in (bit c for channel c), the forward twin of
+    // SurfaceLightChannels (Veng/surface_flags.slang): a light sharing none of them skips it.
+    uint   LightChannels;
 
     __init()
     {
@@ -77,6 +80,7 @@ struct ForwardSurface
         Occlusion = 1.0;
         DeclinesShadowMaps = false;
         DeclinesEnvironmentLighting = false;
+        LightChannels = SurfaceLightChannelsDefault;
     }
 };
 
@@ -104,6 +108,7 @@ ForwardLighting EvaluateForwardLighting(ForwardSurface s)
                                                   s.Roughness, s.Metallic, s.DeclinesShadowMaps,
                                                   s.DeclinesEnvironmentLighting,
                                                   NormalScreenVariance(s.Normal));
+    surface.LightChannels = s.LightChannels;
 
     // The tile's forward mask, found by projecting the surface: this layer may render at another
     // resolution than the opaque pass the tiles were laid over.

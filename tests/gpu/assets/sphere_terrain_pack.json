@@ -30,6 +30,16 @@
       "id": "0xA8E093CFAD0A1D28",
       "type": "Material",
       "source": "materials/terrain_plain_surface.vmat.json"
+    },
+    {
+      "id": "0x366128036C2E6053",
+      "type": "Shader",
+      "source": "shaders/terrain_shadow.frag.shader.json"
+    },
+    {
+      "id": "0x6DC5AE0590571794",
+      "type": "Material",
+      "source": "materials/terrain_shadow.vmat.json"
     }
   ]
 }

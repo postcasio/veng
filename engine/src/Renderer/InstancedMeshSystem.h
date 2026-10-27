@@ -22,6 +22,7 @@ namespace Veng
 
 namespace Veng::Renderer
 {
+    class SurfaceShadowPipelines;
     class Buffer;
     class CommandBuffer;
     class ComputePipeline;
@@ -150,8 +151,11 @@ namespace Veng::Renderer
         /// @param cmd          The g-buffer pass's command buffer.
         /// @param push         The frame's surface push (frame base and view constants index).
         /// @param drawDataSet  The DrawData set the static draws bind at set 3.
+        /// @param shadowReaders Binds each material's pipeline, and the shadow set for one reading
+        ///                     the shadow maps.
         void RecordGBuffer(CommandBuffer& cmd, const SurfacePush& push,
-                           const Ref<DescriptorSet>& drawDataSet) const;
+                           const Ref<DescriptorSet>& drawDataSet,
+                           SurfaceShadowPipelines& shadowReaders) const;
 
         /// @brief Records one shadow view's set casters into its bound tile.
         /// @param cmd         The shadow pass's command buffer.
