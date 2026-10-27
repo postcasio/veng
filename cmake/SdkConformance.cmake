@@ -12,8 +12,9 @@
 # path vars; a broken install/export fails the configure or the build, failing the test. It
 # then asserts the launcher's relocatable set landed beside the launcher, runs the launcher
 # itself headless and checks both its exit status and the marker it logs once its world resolved,
-# and runs the installed veng-editor --version to exit 0 (covering the editor exe's own
-# INSTALL_RPATH resolution).
+# builds and runs a second standalone consumer of veng_add_host_shader_module (a Slang module
+# compiled for the host), and runs the installed veng-editor --version to exit 0 (covering the
+# editor exe's own INSTALL_RPATH resolution).
 #
 # Modes:
 #   install   — cmake --install the engine build to a throwaway prefix, then configure the
@@ -25,7 +26,8 @@
 # and returns 77 (ctest reports skipped, via SKIP_RETURN_CODE) with no usable Vulkan ICD, the
 # same skip the other launcher smokes take.
 
-foreach (VAR VENG_MODE VENG_CMAKE VENG_ENGINE_BUILD_DIR VENG_TEMPLATE_SRC VENG_SCRATCH VENG_PROBE_BIN)
+foreach (VAR VENG_MODE VENG_CMAKE VENG_ENGINE_BUILD_DIR VENG_TEMPLATE_SRC VENG_HOST_MODULE_SRC VENG_SCRATCH
+        VENG_PROBE_BIN)
     if (NOT DEFINED ${VAR})
         message(FATAL_ERROR "sdk_conformance: ${VAR} not set")
     endif ()
@@ -159,6 +161,37 @@ if (NOT LAUNCHER_OUTPUT MATCHES "model portrait painted into the HUD")
         "model portrait")
 endif ()
 
+# ---- Build and run the host-module consumer ----------------------------------
+# veng_add_host_shader_module needs only the imported vengc, so it is proved by its own small
+# project rather than by growing the template: the build compiles a Slang module (which includes
+# an engine core header) to C++, and the executable exits 0 when the host build computed what the
+# Slang source does.
+set(HOST_MODULE_BUILD_DIR "${VENG_SCRATCH}/host-module-build")
+execute_process(
+    COMMAND "${VENG_CMAKE}" -B "${HOST_MODULE_BUILD_DIR}" -S "${VENG_HOST_MODULE_SRC}" "${DISCOVERY_ARG}"
+            ${ARCH_ARGS}
+    RESULT_VARIABLE HOST_CONFIGURE_RESULT
+)
+if (NOT HOST_CONFIGURE_RESULT EQUAL 0)
+    message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): host-module configure failed (${HOST_CONFIGURE_RESULT})")
+endif ()
+execute_process(
+    COMMAND "${VENG_CMAKE}" --build "${HOST_MODULE_BUILD_DIR}" -j 4 --target host_module_check
+    RESULT_VARIABLE HOST_BUILD_RESULT
+)
+if (NOT HOST_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): host-module build failed (${HOST_BUILD_RESULT})")
+endif ()
+if (WIN32)
+    set(HOST_MODULE_CHECK "${HOST_MODULE_BUILD_DIR}/host_module_check.exe")
+else ()
+    set(HOST_MODULE_CHECK "${HOST_MODULE_BUILD_DIR}/host_module_check")
+endif ()
+execute_process(COMMAND "${HOST_MODULE_CHECK}" RESULT_VARIABLE HOST_RUN_RESULT)
+if (NOT HOST_RUN_RESULT EQUAL 0)
+    message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): host_module_check exited ${HOST_RUN_RESULT}")
+endif ()
+
 # ---- Smoke the editor exe's own runtime resolution --------------------------
 # --version prints and exits before any window or device, so it covers the editor exe's
 # INSTALL_RPATH resolution (libveng_editor / libveng_graph / Slang) with no project or GPU.
@@ -173,4 +206,5 @@ if (NOT EDITOR_RESULT EQUAL 0)
     message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): veng-editor --version exited ${EDITOR_RESULT}")
 endif ()
 
-message(STATUS "sdk_conformance(${VENG_MODE}): out-of-tree template built, launcher and editor ran.")
+message(STATUS
+    "sdk_conformance(${VENG_MODE}): out-of-tree template built, launcher, host module and editor ran.")

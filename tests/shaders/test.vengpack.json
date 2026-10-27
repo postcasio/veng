@@ -105,6 +105,11 @@
       "id": "0x959CE75A45092DCE",
       "type": "Shader",
       "source": "sprite_shading.comp.shader.json"
+    },
+    {
+      "id": "0x97B525975A19E22A",
+      "type": "Shader",
+      "source": "gradient_noise.comp.shader.json"
     }
   ]
 }

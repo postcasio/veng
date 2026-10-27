@@ -7,6 +7,7 @@
 
 #include <Veng/Cook/CookTiming.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/HostShaderModule.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Cook/Verify.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -37,6 +38,8 @@ namespace
                            "[--shader-include <dir>] "
                            "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]] "
                            "[--jobs <n>]\n"
+                           "  vengc compile-host <module.slang> --name <Name> --out-dir <dir> "
+                           "[--shader-include <dir>] [--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
@@ -740,6 +743,86 @@ int main(int argc, char** argv)
             }
         }
 
+        return 0;
+    }
+
+    // -------------------------------------------------------------------
+    // vengc compile-host
+    // -------------------------------------------------------------------
+    if (subcommand == "compile-host")
+    {
+        optional<path> modulePath;
+        optional<string> name;
+        optional<path> outDir;
+        optional<path> depfilePath;
+        path shaderInclude;
+
+        for (usize i = 1; i < args.size(); ++i)
+        {
+            const string& arg = args[i];
+            const bool takesValue = arg == "--name" || arg == "--out-dir" ||
+                                    arg == "--shader-include" || arg == "--depfile";
+            if (takesValue && i + 1 >= args.size())
+            {
+                fmt::print(stderr, "vengc: {} requires an argument\n", arg);
+                return 1;
+            }
+            if (arg == "--name")
+            {
+                name = args[++i];
+            }
+            else if (arg == "--out-dir")
+            {
+                outDir = path(args[++i]);
+            }
+            else if (arg == "--shader-include")
+            {
+                shaderInclude = path(args[++i]);
+            }
+            else if (arg == "--depfile")
+            {
+                depfilePath = path(args[++i]);
+            }
+            else if (!modulePath)
+            {
+                modulePath = path(arg);
+            }
+            else
+            {
+                fmt::print(stderr, "vengc: unexpected argument '{}'\n", arg);
+                return 1;
+            }
+        }
+
+        if (!modulePath || !name || !outDir)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        Result<HostShaderCompiler> compiler = HostShaderCompiler::Create();
+        if (!compiler)
+        {
+            fmt::print(stderr, "vengc: {}\n", compiler.error());
+            return 1;
+        }
+        const Result<HostShaderModuleOutput> compiled = compiler->Compile({
+            .Module = std::filesystem::absolute(*modulePath),
+            .Name = *name,
+            .ShaderIncludeDir = shaderInclude,
+        });
+        if (!compiled)
+        {
+            fmt::print(stderr, "vengc: {}\n", compiled.error());
+            return 1;
+        }
+        if (const VoidResult written =
+                WriteHostShaderModule(*compiled, *name, *outDir, depfilePath);
+            !written)
+        {
+            fmt::print(stderr, "vengc: {}\n", written.error());
+            return 1;
+        }
         return 0;
     }
 

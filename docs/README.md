@@ -96,6 +96,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   map, what each track (frames, CPU threads, GPU, counters, instants) means, and why
   the JSON is a lossy viewer-facing projection nothing in veng reads; and `summary` and
   `compare`, which aggregate a capture per frame and set two captures side by side.
+- **[Shader code that also runs on the host](guides/shader-code-on-the-host.md)** — one Slang
+  source compiled for the GPU and, through `veng_add_host_shader_module`, into a C++ static
+  library: the shared-file-plus-exports pattern, what may cross the boundary, what a host module
+  may not contain, how to write field code that agrees on both targets, and the measured
+  host-against-GPU bound.
 
 ## Reference data
 

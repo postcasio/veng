@@ -307,6 +307,7 @@ add_library(veng_cook_objs OBJECT
         src/CookCache.cpp
         src/CookTiming.cpp
         src/JsonFile.cpp
+        src/HostShaderModule.cpp
         src/Verify.cpp
         src/CoreImporters.cpp
         src/Importers/RawImporter.cpp

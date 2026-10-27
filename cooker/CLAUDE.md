@@ -860,6 +860,9 @@ so the cooker and the runtime loader share one encoder.
   mismatch. `--module <lib>` is presentation only: the verdict is a byte re-hash that consults
   no registry, but without the module a game-defined type prints as a raw hex id instead of its
   registered name. `VerifyArchive` itself stays registry-free; only the CLI presenter takes it.
+- **`compile-host`** — compile a pure Slang module to C++ for the host: `vengc compile-host
+  <module.slang> --name <Name> --out-dir <dir> [--shader-include <dir>] [--depfile <out.d>]`. See
+  [Host shader modules](#host-shader-modules).
 - **`generate-id`** — mint a collision-free `AssetId` (prints the zero-padded hex in both
   spellings: `0x{:016X}ULL` for C++ literals and `"0x{:016X}"` for JSON packs;
   `--reference <pack.json>` to avoid existing ids; `--module <lib>` when a reference pack names a
@@ -879,6 +882,38 @@ so the cooker and the runtime loader share one encoder.
   collision-check against — the id is 64 bits of randomness and a collision is fatal at
   registration.
 - The tool can also emit a **type manifest**.
+
+## Host shader modules
+
+`vengc compile-host` compiles one Slang source for the CPU, so a tool, a test or a GPU-less process
+evaluates exactly the function the shaders do; `veng_add_host_shader_module`
+(`cmake/HostShaderModule.cmake`, exported through `veng-config`) wraps it as a custom command with
+a `DEPFILE` and a `STATIC` library over the output. The authoring pattern, the limits and the
+measured host-against-GPU bound are in
+[docs/guides/shader-code-on-the-host.md](../docs/guides/shader-code-on-the-host.md); the mechanism
+is `Cook/HostShaderModule.h` (`HostShaderCompiler`, in the veng-free core).
+
+- **One session policy.** The module loads through `BuildSlangSearchPaths` (its own directory, then
+  `--shader-include`) with column-major matrices, as `ShaderImporter` does, so a file
+  `#include`-ing `Veng/...` resolves identically for both targets. The target is Slang's `cpp`
+  source target, which needs no downstream compiler and no `slang-llvm`.
+- **Namespaced output.** The compiler installs its own CPU prelude
+  (`IGlobalSession::setLanguagePrelude`): Slang's own, with its types in
+  `VengHostPrelude_<Name>` (`SLANG_PRELUDE_NAMESPACE`), followed by an open
+  `namespace VengHostModule_<Name>` the module's code lands in, closed after it. Two host modules
+  therefore define nothing in common and link into one binary.
+- **A veng-owned interface.** Reflection of each `export`ed function generates `<Name>.h`, a
+  declaration per function in `namespace <Name>` over glm types, and appends the matching
+  definitions to `<Name>.cpp`, each converting to and from the prelude's `Vector` and calling the
+  namespaced export. Nothing crosses a C linkage, so no struct layout is punned.
+- **Refusals, each naming its subject:** a global shader parameter (a host module is pure), an
+  entry point, an exported signature with a type other than `float`/`double`/`int`/`uint` scalars
+  and 2- to 4-vectors, and an export without `__extern_cpp` (its emitted name is mangled — found by
+  looking for the unmangled definition in the emitted text).
+- **The generated unit's build.** C++20 (the prelude includes `<stdfloat>` from C++23 on, which
+  Apple's libc++ lacks), warnings not errors, `SKIP_LINTING`, hidden visibility, and no fast math
+  or FP contraction. The helper warns at configure time when the installed Slang is not
+  `VENG_HOST_SHADER_SLANG_VERSION`, the version the bound was measured with.
 
 ## Cook modules — a game's own importers
 

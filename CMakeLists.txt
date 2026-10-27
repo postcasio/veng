@@ -310,6 +310,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Project.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/HostShaderModule.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Docs.cmake)
 
 # VE_DEBUG is declared at the top of this file, ahead of the build-type default that keys off it.
@@ -1287,8 +1288,15 @@ if (VENG_BUILD_TESTS)
             tests/unit/video_capture_panel_state.cpp
             # The still-picture helpers: the display encode, the PNG, and a screenshot's name claim.
             tests/unit/capture_screenshot.cpp
+            # The host build of a Slang module, checked on the CPU alone.
+            tests/unit/host_shader_module.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
+    # The gradient-noise fixture compiled for the host, which the unit and gpu suites evaluate.
+    veng_add_host_shader_module(veng_test_gradient_noise_host
+            MODULE tests/shaders/host/gradient_noise_host.slang
+            NAME GradientNoise)
+    target_link_libraries(veng_test_unit PRIVATE veng_test_gradient_noise_host)
     # The committed trace-format fixtures live in the source tree; the
     # round-trip case reads them by absolute path so it runs from any working directory.
     target_compile_definitions(veng_test_unit PRIVATE
@@ -1862,6 +1870,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sprite_shading.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/gradient_noise.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/host/gradient_noise.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1882,7 +1892,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/subgroup_probe.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_args.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/dispatch_visit.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sprite_shading.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sprite_shading.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/gradient_noise.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -2001,6 +2012,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp
             tests/gpu/sh_consistency.cpp
+            tests/gpu/host_shader_agreement.cpp
             tests/gpu/area_shadow_size.cpp
             tests/gpu/ltc_sphere.cpp
             # sprite_shading.cpp evaluates the flipbook shading core's functions in one dispatch.
@@ -2106,6 +2118,8 @@ if (VENG_BUILD_TESTS)
             tests/gpu/application_settings_boot.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    # host_shader_agreement.cpp compares the fixture's host build with its GPU dispatch.
+    target_link_libraries(veng_test_gpu PRIVATE veng_test_gradient_noise_host)
     target_precompile_headers(veng_test_gpu PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
     # public escape hatch) to drive RetireOnTransfer/ReleaseBuffer, so this target
@@ -2444,6 +2458,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/ui_dropdown_cook.cpp
             tests/cooker/stylesheet_cook.cpp
             tests/cooker/ui_document_repeat.cpp
+            tests/cooker/compile_host.cpp
     )
     # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked
@@ -2708,6 +2723,7 @@ if (VENG_BUILD_TESTS AND VENG_INSTALL_SDK AND TARGET veng-editor AND TARGET veng
                 -D VENG_CMAKE=${CMAKE_COMMAND}
                 -D VENG_ENGINE_BUILD_DIR=${CMAKE_BINARY_DIR}
                 -D VENG_TEMPLATE_SRC=${CMAKE_CURRENT_SOURCE_DIR}/examples/template
+                -D VENG_HOST_MODULE_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sdk_host_module
                 -D VENG_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/sdk_conformance_${MODE}
                 -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
                 "-D" "VENG_OSX_ARCH=${VENG_SDK_CONFORMANCE_ARCH}"
@@ -2760,6 +2776,7 @@ install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HostShaderModule.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
 )
 

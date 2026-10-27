@@ -64,9 +64,10 @@ if (TARGET veng::veng_editor AND NOT TARGET veng_editor::veng_editor)
     add_library(veng_editor::veng_editor ALIAS veng::veng_editor)
 endif ()
 
-# The authoring vocabulary — veng_add_project / veng_add_asset_pack / veng_add_game and the
-# build-config helpers. They reference vengc through the alias above and the core-data paths
-# the preamble set, so a consumer gets the full authoring surface on find_package(veng).
+# The authoring vocabulary — veng_add_project / veng_add_asset_pack / veng_add_game,
+# veng_add_host_shader_module and the build-config helpers. They reference vengc through the
+# alias above and the core-data paths the preamble set, so a consumer gets the full authoring
+# surface on find_package(veng).
 # VENG_CMAKE_HELPER_DIR is the config dir in install mode and the live source cmake/ dir in
 # build-tree mode, so a co-development engine-source edit to a helper is visible on rebuild.
 include("${VENG_CMAKE_HELPER_DIR}/AssetPack.cmake")
@@ -74,5 +75,6 @@ include("${VENG_CMAKE_HELPER_DIR}/BuildConfig.cmake")
 include("${VENG_CMAKE_HELPER_DIR}/Project.cmake")
 include("${VENG_CMAKE_HELPER_DIR}/Game.cmake")
 include("${VENG_CMAKE_HELPER_DIR}/Editor.cmake")
+include("${VENG_CMAKE_HELPER_DIR}/HostShaderModule.cmake")
 
 check_required_components(veng)

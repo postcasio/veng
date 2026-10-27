@@ -549,6 +549,13 @@ source (there is no precompiled-inline path) and **reflects the shader offline**
 serializable `ShaderInterface`; the engine loads plain **SPIR-V** and gains no Slang dependency.
 Shaders are Slang only; there is no GLSL path.
 
+**Pure shader functions also compile for the host.** A Slang file of generic functions included
+by GPU shaders can be compiled to C++ as well, through `veng_add_host_shader_module`, so a CPU
+evaluation runs exactly the source the GPU does rather than a hand-kept mirror. That is a build
+tool, not a runtime path: the engine still loads only SPIR-V and links no Slang. See
+[cooker/CLAUDE.md](../../../cooker/CLAUDE.md#host-shader-modules) and
+[docs/guides/shader-code-on-the-host.md](../../../docs/guides/shader-code-on-the-host.md).
+
 A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and declares an
 **ordered field list naming every `MaterialParams` member**, each entry stating only what the cook
 cannot reflect — a bare member-name string is a float member at its zero default, and a scalar-uint
