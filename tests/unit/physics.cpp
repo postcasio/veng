@@ -448,6 +448,38 @@ TEST_CASE("an impulse wakes a sleeping body and changes its velocity by impulse 
     CHECK(fixture.World->Get<PhysicsPose>(body).Position.x > 0.0);
 }
 
+TEST_CASE("a body not allowed to sleep accelerates from rest under a weak force, where the default "
+          "falls asleep")
+{
+    const PhysicsFixture fixture;
+    // Weak enough that a body falling under it moves less than the solver's sleep threshold.
+    fixture.Physics().SetGravity(vec3(0.0f, -0.01f, 0.0f));
+    const auto Spawn = [&](const vec3 at, const bool allowSleeping)
+    {
+        const Entity body = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(body, Transform{.Position = at});
+        fixture.World->Add<RigidBody>(body, RigidBody{.AllowSleeping = allowSleeping});
+        fixture.World->Add<Collider>(
+            body, Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(0.5f)});
+        return body;
+    };
+    const Entity sleeper = Spawn(vec3(-2.0f, 0.0f, 0.0f), true);
+    const Entity waker = Spawn(vec3(2.0f, 0.0f, 0.0f), false);
+    fixture.Tick(120);
+
+    CHECK_FALSE(fixture.Physics().IsBodyActive(sleeper));
+    CHECK(fixture.Physics().IsBodyActive(waker));
+    // Two seconds at 0.01 m/s², less the default damping.
+    CHECK(-fixture.Physics().GetLinearVelocity(waker).y > 0.015f);
+    CHECK(fixture.World->Get<PhysicsPose>(waker).Position.y < -0.015);
+
+    // Clearing the permission on the sleeping body wakes it, and it falls from there.
+    fixture.World->Get<RigidBody>(sleeper).AllowSleeping = false;
+    fixture.Tick(60);
+    CHECK(fixture.Physics().IsBodyActive(sleeper));
+    CHECK(-fixture.Physics().GetLinearVelocity(sleeper).y > 0.005f);
+}
+
 TEST_CASE("a sleeping body wakes on request, and an impulse moves no kinematic or static body")
 {
     const PhysicsFixture fixture;

@@ -74,7 +74,7 @@ and awake, plus headroom; a consumer creating bodies on demand caps its own popu
 
 ```
 RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; StartAsleep;
-                  Quality (Discrete|LinearCast); MaxLinearSpeed; MaxAngularSpeed; InertiaScale; }
+                  AllowSleeping; Quality (Discrete|LinearCast); MaxLinearSpeed; MaxAngularSpeed; InertiaScale; }
 Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Scale; Friction; Restitution; Geometry; }
 PhysicsPose     { dvec3 Position; quat Rotation; }
 Sensor          { Layers; }
@@ -92,8 +92,8 @@ through the existing pipeline. An entity needs a `RigidBody` and a `Collider` to
 `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at runtime creates the
 backing body on the next step, removing either destroys it, and editing a field re-creates the body
 with the new settings — except `SyncTransform` and `StartAsleep`, which build nothing into the body,
-and `Quality`, `MaxLinearSpeed`, `MaxAngularSpeed`, `Mass`, `InertiaScale`, `LinearDamping` and
-`AngularDamping`, which the solver changes on a live body; all nine are taken in place, keeping the
+and `AllowSleeping`, `Quality`, `MaxLinearSpeed`, `MaxAngularSpeed`, `Mass`, `InertiaScale`,
+`LinearDamping` and `AngularDamping`, which the solver changes on a live body; all ten are taken in place, keeping the
 body's identity, pose, velocity, contacts and sleep state, as is adding or removing a
 `ContactReport`. So a body whose mass changes while it moves — a vehicle taking on or dropping load,
 one burning propellant, a crate being filled — carries on at the velocity it had and answers the next
@@ -492,6 +492,10 @@ placed at rest costs nothing until a contact, an impulse or **`ActivateBody`** w
 **`IsBodyActive`** reports it. **`AddImpulse(entity, impulse)`** and **`AddImpulseAt(entity, impulse,
 worldPoint)`** change a dynamic body's velocity by impulse over mass at once and wake it (a no-op on
 any other body), beside `Get/SetLinearVelocity` and `Get/SetAngularVelocity`.
+**`RigidBody::AllowSleeping`** (default true) is the solver's permission to put a `Dynamic` body to
+sleep once its points stay within about 1.5 cm for half a second, which zeroes its velocity: a body
+under a weak constant force never starts from rest, and a slow drift under a few centimetres a
+second is stopped. Cleared, the body stays awake; clearing it on a live body wakes it.
 
 **Contacts are found against the pose a step starts from.** A kinematic body teleported across a
 sensor in one tick is therefore reported on the *next* tick, once the step begins with it inside.

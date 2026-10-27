@@ -967,16 +967,33 @@ namespace Veng
             native.Bodies.erase(found);
         }
 
-        /// @brief Takes a live body's motion quality and speed limits from @p body in place.
+        /// @brief Takes a live body's motion quality, speed limits and permission to sleep from
+        ///        @p body in place.
         ///
         /// The solver changes each on a body it holds without re-creating it, so the edit keeps the
-        /// body's pose, velocity, contacts and sleep state, and wakes nothing.
+        /// body's pose, velocity, contacts and sleep state, and wakes nothing — except that a body
+        /// no longer allowed to sleep is woken, since the solver would leave a sleeping one asleep.
         /// @param native  The world's backend state.
         /// @param record  The non-static body's record, updated to match.
         /// @param body    The settings to take.
         void ApplyMotionSettings(PhysicsWorld::Native& native, Detail::BodyRecord& record,
                                  const RigidBody& body)
         {
+            if (record.Body.AllowSleeping != body.AllowSleeping)
+            {
+                {
+                    const JPH::BodyLockWrite lock(native.System.GetBodyLockInterface(), record.Id);
+                    if (lock.Succeeded())
+                    {
+                        lock.GetBody().SetAllowSleeping(body.AllowSleeping);
+                    }
+                }
+                if (!body.AllowSleeping && body.Motion == MotionType::Dynamic)
+                {
+                    native.System.GetBodyInterface().ActivateBody(record.Id);
+                }
+                record.Body.AllowSleeping = body.AllowSleeping;
+            }
             if (record.Body.Quality != body.Quality)
             {
                 native.System.GetBodyInterface().SetMotionQuality(record.Id,
@@ -1190,6 +1207,7 @@ namespace Veng
         settings.mMotionQuality = ToJoltQuality(body.Quality);
         settings.mMaxLinearVelocity = body.MaxLinearSpeed;
         settings.mMaxAngularVelocity = body.MaxAngularSpeed;
+        settings.mAllowSleeping = body.AllowSleeping;
         // A Trigger-layer body reports overlaps and pushes nothing; that is what the layer means.
         settings.mIsSensor = sensor || body.Layer == PhysicsLayer::Trigger;
         // A sensor is told about non-dynamic bodies too, so a kinematic mover entering a trigger

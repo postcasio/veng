@@ -281,7 +281,7 @@ namespace Veng
         /// shadow. RigidBody::StartAsleep is read only here, at
         /// creation, and a difference in it alone re-creates nothing. RigidBody::Quality,
         /// MaxLinearSpeed and MaxAngularSpeed are taken in place on the live body, waking nothing,
-        /// and so is @p reportContacts. RigidBody::Mass, InertiaScale, LinearDamping and
+        /// and so are RigidBody::AllowSleeping (clearing it wakes the body) and @p reportContacts. RigidBody::Mass, InertiaScale, LinearDamping and
         /// AngularDamping are taken in place too, keeping the body's identity, pose, velocities,
         /// contacts and sleep state, so a body whose load changes while it moves carries on at the
         /// velocity it had and answers forces at its new mass. A body turned between Kinematic and

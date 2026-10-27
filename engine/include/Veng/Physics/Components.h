@@ -128,6 +128,16 @@ namespace Veng
         /// PhysicsWorld::ActivateBody. Read when the body is created only, so changing it on a
         /// live body re-creates nothing. Ignored for a Static or Kinematic body.
         bool StartAsleep = false;
+        /// @brief Whether the solver may put a Dynamic body to sleep once it comes to rest.
+        ///
+        /// True by default: a body whose points stay within a centimetre or two for half a second
+        /// is put to sleep, its velocity zeroed, and costs the step nothing until something wakes
+        /// it. That is wrong for a body whose motion is slow but meant: one under a weak constant
+        /// force never starts from rest, and one drifting at a few centimetres a second is stopped.
+        /// Cleared, the body stays awake and integrates every step. Changing it on a live body is
+        /// taken in place, and clearing it wakes a sleeping body. Ignored for a Static or Kinematic
+        /// body.
+        bool AllowSleeping = true;
         /// @brief How the solver finds this body's contacts within a step; ignored for a Static body.
         ///
         /// MotionQuality::LinearCast keeps a fast body from passing through what lies in its path,
@@ -513,6 +523,8 @@ VE_FIELD(SyncTransform, .DisplayName = "Sync Transform",
                     "PhysicsPose alone")
 VE_FIELD(StartAsleep, .DisplayName = "Start Asleep",
          .Tooltip = "Create a Dynamic body asleep, so it costs nothing until something wakes it")
+VE_FIELD(AllowSleeping, .DisplayName = "Allow Sleeping",
+         .Tooltip = "Let the solver put a Dynamic body to sleep once it comes to rest")
 VE_FIELD(Quality, .DisplayName = "Motion Quality",
          .Tooltip = "Discrete, or LinearCast to sweep a fast body so it does not tunnel")
 VE_FIELD(MaxLinearSpeed, .DisplayName = "Max Linear Speed",

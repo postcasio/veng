@@ -638,10 +638,12 @@ extern "C"
 /// the shadow-reading pipelines, and the packed light's flags word and the surface-flags code are
 /// re-encoded. A module spawns lights, builds materials and owns renderers, so a stale one lays
 /// them out short, and its cooked shaders write the surface flags at the old levels.
+/// Version 160 lets a dynamic body stay awake: RigidBody grows AllowSleeping, after StartAsleep. A
+/// module spawns bodies, so a stale one lays the component out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 159u
+#define VENG_MODULE_ABI_VERSION 160u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
