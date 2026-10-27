@@ -94,8 +94,22 @@ namespace Veng::Renderer
         /// @brief The view frustum's planes in the body-fixed frame, relative to the eye: a point
         ///        `q` (from the eye) is inside when `dot(xyz, q) + w ≥ 0` for every plane.
         ///
-        /// Ranks requests only; selection is not frustum-pruned. Null treats every tile as inside.
+        /// Beyond Settings.OmnidirectionalRadius a tile refines only while its bound meets these
+        /// planes, and requests inside them rank ahead of those outside. A renderer passes the
+        /// view's side planes alone, so the selection does not depend on where the near and far
+        /// planes stand (or on a scale about the eye that moves them). Null treats every tile as
+        /// inside.
         const std::array<glm::dvec4, 6>* Frustum = nullptr;
+        /// @brief The deepest pinned level: tiles at or above it are always resident, so wanting
+        ///        them costs the budget nothing.
+        u32 PinnedLevel = 0;
+        /// @brief The most tiles below the pinned top the selection may want kept or generated.
+        ///
+        /// Splits are taken nearest the eye first (by the distance to the tile's bound, a split
+        /// taken last frame ranked as if `(1 − h)` of its distance away and a new one `(1 + h)`),
+        /// so when the pool cannot hold every wanted split the ground under and before the eye
+        /// keeps its depth and the shortfall falls on the far field. ~0 is no budget.
+        u32 TileBudget = ~0u;
         /// @brief What the pool holds.
         const SphereTerrainTileOracle* Tiles = nullptr;
         /// @brief The tiles split last frame, for hysteresis.
@@ -149,8 +163,9 @@ namespace Veng::Renderer
     /// `(1 − h)·D_L` and merges past `(1 + h)·D_L`; it also splits when its MorphError, projected at
     /// its bound's distance, exceeds the height-error target. A split happens only when all four
     /// children are resident; otherwise the tile is drawn and its children requested (the parent
-    /// fallback). Subtrees are pruned only below the horizon or past their level's range, never by
-    /// the frustum, so a turn of the head finds the near tiles resident.
+    /// fallback). Subtrees are pruned below the horizon, past their level's range, and — beyond
+    /// the omnidirectional radius — outside the view frustum, so a turn of the head finds the
+    /// near tiles resident. Splits are taken nearest first under the input's tile budget.
     [[nodiscard]] VE_API SphereTerrainSelectionResult
     SelectSphereTerrain(const SphereTerrainSelectionInput& input);
 }

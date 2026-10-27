@@ -19,6 +19,7 @@ namespace Veng::Renderer
 {
     class Context;
     class InstancedMeshSystem;
+    class SphereTerrainSystem;
     class DescriptorSetLayout;
     class GraphicsPipeline;
     class PipelineLayout;
@@ -52,9 +53,11 @@ namespace Veng::Renderer
         /// @param resolution  Per-tile edge length in texels; the atlas is sized from this.
         /// @param instanced  The instanced mesh sets casting into the faces, or null while the
         ///                   scene carries none.
+        /// @param terrain     The renderer's sphere terrains casting into the views.
         PunctualShadowScenePass(Context& context, AssetManager& assets,
                                 const CasterRecordRing& records, const ShadowCasterViews& casters,
-                                u32 resolution, const InstancedMeshSystem* instanced);
+                                u32 resolution, const InstancedMeshSystem* instanced,
+                                const SphereTerrainSystem* terrain);
         ~PunctualShadowScenePass() override;
 
         /// @brief Adds this frame's rendered faces to the shadow views.
@@ -85,6 +88,8 @@ namespace Veng::Renderer
         const ShadowCasterViews& m_Casters;
         /// @brief The instanced mesh sets casting into the views, or null.
         const InstancedMeshSystem* m_Instanced = nullptr;
+        /// @brief The sphere terrains casting into the views.
+        const SphereTerrainSystem* m_Terrain = nullptr;
         u32 m_Resolution;
         /// @brief The faces this frame renders, in shadow-view order.
         vector<ShadowView> m_Views;

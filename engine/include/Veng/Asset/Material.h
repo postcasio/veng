@@ -26,6 +26,12 @@ namespace Veng
     struct Shader;
     class Texture;
 
+    /// @brief The core pack's sphere-terrain vertex stage (surface_terrain.vert).
+    ///
+    /// A material declaring "sphereTerrain" names it as its vertex shader, and no other material
+    /// may; the cook enforces both.
+    inline constexpr AssetId SphereTerrainVertexShaderId{0x7D963B7185626B36ULL};
+
     /// @brief Selects a material's output contract, pipeline shape, standard vertex shader, and invocation site.
     ///
     /// Surface writes the g-buffer and is drawn per submesh by the geometry pass; PostProcess writes a
@@ -246,6 +252,13 @@ namespace Veng
         /// material does not declare it. Surface domain only (cook-enforced).
         bool InstancedSets = false;
 
+        /// @brief Whether the material shades sphere terrain.
+        ///
+        /// Its vertex stage is the core sphere-terrain stage and its pipeline the terrain
+        /// pipeline: no instance-rate binding, and the terrain's set 4 in its layout. Surface
+        /// domain only, exclusive with InstancedSets (cook-enforced).
+        bool SphereTerrain = false;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -373,6 +386,13 @@ namespace Veng
         /// A material declares it at cook time ("instancedSets": true); a set drawn with a material
         /// that does not is reported and draws nothing.
         [[nodiscard]] bool SupportsInstancedSets() const { return m_InstancedSets; }
+
+        /// @brief Returns whether the material shades sphere terrain.
+        ///
+        /// A material declares it at cook time ("sphereTerrain": true). Its pipeline is the terrain
+        /// pipeline and it draws on nothing else; a terrain drawn with a material that does not
+        /// declare it is reported and draws nothing.
+        [[nodiscard]] bool IsSphereTerrain() const { return m_SphereTerrain; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -557,6 +577,7 @@ namespace Veng
         bool m_ReadsSceneColor = false;
         bool m_ReadsSceneDepth = false;
         bool m_InstancedSets = false;
+        bool m_SphereTerrain = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::GraphicsPipeline> m_InstancedPipeline;

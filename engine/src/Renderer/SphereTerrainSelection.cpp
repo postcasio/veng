@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <numbers>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -30,17 +32,39 @@ namespace Veng::Renderer
         {
             HeightRange Working;
             HeightRange Own;
+            f32 MorphError = 0.0f;
             u32 Layer = 0;
         };
+
+        // A tile wanting to split, waiting its turn for the budget.
+        struct Candidate
+        {
+            f64 Order = 0.0;
+            CubeSphereTileKey Key;
+            f32 Urgency = 0.0f;
+            bool InFrustum = true;
+
+            [[nodiscard]] bool operator>(const Candidate& other) const
+            {
+                return Order != other.Order ? Order > other.Order : Key.Value > other.Key.Value;
+            }
+        };
+
+        using CandidateQueue =
+            std::priority_queue<Candidate, vector<Candidate>, std::greater<Candidate>>;
 
         struct Walker
         {
             const SphereTerrainSelectionInput& In;
             SphereTerrainSelectionResult& Out;
             std::unordered_map<u64, Node> Nodes;
-            std::unordered_set<u64> Blocked;
+            std::unordered_set<u64> Held;
+            std::unordered_set<u64> Requested;
+            CandidateQueue Splits;
+            vector<Candidate> Prefetches;
             f64 RangeAtZero = 0.0;
             f64 Occluder = 0.0;
+            u64 Used = 0;
 
             [[nodiscard]] HeightRange Clamp(HeightRange range) const
             {
@@ -82,6 +106,17 @@ namespace Veng::Renderer
                 return record != nullptr && record->State == SphereTerrainTileState::Resident;
             }
 
+            // What wanting a tile's four children costs the budget: nothing in the pinned top.
+            [[nodiscard]] u64 ChildCost(const CubeSphereTileKey key) const
+            {
+                return key.GetLevel() + 1 > In.PinnedLevel ? 4u : 0u;
+            }
+
+            [[nodiscard]] bool Afford(const CubeSphereTileKey key) const
+            {
+                return In.TileBudget == ~0u || Used + ChildCost(key) <= In.TileBudget;
+            }
+
             void WantOrRequest(const CubeSphereTileKey child, const SphereTerrainRequestKind kind,
                                const f32 urgency, const bool inFrustum)
             {
@@ -94,6 +129,9 @@ namespace Veng::Renderer
                     {.Key = child, .Kind = kind, .Urgency = urgency, .InFrustum = inFrustum});
             }
 
+            // Measures a resident tile and decides what it wants: a split joins the queue, which
+            // takes splits nearest first under the budget; a tile near enough to split soon joins
+            // the prefetch list.
             void Visit(const CubeSphereTileKey key, const optional<HeightRange>& parentOwn)
             {
                 const SphereTerrainTileRecord* record = In.Tiles->Find(key);
@@ -106,9 +144,11 @@ namespace Veng::Renderer
                 Out.Wanted.push_back(key);
 
                 HeightRange own{.Min = In.MinHeight, .Max = In.MaxHeight};
+                f32 morphError = In.LevelHeightBounds[level];
                 if (record->Bound.Measured)
                 {
                     own = {.Min = record->Bound.Min, .Max = record->Bound.Max};
+                    morphError = record->Bound.MorphError;
                 }
                 else if (parentOwn.has_value())
                 {
@@ -122,7 +162,10 @@ namespace Veng::Renderer
                     working.Max = std::max(working.Max, parentOwn->Max);
                 }
                 working = Clamp(working);
-                Nodes[key.Value] = {.Working = working, .Own = own, .Layer = record->Layer};
+                Nodes[key.Value] = {.Working = working,
+                                    .Own = own,
+                                    .MorphError = morphError,
+                                    .Layer = record->Layer};
 
                 const SphereTerrainTileBox box =
                     ComputeSphereTerrainTileBox(key, In.Radius, working.Min, working.Max);
@@ -146,133 +189,167 @@ namespace Veng::Renderer
                         wasSplit ? projected > target * (1.0 - h) : projected > target * (1.0 + h);
                 }
 
+                const bool nearEye = distance <= settings.OmnidirectionalRadius;
+                const bool inFrustum = IsInFrustum(box);
+                const f64 order = distance * (wasSplit ? 1.0 - h : 1.0 + h);
                 if (canDeepen && (distanceWants || heightWants))
                 {
-                    bool allResident = true;
-                    for (u32 child = 0; child < 4; child++)
+                    if (!nearEye && !inFrustum)
                     {
-                        allResident = allResident && IsChildResident(key.GetChild(child));
-                    }
-                    if (allResident)
-                    {
-                        Out.Splits.insert(key.Value);
-                        for (u32 child = 0; child < 4; child++)
-                        {
-                            Visit(key.GetChild(child), own);
-                        }
+                        Held.insert(key.Value);
+                        Out.Stats.HeldForFrustum++;
                         return;
                     }
-                    Out.Stats.WaitingSplits++;
                     const f64 urgency =
                         std::max((1.0 - h) * range / std::max(distance, 1e-3),
                                  projected / std::max<f64>(settings.TargetHeightErrorPixels, 1e-6));
-                    const bool inFrustum = IsInFrustum(box);
-                    for (u32 child = 0; child < 4; child++)
-                    {
-                        WantOrRequest(key.GetChild(child), SphereTerrainRequestKind::Split,
-                                      static_cast<f32>(urgency), inFrustum);
-                    }
+                    Splits.push({.Order = order,
+                                 .Key = key,
+                                 .Urgency = static_cast<f32>(urgency),
+                                 .InFrustum = inFrustum});
                     return;
                 }
 
-                if (canDeepen && distance < settings.PrefetchRangeScale * (1.0 - h) * range)
+                if (canDeepen && (nearEye || inFrustum) &&
+                    distance < settings.PrefetchRangeScale * (1.0 - h) * range)
                 {
-                    const bool inFrustum = IsInFrustum(box);
-                    for (u32 child = 0; child < 4; child++)
-                    {
-                        WantOrRequest(key.GetChild(child), SphereTerrainRequestKind::Prefetch, 0.0f,
-                                      inFrustum);
-                    }
+                    Prefetches.push_back({.Order = order, .Key = key, .InFrustum = inFrustum});
                 }
             }
 
-            // Splits a tile the distance rule left whole because a split neighbour needs it: past
-            // the horizon the rule stops refining, and the drawn set must still be balanced there.
-            // Fails when the tile, or an ancestor it needs, has a child still generating.
-            bool ForceSplit(const CubeSphereTileKey key)
+            // Splits a tile, after making sure every tile its children will border exists: each
+            // same-level neighbour's parent is split first, so the drawn set stays 2:1 balanced by
+            // construction. Fails, splitting nothing more, when the budget cannot afford it or a
+            // tile it needs has children still generating; those are requested, once, and charged
+            // to the budget, since they will hold pool layers once generated.
+            bool TrySplit(const CubeSphereTileKey key, const f32 urgency, const bool inFrustum,
+                          const bool forBalance)
             {
                 if (Out.Splits.contains(key.Value))
                 {
                     return true;
                 }
-                if (Blocked.contains(key.Value) || key.GetLevel() >= In.MaxLevel)
+                if (key.GetLevel() >= In.MaxLevel)
                 {
                     return false;
                 }
-                if (!Nodes.contains(key.Value) &&
-                    (key.GetLevel() == 0 || !ForceSplit(key.GetParent()) ||
-                     !Nodes.contains(key.Value)))
+                // A tile is a node only once its parent is split.
+                if (!Nodes.contains(key.Value))
                 {
-                    return false;
-                }
-                for (u32 child = 0; child < 4; child++)
-                {
-                    if (!IsChildResident(key.GetChild(child)))
+                    if (key.GetLevel() == 0 ||
+                        !TrySplit(key.GetParent(), urgency, inFrustum, true) ||
+                        !Nodes.contains(key.Value))
                     {
                         return false;
                     }
                 }
+                if (!Afford(key) && !Requested.contains(key.Value))
+                {
+                    if (!forBalance)
+                    {
+                        Out.Stats.HeldForBudget++;
+                    }
+                    return false;
+                }
+
+                bool allResident = true;
+                for (u32 child = 0; child < 4; child++)
+                {
+                    allResident = allResident && IsChildResident(key.GetChild(child));
+                }
+                if (!allResident)
+                {
+                    if (!Requested.contains(key.Value))
+                    {
+                        Requested.insert(key.Value);
+                        Used += ChildCost(key);
+                        for (u32 child = 0; child < 4; child++)
+                        {
+                            WantOrRequest(key.GetChild(child), SphereTerrainRequestKind::Split,
+                                          urgency, inFrustum);
+                        }
+                    }
+                    if (!forBalance)
+                    {
+                        Out.Stats.WaitingSplits++;
+                    }
+                    return false;
+                }
+
+                for (u32 edge = 0; edge < 4; edge++)
+                {
+                    const CubeSphereTileKey neighbour =
+                        key.GetNeighbour(static_cast<CubeSphere::Edge>(edge));
+                    if (!Nodes.contains(neighbour.Value) &&
+                        !TrySplit(neighbour.GetParent(), urgency, inFrustum, true))
+                    {
+                        if (!forBalance)
+                        {
+                            Out.Stats.HeldForBalance++;
+                        }
+                        return false;
+                    }
+                }
+                // Forcing the neighbours may have spent what this split needed.
+                if (!Requested.contains(key.Value))
+                {
+                    if (!Afford(key))
+                    {
+                        if (!forBalance)
+                        {
+                            Out.Stats.HeldForBudget++;
+                        }
+                        return false;
+                    }
+                    Used += ChildCost(key);
+                }
+
                 Out.Splits.insert(key.Value);
-                Out.Stats.SplitForBalance++;
+                if (forBalance)
+                {
+                    Out.Stats.SplitForBalance++;
+                }
                 const HeightRange own = Nodes.at(key.Value).Own;
                 for (u32 child = 0; child < 4; child++)
                 {
-                    if (!Nodes.contains(key.GetChild(child).Value))
-                    {
-                        Visit(key.GetChild(child), own);
-                    }
+                    Visit(key.GetChild(child), own);
                 }
                 return true;
             }
 
-            // Makes the split set 2:1 balanced: every split tile's same-level neighbours must exist,
-            // which is exactly when no drawn tile meets one more than a level finer. A missing
-            // neighbour's parent is split when its children are resident; otherwise the finer
-            // tile's split is undone until they land, keeping its children wanted.
-            void Balance()
+            // Takes the queued splits nearest the eye first; one that cannot be taken is held
+            // whole and drawn.
+            void Refine()
             {
-                bool changed = true;
-                while (changed)
+                while (!Splits.empty())
                 {
-                    changed = false;
-                    vector<u64> splits(Out.Splits.begin(), Out.Splits.end());
-                    std::ranges::sort(splits,
-                                      [](const u64 a, const u64 b)
-                                      {
-                                          const u32 la = CubeSphereTileKey::FromValue(a).GetLevel();
-                                          const u32 lb = CubeSphereTileKey::FromValue(b).GetLevel();
-                                          return la != lb ? la > lb : a < b;
-                                      });
-                    for (const u64 value : splits)
+                    const Candidate candidate = Splits.top();
+                    Splits.pop();
+                    if (!TrySplit(candidate.Key, candidate.Urgency, candidate.InFrustum, false))
                     {
-                        const CubeSphereTileKey key = CubeSphereTileKey::FromValue(value);
-                        if (key.GetLevel() == 0 || !Out.Splits.contains(value))
-                        {
-                            continue;
-                        }
-                        const usize before = Out.Splits.size();
-                        bool balanced = true;
-                        for (u32 edge = 0; edge < 4 && balanced; edge++)
-                        {
-                            const CubeSphereTileKey neighbour =
-                                key.GetNeighbour(static_cast<CubeSphere::Edge>(edge));
-                            balanced = ForceSplit(neighbour.GetParent());
-                        }
-                        changed = changed || Out.Splits.size() != before;
-                        if (balanced)
-                        {
-                            continue;
-                        }
-                        std::erase_if(Out.Splits,
-                                      [key](const u64 other)
-                                      {
-                                          return other == key.Value ||
-                                                 key.IsAncestorOf(
-                                                     CubeSphereTileKey::FromValue(other));
-                                      });
-                        Blocked.insert(key.Value);
-                        Out.Stats.HeldForBalance++;
-                        changed = true;
+                        Held.insert(candidate.Key.Value);
+                    }
+                }
+            }
+
+            // Wants the children of drawn tiles near their split distance, nearest first, with
+            // what the budget has left.
+            void Prefetch()
+            {
+                std::ranges::sort(Prefetches, std::less{},
+                                  [](const Candidate& candidate) { return candidate.Order; });
+                for (const Candidate& candidate : Prefetches)
+                {
+                    if (Out.Splits.contains(candidate.Key.Value) || !Afford(candidate.Key))
+                    {
+                        continue;
+                    }
+                    Used += ChildCost(candidate.Key);
+                    for (u32 child = 0; child < 4; child++)
+                    {
+                        WantOrRequest(candidate.Key.GetChild(child),
+                                      SphereTerrainRequestKind::Prefetch, 0.0f,
+                                      candidate.InFrustum);
                     }
                 }
             }
@@ -313,6 +390,8 @@ namespace Veng::Renderer
                     .MaxHeight = node->second.Working.Max,
                     .MorphStart = static_cast<f32>(In.Settings.MorphStartRatio * morphEnd),
                     .MorphEnd = static_cast<f32>(morphEnd),
+                    .MorphError = node->second.MorphError,
+                    .Held = Held.contains(key.Value),
                 });
                 Out.Stats.DrawnTiles++;
                 Out.Stats.DrawnPerLevel[level]++;
@@ -467,7 +546,10 @@ namespace Veng::Renderer
             }
         }
 
-        walker.Balance();
+        walker.Refine();
+        walker.Prefetch();
+        result.Stats.BudgetedTiles = static_cast<u32>(std::min<u64>(walker.Used, ~0u));
+        result.Stats.TileBudget = input.TileBudget;
         for (u32 face = 0; face < CubeSphere::FaceCount; face++)
         {
             walker.Emit(CubeSphereTileKey::Make(static_cast<CubeSphere::Face>(face), 0, 0, 0));

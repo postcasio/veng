@@ -20,6 +20,7 @@ namespace Veng::Renderer
 {
     class Context;
     class InstancedMeshSystem;
+    class SphereTerrainSystem;
     class DescriptorSetLayout;
     class GraphicsPipeline;
     class Image;
@@ -59,9 +60,10 @@ namespace Veng::Renderer
         /// @param cascadeCount Cascades per set the atlas is sized for.
         /// @param instanced    The instanced mesh sets casting into the tiles, or null while the
         ///                     scene carries none.
+        /// @param terrain     The renderer's sphere terrains casting into the views.
         ShadowScenePass(Context& context, AssetManager& assets, const CasterRecordRing& records,
                         const ShadowCasterViews& casters, u32 resolution, u32 cascadeCount,
-                        const InstancedMeshSystem* instanced);
+                        const InstancedMeshSystem* instanced, const SphereTerrainSystem* terrain);
         ~ShadowScenePass() override;
 
         /// @brief The atlas view, written into the shadow descriptor set (set 1 binding 0).
@@ -112,6 +114,8 @@ namespace Veng::Renderer
         const ShadowCasterViews& m_Casters;
         /// @brief The instanced mesh sets casting into the views, or null.
         const InstancedMeshSystem* m_Instanced = nullptr;
+        /// @brief The sphere terrains casting into the views.
+        const SphereTerrainSystem* m_Terrain = nullptr;
         /// @brief The atlas tile grid: one set's columns/rows plus the stacked set count.
         ShadowAtlasGrid m_Grid;
         /// @brief A caster spanning fewer texels than this in a tile is skipped there.

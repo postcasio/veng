@@ -441,7 +441,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 18u;
+    inline constexpr u32 CookedMaterialVersion = 19u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -558,8 +558,16 @@ namespace Veng
         /// declaring material is drawn, and enable its writes for that material's pipeline alone.
         /// Translucent domain, full-resolution scene layer only, enforced at cook.
         u32 ExcludedFromMetering = 0;
+        /// @brief Whether the material shades sphere terrain (the "sphereTerrain" key; default 0).
+        ///
+        /// Its vertex stage is the core sphere-terrain stage, and its one pipeline is the terrain
+        /// pipeline, with the terrain's set 4 in its layout. Surface domain only, exclusive with
+        /// InstancedSets, enforced at cook.
+        u32 SphereTerrain = 0;
+        /// @brief Zero; holds the header to a multiple of eight bytes with no unnamed padding.
+        u32 Reserved = 0;
     };
-    static_assert(sizeof(CookedMaterialHeader) == 72,
+    static_assert(sizeof(CookedMaterialHeader) == 80,
                   "CookedMaterialHeader carries no unnamed padding");
 
     /// @brief One reflected material field within the single parameter block.

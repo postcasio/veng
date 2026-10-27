@@ -721,6 +721,17 @@ does not declare it. A declared material still draws on an ordinary mesh: its fr
 instance through `Veng/instanced_mesh.slang`, which returns the neutral record there. See
 [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Instanced mesh sets".
 
+**A Surface material declares whether it shades sphere terrain**, `"sphereTerrain": true`
+(`Material::IsSphereTerrain`; default false). It names the core `surface_terrain.vert`
+(`SphereTerrainVertexShaderId`) as its vertex shader, and no other material may name that stage; its
+fragment takes `SphereTerrainFragmentInput` (`Veng/sphere_terrain.slang`). The cook refuses the key
+off the Surface domain, beside `"instancedSets"`, or with another vertex stage, each a located error.
+Its one pipeline is the terrain pipeline, built at load with no instance-rate binding and with the
+reflected set 4 replaced by the terrain's own layout (`WithSphereTerrainSet`, which refuses a
+reflected set-4 binding the terrain's does not carry), so one set the renderer writes per frame binds
+under every terrain material. A terrain drawn with an undeclared material is reported once and draws
+nothing. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Sphere terrain".
+
 The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
 index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);
 PostProcess and Sky push it at 0; GuiFill pushes it at **`GuiFillSelectorPushOffset` (20)**,

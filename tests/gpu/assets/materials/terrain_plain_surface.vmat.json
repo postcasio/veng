@@ -1,0 +1,10 @@
+{
+  "defaultInstance": "0x754BB28BD3AB91D6",
+  "shaders": {
+    "vertex": "0x69BE03796E97148D",
+    "fragment": "0xD3CAB2BFED50AABE"
+  },
+  "fields": [
+    { "name": "BaseColor", "type": "vec4", "value": [0.8, 0.8, 0.8, 1.0] }
+  ]
+}

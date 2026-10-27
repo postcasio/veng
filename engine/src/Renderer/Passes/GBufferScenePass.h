@@ -17,6 +17,7 @@ namespace Veng::Renderer
     class Context;
     class GBufferShadingOverride;
     class InstancedMeshSystem;
+    class SphereTerrainSystem;
 
     /// @brief Records a draw group's instanced runs: one DrawIndexed per run.
     ///
@@ -52,14 +53,15 @@ namespace Veng::Renderer
         ///                    each group's own material pipeline.
         /// @param instanced   The instanced mesh sets to draw after the entity draws, or null while
         ///                    the scene carries none.
+        /// @param terrain     The renderer's sphere terrains, drawn after the entity draws.
         GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
                          SceneRendererSettings::CullMode cull, ResourceId indirectId,
                          const GBufferChannelStates& stores,
                          const GBufferShadingOverride* shadingOverride,
-                         const InstancedMeshSystem* instanced)
+                         const InstancedMeshSystem* instanced, const SphereTerrainSystem* terrain)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
               m_IndirectId(indirectId), m_Stores(stores), m_ShadingOverride(shadingOverride),
-              m_Instanced(instanced)
+              m_Instanced(instanced), m_Terrain(terrain)
         {
         }
 
@@ -88,5 +90,7 @@ namespace Veng::Renderer
         const GBufferShadingOverride* m_ShadingOverride = nullptr;
         /// @brief The instanced mesh sets drawn after the entity draws, or null.
         const InstancedMeshSystem* m_Instanced = nullptr;
+        /// @brief The sphere terrains drawn after the entity draws.
+        const SphereTerrainSystem* m_Terrain = nullptr;
     };
 }

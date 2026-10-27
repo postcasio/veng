@@ -370,7 +370,7 @@ namespace Veng::Renderer
         // pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
         m_Instanced = InstancedMeshSystem::Create(m_Context, m_Assets);
-        m_SphereTerrain = CreateUnique<SphereTerrainSystem>();
+        m_SphereTerrain = SphereTerrainSystem::Create(m_Context, m_Assets);
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
@@ -803,7 +803,8 @@ namespace Veng::Renderer
         {
             auto shadowPass = CreateUnique<ShadowScenePass>(
                 m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
-                m_Settings.ShadowResolution, m_Settings.CascadeCount, instanced);
+                m_Settings.ShadowResolution, m_Settings.CascadeCount, instanced,
+                m_SphereTerrain.get());
             m_ShadowPass = shadowPass.get();
             shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
@@ -815,7 +816,7 @@ namespace Veng::Renderer
         {
             auto punctualPass = CreateUnique<PunctualShadowScenePass>(
                 m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
-                m_Settings.PunctualShadowResolution, instanced);
+                m_Settings.PunctualShadowResolution, instanced, m_SphereTerrain.get());
             m_PunctualShadowPass = punctualPass.get();
             m_Passes.push_back(std::move(punctualPass));
         }
@@ -912,7 +913,8 @@ namespace Veng::Renderer
         auto gbufferPass = CreateUnique<GBufferScenePass>(
             m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
             m_Topology->GBufferStores,
-            m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr, instanced);
+            m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr, instanced,
+            m_SphereTerrain.get());
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
@@ -2169,15 +2171,17 @@ namespace Veng::Renderer
     {
         const DrawBudgetStats& stats = m_DrawBudgetStats;
         const u32 slotDrops = stats.StaticDropped + stats.SkinnedDropped +
-                              stats.TranslucentDropped + stats.InstancedSetDropped;
+                              stats.TranslucentDropped + stats.InstancedSetDropped +
+                              stats.SphereTerrainDropped;
         if (slotDrops > 0 && !m_DrawSlotBudgetWarned)
         {
             Log::Warn("SceneRenderer: the per-frame draw-slot budget of {} is exhausted; {} static "
-                      "/ {} skinned / {} translucent candidates and {} instanced sets were not "
-                      "drawn. The frame is clamped rather than failed, and later frames clamp "
-                      "without warning again.",
+                      "/ {} skinned / {} translucent candidates, {} instanced sets and {} terrain "
+                      "surfaces were not drawn. The frame is clamped rather than failed, and later "
+                      "frames clamp without warning again.",
                       stats.SlotLimit, stats.StaticDropped, stats.SkinnedDropped,
-                      stats.TranslucentDropped, stats.InstancedSetDropped);
+                      stats.TranslucentDropped, stats.InstancedSetDropped,
+                      stats.SphereTerrainDropped);
             m_DrawSlotBudgetWarned = true;
         }
         if (stats.PaletteDropped > 0 && !m_PaletteBudgetWarned)
@@ -2393,6 +2397,13 @@ namespace Veng::Renderer
         }
         const u32 setSlots = budget.GetSlotCursor() - setSlotsBefore;
 
+        // Each drawn terrain surface takes one slot, for its material; its tiles are drawn
+        // outside the budget.
+        const u32 terrainSlotsBefore = budget.GetSlotCursor();
+        m_SphereTerrain->ClaimDrawSlots(
+            static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()) + frameBase, budget);
+        const u32 terrainSlots = budget.GetSlotCursor() - terrainSlotsBefore;
+
         // The layer draws only once its passes are wired AND its view region was written this
         // frame; otherwise this frame's routed draws fold back into the full-resolution plan
         // (rendered full-res, correctly sorted — the cost of one transition frame, never a
@@ -2535,7 +2546,7 @@ namespace Veng::Renderer
             static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
                              translucentPlan.Draws.size() + halfResPlan.Draws.size() +
                              postResolvePlan.Draws.size()) +
-            setSlots;
+            setSlots + terrainSlots;
         VE_ASSERT(gatheredSlots == slotCursor,
                   "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
                   gatheredSlots, slotCursor);
@@ -2909,6 +2920,19 @@ namespace Veng::Renderer
             sceneBounds = Union(sceneBounds, m_Instanced->GetBounds());
             casterBounds = Union(casterBounds, m_Instanced->GetCasterBounds());
         }
+
+        // Sphere terrain tiles are selected from the true eye, whatever scale they draw at; only
+        // the tiles within the shadow distance fold into the casters the cascades fit to.
+        m_SphereTerrain->Select(
+            view.World,
+            SphereTerrainSelectInfo{
+                .Camera = &view.Camera,
+                .HeightPixels = static_cast<f32>(validExtent.y),
+                .Frame = m_Context.GetFrameSerial(),
+                .Delta = view.Delta,
+                .ShadowDistance = m_Topology->ShadowActive ? m_Settings.MaxShadowDistance : 0.0f,
+            });
+        casterBounds = Union(casterBounds, m_SphereTerrain->GetCasterBounds());
 
         // Pack the lights that can light this view into the GPU light layout: cascade-set and
         // punctual shadow-slot assignment by estimated contribution, and the std430 per-light
@@ -3403,9 +3427,11 @@ namespace Veng::Renderer
             casters.Build(frameIndex);
         }
 
-        // Sphere terrain tiles are selected from the true eye, whatever scale they draw at.
-        m_SphereTerrain->Execute(view.World, view.Camera, static_cast<f32>(validExtent.y),
-                                 m_Context.GetFrameSerial());
+        // Sphere terrain tiles are culled against the main view and every shadow view above.
+        m_SphereTerrain->PrepareFrame(frameIndex, view.Camera,
+                                      m_ShadowPass != nullptr || m_PunctualShadowPass != nullptr
+                                          ? m_Internal->ShadowCasters.get()
+                                          : nullptr);
 
         // The instanced sets' per-instance cull for the main view and every shadow view above.
         if (m_InstancedActive)

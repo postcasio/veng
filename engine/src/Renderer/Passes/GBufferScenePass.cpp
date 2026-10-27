@@ -9,6 +9,7 @@
 
 #include "../GBufferShadingOverride.h"
 #include "../InstancedMeshSystem.h"
+#include "../SphereTerrainSystem.h"
 
 namespace Veng::Renderer
 {
@@ -117,6 +118,12 @@ namespace Veng::Renderer
         if (m_Instanced != nullptr && m_ShadingOverride == nullptr)
         {
             m_Instanced->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet);
+        }
+        // Sphere terrain is left out under the override for the same reason: its stages and set 4
+        // are the terrain's own, which the override's pipelines do not take.
+        if (m_Terrain != nullptr && m_ShadingOverride == nullptr)
+        {
+            m_Terrain->RecordGBuffer(cmd, plan.Push, plan.DrawDataSet);
         }
 
         if (plan.Slots.empty() && plan.SkinnedSlots.empty())

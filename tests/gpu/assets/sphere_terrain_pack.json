@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x1E04A0EC8834AAF9",
+      "type": "Shader",
+      "source": "shaders/terrain_flat.frag.shader.json"
+    },
+    {
+      "id": "0x9D1681FBFF6F0D43",
+      "type": "Material",
+      "source": "materials/terrain_flat.vmat.json"
+    },
+    {
+      "id": "0x71541910B19DE1DC",
+      "type": "Shader",
+      "source": "shaders/terrain_true_depth.frag.shader.json"
+    },
+    {
+      "id": "0xEEBC3F79A98C4FF5",
+      "type": "Material",
+      "source": "materials/terrain_true_depth.vmat.json"
+    },
+    {
+      "id": "0xD3CAB2BFED50AABE",
+      "type": "Shader",
+      "source": "shaders/terrain_plain_surface.frag.shader.json"
+    },
+    {
+      "id": "0xA8E093CFAD0A1D28",
+      "type": "Material",
+      "source": "materials/terrain_plain_surface.vmat.json"
+    }
+  ]
+}

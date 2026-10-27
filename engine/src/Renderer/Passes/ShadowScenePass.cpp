@@ -2,6 +2,7 @@
 
 #include "../DrawGather.h"
 #include "../InstancedMeshSystem.h"
+#include "../SphereTerrainSystem.h"
 
 #include <span>
 
@@ -67,10 +68,11 @@ namespace Veng::Renderer
     ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets,
                                      const CasterRecordRing& records,
                                      const ShadowCasterViews& casters, u32 resolution,
-                                     u32 cascadeCount, const InstancedMeshSystem* instanced)
+                                     u32 cascadeCount, const InstancedMeshSystem* instanced,
+                                     const SphereTerrainSystem* terrain)
         : m_Context(context), m_Records(records), m_Resolution(resolution),
           m_CascadeCount(cascadeCount), m_Casters(casters), m_Instanced(instanced),
-          m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets))
+          m_Terrain(terrain), m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets))
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
@@ -371,6 +373,20 @@ namespace Veng::Renderer
                         {
                             m_Instanced->RecordShadowView(cmd, shadowView, SetTile(tile),
                                                           m_Context.IsDepthClampSupported());
+                        }
+                    }
+                }
+
+                // Sphere terrain: each tile's tiles, pancaked like the other casters.
+                if (m_Terrain != nullptr)
+                {
+                    for (u32 tile = 0; tile < tileCount; ++tile)
+                    {
+                        const u32 shadowView = m_FirstView + tile;
+                        if (m_Terrain->HasShadowDraws(shadowView))
+                        {
+                            m_Terrain->RecordShadowView(cmd, shadowView, SetTile(tile),
+                                                        m_Context.IsDepthClampSupported());
                         }
                     }
                 }

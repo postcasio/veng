@@ -120,6 +120,11 @@
       "id": "0x73076F8C5B6B5499",
       "type": "Shader",
       "source": "sphere_terrain_mapping_probe.comp.shader.json"
+    },
+    {
+      "id": "0x4129C7EEF4F1682A",
+      "type": "Shader",
+      "source": "sphere_terrain_placement_probe.comp.shader.json"
     }
   ]
 }

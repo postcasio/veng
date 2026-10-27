@@ -127,7 +127,9 @@ every fragment output must compile to the location its SV_Target index
   names, which Slang's declaration-order numbering breaks for a struct with a gap unless every output
   carries an explicit `[[vk::location(N)]]`, and the importer refuses one that does not. A Surface
   material may declare `"instancedSets": true` when an instanced mesh set may draw it, a located cook
-  error on any other domain. Because the
+  error on any other domain, and `"sphereTerrain": true` when it shades sphere terrain — a located
+  error off the Surface domain, beside `"instancedSets"`, or unless its vertex shader is the core
+  `surface_terrain.vert`, which no other material may name. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects

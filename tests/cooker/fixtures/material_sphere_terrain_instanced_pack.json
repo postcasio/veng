@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x000000000000106B",
+      "type": "Shader",
+      "source": "shaders/params_only.frag.shader.json"
+    },
+    {
+      "id": "0xFA223819E1B2A2A5",
+      "type": "Material",
+      "source": "materials/surface_sphere_terrain_instanced.vmat.json"
+    }
+  ]
+}

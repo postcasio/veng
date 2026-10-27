@@ -16,6 +16,8 @@ namespace Veng::Renderer
         Translucent,
         /// @brief The instanced-set phase: one slot per set, for its frame and material.
         InstancedSet,
+        /// @brief The sphere-terrain phase: one slot per drawn surface, for its material.
+        SphereTerrain,
     };
 
     /// @brief The outcome of a skinned draw's combined slot + palette claim.
@@ -121,6 +123,9 @@ namespace Veng::Renderer
                 break;
             case DrawPhase::InstancedSet:
                 m_Stats.InstancedSetDropped += count;
+                break;
+            case DrawPhase::SphereTerrain:
+                m_Stats.SphereTerrainDropped += count;
                 break;
             }
         }

@@ -1,6 +1,7 @@
 #include "PunctualShadowScenePass.h"
 
 #include "../InstancedMeshSystem.h"
+#include "../SphereTerrainSystem.h"
 
 #include "../DrawGather.h"
 
@@ -67,9 +68,10 @@ namespace Veng::Renderer
                                                      const CasterRecordRing& records,
                                                      const ShadowCasterViews& casters,
                                                      u32 resolution,
-                                                     const InstancedMeshSystem* instanced)
+                                                     const InstancedMeshSystem* instanced,
+                                                     const SphereTerrainSystem* terrain)
         : m_Context(context), m_Records(records), m_Casters(casters), m_Instanced(instanced),
-          m_Resolution(resolution)
+          m_Terrain(terrain), m_Resolution(resolution)
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
@@ -338,6 +340,20 @@ namespace Veng::Renderer
                         {
                             m_Instanced->RecordShadowView(cmd, shadowView, SetTile(m_Views[v]),
                                                           /*depthClamp=*/false);
+                        }
+                    }
+                }
+
+                // Sphere terrain: each face's tiles.
+                if (m_Terrain != nullptr)
+                {
+                    for (u32 v = 0; v < m_Views.size(); ++v)
+                    {
+                        const u32 shadowView = m_FirstView + v;
+                        if (m_Terrain->HasShadowDraws(shadowView))
+                        {
+                            m_Terrain->RecordShadowView(cmd, shadowView, SetTile(m_Views[v]),
+                                                        /*depthClamp=*/false);
                         }
                     }
                 }

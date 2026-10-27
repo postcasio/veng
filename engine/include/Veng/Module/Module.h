@@ -624,10 +624,17 @@ extern "C"
 /// view-constants block SkyFromWorld and EnvironmentFromWorld (ViewConstantsStride 832 → 864). A
 /// module spawns skies, builds views and indexes view regions by the stride, so a stale one lays
 /// them out short and reads every region past the first at the wrong offset.
+/// Version 157 draws sphere terrain: SphereTerrain grows LevelLayers (and SphereTerrainLevelLayer
+/// registers), SphereTerrainGenerator a WriteTileDrawData virtual, SphereTerrainDrawnTile
+/// MorphError and Held, SphereTerrainSelectionSettings OmnidirectionalRadius,
+/// SphereTerrainSelectionStats its budget and per-view counts, DrawBudgetStats
+/// SphereTerrainDropped, and MaterialInfo and Material the sphere-terrain flag. A module subclasses
+/// the generator, spawns terrains and reads selections and stats, so a stale one lays them out
+/// short and dispatches through a short vtable.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 156u
+#define VENG_MODULE_ABI_VERSION 157u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

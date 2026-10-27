@@ -9,6 +9,21 @@ namespace Veng
 {
     class MaterialInstance;
 
+    /// @brief An opaque surface a sphere terrain draws over its own at a constant height: a water
+    ///        level, a lava level, a flat datum.
+    ///
+    /// The layer is drawn over the same tile selection as the terrain, at the terrain's placement,
+    /// morph and scale, with its height in place of the height channel, so it stands exactly where
+    /// the terrain would at that height at every distance. A tile draws it only where the tile's
+    /// height range dips below it, so a layer costs nothing over higher ground.
+    struct SphereTerrainLevelLayer
+    {
+        /// @brief The Surface material the layer is drawn with; it must declare "sphereTerrain".
+        AssetHandle<MaterialInstance> Material;
+        /// @brief The layer's height above the sphere's radius, in metres.
+        f32 Height = 0.0f;
+    };
+
     /// @brief A sphere's terrain, drawn from a shared Renderer::SphereTerrainSource.
     ///
     /// Each renderer gathers the scene's terrains every Execute, forms the eye in the sphere's
@@ -20,9 +35,14 @@ namespace Veng
     /// The sphere stands where Center and Orientation say, in the frame a FloatingOrigin rests in
     /// (scene space for a scene without one); the entity's Transform is not read, and nothing
     /// re-bases the two, since they rest in the frame that does not move.
+    ///
+    /// Its tiles draw into the g-buffer and, at a scale of one, into the shadow views, through a
+    /// Surface material declaring "sphereTerrain" (`Veng/sphere_terrain.slang`); a terrain drawn
+    /// with another material is reported once and draws nothing. It is not pickable, not drawn by
+    /// the depth-and-normal path or under the g-buffer shading override, and not occlusion-tested.
     struct SphereTerrain
     {
-        /// @brief The Surface material the terrain is drawn with.
+        /// @brief The Surface material the terrain is drawn with; it must declare "sphereTerrain".
         AssetHandle<MaterialInstance> Material;
         /// @brief Whether the terrain is selected and drawn at all.
         bool Visible = true;
@@ -31,8 +51,19 @@ namespace Veng
         /// @brief The pixels one grid quad's edge may span on screen before its tile splits.
         f32 TargetPixelsPerQuad = 8.0f;
         /// @brief A uniform scale about the eye applied to the drawn terrain; one draws at true
-        ///        size. Selection measures unscaled distances whatever it is.
+        ///        size.
+        ///
+        /// A scale about the eye moves nothing on screen and changes only depth, so a consumer can
+        /// draw a distant sphere inside a bounded depth range at its true apparent size. Selection
+        /// and culling measure unscaled distances, so the same tiles draw at any scale; a terrain
+        /// at a scale other than one casts no shadow, since its drawn geometry does not stand
+        /// where the scene's casters and receivers are; and the deferred pass reconstructs a
+        /// scaled fragment at its scaled position unless the material writes a depth of its own
+        /// (`TerrainTrueDeviceDepth`).
         f32 Scale = 1.0f;
+        /// @brief The level layers drawn over the terrain; past MaxSphereTerrainLevelLayers the
+        ///        rest are ignored.
+        vector<SphereTerrainLevelLayer> LevelLayers;
         /// @brief The sphere's centre in the stable frame, in metres.
         ///
         /// Runtime-only: carries no VE_FIELD, so it is never reflected, cooked or serialized.
@@ -49,12 +80,21 @@ namespace Veng
     };
 }
 
+VE_REFLECT(::Veng::SphereTerrainLevelLayer, 0xDF994550C064BA0AULL)
+VE_FIELD(Material, .DisplayName = "Material",
+         .Tooltip = "A Surface material declaring sphereTerrain")
+VE_FIELD(Height, .DisplayName = "Height", .Tooltip = "Metres above the sphere's radius")
+VE_REFLECT_END();
+
 VE_REFLECT(::Veng::SphereTerrain, 0xB41B55C78CFC7E4FULL)
-VE_FIELD(Material, .DisplayName = "Material", .Tooltip = "A Surface material for terrain tiles")
+VE_FIELD(Material, .DisplayName = "Material",
+         .Tooltip = "A Surface material declaring sphereTerrain")
 VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(TargetPixelsPerQuad, .DisplayName = "Target pixels per quad",
          .Tooltip = "Pixels a grid quad may span before its tile splits", .Display = {.Min = 1.0})
 VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Uniform scale about the eye",
          .Display = {.Min = 0.0})
+VE_ARRAY_FIELD(LevelLayers, .DisplayName = "Level layers",
+               .Tooltip = "Opaque surfaces drawn at a constant height over the terrain")
 VE_REFLECT_END();

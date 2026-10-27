@@ -35,6 +35,11 @@ namespace Veng::Renderer
         u32 InstancedSets = 0;
         /// @brief The instances those sets carry, none of which holds a slot.
         u32 InstancedInstances = 0;
+        /// @brief Sphere-terrain surfaces not drawn for want of a slot for their material.
+        ///
+        /// A terrain's own surface and each of its level layers take one slot each, however many
+        /// tiles they draw.
+        u32 SphereTerrainDropped = 0;
         /// @brief Skinned instances dropped for want of palette matrices.
         ///
         /// Counted per instance: the phase skips an instance whose palette does not fit and keeps

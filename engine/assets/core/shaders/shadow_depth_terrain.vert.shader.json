@@ -1,0 +1,4 @@
+{
+  "source": "shadow_depth_terrain.vert.slang",
+  "entry": "vsMain"
+}

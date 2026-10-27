@@ -775,6 +775,28 @@ TEST_CASE("Cooker: a Surface material declaring instanced sets cooks with the fl
     CHECK(translucent.error().find("'instancedSets' requires the Surface domain") != string::npos);
 }
 
+TEST_CASE("Cooker: a sphere-terrain material must name the core terrain vertex stage and serve "
+          "nothing else")
+{
+    // The terrain stage is what writes the terrain's interpolants, so a material naming another
+    // vertex stage is refused; and a terrain material draws on nothing else, so it cannot also
+    // serve instanced sets.
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const VoidResult vertex = cooker.CookPack(
+        FixtureDir / "material_sphere_terrain_wrong_vertex_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_terrain_vertex.vengpack");
+    REQUIRE_FALSE(vertex.has_value());
+    CHECK(vertex.error().find("'sphereTerrain' requires the core sphere-terrain vertex stage") !=
+          string::npos);
+    const VoidResult instanced = cooker.CookPack(
+        FixtureDir / "material_sphere_terrain_instanced_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_terrain_instanced.vengpack");
+    REQUIRE_FALSE(instanced.has_value());
+    CHECK(instanced.error().find("'sphereTerrain' is exclusive with 'instancedSets'") !=
+          string::npos);
+}
+
 TEST_CASE("Cooker: a reactive translucent material cooks with the flag set; the misuses are "
           "located cook errors")
 {

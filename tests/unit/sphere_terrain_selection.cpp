@@ -3,7 +3,9 @@
 // of view; the drawn set covers the sphere once, is 2:1 balanced (also when a tile's children are
 // withheld), deepens monotonically toward the ground and holds still inside the hysteresis band;
 // and every edge between drawn tiles of adjacent levels has the coarse side unmorphed and the fine
-// side fully morphed.
+// side fully morphed. Under a tile budget the ground under the eye keeps its full depth, beyond the
+// near radius only tiles in the view refine, and either way the set still covers once, balances,
+// and keeps the invariant wherever its coarse side was not held.
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +16,8 @@
 #include <doctest/doctest.h>
 
 #include <Veng/Math/CubeSphere.h>
+#include <Veng/Math/Frustum.h>
+#include <Veng/Scene/Camera.h>
 
 #include <Renderer/SphereTerrainResidency.h>
 #include <Renderer/SphereTerrainSelection.h>
@@ -354,4 +358,180 @@ TEST_CASE("sphere terrain selection: adjacent levels meet with the coarse side u
         CHECK(adjacency.FineUnmorphed == 0u);
         CHECK(adjacency.Visible > 0u);
     }
+}
+
+namespace
+{
+    // The drawn tile covering a body-fixed direction.
+    const SphereTerrainDrawnTile* Covering(const vector<SphereTerrainDrawnTile>& drawn,
+                                           const dvec3& direction)
+    {
+        const CubeSphere::FacePoint point = CubeSphere::DirectionToFace(direction);
+        const u32 n = 1u << CubeSphere::MaxLevel;
+        const auto cell = [n](const f64 c)
+        { return std::min(static_cast<u32>((c + 1.0) * 0.5 * n), n - 1); };
+        const CubeSphereTileKey deepest = CubeSphereTileKey::Make(
+            point.OnFace, CubeSphere::MaxLevel, cell(point.U), cell(point.V));
+        for (const SphereTerrainDrawnTile& tile : drawn)
+        {
+            if (tile.Key == deepest || tile.Key.IsAncestorOf(deepest))
+            {
+                return &tile;
+            }
+        }
+        return nullptr;
+    }
+
+    // A view's side planes about the eye, body-fixed: a camera at the eye looking along forward.
+    std::array<glm::dvec4, 6> SidePlanes(const dvec3& forward, const dvec3& up)
+    {
+        CameraView camera;
+        camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1000.0f);
+        camera.SetView(vec3(0.0f), vec3(forward), vec3(up));
+        const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
+        std::array<glm::dvec4, 6> planes{};
+        planes.fill(glm::dvec4(0.0, 0.0, 0.0, 1.0));
+        for (usize i = 0; i < 4; i++)
+        {
+            planes[i] = glm::dvec4(dvec3(vec3(frustum.Planes[i])), frustum.Planes[i].w);
+        }
+        return planes;
+    }
+
+    // Runs a budgeted, frustum-pruned selection until its splits stop changing.
+    SphereTerrainSelectionResult SettleWith(const FlatPool& pool, const dvec3& eye,
+                                            const std::array<glm::dvec4, 6>* frustum,
+                                            const u32 budget)
+    {
+        std::unordered_set<u64> splits;
+        SphereTerrainSelectionResult result;
+        for (u32 frame = 0; frame < 4; frame++)
+        {
+            SphereTerrainSelectionInput input = FlatInput(pool, eye, &splits);
+            input.Frustum = frustum;
+            input.PinnedLevel = 2;
+            input.TileBudget = budget;
+            result = SelectSphereTerrain(input);
+            if (result.Splits == splits)
+            {
+                break;
+            }
+            splits = result.Splits;
+        }
+        return result;
+    }
+
+    // Every coarse-fine edge in view whose coarse side was not held keeps the invariant.
+    u32 UnheldMorphViolations(const vector<SphereTerrainDrawnTile>& drawn, const dvec3& eye)
+    {
+        std::unordered_map<u64, const SphereTerrainDrawnTile*> byKey;
+        for (const SphereTerrainDrawnTile& tile : drawn)
+        {
+            byKey[tile.Key.Value] = &tile;
+        }
+        u32 violations = 0;
+        for (const SphereTerrainDrawnTile& fine : drawn)
+        {
+            const CubeSphereTileGeometry geometry = GetCubeSphereTileGeometry(fine.Key);
+            for (u32 e = 0; e < 4; e++)
+            {
+                const auto edge = static_cast<CubeSphere::Edge>(e);
+                CubeSphereTileKey coarse = fine.Key.GetNeighbour(edge);
+                if (byKey.contains(coarse.Value) || coarse.GetLevel() == 0)
+                {
+                    continue;
+                }
+                coarse = coarse.GetParent();
+                if (!byKey.contains(coarse.Value) || byKey.at(coarse.Value)->Held ||
+                    IsBoxBelowHorizon(ComputeSphereTerrainTileBox(coarse, Radius, 0.0f, 0.0f), eye,
+                                      Radius))
+                {
+                    continue;
+                }
+                const SphereTerrainDrawnTile& outer = *byKey.at(coarse.Value);
+                for (u32 k = 0; k <= SphereTerrainGridQuads; k++)
+                {
+                    const glm::dvec2 st =
+                        EdgeParameter(edge, static_cast<f64>(k) / SphereTerrainGridQuads);
+                    const f64 distance =
+                        glm::length((CubeSphereTileDirection(geometry, st.x, st.y) * Radius) - eye);
+                    violations +=
+                        Morph(distance, outer) > 0.0 || Morph(distance, fine) < 1.0 ? 1u : 0u;
+                }
+            }
+        }
+        return violations;
+    }
+}
+
+TEST_CASE("sphere terrain selection: a short budget keeps the ground under the eye at full depth")
+{
+    const FlatPool pool;
+    const dvec3 eye = Above(2.0);
+    const SphereTerrainSelectionResult full = SettleWith(pool, eye, nullptr, ~0u);
+    // A tenth of what the unbudgeted selection wants: enough for the balanced chain of tiles
+    // down to the deepest level under the eye (about 24 a level), not for the rings around it.
+    constexpr u32 Budget = 600;
+    const SphereTerrainSelectionResult short_ = SettleWith(pool, eye, nullptr, Budget);
+
+    const SphereTerrainDrawnTile* fullUnder = Covering(full.Drawn, eye);
+    const SphereTerrainDrawnTile* shortUnder = Covering(short_.Drawn, eye);
+    REQUIRE(fullUnder != nullptr);
+    REQUIRE(shortUnder != nullptr);
+    CHECK(fullUnder->Key.GetLevel() >= 20u);
+    CHECK(shortUnder->Key.GetLevel() == fullUnder->Key.GetLevel());
+    CHECK(full.Stats.BudgetedTiles > 8 * Budget);
+    CHECK(short_.Stats.HeldForBudget > 0u);
+    CHECK(short_.Stats.BudgetedTiles <= Budget);
+
+    f64 solidAngle = 0.0;
+    for (const SphereTerrainDrawnTile& tile : short_.Drawn)
+    {
+        solidAngle += TileSolidAngle(tile.Key);
+    }
+    CHECK(std::abs(solidAngle - (4.0 * std::numbers::pi)) < 1e-9);
+    CHECK(Inspect(short_.Drawn, eye).Unbalanced == 0u);
+    CHECK(UnheldMorphViolations(short_.Drawn, eye) == 0u);
+}
+
+TEST_CASE("sphere terrain selection: beyond the near radius only the view refines")
+{
+    const FlatPool pool;
+    const dvec3 up = glm::normalize(Above(1.0));
+    const dvec3 north = glm::normalize(glm::cross(up, dvec3(0.0, 0.0, 1.0)));
+    const dvec3 eye = Above(2.0);
+    const std::array<glm::dvec4, 6> planes = SidePlanes(north, up);
+    const SphereTerrainSelectionResult full = SettleWith(pool, eye, nullptr, ~0u);
+    const SphereTerrainSelectionResult pruned = SettleWith(pool, eye, &planes, ~0u);
+
+    // The ground near the eye keeps its depth whichever way it lies, and so does the ground ahead;
+    // the ground behind, beyond the near radius, does not.
+    const f64 near = 0.5 * SphereTerrainSelectionSettings{}.OmnidirectionalRadius;
+    u32 nearShallower = 0;
+    for (const dvec3& side : {north, -north, glm::cross(up, north), -glm::cross(up, north)})
+    {
+        const dvec3 at = glm::normalize(eye + (side * near));
+        nearShallower +=
+            Covering(pruned.Drawn, at)->Key.GetLevel() < Covering(full.Drawn, at)->Key.GetLevel()
+                ? 1u
+                : 0u;
+    }
+    CHECK(nearShallower == 0u);
+    const dvec3 ahead = glm::normalize(eye + (north * 2000.0));
+    const dvec3 behind = glm::normalize(eye - (north * 2000.0));
+    CHECK(Covering(pruned.Drawn, ahead)->Key.GetLevel() ==
+          Covering(full.Drawn, ahead)->Key.GetLevel());
+    CHECK(Covering(pruned.Drawn, behind)->Key.GetLevel() <
+          Covering(full.Drawn, behind)->Key.GetLevel());
+    CHECK(pruned.Stats.HeldForFrustum > 0u);
+    CHECK(pruned.Drawn.size() < full.Drawn.size());
+
+    f64 solidAngle = 0.0;
+    for (const SphereTerrainDrawnTile& tile : pruned.Drawn)
+    {
+        solidAngle += TileSolidAngle(tile.Key);
+    }
+    CHECK(std::abs(solidAngle - (4.0 * std::numbers::pi)) < 1e-9);
+    CHECK(Inspect(pruned.Drawn, eye).Unbalanced == 0u);
+    CHECK(UnheldMorphViolations(pruned.Drawn, eye) == 0u);
 }

@@ -42,6 +42,13 @@ namespace Veng::Renderer
     /// @brief The layer index meaning "no layer": a level-0 tile's parent.
     inline constexpr u32 SphereTerrainNoLayer = ~0u;
 
+    /// @brief The most 32-bit words of per-tile data a generator hands the drawing stages, for a
+    ///        tile and again for its parent.
+    inline constexpr u32 MaxSphereTerrainTileWords = 32;
+
+    /// @brief The most level layers a terrain draws over its own surface.
+    inline constexpr u32 MaxSphereTerrainLevelLayers = 2;
+
     /// @brief The texels a side of a channel held at a divisor of the full tile resolution.
     /// @param divisor The channel's TexelDivisor; it divides the tile's span of texels exactly.
     [[nodiscard]] constexpr u32 SphereTerrainChannelTexels(const u32 divisor)
@@ -172,6 +179,22 @@ namespace Veng::Renderer
         /// the bound a generator gives decides how early an unmeasured tile splits. A sphere-wide
         /// bound would put every tile near the eye within reach and split everything near it.
         [[nodiscard]] virtual f32 GetLevelHeightBound(u32 level) const = 0;
+
+        /// @brief Writes the per-tile words the drawing stages read for a tile.
+        ///
+        /// For shading that needs per-tile constants the engine does not carry — a precision
+        /// anchor, a lattice offset reduced on the host. Called on the render thread the first
+        /// frame a tile is drawn or is a drawn tile's parent, and cached while it stays so; the
+        /// fragment reads the words through `TerrainTileData` and `TerrainParentTileData`
+        /// (`Veng/sphere_terrain.slang`). The words must be a function of the key alone. Writes
+        /// nothing by default, which leaves them zero.
+        /// @param key    The tile.
+        /// @param words  MaxSphereTerrainTileWords words, zeroed.
+        virtual void WriteTileDrawData(CubeSphereTileKey key, std::span<u32> words) const
+        {
+            (void)key;
+            (void)words;
+        }
     };
 
     /// @brief Creation parameters for a SphereTerrainSource.
@@ -268,6 +291,16 @@ namespace Veng::Renderer
         f32 MorphStart = 0.0f;
         /// @brief The eye distance at which the tile is wholly its parent's shape.
         f32 MorphEnd = 0.0f;
+        /// @brief The largest difference between the tile's height and its parent's grid, in
+        ///        metres: measured, or the generator's level bound while unmeasured.
+        f32 MorphError = 0.0f;
+        /// @brief Whether the tile wanted to split and was held whole: its children still
+        ///        generating, the selection's tile budget spent, or the view frustum pruning it.
+        ///
+        /// A held tile is drawn nearer than its level's range, so a finer neighbour meets it
+        /// partly morphed rather than fully; the skirts cover the step, which is at most that
+        /// neighbour's MorphError.
+        bool Held = false;
     };
 
     /// @brief The selection rule's tunables; the defaults are the shipped values.
@@ -287,6 +320,14 @@ namespace Veng::Renderer
         /// @brief How far past a drawn tile's split distance its children are prefetched, as a
         ///        multiple of it.
         f32 PrefetchRangeScale = 1.3f;
+        /// @brief The radius about the eye, in metres, inside which tiles refine in every
+        ///        direction; beyond it only tiles meeting the view frustum refine.
+        ///
+        /// Turning the head therefore never strips the ground near the eye, while the far field
+        /// behind the view stays at the levels its parents give it. A renderer raises it to its
+        /// shadow distance, so every tile a shadow cascade receives on is refined whichever way
+        /// the eye looks.
+        f32 OmnidirectionalRadius = 64.0f;
     };
 
     /// @brief What one renderer's selection of one sphere terrain did last frame.
@@ -298,12 +339,38 @@ namespace Veng::Renderer
         std::array<u32, CubeSphere::MaxLevel + 1> DrawnPerLevel{};
         /// @brief Drawn tiles that wanted to split but had a child still generating.
         u32 WaitingSplits = 0;
-        /// @brief Splits undone to keep the drawn set 2:1 balanced, a neighbour's children still
-        ///        generating.
+        /// @brief Drawn tiles that wanted to split but were held whole to keep the drawn set 2:1
+        ///        balanced: a tile their children would border could not be split, its own
+        ///        children still generating.
         u32 HeldForBalance = 0;
         /// @brief Tiles split only to keep the drawn set 2:1 balanced: past the horizon, beside a
         ///        refined neighbour.
         u32 SplitForBalance = 0;
+        /// @brief Drawn tiles that wanted to split but were held whole by the tile budget.
+        u32 HeldForBudget = 0;
+        /// @brief Drawn tiles that wanted to split but lie outside the view frustum beyond the
+        ///        omnidirectional radius.
+        u32 HeldForFrustum = 0;
+        /// @brief Tiles the selection wanted kept or generated, beyond the pinned top: what it
+        ///        charged against its tile budget.
+        u32 BudgetedTiles = 0;
+        /// @brief The tile budget the selection ran under; ~0 for none.
+        u32 TileBudget = ~0u;
+        /// @brief Tiles the main view drew, its level layers' draws included.
+        u32 MainViewTiles = 0;
+        /// @brief Selected tiles the main view culled by its frustum.
+        u32 CulledByFrustum = 0;
+        /// @brief Selected tiles the main view culled below the horizon.
+        u32 CulledByHorizon = 0;
+        /// @brief Tiles drawn into the shadow views, summed over the views.
+        u32 ShadowViewTiles = 0;
+        /// @brief Triangles drawn over every view, skirts included.
+        u64 Triangles = 0;
+        /// @brief Drawn tiles still morphing in under an arrival floor.
+        u32 ArrivingTiles = 0;
+        /// @brief Terrains skipped because their material does not declare "sphereTerrain" or
+        ///        is not resident.
+        u32 SkippedTerrains = 0;
         /// @brief Tiles requested.
         u32 Requests = 0;
         /// @brief Quadtree nodes the selection visited.

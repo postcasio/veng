@@ -392,10 +392,13 @@ add_library(veng SHARED
         src/Renderer/InstanceSet.cpp
         src/Renderer/InstancedCull.cpp
         src/Renderer/InstancedMeshSystem.cpp
+        src/Renderer/SphereTerrainDraw.cpp
+        src/Renderer/SphereTerrainLayout.cpp
         src/Renderer/SphereTerrainResidency.cpp
         src/Renderer/SphereTerrainSelection.cpp
         src/Renderer/SphereTerrainSource.cpp
         src/Renderer/SphereTerrainSystem.cpp
+        src/Renderer/SphereTerrainVertex.cpp
         src/Renderer/GBufferShadingOverride.cpp
         src/Renderer/LightTileCuller.cpp
         src/Renderer/SsrChain.cpp
@@ -660,8 +663,10 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/DrawGather.cpp
         src/Renderer/InstancedCull.cpp
         src/Renderer/InstancedMeshSystem.cpp
-        # The sphere terrain selection, which walks the tile quadtree once per view per frame.
+        # The sphere terrain selection, which walks the tile quadtree once per view per frame, and
+        # the per-tile cull and record build that follows it.
         src/Math/CubeSphere.cpp
+        src/Renderer/SphereTerrainDraw.cpp
         src/Renderer/SphereTerrainSelection.cpp
         src/Renderer/LightPacking.cpp
         src/Renderer/LodSelection.cpp

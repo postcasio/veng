@@ -3933,9 +3933,10 @@ encode produces; the end-to-end transparency property is in `tests/gpu/generated
 ## Sphere terrain: a quadtree of generated tiles
 
 **A sphere's terrain is a cube-sphere quadtree of tiles**, chosen per view by screen-space error,
-generated on the GPU by kernels a consumer supplies, and held in a pooled tile atlas — from a
-whole-globe view down to centimetre tiles on a sphere thousands of kilometres across. This section is the data half:
-the mapping, the pool, the measured bounds and the selection. Nothing here draws.
+generated on the GPU by kernels a consumer supplies, held in a pooled tile atlas, and drawn as one
+instanced grid that morphs between levels — from a whole-globe view down to centimetre tiles on a
+sphere thousands of kilometres across. The first half below is the data (the mapping, the pool, the
+measured bounds and the selection); the second the drawing.
 
 - **The mapping** (`Veng/Math/CubeSphere.h`, device-free, double). Six faces `+X −X +Y −Y +Z −Z`,
   each `u, v ∈ [−1, 1]` with a right-handed basis, warped equal-angle (`x = tan(π/4·u)`, area ratio
@@ -4002,13 +4003,25 @@ the mapping, the pool, the measured bounds and the selection. Nothing here draws
   `(1 − h)·D_L` and merges past `(1 + h)·D_L`, or splits when its `MorphError` projected at its
   distance exceeds `TargetHeightErrorPixels`; a split needs all four children resident, else the tile
   is drawn and its children requested (the parent fallback). Subtrees are pruned below the horizon
-  (all eight bound corners hidden by the sphere of `Radius + MinHeight`) or past their range — never
-  by the frustum, which only ranks requests. **The drawn set is 2:1 balanced**: a split tile's
-  same-level neighbours must exist, so a missing neighbour's parent is split for balance (past the
-  horizon, where the distance rule stops refining) and, when its children are not resident, the
-  finer split is undone until they land. Morph ranges are `E_L = 2(1 − h)·D_L` and
-  `S_L = a·E_L`; with `h = 0.05`, `a = 0.85`, `c = 3`, every coarse–fine edge in view has the coarse
-  side unmorphed and the fine side fully morphed (`tests/unit/sphere_terrain_selection.cpp`).
+  (all eight bound corners hidden by the sphere of `Radius + MinHeight`), past their range, and —
+  **beyond `OmnidirectionalRadius`** (64 m, raised to the renderer's shadow distance) — when their
+  bound misses the view frustum's side planes, so turning the head never strips the ground near the
+  eye while the far field behind the view stays at its parents' levels. **Splits are taken nearest
+  first under a tile budget**: every split wanted joins a queue ordered by the distance to its bound
+  (a split taken last frame ranked at `(1 − h)` of it, a new one at `(1 + h)`), and each split
+  charges its four children to `TileBudget` (the pool's capacity less the pinned top and a reserve
+  of `max(16, capacity/16)`), resident or still to generate; a split the budget cannot afford is
+  held whole. So when the pool cannot hold every wanted split, the ground under and before the eye
+  keeps its depth and the shortfall falls on the far field. **The drawn set is 2:1 balanced by
+  construction**: a tile splits only once every same-level neighbour exists, so a missing
+  neighbour's parent is split first (past the horizon or outside the frustum, where nothing else
+  wants it), and a neighbour whose children are not resident has them requested and holds the split
+  until they land. A tile that wanted to split and was held — by residency, budget, frustum or
+  balance — is drawn with `SphereTerrainDrawnTile::Held` set. Morph ranges are
+  `E_L = 2(1 − h)·D_L` and `S_L = a·E_L`; with `h = 0.05`, `a = 0.85`, `c = 3`, every coarse–fine
+  edge in view whose coarse side was not held has the coarse side unmorphed and the fine side fully
+  morphed (`tests/unit/sphere_terrain_selection.cpp`); against a held coarse side the fine side is
+  partly morphed, and its edge stands off by at most its MorphError, which the skirts cover.
 - **Per renderer** (`SphereTerrainSystem`). Each `Execute` forms the eye in each sphere's body-fixed
   frame in double — `inverse(Orientation)·(FloatingOrigin::Position + camera − Center)` — selects,
   marks the wanted set (visited tiles, children of waiting splits, prefetched children within
@@ -4016,15 +4029,94 @@ the mapping, the pool, the measured bounds and the selection. Nothing here draws
   splits behind, by how far the parent's error exceeds the threshold, then prefetch. Its memory (last
   frame's splits, for hysteresis) is keyed by the source's serial, so a source moved between
   entities or scenes keeps it. `SceneRenderer::GetSphereTerrainSelection(entity)` returns the drawn
-  tiles (key, layers, working range, morph range); `GetSphereTerrainStats()` the counts per level,
-  waiting splits and balance splits; `SphereTerrainSource::FindDeepestResident(direction)` and
+  tiles (key, layers, working range, morph range, MorphError, held); `GetSphereTerrainStats()` the
+  counts per level, waiting splits, balance splits and holds; `SphereTerrainSource::FindDeepestResident(direction)` and
   `GetStats()` the pool's side. `Render/SphereTerrain*` counters sample them.
 
-**What a view wants is large near the ground.** Selection is not frustum-pruned, so it covers every
-direction: around an eye 2 m above a 6.4×10⁶ m sphere, at `τ = 8` and a 1440-pixel view, every
-resident tile drawn, it draws about 3,800 tiles (≈ 240 a level below the horizon's reach), visits
-about 5,000 and wants about 7,500 with prefetch; at 10 km, 1,900 drawn and 3,900 wanted. A pool
-smaller than the wanted set holds what it can and draws the rest at their parents.
+**What a view wants is large near the ground, and balance makes depth cost a constant per level.**
+Around an eye 2 m above a 6.4×10⁶ m sphere, at `τ = 8` and a 1440-pixel view, every tile resident,
+the unbudgeted selection wants about 7,500 tiles omnidirectionally and about 5,000 pruned to a
+16:9 frustum; at 430 m, 5,300 against 1,900. A budget far below that still reaches the deepest level
+under the eye, because the nearest splits come first, but the balanced chain down to it costs about
+24 tiles a level, so a pool's depth near the ground is bounded by `TileBudget / 24` levels below the
+pinned top: a 512-tile pool reaches level 16 under the eye at 2 m, and full depth (level 24) wants
+a budget near 550, about a 700-tile pool.
+
+### Drawing sphere terrain
+
+**Every drawn tile is one instance of one shared grid** (`SphereTerrainSystem`, per renderer;
+`SphereTerrainVertex.h` and `SphereTerrainDraw.h` the device-free cores the unit band pins).
+
+- **The grid.** 33 × 33 vertices (32 quads a side, vertex `k` on texel `2 + 4k`) plus a skirt vertex
+  under each edge vertex, carried by no vertex buffer: the index (u16, built once per renderer) names
+  the vertex and the stage decodes it (`SphereTerrainGridVertex`). Every quad is cut from its lowest
+  corner to its highest, the diagonal whose collapse under the morph reproduces the parent's
+  triangulation; 2,048 triangles a tile plus 256 of skirt, wound counter-clockwise from outside.
+- **Records and lists.** Each frame, each tile some view draws gets one 672-byte record
+  (`SphereTerrainDrawRecord` / `SphereTerrainRecord`) in a host-mapped per-frame-slot buffer: its four
+  corners eye-relative, `Center + Orientation·(R·d_i) − eye` formed in double; the corners' verticals;
+  the six squared chords `|d_i − d_j|²`; the tile's `SphereTerrainTileConstants`; last frame's corners
+  (from last frame's pose and origin, relative to this frame's camera), the tangent, the morph range,
+  arrival floor and skirt depth, the level layers' heights, the layers and quadrant, and the
+  generator's `MaxSphereTerrainTileWords` words for the tile and its parent
+  (`SphereTerrainGenerator::WriteTileDrawData`, cached per source while the tile stays drawn). Each
+  view and surface has a list of record indices; a draw's `firstInstance` is its list's start, so
+  `SV_VulkanInstanceID` names the entry. **Set 4** is the terrain's own layout
+  (`CreateSphereTerrainSetLayout`): channel `n`'s array at binding `n` (an absent channel binds the
+  height's), the records at 8, the lists at 9, written once per source per frame slot.
+- **Placement** (`SphereTerrainPlace`): `Σ ŵ_i C_i + n·(R (1 − |m|²)/(1 + |m|) + h)` with
+  `1 − |m|² = Σ_{i<j} ŵ_iŵ_j|d_i − d_j|²` — every term an eye-relative corner or a quantity no larger
+  than the tile, so nothing the size of the radius is subtracted in f32: the device places a level-22
+  vertex 2 m under the eye on a 6.4×10⁶ m sphere to 0.3 µm, and a level-8 vertex from 10,000 km to
+  1×10⁻⁷ of its distance (`tests/gpu/sphere_terrain.cpp`).
+- **The morph** (CDLOD's, reimplemented from the published description): `k` from the vertex's
+  unmorphed distance, `max(saturate((d − S)/(E − S)), floor)`; odd grid coordinates slide to the even
+  one below by `k`, and the height blends from the tile's own grid to its parent's grid (linear over
+  the parent's triangles) by `k`, so at `k = 1` a tile *is* its parent, vertex for vertex and
+  triangle for triangle. A tile appearing under one drawn last frame takes an **arrival floor**
+  falling from 1 to 0 over `SphereTerrainArrivalSeconds` (0.25 s) on the view's delta, so a split
+  delayed past its distance morphs in rather than popping. A merge is not morphed: the distance
+  rule merges past the morph end, where the children already are their parent, and a split the
+  budget or the frustum takes back steps by at most the children's MorphError.
+- **Skirts** hang each edge vertex along the vertical by the record's depth:
+  `max(M_L, M_{L+1})` (the frame's largest MorphError at the tile's level and the next, the most a
+  partly morphed neighbour's edge can stand off) plus the parent grid's chord sagitta, two f32 steps
+  at the tile's distance and two tiles' rounding of one texel, and at least
+  `SphereTerrainMinSkirtMetres`. A skirt takes its edge vertex's shading.
+- **Culling** is per view, in unscaled metres, against the selection's box widened to the level
+  layers: the main view by its four side planes (so neither the near and far planes nor a scale
+  move it) and the horizon, each shadow view by its six cull planes (`ShadowCasterViews`). The
+  cascades fit to the shadow-casting tiles within `MaxShadowDistance` alone
+  (`GetCasterBounds`, selected ahead of the cascade fit).
+- **Scale about the eye and the depth hook.** `SphereTerrain::Scale` multiplies the eye-relative
+  position for the rasterized position only; the motion vector and the interpolated true clip
+  position (`v_CurClip`) are the unscaled geometry's. `TerrainTrueViewDepth` / `TerrainTrueDeviceDepth`
+  give a material its true depth to write through `GBufferDepthOutput`, which also has the deferred
+  pass reconstruct the true position. A terrain at a scale other than one draws into no shadow view.
+- **The material** declares `"sphereTerrain"` (see [../Asset/CLAUDE.md](../Asset/CLAUDE.md)); its
+  fragment takes `SphereTerrainFragmentInput` and reads `TerrainChannel` (the tile's sample blended
+  with the parent's by the geometry's own morph, so the shading has no seam where the geometry has
+  none), `TerrainTexelSize`, `TerrainDirectionOffset` with `TerrainCenterHigh`/`Low`,
+  `TerrainTileData`/`TerrainParentTileData`, `TerrainMorph` and `TerrainSurface`. Each drawn surface
+  takes one `DrawBudget` slot (`DrawPhase::SphereTerrain`) for its material and an identity frame;
+  the push block's `InstanceDraw` names it and `InstanceBuffer` the surface drawn.
+- **Level layers** (`SphereTerrain::LevelLayers`, at most `MaxSphereTerrainLevelLayers`): each a
+  second terrain material drawn over the same selection at a constant height in place of the height
+  channel, with the terrain's placement, morph, scale and helpers, only on tiles whose working range
+  dips below it; one more draw per view, casting like the terrain.
+- **Shadows.** Each shadow pass draws each view's lists through a depth-only pipeline of its own
+  (`shadow_depth_terrain.vert`, the same `SphereTerrainEvaluate`, both faces, the cascades with
+  depth clamp). A terrain draw binds no shadow set, so a terrain material reads no shadow map.
+- **What a terrain draw does not do:** it is not pickable, not drawn by the depth-and-normal path or
+  under `GBufferShadingOverride` (whose pipelines take neither its stage nor its set 4), and not
+  occlusion-tested against the hi-Z pyramid; it draws one material for its own surface plus its
+  layers.
+- **Diagnostics.** `GetSphereTerrainStats()` adds the main view's tiles, the frustum and horizon
+  culls, the shadow views' tiles, triangles, arriving tiles, skipped terrains, the budget held and
+  the frustum held; `GetDrawBudgetStats().SphereTerrainDropped` counts surfaces denied a slot.
+  `tests/gpu/sphere_terrain.cpp` draws a test sphere from orbit to 2 m with no hole inside its
+  silhouette, holds coverage and written depth across a scale of 1×10⁻³, shows it shadowing a cube at
+  scale one and not scaled, and refuses an undeclared material.
 
 ## The fluid solver: advecting whatever it is handed
 

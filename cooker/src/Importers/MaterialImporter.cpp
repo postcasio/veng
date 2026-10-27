@@ -347,6 +347,36 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1j''. Parse the optional sphere-terrain declaration (default false) ---
+
+        // Set by a Surface material that shades sphere terrain. Its vertex stage must be the core
+        // terrain stage, which places the shared grid about the eye and writes the terrain's
+        // interpolants, so the key and the vertex shader are checked together; a terrain material
+        // draws on nothing else, so it cannot also serve instanced sets.
+        bool sphereTerrain = false;
+        if (vmat.contains("sphereTerrain"))
+        {
+            if (!vmat["sphereTerrain"].is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'sphereTerrain' must be a boolean",
+                                vmatPath.string()));
+            }
+            sphereTerrain = vmat["sphereTerrain"].get<bool>();
+            if (sphereTerrain && domainValue != MaterialDomain::Surface)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'sphereTerrain' requires the Surface domain",
+                    vmatPath.string()));
+            }
+            if (sphereTerrain && instancedSets)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'sphereTerrain' is exclusive with 'instancedSets'",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 1j'. Parse the optional reactive declaration (default false) ---
 
         // Set by a Translucent material whose fragment writes the temporal resolve's reactive mask
@@ -506,6 +536,18 @@ namespace Veng::Cook
 
         const u64 vertexShaderId = vertexParsed->Value;
         const u64 fragmentShaderId = fragmentParsed->Value;
+
+        if (sphereTerrain != (vertexShaderId == SphereTerrainVertexShaderId.Value))
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': {}", vmatPath.string(),
+                sphereTerrain
+                    ? fmt::format("'sphereTerrain' requires the core sphere-terrain vertex stage "
+                                  "{} as 'shaders.vertex'",
+                                  FormatHexId(SphereTerrainVertexShaderId.Value))
+                    : string("the core sphere-terrain vertex stage is only for a material "
+                             "declaring 'sphereTerrain'")));
+        }
 
         if (!context.Resolve)
         {
@@ -1192,6 +1234,7 @@ namespace Veng::Cook
         header.InstancedSets = instancedSets ? 1u : 0u;
         header.Reactive = reactive ? 1u : 0u;
         header.ExcludedFromMetering = excludedFromMetering ? 1u : 0u;
+        header.SphereTerrain = sphereTerrain ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

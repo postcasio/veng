@@ -381,8 +381,9 @@ namespace Veng::Renderer
         /// @param entity A SphereTerrain entity of the scene last rendered.
         [[nodiscard]] vector<SphereTerrainDrawnTile> GetSphereTerrainSelection(Entity entity) const;
 
-        /// @brief The last Execute's sphere terrain selection statistics, summed over every
-        ///        terrain: tiles drawn (and per level), waiting splits, balance holds, requests.
+        /// @brief The last Execute's sphere terrain statistics, summed over every terrain: tiles
+        ///        selected (and per level), waiting splits, budget, frustum and balance holds,
+        ///        requests, and the tiles each view drew and culled.
         [[nodiscard]] SphereTerrainSelectionStats GetSphereTerrainStats() const;
 
         /// @brief Whether the last Execute culled its instanced mesh sets on the GPU.

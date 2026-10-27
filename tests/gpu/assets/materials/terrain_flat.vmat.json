@@ -1,0 +1,11 @@
+{
+  "defaultInstance": "0x053402D8026C9E5F",
+  "sphereTerrain": true,
+  "shaders": {
+    "vertex": "0x7D963B7185626B36",
+    "fragment": "0x1E04A0EC8834AAF9"
+  },
+  "fields": [
+    { "name": "BaseColor", "type": "vec4", "value": [0.4, 0.6, 0.8, 1.0] }
+  ]
+}

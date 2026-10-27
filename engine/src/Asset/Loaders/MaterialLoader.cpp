@@ -2,6 +2,8 @@
 
 #include "SurfacePipeline.h"
 
+#include "../../Renderer/SphereTerrainLayout.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -525,9 +527,10 @@ namespace Veng
         const bool readsSceneColor = header.ReadsSceneColor != 0;
         const bool readsSceneDepth = header.ReadsSceneDepth != 0;
         const bool instancedSets = header.InstancedSets != 0;
+        const bool sphereTerrain = header.SphereTerrain != 0;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask, reactive,
-                           meteringExcluded, layer, readsSceneColor, readsSceneDepth,
-                           instancedSets](AssetManager& manager,
+                           meteringExcluded, layer, readsSceneColor, readsSceneDepth, instancedSets,
+                           sphereTerrain](AssetManager& manager,
                                           std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
@@ -558,6 +561,7 @@ namespace Veng
                 .ReadsSceneColor = readsSceneColor,
                 .ReadsSceneDepth = readsSceneDepth,
                 .InstancedSets = instancedSets,
+                .SphereTerrain = sphereTerrain,
                 .Pipeline = nullptr,
                 .VertexShader = vsHandle,
                 .FragmentShader = fsHandle,
@@ -575,7 +579,7 @@ namespace Veng
                 .Dependencies =
                     vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
                 .Finalize = [manager = &manager, &context, id, domain, cullMode, vsHandle, fsHandle,
-                             material]() -> VoidResult
+                             material, sphereTerrain]() -> VoidResult
                 {
                     Result<Ref<Renderer::PipelineLayout>> layout =
                         BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
@@ -583,14 +587,29 @@ namespace Veng
                     {
                         return std::unexpected(layout.error());
                     }
+                    // A terrain pipeline binds the terrain's own set 4, written once a frame for
+                    // every terrain material, so its layout carries that set rather than the
+                    // reflected one.
+                    if (sphereTerrain)
+                    {
+                        layout = Renderer::WithSphereTerrainSet(
+                            context, **layout, fmt::format("Material {} Terrain Layout", id.Value));
+                        if (!layout)
+                        {
+                            return std::unexpected(layout.error());
+                        }
+                    }
 
                     Ref<Renderer::GraphicsPipeline> pipeline;
                     if (domain == MaterialDomain::Surface)
                     {
+                        // The terrain stage reads its tile through the instance index, not an
+                        // instance-rate candidate id.
                         Result<Ref<Renderer::GraphicsPipeline>> built =
                             Detail::BuildSurfacePipeline(
                                 *manager, context, fmt::format("Material {} Pipeline", id.Value),
-                                *layout, *vsHandle.Get(), *fsHandle.Get(), cullMode);
+                                *layout, *vsHandle.Get(), *fsHandle.Get(), cullMode,
+                                /*instanceCandidateId=*/!sphereTerrain);
                         if (!built)
                         {
                             return std::unexpected(built.error());

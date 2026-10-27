@@ -1,0 +1,4 @@
+{
+  "source": "terrain_true_depth.frag.slang",
+  "entry": "fsMain"
+}

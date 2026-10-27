@@ -1145,6 +1145,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/cube_sphere.cpp
             tests/unit/sphere_terrain_selection.cpp
             tests/unit/sphere_terrain_residency.cpp
+            tests/unit/sphere_terrain_cull.cpp
+            tests/unit/sphere_terrain_vertex.cpp
             tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
@@ -1887,7 +1889,10 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sphere_terrain_mapping_probe.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sphere_terrain_test_generator.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sphere_terrain_mapping_probe.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sphere_terrain_placement_probe.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sphere_terrain_placement_probe.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/Veng/sphere_terrain_mapping.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/Veng/sphere_terrain_draw.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/host/gradient_noise.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
