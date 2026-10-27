@@ -19,6 +19,7 @@
 #include "LensDirt.h"
 #include "LightTileCuller.h"
 #include "PickingSystem.h"
+#include "SphereTerrainSystem.h"
 #include "Passes/DebugBlitScenePasses.h"
 #include "Passes/DebugDrawScenePass.h"
 #include "Passes/DeferredLightingScenePass.h"
@@ -369,6 +370,7 @@ namespace Veng::Renderer
         // pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
         m_Instanced = InstancedMeshSystem::Create(m_Context, m_Assets);
+        m_SphereTerrain = CreateUnique<SphereTerrainSystem>();
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
@@ -3393,6 +3395,10 @@ namespace Veng::Renderer
             casters.Build(frameIndex);
         }
 
+        // Sphere terrain tiles are selected from the true eye, whatever scale they draw at.
+        m_SphereTerrain->Execute(view.World, view.Camera, static_cast<f32>(validExtent.y),
+                                 m_Context.GetFrameSerial());
+
         // The instanced sets' per-instance cull for the main view and every shadow view above.
         if (m_InstancedActive)
         {
@@ -4142,6 +4148,18 @@ namespace Veng::Renderer
             fold(static_cast<const PointFieldScenePass*>(m_ScenePointFieldPass)->GetStats());
         }
         return stats;
+    }
+
+    vector<SphereTerrainDrawnTile>
+    SceneRenderer::GetSphereTerrainSelection(const Entity entity) const
+    {
+        const vector<SphereTerrainDrawnTile>* drawn = m_SphereTerrain->FindSelection(entity);
+        return drawn != nullptr ? *drawn : vector<SphereTerrainDrawnTile>{};
+    }
+
+    SphereTerrainSelectionStats SceneRenderer::GetSphereTerrainStats() const
+    {
+        return m_SphereTerrain->GetTotals();
     }
 
     InstancedMeshStats SceneRenderer::GetInstancedMeshStats() const

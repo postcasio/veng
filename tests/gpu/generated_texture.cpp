@@ -18,6 +18,9 @@
 //   6. A request allocates nothing on the calling thread: the targets are created on a worker, the
 //      set-0 slot is minted when they land, and the allocation hold and the cache-probe hold
 //      compose so the job is never selectable at the seam between them.
+//   7. A target adopting one layer of an array is that layer alone: its barriers leave the other
+//      layers' tracked layouts and texels untouched, and a cached one restores into the same layer
+//      of a fresh array.
 //
 // The ticks here are raster clears rather than compute dispatches deliberately: a clear over a
 // render area needs no pipeline, no shader and no descriptor set, so what the cases measure is the
@@ -43,6 +46,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/Backend/Natives.h>
 
 #include <gpu/fixture.h>
 #include <support/TempPath.h>
@@ -890,4 +894,204 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK_FALSE(service.IsCostBudgetFixed());
 
     CHECK(service.Cancel(Key));
+}
+
+// --- layer-range targets -------------------------------------------------------------------------
+
+namespace
+{
+    constexpr u32 LayerEdge = 4;
+    constexpr u32 LayerCount = 4;
+    constexpr u32 AdoptedLayer = 3;
+
+    Ref<Image> MakeLayeredTarget(Renderer::Context& context, const char* name)
+    {
+        return Image::Create(context,
+                             {
+                                 .Name = name,
+                                 .Extent = {LayerEdge, LayerEdge, 1},
+                                 .Layers = LayerCount,
+                                 .Format = Format::RGBA8Unorm,
+                                 .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                          ImageUsage::TransferSrc | ImageUsage::TransferDst,
+                             });
+    }
+
+    // A job clearing the one layer it adopts to tick colour 7.
+    GeneratedTextureRequest LayerJob(const GeneratedTextureKey key, const Ref<Image>& image,
+                                     u32* ticks)
+    {
+        return {
+            .Key = key,
+            .Name = "LayerBake",
+            .Targets = {{
+                .Adopt = image,
+                .AdoptBaseLayer = AdoptedLayer,
+                .AdoptLayerCount = 1,
+                .ProducerAccess = AccessKind::ColorAttachment,
+            }},
+            .OnTick =
+                [ticks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+            {
+                (*ticks)++;
+                cmd.BeginRendering({
+                    .Extent = {LayerEdge, LayerEdge},
+                    .ColorAttachments = {{
+                        .ImageView = context.Targets[0]->GetView(0, 0),
+                        .LoadOp = LoadOp::Clear,
+                        .StoreOp = StoreOp::Store,
+                        .ClearValue = StripeColor(7),
+                    }},
+                });
+                cmd.EndRendering();
+            },
+        };
+    }
+
+    std::array<std::vector<u8>, LayerCount> ReadLayers(Renderer::Context& context,
+                                                       const Ref<Image>& image)
+    {
+        std::array<std::vector<u8>, LayerCount> layers;
+        u32 delivered = 0;
+        for (u32 layer = 0; layer < LayerCount; layer++)
+        {
+            context.GetAsyncReadback().Request({
+                .Name = "LayerRead",
+                .Image = image,
+                .ArrayLayer = layer,
+                .OnComplete =
+                    [&layers, &delivered, layer](const std::span<const u8> bytes)
+                {
+                    layers[layer].assign(bytes.begin(), bytes.end());
+                    delivered++;
+                },
+            });
+        }
+        DriveUntil(context, [&] { return delivered == LayerCount; });
+        REQUIRE(delivered == LayerCount);
+        return layers;
+    }
+
+    bool LayerIs(const std::vector<u8>& texels, const u32 tick)
+    {
+        if (texels.size() != LayerEdge * LayerEdge * 4u)
+        {
+            return false;
+        }
+        for (u32 texel = 0; texel < LayerEdge * LayerEdge; texel++)
+        {
+            if (texels[texel * 4u] != static_cast<u8>(tick * 32) ||
+                texels[(texel * 4u) + 3] != 255u)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a layer-range target touches only its layers")
+{
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    const Ref<Image> image = MakeLayeredTarget(Context, "LayerRangeTarget");
+
+    // Layers 0-2 hold their own colours and sit in an attachment layout the job must not move.
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            for (u32 layer = 0; layer < AdoptedLayer; layer++)
+            {
+                const Ref<ImageView> view = ImageView::Create(
+                    Context, {.Name = "LayerClear", .Image = image, .BaseArrayLayer = layer});
+                cmd.PrepareForAccess(view, AccessKind::ColorAttachment);
+                cmd.BeginRendering({
+                    .Extent = {LayerEdge, LayerEdge},
+                    .ColorAttachments = {{
+                        .ImageView = view,
+                        .LoadOp = LoadOp::Clear,
+                        .StoreOp = StoreOp::Store,
+                        .ClearValue = StripeColor(layer + 1),
+                    }},
+                });
+                cmd.EndRendering();
+            }
+        });
+    std::array<vk::ImageLayout, AdoptedLayer> before{};
+    for (u32 layer = 0; layer < AdoptedLayer; layer++)
+    {
+        before[layer] = image->GetNative().At(layer, 0).Layout;
+    }
+
+    constexpr GeneratedTextureKey Key = 0x5721'1A7Eull;
+    u32 ticks = 0;
+    REQUIRE(service.Request(LayerJob(Key, image, &ticks)));
+    DriveUntil(Context, [&] { return service.IsResident(Key); });
+    REQUIRE(service.IsResident(Key));
+    CHECK(ticks == 1u);
+
+    const optional<GeneratedTextureResult> result = service.Find(Key);
+    REQUIRE(result.has_value());
+    CHECK(result->Targets[0]->GetBaseLayer() == AdoptedLayer);
+    CHECK(result->Targets[0]->GetLayerCount() == 1u);
+    for (u32 layer = 0; layer < AdoptedLayer; layer++)
+    {
+        CHECK(image->GetNative().At(layer, 0).Layout == before[layer]);
+    }
+    CHECK(image->GetNative().At(AdoptedLayer, 0).Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    const std::array<std::vector<u8>, LayerCount> layers = ReadLayers(Context, image);
+    for (u32 layer = 0; layer < AdoptedLayer; layer++)
+    {
+        CHECK(LayerIs(layers[layer], layer + 1));
+    }
+    CHECK(LayerIs(layers[AdoptedLayer], 7));
+    CHECK(service.Release(Key));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a cached layer-range job restores into the same layer")
+{
+    const TempCacheRoot root;
+    const Result<Unique<DerivedDataCache>> cache =
+        DerivedDataCache::Open({.Root = root.Dir, .Generation = "gpu-case"});
+    REQUIRE(cache.has_value());
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCache(cache->get(), &Tasks);
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+
+    constexpr string_view CacheKey = "layer-range/4x4";
+    constexpr GeneratedTextureKey ColdKey = 0x5721'1A01ull;
+    constexpr GeneratedTextureKey WarmKey = 0x5721'1A02ull;
+
+    const Ref<Image> cold = MakeLayeredTarget(Context, "LayerRangeCold");
+    u32 coldTicks = 0;
+    GeneratedTextureRequest coldJob = LayerJob(ColdKey, cold, &coldTicks);
+    coldJob.CacheKey = string(CacheKey);
+    REQUIRE(service.Request(std::move(coldJob)));
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(ColdKey); });
+    REQUIRE(service.IsResident(ColdKey));
+    CHECK(coldTicks == 1u);
+    DriveWithTasks(Context, Tasks, [&] { return (*cache)->Contains(string(CacheKey)); });
+    REQUIRE((*cache)->Contains(string(CacheKey)));
+    CHECK(service.Release(ColdKey));
+
+    // A fresh array: its other layers have never been touched, and the restore must not touch them.
+    const Ref<Image> warm = MakeLayeredTarget(Context, "LayerRangeWarm");
+    u32 warmTicks = 0;
+    GeneratedTextureRequest warmJob = LayerJob(WarmKey, warm, &warmTicks);
+    warmJob.CacheKey = string(CacheKey);
+    REQUIRE(service.Request(std::move(warmJob)));
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(WarmKey); });
+    REQUIRE(service.IsResident(WarmKey));
+    CHECK(warmTicks == 0u);
+    CHECK(service.GetStats().RestoredTotal == 1u);
+    for (u32 layer = 0; layer < AdoptedLayer; layer++)
+    {
+        CHECK(warm->GetNative().At(layer, 0).Layout == vk::ImageLayout::eUndefined);
+    }
+    CHECK(LayerIs(ReadLayers(Context, warm)[AdoptedLayer], 7));
+
+    service.SetCache(nullptr, nullptr);
+    CHECK(service.Release(WarmKey));
 }

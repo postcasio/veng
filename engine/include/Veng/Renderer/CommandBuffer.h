@@ -98,10 +98,26 @@ namespace Veng::Renderer
         u64 BufferOffset = 0;
         /// @brief Destination (or source) mip level.
         u32 MipLevel = 0;
+        /// @brief The first array layer the region covers.
+        u32 BaseArrayLayer = 0;
+        /// @brief The number of array layers the region covers; zero for every layer from
+        ///        BaseArrayLayer to the image's last.
+        u32 ArrayLayers = 0;
         /// @brief The region's top-left texel on the image side (x, y, z).
         uvec3 ImageOffset = {0, 0, 0};
         /// @brief The region's texel dimensions (width, height, depth).
         uvec3 Extent = {1, 1, 1};
+    };
+
+    /// @brief A run of array layers copied between two images by CommandBuffer::CopyImageLayers.
+    struct ImageLayerCopy
+    {
+        /// @brief The first source layer.
+        u32 SourceLayer = 0;
+        /// @brief The first destination layer.
+        u32 DestinationLayer = 0;
+        /// @brief The number of layers copied.
+        u32 LayerCount = 1;
     };
 
     /// @brief Parameters for a blit between two images, with explicit mip levels and offsets.
@@ -381,6 +397,18 @@ namespace Veng::Renderer
         /// @param source       Transfer source; must be in TransferSrc layout.
         /// @param destination  Transfer destination; must be in TransferDst layout, same extent.
         void CopyImage(const Ref<Image>& source, const Ref<Image>& destination);
+
+        /// @brief Copies runs of array layers' mip 0 from one image into another, whole-extent.
+        ///
+        /// One vkCmdCopyImage with a region per run, so a pool reallocated at a new layer count
+        /// moves its live layers — compacted or not — in one recording. The images share extent
+        /// and a copy-compatible format; like CopyImage this sets no barriers, so the touched source
+        /// layers must be in TransferSrc layout and the destination layers in TransferDst.
+        /// @param source       Transfer source.
+        /// @param destination  Transfer destination, same extent.
+        /// @param copies       The layer runs; an empty span records nothing.
+        void CopyImageLayers(const Ref<Image>& source, const Ref<Image>& destination,
+                             std::span<const ImageLayerCopy> copies);
 
         /// @brief Blits one image region into another.
         void BlitImage(const BlitImageInfo& info);

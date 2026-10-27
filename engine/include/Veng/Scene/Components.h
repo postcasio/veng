@@ -12,3 +12,4 @@
 #include <Veng/Scene/Components/Mesh.h>
 #include <Veng/Scene/Components/Net.h>
 #include <Veng/Scene/Components/RenderLook.h>
+#include <Veng/Scene/Components/SphereTerrain.h>

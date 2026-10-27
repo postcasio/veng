@@ -480,6 +480,13 @@ namespace Veng::Renderer
         /// @return The device's maximum 2D image edge length, in texels.
         [[nodiscard]] u32 GetMaxImageDimension2D() const;
 
+        /// @brief The most array layers an image may have on this device.
+        ///
+        /// The physical device's @c maxImageArrayLayers limit, at least 256 by the Vulkan
+        /// specification. A consumer pooling many same-shaped textures into one layered image
+        /// sizes its capacity within this bound.
+        [[nodiscard]] u32 GetMaxImageArrayLayers() const;
+
         /// @brief The maximum width/height of a 2D image this device can render into.
         ///
         /// The smallest of @c maxImageDimension2D, @c maxFramebufferWidth and

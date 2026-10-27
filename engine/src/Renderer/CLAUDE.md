@@ -116,7 +116,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AnamorphicStreak`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `LightTileCuller`, `SsrChain`, `ParticleSimulation`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `InstancedMeshSystem`, `SphereTerrainSystem`, `LightTileCuller`, `SsrChain`, `ParticleSimulation`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -3802,6 +3802,23 @@ because anything migrates. `BakedSkyCube` is the exception that does route throu
 bake fills a scratch cube one face per tick as a service job, so a dirty baked sky never blocks a
 frame on six fullscreen sky evaluations and the previous cube stands until the new one lands.
 
+### A target can be a layer range of an array
+
+`GeneratedTextureTargetInfo::AdoptBaseLayer` and `AdoptLayerCount` make an adopted target **one
+layer range of the adopted image** rather than all of it. `GetSampledView()` is then a view over the
+range, so every transition the service records — the producer access before a tick, the
+write-after-write between ticks, `SampleAny` on completion, the transfer access of a cache store or
+restore — reaches those layers and no others (layouts are tracked per subresource, and a view's
+`PrepareForAccess` touches only its range). `GetView(mip, layer)` counts `layer` from the range's
+base (`GetBaseLayer`, `GetLayerCount`), a store reads and a restore writes the range alone through
+`BufferImageCopyRegion::BaseArrayLayer`/`ArrayLayers`, and the stored shape is the range's — so a
+cached range restores into the same range of a fresh array. It serves **many jobs filling disjoint
+layers of one array that the frame samples throughout**: a tile pool, a shadow-map array, a decal
+atlas. Adopting the whole array for one job would put every other layer into the producer's layout
+mid-frame. `Bindless` stays single-layer 2D only, and a layer-range target asking for it is a fatal
+assert. `tests/gpu/generated_texture.cpp` pins both halves: the other layers' tracked layouts and
+texels survive a job on one, and a cached one restores into the same layer of an untouched array.
+
 ### The frame-deferred readback
 
 `AsyncReadback` (`Veng/Renderer/AsyncReadback.h`, `Context::GetAsyncReadback()`) gets a finished
@@ -3896,6 +3913,102 @@ which is the order a per-mip, all-layers copy reads and writes them in both dire
 `tests/unit/derived_data_cache.cpp` pins the codec beside the cache that carries it — including
 that the header-plus-appended-texels the store assembles is byte-for-byte the payload a whole
 encode produces; the end-to-end transparency property is in `tests/gpu/generated_texture.cpp`.
+
+## Sphere terrain: a quadtree of generated tiles
+
+**A sphere's terrain is a cube-sphere quadtree of tiles**, chosen per view by screen-space error,
+generated on the GPU by kernels a consumer supplies, and held in a pooled tile atlas — from a
+whole-globe view down to centimetre tiles on a sphere thousands of kilometres across. This section is the data half:
+the mapping, the pool, the measured bounds and the selection. Nothing here draws.
+
+- **The mapping** (`Veng/Math/CubeSphere.h`, device-free, double). Six faces `+X −X +Y −Y +Z −Z`,
+  each `u, v ∈ [−1, 1]` with a right-handed basis, warped equal-angle (`x = tan(π/4·u)`, area ratio
+  ~1.4 across a face). Tile edges are lines on the cube plane, so great-circle arcs: a tile is a
+  spherical quadrilateral. `CubeSphereTileKey` packs face, level (≤ 24) and `x, y` into a `u64`;
+  `GetParent` / `GetChild` / `GetNeighbour` are pure, and a neighbour across a face edge is found by
+  folding doubled integer coordinates over the edge, so it is exact. `GetCubeSphereTileGeometry`
+  gives a tile's corners, norms and warp terms in double.
+- **Precision at depth.** The face fraction across a tile is the tangent difference rewritten as a
+  quotient of sines and cosines (`TileFraction`), which never subtracts nearly equal tangents; the
+  f32 form the shaders run (`TileFractionF32`, `Veng/sphere_terrain_mapping.slang`) divides through
+  by `cos θ0` and evaluates fixed sine and cosine polynomials, so it does not depend on the device's
+  transcendentals or its fast-math mode. A texel's direction is the tile's centre (double, handed to
+  the GPU as an f32 value plus residual) plus an offset built only from small differences
+  `d_i − d_c` (`CubeSphereTileOffsetF32` / `SphereTerrainTileOffset`), accurate to the f32 rounding
+  of the tile's own size: on a 6.4×10⁶ m sphere the device places a level-20–24 texel within about
+  a micrometre (`tests/gpu/sphere_terrain.cpp`). MoltenVK's fast-math mode is requested explicitly
+  (`MVK_CONFIG_FAST_MATH_ENABLED`, "always", through `VK_EXT_layer_settings`; the environment wins)
+  rather than inherited, and arithmetic that must hold its rounding is `precise`.
+- **The generator** (`SphereTerrainGenerator`, `Veng/Renderer/SphereTerrain.h`) is where a
+  consumer's kernels enter: `GetChannels` (≤ `MaxSphereTerrainChannels`; channel 0 is height,
+  `R32Sfloat`, metres above the radius; a channel may hold a divisor of the tile's resolution),
+  `RecordTile`, `GetTileCost`, `GetCacheSalt` and `GetLevelHeightBound`. **Its contract: a texel's
+  value is a function of its direction and level alone**, so same-level tiles agree on shared and
+  border texels to their anchors' rounding. A tile is `SphereTerrainTileTexels` (133) a side: 128
+  cells plus the shared edge row plus a 2-texel border; grid vertex `k` sits on texel `2 + 4k`.
+  `SphereTerrainTileWork` carries the key and layer, the geometry in double, the packed
+  `SphereTerrainTileConstants` (128 bytes, a push block), a storage view per channel over the tile's
+  layer, and the parent's layer as single-layer sampled views — never the whole arrays, whose
+  descriptor would name this tile's layer in the wrong layout while it is being written.
+- **The pool** (`SphereTerrainSource`, created by the consumer and shared through the
+  `SphereTerrain` component). One array image per channel, `MaxResidentTiles` layers (clamped to
+  `Context::GetMaxImageArrayLayers` with a warning), one layer index per tile across channels, every
+  layer held in a sampled layout outside its own tick, so `GetChannelArrayView` is bindable by any
+  pass after the frame's generation; set 0 is never touched. Each tile is one generated-texture job
+  whose targets adopt that tile's layer of every channel (a layer-range target, above), keyed
+  `mix64(source serial, tile key)`, cached under `GetCacheSalt` when it is non-empty; the job is
+  released once complete, since the texels live in the pool. `SetCapacity` reallocates in place,
+  copying (and compacting) the resident layers through `CommandBuffer::CopyImageLayers` as setup
+  commands.
+- **Residency** (`SphereTerrainResidency`, device-free, `src/Renderer/`). A tile is requested only
+  under a resident parent, so the held set is closed under parent; a tile is evictable when not
+  pinned, holding no pending or resident child, and wanted neither this frame nor the last (two
+  frames, so renderers marking in turn cannot evict each other's tiles); eviction takes the least
+  recently wanted. Full with nothing evictable, a request waits and is counted
+  (`RequestsDeferred`); so does one past `MaxPendingTiles`. A pending tile no renderer wants for two
+  frames is cancelled. The pinned top (`0..PinnedLevel`, 126 tiles at 2) is requested level by
+  level from creation, at `PinnedPriority`, and never evicted, so every parent chain ends resident.
+  The source advances on `Context::AddFrameRetiredCallback`, ahead of the frame's pump: it releases
+  completed jobs, reads back retired bounds, cancels stale requests and requests the pinned top.
+- **Measured bounds.** Each tick runs the generator, then the engine's reduction
+  (`sphere_terrain_bounds.comp`, one workgroup) ordered after it by a `StorageRead` barrier on the
+  height layer: the interior's min and max, and `MorphError` — the largest difference over the
+  33×33 grid vertices between the tile's height and its parent's grid (linear along a parent edge,
+  the larger of both diagonals at a cell centre). Each result is one 256-byte entry of a host-mapped
+  per-frame-slot buffer, bound alone so dispatches never share a range, and read when the slot's
+  fence has been waited. A tile restored from the cache ran no tick, so it is measured by a job of
+  its own. Until measured, a tile is bounded by its parent's range widened by
+  `GetLevelHeightBound`; its working bound is the union of its own and its parent's.
+- **Selection** (`SelectSphereTerrain`, `src/Renderer/SphereTerrainSelection.h`, device-free and
+  pure). A level's range is `D_L = max(s_L·K/τ, c·Ď_L)`, both terms upper bounds that halve exactly
+  per level, so `D_{L−1} = 2 D_L`. Distances are to the tile's bound, an oriented box in the tile's
+  own frame (so its diameter is the tile's, whatever face it is on). A drawn tile splits under
+  `(1 − h)·D_L` and merges past `(1 + h)·D_L`, or splits when its `MorphError` projected at its
+  distance exceeds `TargetHeightErrorPixels`; a split needs all four children resident, else the tile
+  is drawn and its children requested (the parent fallback). Subtrees are pruned below the horizon
+  (all eight bound corners hidden by the sphere of `Radius + MinHeight`) or past their range — never
+  by the frustum, which only ranks requests. **The drawn set is 2:1 balanced**: a split tile's
+  same-level neighbours must exist, so a missing neighbour's parent is split for balance (past the
+  horizon, where the distance rule stops refining) and, when its children are not resident, the
+  finer split is undone until they land. Morph ranges are `E_L = 2(1 − h)·D_L` and
+  `S_L = a·E_L`; with `h = 0.05`, `a = 0.85`, `c = 3`, every coarse–fine edge in view has the coarse
+  side unmorphed and the fine side fully morphed (`tests/unit/sphere_terrain_selection.cpp`).
+- **Per renderer** (`SphereTerrainSystem`). Each `Execute` forms the eye in each sphere's body-fixed
+  frame in double — `inverse(Orientation)·(FloatingOrigin::Position + camera − Center)` — selects,
+  marks the wanted set (visited tiles, children of waiting splits, prefetched children within
+  `PrefetchRangeScale` of the split distance) and issues the requests: splits in view first, then
+  splits behind, by how far the parent's error exceeds the threshold, then prefetch. Its memory (last
+  frame's splits, for hysteresis) is keyed by the source's serial, so a source moved between
+  entities or scenes keeps it. `SceneRenderer::GetSphereTerrainSelection(entity)` returns the drawn
+  tiles (key, layers, working range, morph range); `GetSphereTerrainStats()` the counts per level,
+  waiting splits and balance splits; `SphereTerrainSource::FindDeepestResident(direction)` and
+  `GetStats()` the pool's side. `Render/SphereTerrain*` counters sample them.
+
+**What a view wants is large near the ground.** Selection is not frustum-pruned, so it covers every
+direction: around an eye 2 m above a 6.4×10⁶ m sphere, at `τ = 8` and a 1440-pixel view, every
+resident tile drawn, it draws about 3,800 tiles (≈ 240 a level below the horizon's reach), visits
+about 5,000 and wants about 7,500 with prefetch; at 10 km, 1,900 drawn and 3,900 wanted. A pool
+smaller than the wanted set holds what it can and draws the rest at their parents.
 
 ## The fluid solver: advecting whatever it is handed
 

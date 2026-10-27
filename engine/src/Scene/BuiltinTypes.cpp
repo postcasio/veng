@@ -289,6 +289,10 @@ namespace Veng
         // transitively; the runtime-only instance store carries no reflected field.
         registry.Register<InstancedMesh>();
 
+        // A sphere's terrain, selected and drawn by the renderer per Execute. Its Material handle
+        // registers transitively; the centre, orientation and source are runtime-only.
+        registry.Register<SphereTerrain>();
+
         // A scene-authored fullscreen post-process effect, resolved by the renderer per Execute. Its
         // Material handle registers transitively; the effect runs over scene color + depth before
         // bloom.

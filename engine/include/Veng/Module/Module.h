@@ -609,10 +609,15 @@ extern "C"
 /// CaptureRefresh the Retain enumerator, Gui::Element ImageAlpha and Gui::GuiVertex
 /// TexelPremultiplied (124 → 128 bytes). A module reads portrait outputs, reaches elements and
 /// builds draw lists, so a stale one reads them at the old layout.
+/// Version 154 adds sphere terrain: the SphereTerrain component registers, SceneRenderer grows by
+/// its terrain subsystem, GeneratedTextureTargetInfo grows AdoptBaseLayer and AdoptLayerCount,
+/// GeneratedTexture its layer range, and BufferImageCopyRegion BaseArrayLayer and ArrayLayers. A
+/// module requests generated textures, records copies and owns renderers, so a stale one lays them
+/// out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 153u
+#define VENG_MODULE_ABI_VERSION 154u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

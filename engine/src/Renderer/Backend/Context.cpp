@@ -229,6 +229,26 @@ namespace Veng::Renderer
                 .pValues = &synchronousSubmits,
             });
         }
+
+        // Fast math is requested explicitly (MoltenVK's "always" mode) rather than inherited, so
+        // the precision a shader is written against is the engine's choice; arithmetic that must
+        // hold its rounding marks itself precise. A user's environment variable still wins.
+        constexpr const char* FastMathVariable = "MVK_CONFIG_FAST_MATH_ENABLED";
+        constexpr u32 FastMathAlways = 1;
+        const bool fastMathFromEnvironment = std::getenv(FastMathVariable) != nullptr;
+        if (layerSettingsAvailable && !fastMathFromEnvironment)
+        {
+            layerSettings.push_back({
+                .pLayerName = "MoltenVK",
+                .pSettingName = FastMathVariable,
+                .type = vk::LayerSettingTypeEXT::eUint32,
+                .valueCount = 1,
+                .pValues = &FastMathAlways,
+            });
+        }
+        Log::Info("Shader fast math: {}", fastMathFromEnvironment
+                                              ? "as MVK_CONFIG_FAST_MATH_ENABLED sets it"
+                                              : "always (requested)");
 #else
         m_SubmitMode = ResolveQueueSubmitMode(info.SubmitMode, nullptr, false);
 #endif
@@ -1234,6 +1254,11 @@ namespace Veng::Renderer
     u32 Context::GetMaxImageDimension2D() const
     {
         return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
+    }
+
+    u32 Context::GetMaxImageArrayLayers() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxImageArrayLayers;
     }
 
     u32 Context::GetMaxAttachmentDimension2D() const

@@ -97,6 +97,7 @@
 
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/BVH.h>
+#include <Veng/Math/CubeSphere.h>
 #include <Veng/Math/Curve.h>
 #include <Veng/Math/Ease.h>
 #include <Veng/Math/Frustum.h>
@@ -181,6 +182,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/ComponentPool.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Components/SphereTerrain.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/PresentationScope.h>
@@ -216,6 +218,7 @@
 #include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>
+#include <Veng/Renderer/SphereTerrain.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>

@@ -57,27 +57,34 @@ namespace Veng::Renderer
                       static_cast<u32>(access));
         }
 
-        // The view type covering every layer of an image: a volume is one 3D view, a layered image
-        // an array, a single-layer image a plain 2D view.
-        ImageViewType AllLayerViewType(const Image& image)
+        // The view type covering `layers` layers of an image: a volume is one 3D view, a layered
+        // range an array, a single layer a plain 2D view.
+        ImageViewType AllLayerViewType(const Image& image, const u32 layers)
         {
             if (image.GetType() == ImageType::Type3D)
             {
                 return ImageViewType::Type3D;
             }
-            return image.GetLayers() > 1 ? ImageViewType::Array2D : ImageViewType::Type2D;
+            return layers > 1 ? ImageViewType::Array2D : ImageViewType::Type2D;
         }
 
-        // The stored shape of a live target, which is what a cached payload must match exactly.
-        GeneratedTextureBlobShape ShapeOf(const Image& image)
+        // The stored shape of an image covering `layers` of its layers, which is what a cached
+        // payload must match exactly.
+        GeneratedTextureBlobShape ShapeOf(const Image& image, const u32 layers)
         {
             return {
                 .TexelFormat = image.GetFormat(),
                 .Type = image.GetType(),
                 .Extent = image.GetExtent(),
-                .Layers = image.GetLayers(),
+                .Layers = layers,
                 .MipLevels = image.GetMipLevels(),
             };
+        }
+
+        // The stored shape of a live target: its layer range, not its image's.
+        GeneratedTextureBlobShape ShapeOf(const GeneratedTexture& target)
+        {
+            return ShapeOf(*target.GetImage(), target.GetLayerCount());
         }
 
         // Whether every target can take part in a cache round trip. A created target has the
@@ -96,7 +103,7 @@ namespace Veng::Renderer
                               cacheKey, image.GetName());
                     return false;
                 }
-                if (GeneratedTextureShapeBytes(ShapeOf(image)) == 0)
+                if (GeneratedTextureShapeBytes(ShapeOf(*target)) == 0)
                 {
                     Log::Warn("generated-texture job '{}' is not cached: target '{}' has a format "
                               "with no known byte size",
@@ -112,8 +119,8 @@ namespace Veng::Renderer
         // asks for. Stated as a reduction of the stored shape rather than a widening of the
         // target's, because a chain whose extent has clamped at one texel cannot be widened back
         // unambiguously.
-        bool MatchesStoredShape(const GeneratedTextureBlobShape& stored, const Image& image,
-                                const u32 mipOffset)
+        bool MatchesStoredShape(const GeneratedTextureBlobShape& stored,
+                                const GeneratedTexture& target, const u32 mipOffset)
         {
             if (mipOffset >= stored.MipLevels)
             {
@@ -124,14 +131,14 @@ namespace Veng::Renderer
             tail.Extent = {std::max(1u, stored.Extent.x >> mipOffset),
                            std::max(1u, stored.Extent.y >> mipOffset),
                            std::max(1u, stored.Extent.z >> mipOffset)};
-            return tail == ShapeOf(image);
+            return tail == ShapeOf(target);
         }
 
-        // The per-mip copy regions joining one target and a staging buffer, all layers of a mip at
-        // once — the layout the levels are stored in and the one the copies in both directions
-        // expect.
+        // The per-mip copy regions joining one target and a staging buffer, all the target's layers
+        // of a mip at once — the layout the levels are stored in and the one the copies in both
+        // directions expect.
         vector<BufferImageCopyRegion> LevelRegions(const GeneratedTextureBlobShape& shape,
-                                                   const u64 baseOffset)
+                                                   const u64 baseOffset, const u32 baseLayer)
         {
             vector<BufferImageCopyRegion> regions;
             regions.reserve(shape.MipLevels);
@@ -140,6 +147,8 @@ namespace Veng::Renderer
                 regions.push_back({
                     .BufferOffset = baseOffset + GeneratedTextureMipOffset(shape, mip),
                     .MipLevel = mip,
+                    .BaseArrayLayer = baseLayer,
+                    .ArrayLayers = shape.Layers,
                     .Extent = {std::max(1u, shape.Extent.x >> mip),
                                std::max(1u, shape.Extent.y >> mip),
                                std::max(1u, shape.Extent.z >> mip)},
@@ -170,16 +179,31 @@ namespace Veng::Renderer
             m_Image = Image::Create(context, image);
         }
 
-        m_Sampled = ImageView::Create(
-            context, {
-                         .Name = m_Image->GetName() + " (Sampled)",
-                         .Image = m_Image,
-                         .ViewType = info.SampledViewType.value_or(AllLayerViewType(*m_Image)),
-                         .BaseMipLevel = 0,
-                         .MipLevels = m_Image->GetMipLevels(),
-                         .BaseArrayLayer = 0,
-                         .ArrayLayers = m_Image->GetLayers(),
-                     });
+        m_LayerCount = m_Image->GetLayers();
+        if (info.Adopt && info.AdoptLayerCount != 0)
+        {
+            VE_ASSERT(info.AdoptBaseLayer + info.AdoptLayerCount <= m_Image->GetLayers(),
+                      "generated texture adopts layers {}+{} of '{}', which has {}",
+                      info.AdoptBaseLayer, info.AdoptLayerCount, m_Image->GetName(),
+                      m_Image->GetLayers());
+            VE_ASSERT(!info.Bindless,
+                      "generated texture '{}' adopts a layer range and asks for a bindless slot; "
+                      "set 0's sampled-image array takes whole single-layer images only",
+                      m_Image->GetName());
+            m_BaseLayer = info.AdoptBaseLayer;
+            m_LayerCount = info.AdoptLayerCount;
+        }
+
+        m_Sampled = ImageView::Create(context, {
+                                                   .Name = m_Image->GetName() + " (Sampled)",
+                                                   .Image = m_Image,
+                                                   .ViewType = info.SampledViewType.value_or(
+                                                       AllLayerViewType(*m_Image, m_LayerCount)),
+                                                   .BaseMipLevel = 0,
+                                                   .MipLevels = m_Image->GetMipLevels(),
+                                                   .BaseArrayLayer = m_BaseLayer,
+                                                   .ArrayLayers = m_LayerCount,
+                                               });
     }
 
     void GeneratedTexture::RegisterBindless()
@@ -211,12 +235,12 @@ namespace Veng::Renderer
 
         VE_ASSERT(mipLevel < m_Image->GetMipLevels(), "generated texture '{}' has no mip {}",
                   m_Image->GetName(), mipLevel);
-        VE_ASSERT(layer == AllLayers || layer < m_Image->GetLayers(),
+        VE_ASSERT(layer == AllLayers || layer < m_LayerCount,
                   "generated texture '{}' has no layer {}", m_Image->GetName(), layer);
 
         const bool allLayers = layer == AllLayers;
         const ImageViewType viewType =
-            allLayers ? AllLayerViewType(*m_Image)
+            allLayers ? AllLayerViewType(*m_Image, m_LayerCount)
                       : (m_Image->GetType() == ImageType::Type3D ? ImageViewType::Type3D
                                                                  : ImageViewType::Type2D);
         m_Views.push_back({
@@ -233,8 +257,8 @@ namespace Veng::Renderer
                     .ViewType = viewType,
                     .BaseMipLevel = mipLevel,
                     .MipLevels = 1,
-                    .BaseArrayLayer = allLayers ? 0 : layer,
-                    .ArrayLayers = allLayers ? m_Image->GetLayers() : 1,
+                    .BaseArrayLayer = allLayers ? m_BaseLayer : m_BaseLayer + layer,
+                    .ArrayLayers = allLayers ? m_LayerCount : 1,
                 }),
         });
         return m_Views.back().View;
@@ -468,7 +492,7 @@ namespace Veng::Renderer
         }
         for (usize i = 0; i < job->Targets.size(); i++)
         {
-            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i]->GetImage(), 0))
+            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i], 0))
             {
                 miss();
                 return;
@@ -531,8 +555,7 @@ namespace Veng::Renderer
         }
         for (usize i = 0; i < job->Targets.size(); i++)
         {
-            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i]->GetImage(),
-                                    job->CacheMipOffsets[i]))
+            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i], job->CacheMipOffsets[i]))
             {
                 miss();
                 return;
@@ -686,8 +709,8 @@ namespace Veng::Renderer
             for (usize i = 0; i < job->Targets.size(); i++)
             {
                 const GeneratedTexture& target = *job->Targets[i];
-                const vector<BufferImageCopyRegion> regions =
-                    LevelRegions(ShapeOf(*target.GetImage()), job->Restore->TargetOffsets[i]);
+                const vector<BufferImageCopyRegion> regions = LevelRegions(
+                    ShapeOf(target), job->Restore->TargetOffsets[i], target.GetBaseLayer());
                 cmd.PrepareForAccess(target.GetSampledView(), AccessKind::TransferDst);
                 cmd.CopyBufferToImage(job->Restore->Staging, target.GetImage(), regions);
                 cmd.PrepareForAccess(target.GetSampledView(), AccessKind::SampleAny);
@@ -714,7 +737,7 @@ namespace Veng::Renderer
         shapes.reserve(job.Targets.size());
         for (const Unique<GeneratedTexture>& target : job.Targets)
         {
-            shapes.push_back(ShapeOf(*target->GetImage()));
+            shapes.push_back(ShapeOf(*target));
         }
         // The blob's own padded region size, so the staging bytes are appendable behind the
         // header verbatim — and each shape's base is aligned, which a copy's buffer offset
@@ -740,16 +763,18 @@ namespace Veng::Renderer
             .StagedPump = m_PumpCount,
         };
         store.Images.reserve(job.Targets.size());
+        store.LayerCounts.reserve(job.Targets.size());
 
         for (usize i = 0; i < job.Targets.size(); i++)
         {
             const Unique<GeneratedTexture>& target = job.Targets[i];
-            const vector<BufferImageCopyRegion> regions =
-                LevelRegions(shapes[i], GeneratedTextureShapeOffset(shapes, i));
+            const vector<BufferImageCopyRegion> regions = LevelRegions(
+                shapes[i], GeneratedTextureShapeOffset(shapes, i), target->GetBaseLayer());
             cmd.PrepareForAccess(target->GetSampledView(), AccessKind::TransferSrc);
             cmd.CopyImageToBuffer(target->GetImage(), store.Staging, regions);
             cmd.PrepareForAccess(target->GetSampledView(), AccessKind::SampleAny);
             store.Images.push_back(target->GetImage());
+            store.LayerCounts.push_back(target->GetLayerCount());
         }
 
         m_Stores.push_back(std::move(store));
@@ -790,9 +815,9 @@ namespace Veng::Renderer
 
             vector<GeneratedTextureBlobShape> shapes;
             shapes.reserve(store.Images.size());
-            for (const Ref<Image>& image : store.Images)
+            for (usize i = 0; i < store.Images.size(); i++)
             {
-                shapes.push_back(ShapeOf(*image));
+                shapes.push_back(ShapeOf(*store.Images[i], store.LayerCounts[i]));
             }
 
             m_StoredTotal++;

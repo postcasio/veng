@@ -13,6 +13,7 @@
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SceneRendererSettings.h>
 #include <Veng/Renderer/SceneView.h>
+#include <Veng/Renderer/SphereTerrain.h>
 #include <Veng/Renderer/VolumeMarch.h>
 
 #include <Veng/Scene/SceneBroadphase.h>
@@ -61,6 +62,7 @@ namespace Veng::Renderer
     class HalfResTranslucency;
     class GpuCullSystem;
     class InstancedMeshSystem;
+    class SphereTerrainSystem;
     class LightTileCuller;
     class SsrChain;
     class ParticleSimulation;
@@ -370,6 +372,18 @@ namespace Veng::Renderer
         ///        GPU (the fallback's A/B verification hook).
         /// @param force True to cull on the host; false to restore the device's choice.
         void SetInstancedMeshForceCpuCull(bool force);
+
+        /// @brief The tiles the last Execute selected for a sphere terrain entity.
+        ///
+        /// Each drawn tile carries its key, level, layers, working height range and morph range,
+        /// for a consumer aligning its own work (a collider stream, a scatter) to what is drawn.
+        /// Empty for an entity the last Execute did not select.
+        /// @param entity A SphereTerrain entity of the scene last rendered.
+        [[nodiscard]] vector<SphereTerrainDrawnTile> GetSphereTerrainSelection(Entity entity) const;
+
+        /// @brief The last Execute's sphere terrain selection statistics, summed over every
+        ///        terrain: tiles drawn (and per level), waiting splits, balance holds, requests.
+        [[nodiscard]] SphereTerrainSelectionStats GetSphereTerrainStats() const;
 
         /// @brief Whether the last Execute culled its instanced mesh sets on the GPU.
         ///
@@ -1066,6 +1080,10 @@ namespace Veng::Renderer
 
         /// @brief The instanced mesh sets: their gather, upload, per-instance cull and draws.
         Unique<InstancedMeshSystem> m_Instanced;
+
+        /// @brief The sphere terrains: their per-view tile selection, and the wants and requests it
+        ///        marks on each terrain's source.
+        Unique<SphereTerrainSystem> m_SphereTerrain;
 
         /// @brief The depth-of-field battery — half-resolution layers, tile records, gather/fill
         ///        targets, and the composite that folds them over the lit HDR.

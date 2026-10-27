@@ -43,6 +43,23 @@ namespace Veng::Renderer
         /// asserts nothing about its usage — an adopted image is the caller's to size correctly.
         Ref<Veng::Renderer::Image> Adopt;
 
+        /// @brief The first layer of the adopted image this target is, when AdoptLayerCount is set.
+        u32 AdoptBaseLayer = 0;
+
+        /// @brief How many layers of the adopted image this target is, from AdoptBaseLayer; zero for
+        ///        every layer.
+        ///
+        /// With Adopt set and a count given, the target **is** that layer range: the sampled view
+        /// covers the range alone, so every transition the service records — the producer access
+        /// before a tick, the write-after-write between ticks, the sample access on completion, the
+        /// transfer access of a cache store or restore — reaches those layers and no others, and
+        /// GetView counts its layer from the range's base. A cache store reads and a restore writes
+        /// the range only, and the stored shape is the range's. This is what lets many jobs fill
+        /// disjoint layers of one array that the frame samples throughout — a tile pool, a
+        /// shadow-map array, a decal atlas — without one job's barriers reaching another's layers.
+        /// A layer-range target may not ask for Bindless. Ignored without Adopt.
+        u32 AdoptLayerCount = 0;
+
         /// @brief How the job's ticks write this target.
         ///
         /// The service transitions the target into this before the first tick and re-prepares it
@@ -105,11 +122,17 @@ namespace Veng::Renderer
         /// @brief The image the job's ticks fill.
         [[nodiscard]] const Ref<Image>& GetImage() const { return m_Image; }
 
-        /// @brief The view over the whole image — every mip, every layer.
+        /// @brief The view over the whole target — every mip, every layer of its range.
         ///
         /// This is what a completed job hands the caller to sample, and what the service's own
-        /// layout transitions are recorded against.
+        /// layout transitions are recorded against. A layer-range target's view covers its range.
         [[nodiscard]] const Ref<ImageView>& GetSampledView() const { return m_Sampled; }
+
+        /// @brief The image layer the target's layer 0 is: zero unless it adopted a layer range.
+        [[nodiscard]] u32 GetBaseLayer() const { return m_BaseLayer; }
+
+        /// @brief The number of image layers the target covers.
+        [[nodiscard]] u32 GetLayerCount() const { return m_LayerCount; }
 
         /// @brief A view of one mip level, of one layer or of all of them, created on first ask.
         ///
@@ -117,7 +140,8 @@ namespace Veng::Renderer
         /// for a raster tick — a view is a view, and which it is follows from how the tick uses it.
         /// Views are cached, so asking for the same subresource twice hands back the same view.
         /// @param mipLevel The mip level the view exposes.
-        /// @param layer    The array layer, or AllLayers for the whole layer range.
+        /// @param layer    The array layer, counted from GetBaseLayer, or AllLayers for the whole
+        ///                 layer range.
         /// @return The cached view.
         [[nodiscard]] const Ref<ImageView>& GetView(u32 mipLevel, u32 layer = AllLayers) const;
 
@@ -142,8 +166,12 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The created or adopted image.
         Ref<Image> m_Image;
-        /// @brief The whole-image view.
+        /// @brief The whole-target view.
         Ref<ImageView> m_Sampled;
+        /// @brief The image layer the target's layer 0 is.
+        u32 m_BaseLayer = 0;
+        /// @brief The image layers the target covers.
+        u32 m_LayerCount = 1;
         /// @brief The access the ticks write through.
         AccessKind m_ProducerAccess;
         /// @brief Whether the target asked for a set-0 slot.
@@ -566,6 +594,9 @@ namespace Veng::Renderer
             /// Held rather than their shapes because a shape is a renderer-internal type, and an
             /// image's shape is immutable, so re-deriving it when the levels land is free.
             vector<Ref<Image>> Images;
+            /// @brief The layers each image's target covers, which a layer-range target's shape
+            ///        takes in place of the image's own count.
+            vector<u32> LayerCounts;
             /// @brief The host-mapped buffer every target's levels are copied into.
             Ref<Buffer> Staging;
             /// @brief Texel bytes across every target, which is the buffer's size.
