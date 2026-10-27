@@ -193,6 +193,9 @@ namespace Veng
         vec3 GroundNormal = vec3(0.0f);
         /// @brief The entity being stood on, or Entity::Null when airborne or on unowned geometry.
         Entity GroundEntity = Entity::Null;
+        /// @brief The tag of the heightfield cell stood on (CollisionHeightField::CellTags), or 0
+        ///        when airborne or on anything else.
+        u8 GroundSurfaceTag = 0;
         /// @brief The capsule's world-space linear velocity after the update, in metres per second.
         vec3 LinearVelocity = vec3(0.0f);
         /// @brief The capsule's world-space position after the update, at double precision.
@@ -531,6 +534,11 @@ namespace Veng
         /// @brief Returns a character capsule's world-space linear velocity, or zero when it has none.
         /// @param entity  The entity whose capsule velocity to read.
         [[nodiscard]] vec3 GetCharacterVelocity(Entity entity) const;
+
+        /// @brief Returns a character capsule's world-space position at double precision, or zero
+        ///        when it has none.
+        /// @param entity  The entity whose capsule position to read.
+        [[nodiscard]] dvec3 GetCharacterPosition(Entity entity) const;
 
         /// @brief Teleports a character capsule to @p pose, leaving its velocity untouched; a no-op
         ///        when it has none.

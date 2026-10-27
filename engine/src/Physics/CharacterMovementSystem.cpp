@@ -42,6 +42,8 @@ namespace Veng
             bool HasState = false;
             /// @brief Whether the entity is a rolled-back predicted character.
             bool Predicted = false;
+            /// @brief Whether the entity needs a PhysicsPose added, its pose being kept there.
+            bool AddPose = false;
         };
 
         /// @brief Rotates @p from toward @p to by at most @p maxAngle radians.
@@ -116,8 +118,7 @@ namespace Veng
         // cannot happen inside the iteration that finds the characters needing one.
         const Scene& readScene = scene;
         vector<Simulated> simulated;
-        for (auto [entity, transform, controller] :
-             readScene.View<Transform, CharacterController>())
+        for (auto [entity, controller] : readScene.View<CharacterController>())
         {
             // A disabled controller is not simulated: it is left out of the simulated set, so the
             // orphan sweep below releases its capsule and its Transform is never overwritten — the
@@ -132,12 +133,23 @@ namespace Veng
             {
                 continue;
             }
+            // The pose comes from Transform, or from PhysicsPose when the controller keeps it in
+            // double precision; a character with neither has nowhere to stand.
+            const auto* transform = readScene.TryGet<Transform>(entity);
+            const auto* physicsPose =
+                controller.SyncTransform ? nullptr : readScene.TryGet<PhysicsPose>(entity);
+            if (physicsPose == nullptr && transform == nullptr)
+            {
+                continue;
+            }
             Simulated entry{
                 .Owner = entity,
                 .Controller = controller,
-                .Pose = PhysicsPose{.Position = dvec3(transform.Position),
-                                    .Rotation = transform.Rotation},
+                .Pose = physicsPose != nullptr ? *physicsPose
+                                               : PhysicsPose{.Position = dvec3(transform->Position),
+                                                             .Rotation = transform->Rotation},
                 .Predicted = readScene.Has<Predicted>(entity),
+                .AddPose = !controller.SyncTransform && physicsPose == nullptr,
             };
             if (const auto* command = readScene.TryGet<Intent>(entity))
             {
@@ -157,6 +169,10 @@ namespace Veng
             if (!entry.HasState)
             {
                 scene.Add<CharacterState>(entry.Owner);
+            }
+            if (entry.AddPose)
+            {
+                scene.Add<PhysicsPose>(entry.Owner, entry.Pose);
             }
         }
 
@@ -181,8 +197,20 @@ namespace Veng
 
         for (const Simulated& entry : simulated)
         {
-            const vec3 position = vec3(entry.Pose.Position);
-            const vec3 acceleration = EvaluateGravity(sources, position);
+            // A predicted character's pose is reconciled against the server: on a correction the
+            // reconcile writes the authoritative pose into its source component and clears nothing
+            // on the capsule, so the capsule is re-seated onto it before this tick's sweep. In
+            // steady prediction that component already equals the capsule's own pose (the mover
+            // wrote it last tick), so the re-seat is idempotent; after a rollback restore it is
+            // what makes the correction take.
+            if (entry.Predicted)
+            {
+                world->SetCharacterPose(entry.Owner, entry.Pose);
+            }
+
+            // The field is evaluated at the capsule's own double-precision position.
+            const vec3 acceleration =
+                EvaluateGravity(sources, world->GetCharacterPosition(entry.Owner));
             const f32 gravityMagnitude = glm::length(acceleration);
 
             // The up is the negated gravity; with no source the character keeps its last up and
@@ -214,16 +242,6 @@ namespace Veng
             const bool jump =
                 (entry.Command.Actions & static_cast<u32>(CharacterAction::Jump)) != 0;
 
-            // A predicted character's Transform is reconciled against the server: on a correction the
-            // reconcile writes the authoritative pose here and clears nothing on the capsule, so the
-            // capsule is re-seated onto it before this tick's sweep. In steady prediction the
-            // Transform already equals the capsule's own pose (the mover wrote it last tick), so the
-            // re-seat is idempotent; after a rollback restore it is what makes the correction take.
-            if (entry.Predicted)
-            {
-                world->SetCharacterPose(entry.Owner, entry.Pose);
-            }
-
             const CharacterMoveResult result =
                 world->UpdateCharacter(entry.Owner,
                                        CharacterMoveInput{
@@ -245,13 +263,22 @@ namespace Veng
             state.VerticalSpeed = glm::dot(result.LinearVelocity, up);
             state.AirTime = result.Grounded ? 0.0f : entry.LastAirTime + delta;
             state.GroundEntity = result.GroundEntity;
+            state.GroundSurfaceTag = result.GroundSurfaceTag;
 
-            auto& transform = scene.Get<Transform>(entry.Owner);
-            transform.Position = vec3(result.Position);
             // The heading is the commanded facing, not the swept capsule's rotation: the capsule is
             // rotationally symmetric about its up, so the solver neither turns its yaw nor needs it,
             // and writing facing here is what makes the heading survive and accumulate across ticks.
-            transform.Rotation = facing;
+            if (entry.Controller.SyncTransform)
+            {
+                auto& transform = scene.Get<Transform>(entry.Owner);
+                transform.Position = vec3(result.Position);
+                transform.Rotation = facing;
+            }
+            else
+            {
+                scene.Get<PhysicsPose>(entry.Owner) =
+                    PhysicsPose{.Position = result.Position, .Rotation = facing};
+            }
         }
     }
 

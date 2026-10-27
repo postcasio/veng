@@ -141,9 +141,10 @@ and `BodyContacts` for a reporting body's contacts.
 `Collider::Shape = Mesh` takes its shape from the `AssetHandle<CollisionShape>` in
 `Collider::Geometry` instead of from `Extents`. **`CollisionShape` is an ordinary cooked asset**
 (`AssetTypes::CollisionShape`, `Veng/Asset/CollisionShape.h`) carrying a **convex hull** (its hull
-vertices), an **indexed triangle mesh**, or a **compound** — a set of transformed child shapes,
-each a primitive (box/sphere/capsule) or its own hull/mesh. It is authored as a `*.collision.json`
-naming a mode:
+vertices), an **indexed triangle mesh**, a **compound** — a set of transformed child shapes,
+each a primitive (box/sphere/capsule) or its own hull/mesh — or a **heightfield**, which is built
+at run time rather than cooked ([below](#a-heightfield-is-built-at-run-time-and-streamed)). The
+cooked kinds are authored as a `*.collision.json` naming a mode:
 
 ```json
 { "model": "hull.glb", "mode": "convex" }
@@ -179,7 +180,8 @@ Two properties are load-bearing:
   two-faced hull rather than refusing them, and a flat hull has no inertia for a dynamic body, so the
   check is stricter than the build: passing means the points build without asserting. It holds the
   solver's process registration for the call, so it is cheapest while a world is alive.
-- **A triangle mesh may not back a `Dynamic` body.** A triangle mesh is a surface: it has no
+- **A triangle mesh — or a heightfield — may not back a `Dynamic` body.** A triangle mesh is a
+  surface: it has no
   interior and no inertia, and a dynamic one is a well-known way to get a solver that misbehaves
   for reasons the consumer cannot see. `PhysicsWorld::CreateBody` **asserts** on the pair rather
   than letting it be discovered at runtime — through `CollisionShape::ContainsTriangleMesh`, so a
@@ -194,6 +196,73 @@ Two properties are load-bearing:
 A `ColliderShape::Mesh` collider whose handle is **not resident** has no shape, so the step skips
 it exactly as it skips a `RigidBody` with no `Collider`, and the body is created on the tick the
 asset arrives. Nothing blocks and nothing asserts.
+
+### A heightfield is built at run time, and streamed
+
+`CollisionGeometry::HeightField` carries a **`CollisionHeightField`**: `SampleCount` N (any N in
+[3, 32769]), `Spacing`, `Origin` (the local position of sample (0, 0)), `N × N` `Heights` row-major
+(`z · N + x`) along local +Y, an optional `(N−1)²` `CellTags` array, and `MaxError`. The surface is
+the triangulated grid through `Origin + (x · Spacing, h, z · Spacing)`, so a consumer supplies the
+heights on whatever lattice it likes — a flat terrain tile, or a patch of a sphere placed and turned
+by the body's pose so its local +Y is the patch's up. The solver's own block-size and padding rules
+are internal. There is no cooked form: nothing authors one offline, the cooked enum only reserves
+the value, and the loader refuses it.
+
+- **A heightfield is a surface.** `ContainsTriangleMesh` reports it, so it takes the triangle mesh's
+  rules: `Static` or `Kinematic` only, and an assert to sweep.
+- **Validate before building.** `CollisionShape::ValidateHeightField` refuses a sample count out of
+  range, a height array of the wrong length, a height that is neither finite nor
+  `CollisionHeightField::Hole` (`+∞`), a non-positive spacing, a tag array of the wrong length and a
+  non-positive error bound, each with a reason and never asserting; a world building an invalid one
+  asserts, as it does for an unbuildable hull.
+- **Holes.** A `Hole` sample removes every triangle that would use it: the two triangles of a cell
+  share the low-corner-to-high-corner diagonal, so a hole at a cell's low corner opens the whole cell.
+- **Tags are the consumer's.** A cell's tag is reported as `RayHit::SurfaceTag`,
+  `ShapeHit::SurfaceTag`, `CharacterMoveResult::GroundSurfaceTag` and
+  `CharacterState::GroundSurfaceTag`, and is 0 for any body that is not a heightfield or one with no
+  tags. Internally it is the solver's material index; the engine attaches no friction or restitution
+  to it, and friction stays a body setting.
+- **Precision, stated.** The coordinates are shape-local f32 about the body's double pose, so a tile
+  a kilometre across resolves about 0.1 mm at its edge wherever it stands. In a large world the
+  body's pose comes through `PhysicsPose` (`RigidBody::SyncTransform` cleared), since `Transform` is
+  f32. The solver stores the heights quantised: `MaxError` (default 1 mm) bounds the per-block
+  packing, and the whole grid is first quantised to 16 bits over its height range, so the error is
+  never below half of `range / 65534` — about 0.8 mm per 100 m of relief in one tile.
+
+**`CollisionShape::Prepare()` is the off-thread seam, for every geometry.** It builds the solver
+shape the world would build and keeps it on the asset (`CollisionShape::Prepared`, an opaque
+`PreparedCollisionShape`), so the world's shape cache uses it rather than building. It is idempotent,
+holds the solver's process registration for the call as `ValidateConvex` does, and is safe on a
+`TaskSystem` worker (not on two threads at once for one shape, and finished before the shape is
+handed to a world). It works for a convex hull, a mesh and a compound as well as a heightfield. The
+prepared shape is never serialised, so the solver-neutral contract holds: a solver bump is a
+rebuild, not a re-cook. The cost is a runtime-only solver object held by an otherwise solver-neutral
+asset. A cache entry built from a prepared shape counts the asset's reference as its own, so it is
+still dropped once no body or query holds it.
+
+**Streaming terrain colliders around a mover** needs no new mechanism — a tile is a body added and
+removed as a trickle:
+
+1. generate the heights on a worker, and call `Prepare()` there;
+2. in the continuation on the main thread, `AssetManager::Adopt` the shape and add the entity's
+   `RigidBody` (`Static`, `SyncTransform = false` with a `PhysicsPose`) and `Collider`
+   (`Shape = Mesh`, `Geometry` the adopted handle);
+3. the next step creates the body, at the cost of a broad-phase insertion rather than a shape build.
+
+The contract: a body arrives on the step after its components do, and `PhysicsWorld::HasBody`
+tells the streamer when a tile is live, so a mover can refuse to descend onto ground that is not yet
+solid. `MaxBodies` stays fatal, so the streamer sizes its window below it. A trickle rides the
+incremental broad-phase update ([Layers are a closed table](#layers-are-a-closed-table)). Measured
+once on the fanless M5 in `build-debug`:
+
+| | 65² | 129² | 257² |
+|---|---|---|---|
+| `Prepare()`, main thread or worker | 0.12 ms | 0.40 ms | 1.5 ms |
+| step adding a batch of 1 / 4 / 16 to 200 resting tiles | 0.03 / 0.04 / 0.05 ms | 0.03 / 0.03 / 0.06 ms | 0.03 / 0.04 / 0.06 ms |
+| step removing a batch of 1 / 4 / 16 | 0.03 / 0.03 / 0.04 ms | 0.03 / 0.03 / 0.04 ms | 0.03 / 0.03 / 0.04 ms |
+
+against 0.02 ms for the same step with no churn. An unprepared tile pays its `Prepare()` figure on
+the main thread inside the step that creates it.
 
 ## Sensors are state a system drains
 
@@ -356,6 +425,8 @@ usize              OverlapSpheres(const PhysicsWorld*, const Collider& shape, co
   entry no body holds and nothing has asked for since the previous step, so the cache is bounded by
   the colliders in use; an entry holds its geometry's handle, which pins the address it keys on.
   `GetBuiltShapeCount` / `FindBuiltShape` / `GetBodyShape` expose it for tests and diagnostics.
+- **A hit on a heightfield names its cell's tag.** `RayHit::SurfaceTag` and `ShapeHit::SurfaceTag`
+  are the cell's `CollisionHeightField::CellTags` entry, 0 for anything else.
 - **The ignore list is for a handful of entities.** It is linear-scanned; up to four are held
   without allocating.
 
@@ -535,6 +606,47 @@ rest still reuses its result as before. The distance tolerance rarely needs touc
 translating past its neighbour shifts the pair from either frame. Switching the cache off re-runs the
 narrow phase for every pair every step.
 
+## Gravity is a field
+
+A **`GravitySource`** (`Veng/Physics/Gravity.h`) on an entity declares a field over a bounded
+`Region`; there is no world-constant gravity once any source exists. A body reached by no source is
+in free fall — a real state, not a default.
+
+- **Kinds.** `Uniform` (a constant direction: a deck), `Radial` (toward the origin: a sphere) and
+  `Axial` (outward from an axis: a rotating habitat). `Magnitude` is authored, never derived from a
+  spin rate.
+- **Two falloffs, for Radial.** Under `GravityFalloff::Linear` (the default) the field ramps from 0
+  at `InnerRadius` to `Magnitude` at `OuterRadius` and holds `Magnitude` to the region's edge. Under
+  `GravityFalloff::InverseSquare` it is `Magnitude · (OuterRadius / r)²` from `OuterRadius` out — a
+  point mass's field, so a body can orbit — with the same linear ramp inside, continuous at
+  `OuterRadius` and with `InnerRadius = 0` exactly a uniform-density sphere's interior; below
+  `InnerRadius` it is zero. `Magnitude` is the field at `OuterRadius`, for a source standing for a
+  solid sphere the gravity at its surface. An `Axial` source keeps the linear ramp whatever
+  `Falloff` says.
+- **A field ends at its region.** A source whose field is not negligible at its boundary authors a
+  `BlendWidth`, or the field steps to zero across the edge — an inverse-square field reaches every
+  distance, so its region and blend band are where the author decides it stops.
+- **Priority and blending.** Composition is by descending `Priority`: the highest source containing
+  the point wins once the point is more than its `BlendWidth` inside, within the band its weight
+  fades in from the boundary and the next source down fills the rest. The evaluator is
+  **`EvaluateGravity`**, the one function every consumer calls.
+- **Double precision.** `EvaluateGravity` takes a `dvec3` point; `GravitySourceInstance::Origin` is a
+  `dvec3` and its `Bounds` are held relative to it, so the evaluator subtracts in double and does the
+  rest in small f32 magnitudes. A source and a point 10⁷ m from the origin compose exactly as they
+  would beside it.
+- **Where sources come from.** `GatherGravitySources` places each source through the scene's
+  `PhysicsPoseResolver` (`ResolvePhysicsPose`), the seam vehicles and interaction already read
+  through, so a consumer that re-bases its `Transform`s about a floating origin feeds the field
+  solver-frame positions. With no resolver the default resolution composes the `Transform` chain.
+
+**How bodies and characters consume it.** `StepPhysics` gathers the sources once per tick and
+installs them (`PhysicsWorld::SetGravitySources`), which zeroes the solver's uniform gravity; a step
+listener then adds each active dynamic body `mass · EvaluateGravity(centre of mass)` as a force
+before each solver step, at the body's double centre of mass. A character re-reads its up from the
+field every tick at its capsule's double position (below). **A body under a velocity controller** —
+one that sets its velocity each tick — overrides that force, so it adds `EvaluateGravity` at its
+own position to its own target velocity if it is meant to fall.
+
 ## The character controller — a kinematic capsule with per-body up
 
 A **`CharacterController`** (`Veng/Physics/CharacterController.h`) is a walking character: a kinematic
@@ -575,8 +687,21 @@ directly, so a character leaving a moving vehicle carries its velocity rather th
 
 **`CharacterState`** (`VE_TYPE`, runtime-only, never serialized/replicated) is the view output the
 mover writes onto every character each tick — `Grounded`, `GroundNormal`, `Up`, `PlanarSpeed`,
-`VerticalSpeed`, `AirTime`, `GroundEntity` — so gameplay reads a character's ground state without a
-second world query. `GroundEntity` is what makes "am I standing on something moving" answerable.
+`VerticalSpeed`, `AirTime`, `GroundEntity`, `GroundSurfaceTag` — so gameplay reads a character's
+ground state without a second world query. `GroundEntity` is what makes "am I standing on something
+moving" answerable, and `GroundSurfaceTag` is the tag of the heightfield cell stood on (0 on
+anything else).
+
+**A character's pose can be kept in double precision.** `CharacterController::SyncTransform`
+(default true) mirrors `RigidBody::SyncTransform`. Set, the mover seeds each tick from `Transform`
+and writes the result back — and `Transform` is f32, so at 6.4 × 10⁶ m from the origin a character
+is quantised to the 0.5 m f32 spacing every tick. Cleared, the mover reads the pose from, and writes
+it to, the entity's `PhysicsPose` (`dvec3`), adding one seeded from `Transform` when it has none,
+and leaves `Transform` to the consumer. The heading lives in the pose's rotation either way. A
+`Predicted` character is then re-seated from `PhysicsPose`, so the consumer's half of the contract
+is that its reconcile writes `PhysicsPose` from its own replicated state — `PhysicsPose` is never
+replicated, and replicating a double pose is the consumer's. The field is evaluated at the capsule's
+own double position (`PhysicsWorld::GetCharacterPosition`) in both modes.
 
 **`CharacterMovementSystem`** (`Veng/Physics/CharacterMovementSystem.h`) is the builtin that drives
 it from `Intent` — the character analogue of `MovementSystem` and its **alternative**, not its
@@ -609,7 +734,9 @@ local character's capsule is blocked by that kinematic body; the body is never p
 block and neither pushes the other. It is a purely local proxy (the components it adds are not
 replicated), grown against `HasAuthority` and dropped when a character flips local — a no-op on the
 server, where every character is authoritative, and in single-peer play, where there are no remote
-characters. A level names it before `PhysicsSystem`.
+characters. A level names it before `PhysicsSystem`. A remote character's proxy follows its interpolated `Transform`, which is f32, so far from the
+origin it blocks at a position rounded to the f32 spacing; following a double pose would need a
+double interpolated pose, which the interpolation does not carry.
 
 ## The replay gate — the predicted set is what rolls back
 

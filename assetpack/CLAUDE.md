@@ -136,7 +136,8 @@ the format and its serialization — neither importer nor loader.
   so the loader validates it against the engine's canonical *or* skinned layout by `SkeletonId`.
 - **`AssetTypes::CollisionShape` carries solver-neutral collision geometry.** A
   **`CookedCollisionShapeHeader`** (`CookedCollisionShapeVersion`, currently **2**) is a `Mode` (a
-  `CookedCollisionGeometry` ordinal: `Convex`, `Mesh`, or `Compound`), a `PointCount`, an
+  `CookedCollisionGeometry` ordinal: `Convex`, `Mesh`, or `Compound`; `HeightField` is reserved so
+  the ordinals mirror the engine's, and is never cooked), a `PointCount`, an
   `IndexCount`, and a `ChildCount`, followed by `ChildCount` `CookedCollisionChild` entries, then
   `PointCount` xyz `f32` triples and `IndexCount` `u32` triangle indices (none under `Convex`).
   Under `Convex`/`Mesh` the point/index region is the shape's own geometry and `ChildCount` is 0;
@@ -148,9 +149,9 @@ the format and its serialization — neither importer nor loader.
   public contract living here — in a library that carries no physics dependency at all. The runtime
   builds the solver's shape from this at load, so a library bump is a rebuild rather than a re-cook.
   Convex hulling still happens once, offline: a `Convex` blob (or child) carries the hull's
-  vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown `Mode` or
-  child kind, an index count that is not a multiple of three, a child slice out of range, and an
-  index addressing past its points.
+  vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown or
+  `HeightField` `Mode`, an unknown child kind, an index count that is not a multiple of three, a
+  child slice out of range, and an index addressing past its points.
 - **`AssetTypes::Flipbook` carries a sprite sheet's grid and the textures sharing it.** A
   **`CookedFlipbookHeader`** (`CookedFlipbookVersion`, currently **2**; its size is pinned by a
   `static_assert`) holds the grid (`Columns`, `Rows`, `FrameCount`, `FrameWidth`/`FrameHeight`),

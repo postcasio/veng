@@ -1,5 +1,6 @@
 #include <Veng/Renderer/SceneGizmos.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -174,6 +175,43 @@ namespace Veng::Renderer
             for (const vec3 side : {right, -right, fwd, -fwd})
             {
                 debug.DrawLine(bottom + side * radius, top + side * radius, color);
+            }
+        }
+
+        /// @brief Draws a heightfield as a coarse wire grid of its rows and columns through
+        ///        @p frame; a segment touching a hole is left out.
+        void DrawWireHeightField(DebugDraw& debug, const mat4& frame,
+                                 const CollisionHeightField& field, const vec4 color)
+        {
+            constexpr u32 MaxLinesPerAxis = 32;
+            const u32 count = field.SampleCount;
+            if (count < 2 || field.Heights.size() != usize{count} * count)
+            {
+                return;
+            }
+            const u32 stride = std::max(1U, (count - 1 + MaxLinesPerAxis - 1) / MaxLinesPerAxis);
+            const auto at = [&](const u32 x, const u32 z)
+            {
+                const vec3 local = field.Origin + vec3(static_cast<f32>(x) * field.Spacing,
+                                                       field.Heights[usize{z} * count + x],
+                                                       static_cast<f32>(z) * field.Spacing);
+                return vec3(frame * vec4(local, 1.0f));
+            };
+            const auto solid = [&](const u32 x, const u32 z)
+            { return field.Heights[usize{z} * count + x] != CollisionHeightField::Hole; };
+            for (u32 line = 0; line < count; line += stride)
+            {
+                for (u32 i = 0; i + 1 < count; ++i)
+                {
+                    if (solid(i, line) && solid(i + 1, line))
+                    {
+                        debug.DrawLine(at(i, line), at(i + 1, line), color);
+                    }
+                    if (solid(line, i) && solid(line, i + 1))
+                    {
+                        debug.DrawLine(at(line, i), at(line, i + 1), color);
+                    }
+                }
             }
         }
 
@@ -412,6 +450,10 @@ namespace Veng::Renderer
                             {
                                 DrawCollisionChild(debug, frame, scale, child, color);
                             }
+                        }
+                        else if (geometry->Geometry == CollisionGeometry::HeightField)
+                        {
+                            DrawWireHeightField(debug, frame, geometry->HeightField, color);
                         }
                         else
                         {

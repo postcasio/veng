@@ -629,3 +629,75 @@ TEST_CASE("A commanded facing stays orthonormal and planar to a slewing up")
     CHECK(worstNormError < 1e-4f);
     CHECK(worstUpAlignment > 0.999f);
 }
+
+TEST_CASE("A character keeping its pose in double precision stands still far from the origin")
+{
+    // 6.4e6 m out, where an f32 coordinate rounds to half a metre: the pose has to live in
+    // PhysicsPose for a character standing on a floor there to stay where it stands.
+    constexpr f64 Distance = 6.4e6;
+    const vec3 up = glm::normalize(vec3(0.6f, 0.64f, 0.48f));
+    const dvec3 surface = dvec3(up) * Distance;
+    const quat standing = FromTo(vec3(0.0f, 1.0f, 0.0f), up);
+
+    for (const bool predicted : {false, true})
+    {
+        CAPTURE(predicted);
+        TypeRegistry types;
+        RegisterBuiltinTypes(types);
+        const Unique<Scene> scene = Scene::Create(types);
+        scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        const Entity field = scene->CreateEntity();
+        scene->Add<Transform>(field, Transform{});
+        scene->Add<GravitySource>(field,
+                                  GravitySource{.Kind = GravityKind::Radial,
+                                                .Magnitude = 9.81f,
+                                                .OuterRadius = static_cast<f32>(Distance),
+                                                .Falloff = GravityFalloff::InverseSquare,
+                                                .Bounds = Region{.Shape = RegionShape::Sphere,
+                                                                 .HalfExtents = vec3(1.0e7f)}});
+
+        const Entity floor = scene->CreateEntity();
+        scene->Add<RigidBody>(floor, RigidBody{.Motion = MotionType::Static,
+                                               .Layer = PhysicsLayer::Static,
+                                               .SyncTransform = false});
+        scene->Add<Collider>(
+            floor, Collider{.Shape = ColliderShape::Box, .Extents = vec3(5.0f, 0.5f, 5.0f)});
+        scene->Add<PhysicsPose>(
+            floor, PhysicsPose{.Position = surface - dvec3(up) * 0.5, .Rotation = standing});
+
+        CharacterController controller = DefaultController();
+        controller.SyncTransform = false;
+        const Entity pawn = scene->CreateEntity();
+        scene->Add<CharacterController>(pawn, controller);
+        scene->Add<PhysicsPose>(
+            pawn, PhysicsPose{.Position = surface + dvec3(up) * 0.05, .Rotation = standing});
+        scene->Add<Intent>(pawn, Intent{});
+        if (predicted)
+        {
+            scene->Add<Predicted>(pawn);
+        }
+
+        TestSupport::TestServices services;
+        CharacterMovementSystem characters;
+        const auto tick = [&]
+        {
+            StepPhysics(*scene, FixedStep);
+            characters.OnUpdate(*scene, FixedStep, services.Make());
+        };
+        for (u32 settle = 0; settle < 30; ++settle)
+        {
+            tick();
+        }
+        REQUIRE(scene->Get<CharacterState>(pawn).Grounded);
+        const dvec3 start = scene->Get<PhysicsPose>(pawn).Position;
+        f64 drift = 0.0;
+        for (u32 still = 0; still < 120; ++still)
+        {
+            tick();
+            drift = std::max(drift, glm::length(scene->Get<PhysicsPose>(pawn).Position - start));
+        }
+        CHECK(drift < 1.0e-3);
+        CHECK_FALSE(scene->Has<Transform>(pawn));
+    }
+}

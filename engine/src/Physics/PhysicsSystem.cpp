@@ -3,6 +3,7 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -655,25 +656,23 @@ namespace Veng
         out.clear();
         for (auto [entity, source] : scene.View<GravitySource>())
         {
-            vec3 position(0.0f);
-            quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
-            if (const auto* transform = scene.TryGet<Transform>(entity))
-            {
-                position = transform->Position;
-                rotation = transform->Rotation;
-            }
+            // Through the scene's pose resolver, so a consumer whose Transforms are a projection
+            // about a moving origin feeds the field the solver's frame, not the render frame.
+            const PhysicsPose pose = ResolvePhysicsPose(scene, entity);
 
+            // The region is held relative to the origin, so only the origin carries the distance.
             Region bounds = source.Bounds;
-            bounds.Center = position + rotation * source.Bounds.Center;
-            bounds.Orientation = rotation * source.Bounds.Orientation;
+            bounds.Center = pose.Rotation * source.Bounds.Center;
+            bounds.Orientation = pose.Rotation * source.Bounds.Orientation;
 
             out.emplace_back(GravitySourceInstance{
                 .Kind = source.Kind,
-                .Direction = rotation * source.Direction,
-                .Origin = position,
+                .Direction = pose.Rotation * source.Direction,
+                .Origin = pose.Position,
                 .Magnitude = source.Magnitude,
                 .InnerRadius = source.InnerRadius,
                 .OuterRadius = source.OuterRadius,
+                .Falloff = source.Falloff,
                 .Bounds = bounds,
                 .Priority = source.Priority,
                 .BlendWidth = source.BlendWidth,

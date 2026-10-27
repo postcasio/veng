@@ -1200,6 +1200,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/constant_motion.cpp
             tests/unit/physics.cpp
             tests/unit/physics_content.cpp
+            tests/unit/physics_heightfield.cpp
             tests/unit/physics_contacts.cpp
             tests/unit/physics_pose_resolver.cpp
             tests/unit/gravity.cpp
@@ -1405,7 +1406,15 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME death.physics_dynamic_triangle_mesh COMMAND veng_test_death physics_dynamic_triangle_mesh)
     set_tests_properties(death.physics_dynamic_triangle_mesh PROPERTIES LABELS "death;fast"
-            PASS_REGULAR_EXPRESSION "triangle-mesh CollisionShape on a Dynamic RigidBody")
+            PASS_REGULAR_EXPRESSION "CollisionShape on a Dynamic RigidBody")
+
+    add_test(NAME death.physics_dynamic_heightfield COMMAND veng_test_death physics_dynamic_heightfield)
+    set_tests_properties(death.physics_dynamic_heightfield PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "heightfield CollisionShape on a Dynamic RigidBody")
+
+    add_test(NAME death.physics_sweep_heightfield COMMAND veng_test_death physics_sweep_heightfield)
+    set_tests_properties(death.physics_sweep_heightfield PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "ShapeCast was given a triangle-mesh or heightfield")
 
     add_test(NAME death.physics_degenerate_hull COMMAND veng_test_death physics_degenerate_hull)
     set_tests_properties(death.physics_degenerate_hull PROPERTIES LABELS "death;fast"

@@ -53,6 +53,26 @@ namespace Veng
         Axial = 2,
     };
 
+    /// @brief How a Radial source's strength varies with distance past its OuterRadius.
+    ///
+    /// Read by Radial sources only; an Axial source keeps the linear ramp whatever it says. Integer
+    /// values are stable — persisted in prefabs.
+    enum class GravityFalloff : u8
+    {
+        /// @brief Ramps linearly from zero at InnerRadius to Magnitude at OuterRadius, then holds
+        ///        Magnitude to the region's edge.
+        Linear = 0,
+        /// @brief Falls off as a point mass's field does: `Magnitude * (OuterRadius / r)^2` from
+        ///        OuterRadius out.
+        ///
+        /// Inside OuterRadius the linear ramp from InnerRadius applies, so the field is continuous
+        /// there, and with InnerRadius zero the interior is exactly a uniform-density sphere's.
+        /// Below InnerRadius it is zero. Magnitude is the field at OuterRadius — for a source
+        /// standing for a solid sphere of that radius, the gravity at its surface — so a body can
+        /// orbit one. A zero OuterRadius makes the field zero.
+        InverseSquare = 1,
+    };
+
     /// @brief One authored gravity field: its shape, strength, region, and blend policy.
     ///
     /// Gravity is a field evaluated per body per step rather than a single world constant. A source
@@ -89,10 +109,16 @@ namespace Veng
         f32 InnerRadius = 0.0f;
         /// @brief Radial/Axial: the radius at which the field reaches full strength.
         ///
-        /// The field ramps linearly from zero at InnerRadius to Magnitude at OuterRadius, then holds
-        /// full strength beyond. Unused by Uniform.
+        /// The field ramps linearly from zero at InnerRadius to Magnitude at OuterRadius; beyond it
+        /// it holds full strength, or for a Radial source under GravityFalloff::InverseSquare falls
+        /// off with the square of the distance. Unused by Uniform.
         f32 OuterRadius = 0.0f;
+        /// @brief Radial: how the field varies past OuterRadius. Ignored by Uniform and Axial.
+        GravityFalloff Falloff = GravityFalloff::Linear;
         /// @brief The region of space the source influences.
+        ///
+        /// A field ends at its region's boundary, so a source whose field is not negligible there
+        /// authors a BlendWidth, or the field steps to zero across the edge.
         Region Bounds;
         /// @brief Higher wins where regions overlap.
         i32 Priority = 0;
@@ -105,9 +131,14 @@ namespace Veng
 
     /// @brief A GravitySource resolved into world space, the pure evaluator's input.
     ///
-    /// The physics step composes each source's authored (local) form against its entity's world
-    /// transform to produce one of these, so the evaluator itself is free of any scene, transform,
-    /// or physics type. It is runtime-only derived state — never authored, never serialized.
+    /// The physics step composes each source's authored (local) form against its entity's pose in
+    /// the physics world's frame to produce one of these, so the evaluator itself is free of any
+    /// scene, transform, or physics type. It is runtime-only derived state — never authored, never
+    /// serialized.
+    ///
+    /// The origin is double precision and the region is held relative to it, so the evaluator
+    /// subtracts the evaluation point from the origin in double and works in small f32 magnitudes
+    /// after that: a source and a point far from the world's origin compose as they would beside it.
     struct GravitySourceInstance
     {
         /// @brief The shape of the field.
@@ -115,14 +146,16 @@ namespace Veng
         /// @brief World-space Uniform down vector, or world-space Axial spin axis.
         vec3 Direction = vec3(0.0f, -1.0f, 0.0f);
         /// @brief World-space origin: the Radial centre, or a point on the Axial axis.
-        vec3 Origin = vec3(0.0f);
+        dvec3 Origin{0.0};
         /// @brief The acceleration the field reaches at full strength, in metres per second squared.
         f32 Magnitude = 9.81f;
         /// @brief Radius below which a Radial/Axial field is zero. See GravitySource::InnerRadius.
         f32 InnerRadius = 0.0f;
         /// @brief Radius at which a Radial/Axial field reaches full strength. See GravitySource::OuterRadius.
         f32 OuterRadius = 0.0f;
-        /// @brief The world-space region the source influences.
+        /// @brief How a Radial field varies past OuterRadius. See GravitySource::Falloff.
+        GravityFalloff Falloff = GravityFalloff::Linear;
+        /// @brief The region the source influences, world-oriented and centred relative to Origin.
         Region Bounds;
         /// @brief Higher wins where regions overlap.
         i32 Priority = 0;
@@ -150,11 +183,15 @@ namespace Veng
     /// by the next source down — so a body crossing a seam blends rather than snaps. A point reached
     /// by no source returns zero: free-fall is a real state, not a hidden default.
     ///
+    /// The point is taken in double precision and each source's offset from it is formed in
+    /// double before anything narrows to f32, so the result does not depend on how far the pair
+    /// stands from the world's origin.
+    ///
     /// @param sources   The world-space sources to compose; order within a priority is preserved.
     /// @param position  The world-space point to evaluate at.
     /// @return The gravitational acceleration at @p position, or zero when no source reaches it.
     [[nodiscard]] VE_API vec3 EvaluateGravity(std::span<const GravitySourceInstance> sources,
-                                              vec3 position);
+                                              dvec3 position);
 }
 
 VE_ENUM(::Veng::RegionShape, 0x195E4461D012F2EEULL)
@@ -177,6 +214,11 @@ VE_ENUMERATOR(Radial)
 VE_ENUMERATOR(Axial)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::GravityFalloff, 0x21CF3F6770FDB2C3ULL)
+VE_ENUMERATOR(Linear)
+VE_ENUMERATOR(InverseSquare)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::GravitySource, 0xE57BBD7A52F5449FULL)
 VE_FIELD(Kind, .DisplayName = "Kind", .Tooltip = "Uniform, Radial or Axial field shape")
 VE_FIELD(Direction, .DisplayName = "Direction",
@@ -187,6 +229,9 @@ VE_FIELD(InnerRadius, .DisplayName = "Inner Radius",
          .Tooltip = "Radial/Axial: radius below which the field is zero")
 VE_FIELD(OuterRadius, .DisplayName = "Outer Radius",
          .Tooltip = "Radial/Axial: radius at which the field reaches full strength")
+VE_FIELD(Falloff, .DisplayName = "Falloff",
+         .Tooltip = "Radial: Linear holds full strength past the outer radius; InverseSquare "
+                    "falls off as a point mass's field")
 VE_FIELD(Bounds, .DisplayName = "Bounds")
 VE_FIELD(Priority, .DisplayName = "Priority", .Tooltip = "Higher wins where regions overlap")
 VE_FIELD(BlendWidth, .DisplayName = "Blend Width",

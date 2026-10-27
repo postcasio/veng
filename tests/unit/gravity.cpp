@@ -14,7 +14,9 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 using namespace Veng;
 
@@ -282,4 +284,90 @@ TEST_CASE("a dynamic body released in an Axial field falls outward and rests on 
         CHECK(tangential == doctest::Approx(0.0f).epsilon(0.02));
         CHECK(rest.y == doctest::Approx(0.0f).epsilon(0.05));
     }
+}
+
+namespace
+{
+    // A Radial inverse-square source at `origin` standing for a sphere of radius `radius` whose
+    // surface gravity is `magnitude`, reaching `reach` metres.
+    GravitySourceInstance PointMass(const dvec3 origin, const f32 magnitude, const f32 radius,
+                                    const f32 reach)
+    {
+        return GravitySourceInstance{
+            .Kind = GravityKind::Radial,
+            .Origin = origin,
+            .Magnitude = magnitude,
+            .OuterRadius = radius,
+            .Falloff = GravityFalloff::InverseSquare,
+            .Bounds = Region{.Shape = RegionShape::Sphere, .HalfExtents = vec3(reach)},
+        };
+    }
+}
+
+TEST_CASE("an inverse-square source falls off as the square of the distance and is continuous")
+{
+    constexpr f32 M = 9.81f;
+    constexpr f32 R = 50.0f;
+    const std::array<GravitySourceInstance, 1> sources{PointMass(dvec3(0.0), M, R, 1.0e4f)};
+    const vec3 direction = glm::normalize(vec3(1.0f, 2.0f, -2.0f));
+    const auto strength = [&](const f32 r)
+    { return glm::length(EvaluateGravity(sources, dvec3(direction * r))); };
+
+    CHECK(strength(R) == doctest::Approx(M).epsilon(1.0e-6));
+    CHECK(strength(2.0f * R) == doctest::Approx(M / 4.0f).epsilon(1.0e-6));
+    CHECK(strength(4.0f * R) == doctest::Approx(M / 16.0f).epsilon(1.0e-6));
+    CHECK(strength(R * (1.0f - 1.0e-7f)) ==
+          doctest::Approx(strength(R * (1.0f + 1.0e-7f))).epsilon(1.0e-6));
+    // With no inner radius the interior is a uniform sphere's: linear in r.
+    CHECK(strength(0.25f * R) == doctest::Approx(0.25f * M).epsilon(1.0e-6));
+    CHECK(strength(0.75f * R) == doctest::Approx(0.75f * M).epsilon(1.0e-6));
+    // It pulls toward the origin.
+    CHECK(glm::dot(EvaluateGravity(sources, dvec3(direction * (3.0f * R))), direction) < 0.0f);
+}
+
+TEST_CASE("a body launched at the circular speed in an inverse-square field keeps its radius")
+{
+    // M at R gives M/4 at 2R, where the circular speed is sqrt((M/4) * 2R) = sqrt(M R / 2).
+    constexpr f32 M = 10.0f;
+    constexpr f32 R = 10.0f;
+    const std::array<GravitySourceInstance, 1> sources{PointMass(dvec3(0.0), M, R, 1.0e3f)};
+
+    const Unique<PhysicsWorld> world = PhysicsWorld::Create(PhysicsWorldInfo{});
+    world->SetGravitySources(sources);
+    const Entity body{.Index = 1};
+    world->CreateBody(body,
+                      RigidBody{.Motion = MotionType::Dynamic,
+                                .Mass = 1.0f,
+                                .LinearDamping = 0.0f,
+                                .AngularDamping = 0.0f},
+                      Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(0.25f)},
+                      PhysicsPose{.Position = dvec3(2.0 * R, 0.0, 0.0)});
+    world->SetLinearVelocity(body, vec3(0.0f, 0.0f, std::sqrt(M * R / 2.0f)));
+
+    f64 lowest = 2.0 * R;
+    f64 highest = 2.0 * R;
+    for (u32 step = 0; step < 600; ++step)
+    {
+        world->Step(1.0f / 60.0f);
+        const f64 radius = glm::length(world->GetBodyPose(body)->Position);
+        lowest = std::min(lowest, radius);
+        highest = std::max(highest, radius);
+    }
+    CHECK(lowest > 2.0 * R * 0.99);
+    CHECK(highest < 2.0 * R * 1.01);
+}
+
+TEST_CASE("a field evaluated far from the world's origin matches the same field beside it")
+{
+    const dvec3 far(1.0e7, -4.0e6, 6.0e6);
+    const dvec3 offset(31.25, -7.5, 18.0);
+    const std::array<GravitySourceInstance, 1> near{PointMass(dvec3(0.0), 9.81f, 20.0f, 1.0e3f)};
+    const std::array<GravitySourceInstance, 1> distant{PointMass(far, 9.81f, 20.0f, 1.0e3f)};
+
+    const vec3 a = EvaluateGravity(near, offset);
+    const vec3 b = EvaluateGravity(distant, far + offset);
+    // atan2 of the cross and dot products, which stays exact for nearly parallel vectors.
+    const f32 angle = std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
+    CHECK(angle < 1.0e-6f);
+    CHECK(glm::length(b) == doctest::Approx(glm::length(a)).epsilon(1.0e-6));
 }

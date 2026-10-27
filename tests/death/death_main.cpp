@@ -60,6 +60,7 @@
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/Queries.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -215,6 +216,42 @@ namespace
         // A triangle mesh has no interior and no inertia: Static and Kinematic are the motion
         // types it may back, and the step refuses the Dynamic one at body creation.
         StepPhysics(*scene, 1.0f / 60.0f);
+    }
+
+    // A 3 x 3 heightfield, the smallest there is, as a collider naming it.
+    Collider SmallHeightField()
+    {
+        const Ref<CollisionShape> geometry = CreateRef<CollisionShape>();
+        geometry->Geometry = CollisionGeometry::HeightField;
+        geometry->HeightField.SampleCount = 3;
+        geometry->HeightField.Heights = vector<f32>(9, 0.0f);
+
+        Collider collider{.Shape = ColliderShape::Mesh};
+        collider.Geometry = AssetManager::Adopt<CollisionShape>(geometry);
+        return collider;
+    }
+
+    void RunPhysicsDynamicHeightField()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+        scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity);
+        scene->Add<RigidBody>(entity, RigidBody{.Motion = MotionType::Dynamic});
+        scene->Add<Collider>(entity, SmallHeightField());
+
+        // A heightfield is a surface, so it takes a triangle mesh's Static-or-Kinematic rule.
+        StepPhysics(*scene, 1.0f / 60.0f);
+    }
+
+    void RunPhysicsSweepHeightField()
+    {
+        const Unique<PhysicsWorld> world = PhysicsWorld::Create(PhysicsWorldInfo{});
+        // A surface has no sweep, whatever it is swept against.
+        (void)ShapeCast(world.get(), SmallHeightField(), PhysicsPose{}, dvec3(0.0, -1.0, 0.0));
     }
 
     void RunPhysicsDegenerateHull()
@@ -671,6 +708,14 @@ int main(int argc, char** argv)
     else if (name == "physics_dynamic_triangle_mesh")
     {
         RunPhysicsDynamicTriangleMesh();
+    }
+    else if (name == "physics_dynamic_heightfield")
+    {
+        RunPhysicsDynamicHeightField();
+    }
+    else if (name == "physics_sweep_heightfield")
+    {
+        RunPhysicsSweepHeightField();
     }
     else if (name == "physics_degenerate_hull")
     {

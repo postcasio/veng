@@ -37,6 +37,11 @@ namespace Veng
                 Corrupt(id, fmt::format("collision shape: version {} != expected {}",
                                         header.Version, CookedCollisionShapeVersion)));
         }
+        if (header.Mode == static_cast<u32>(CookedCollisionGeometry::HeightField))
+        {
+            return std::unexpected(Corrupt(id, "collision shape: a heightfield is built at run "
+                                               "time and adopted, and has no cooked form"));
+        }
         if (header.Mode > static_cast<u32>(CookedCollisionGeometry::Compound))
         {
             return std::unexpected(

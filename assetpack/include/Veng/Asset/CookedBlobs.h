@@ -930,6 +930,12 @@ namespace Veng
         /// indices are concatenated into the one point/index region the header sizes, and each
         /// child records its own slice of it.
         Compound = 2,
+        /// @brief Reserved for a regular grid of heights, so this enum stays aligned with
+        ///        Veng::CollisionGeometry.
+        ///
+        /// A heightfield is built at run time and adopted, never cooked: no importer writes this
+        /// mode, and the loader refuses a blob carrying it.
+        HeightField = 3,
     };
 
     /// @brief The shape one CookedCollisionChild carries.

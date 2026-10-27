@@ -63,6 +63,20 @@ namespace Veng
         /// seated character stops colliding and stops overwriting its own Transform. Setting it back
         /// re-creates the capsule from the character's current pose.
         bool Enabled = true;
+        /// @brief Whether the mover reads and writes the character's pose through its Transform.
+        ///
+        /// Set (the default), each tick seeds from Transform and writes the result back to it.
+        /// Cleared, the mover reads the pose from, and writes it to, the entity's PhysicsPose — a
+        /// double-precision position — and leaves Transform to the consumer, exactly as a cleared
+        /// RigidBody::SyncTransform does. That is the mode for a large world, where Transform's
+        /// f32 position would round the character to the f32 spacing every tick (half a metre at
+        /// 6.4e6 m from the origin). A character with no PhysicsPose yet is seeded from its
+        /// Transform, if it has one. The heading lives in the pose's rotation either way.
+        ///
+        /// A Predicted character is then re-seated from PhysicsPose each tick, so the consumer's
+        /// half of the contract is that its reconcile writes the corrected PhysicsPose from its own
+        /// replicated state: PhysicsPose is never replicated.
+        bool SyncTransform = true;
     };
 
     /// @brief A character's resolved motion state this tick — the output everything else reads.
@@ -90,6 +104,9 @@ namespace Veng
         f32 AirTime = 0.0f;
         /// @brief The entity being stood on, or Entity::Null when airborne.
         Entity GroundEntity = Entity::Null;
+        /// @brief The tag of the heightfield cell stood on (CollisionHeightField::CellTags), or 0
+        ///        when airborne or on anything else.
+        u8 GroundSurfaceTag = 0;
     };
 }
 
@@ -111,6 +128,8 @@ VE_FIELD(AirControl, .DisplayName = "Air Control",
          .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(Enabled, .DisplayName = "Enabled",
          .Tooltip = "Cleared takes the character out of simulation without losing its settings")
+VE_FIELD(SyncTransform, .DisplayName = "Sync Transform",
+         .Tooltip = "Cleared reads and writes the pose through PhysicsPose, in double precision")
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::CharacterState, 0x25A2F102E492E78CULL);

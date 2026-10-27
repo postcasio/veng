@@ -64,9 +64,31 @@ namespace Veng
             return glm::clamp((radius - inner) / (outer - inner), 0.0f, 1.0f);
         }
 
+        /// @brief The Radial falloff factor under GravityFalloff::InverseSquare.
+        ///
+        /// The linear ramp inside @p outer, and `(outer / radius)^2` from it out, so the two meet
+        /// at one on the reference radius.
+        /// @param radius  Distance from the origin.
+        /// @param inner   Radius below which the field is zero.
+        /// @param outer   The reference radius, where the field is Magnitude.
+        /// @return The strength factor.
+        [[nodiscard]] f32 InverseSquareFalloff(const f32 radius, const f32 inner, const f32 outer)
+        {
+            if (radius < outer)
+            {
+                return RadialFalloff(radius, inner, outer);
+            }
+            if (radius < inner)
+            {
+                return 0.0f;
+            }
+            const f32 ratio = outer / radius;
+            return ratio * ratio;
+        }
+
         /// @brief The field vector a single source produces at a point, before membership weighting.
         /// @param source  The world-space source.
-        /// @param point   The world-space point.
+        /// @param point   The point, relative to the source's origin.
         /// @return The acceleration the source alone would apply.
         [[nodiscard]] vec3 SourceGravity(const GravitySourceInstance& source, const vec3 point)
         {
@@ -76,16 +98,18 @@ namespace Veng
                 return SafeNormalize(source.Direction) * source.Magnitude;
             case GravityKind::Radial:
             {
-                const vec3 toOrigin = source.Origin - point;
+                const vec3 toOrigin = -point;
                 const f32 radius = glm::length(toOrigin);
-                return SafeNormalize(toOrigin) *
-                       (source.Magnitude *
-                        RadialFalloff(radius, source.InnerRadius, source.OuterRadius));
+                const f32 falloff =
+                    source.Falloff == GravityFalloff::InverseSquare
+                        ? InverseSquareFalloff(radius, source.InnerRadius, source.OuterRadius)
+                        : RadialFalloff(radius, source.InnerRadius, source.OuterRadius);
+                return SafeNormalize(toOrigin) * (source.Magnitude * falloff);
             }
             case GravityKind::Axial:
             {
                 const vec3 axis = SafeNormalize(source.Direction);
-                const vec3 toPoint = point - source.Origin;
+                const vec3 toPoint = point;
                 const vec3 radial = toPoint - axis * glm::dot(toPoint, axis);
                 const f32 radius = glm::length(radial);
                 return SafeNormalize(radial) *
@@ -122,7 +146,7 @@ namespace Veng
         return RegionDepth(region, point) >= 0.0f;
     }
 
-    vec3 EvaluateGravity(const std::span<const GravitySourceInstance> sources, const vec3 position)
+    vec3 EvaluateGravity(const std::span<const GravitySourceInstance> sources, const dvec3 position)
     {
         // The contained sources' contributions, kept sorted by descending priority in a stack
         // buffer. More than this many sources overlapping one point is pathological, and the
@@ -140,7 +164,9 @@ namespace Veng
 
         for (const GravitySourceInstance& source : sources)
         {
-            const f32 depth = RegionDepth(source.Bounds, position);
+            // The one subtraction in double: everything after it is a small offset from the source.
+            const vec3 local = vec3(position - source.Origin);
+            const f32 depth = RegionDepth(source.Bounds, local);
             const f32 weight = BlendWeight(source, depth);
             if (weight <= 0.0f)
             {
@@ -149,7 +175,7 @@ namespace Veng
             const Contribution entry{
                 .Priority = source.Priority,
                 .Weight = weight,
-                .Gravity = SourceGravity(source, position),
+                .Gravity = SourceGravity(source, local),
             };
 
             // Insertion sort, highest priority first and stable within a priority (a new source of

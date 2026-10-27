@@ -5,6 +5,7 @@
 // and included by nothing outside engine/src/Physics — no public header names a JPH type.
 
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/CollisionShape.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Scene/Components.h>
@@ -23,6 +24,7 @@
 #include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
+#include <Jolt/Physics/Collision/Shape/SubShapeID.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -34,6 +36,16 @@
 #include <mutex>
 #include <span>
 #include <unordered_map>
+
+namespace Veng
+{
+    /// @brief The solver shape CollisionShape::Prepare built, held by the asset.
+    struct PreparedCollisionShape
+    {
+        /// @brief The built shape, exactly as a world's build would produce it.
+        JPH::RefConst<JPH::Shape> Shape;
+    };
+}
 
 namespace Veng::Detail
 {
@@ -115,6 +127,20 @@ namespace Veng::Detail
     /// @return The built shape, or null when a ColliderShape::Mesh collider has no resident geometry.
     [[nodiscard]] JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider);
 
+    /// @brief Builds the solver shape a CollisionShape describes, or returns the one Prepare built.
+    /// @param geometry  The hull, mesh, compound or heightfield.
+    /// @return The shape; never null (unbuildable geometry is a fatal assert).
+    [[nodiscard]] JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry);
+
+    /// @brief The surface tag of the heightfield cell a sub-shape names, or 0.
+    ///
+    /// Walks @p shape (a body's whole shape, decorators and compounds included) to the leaf the
+    /// sub-shape id names; a leaf that is not a heightfield, or a heightfield with no tags, is 0.
+    /// @param shape  The body's shape.
+    /// @param id     The sub-shape a hit or contact named on it.
+    /// @return The cell's tag.
+    [[nodiscard]] u8 SurfaceTagOf(const JPH::Shape& shape, const JPH::SubShapeID& id);
+
     /// @brief Everything that determines the solver shape a Collider builds into.
     ///
     /// Friction and restitution are body settings, not shape settings, so two colliders differing
@@ -185,6 +211,9 @@ namespace Veng::Detail
             AssetHandle<CollisionShape> Geometry;
             /// @brief The step count at the entry's last acquisition.
             u64 LastUsed = 0;
+            /// @brief References to Shape held by the cache itself: one, or two when Shape is the
+            ///        geometry's prepared shape, which the pinned geometry also holds.
+            u32 OwnRefs = 1;
         };
 
         /// @brief Serializes every access to the map.
@@ -541,7 +570,7 @@ namespace Veng::Detail
                 {
                     continue;
                 }
-                const vec3 position = vec3(FromJolt(body->GetCenterOfMassPosition()));
+                const dvec3 position = FromJolt(body->GetCenterOfMassPosition());
                 const vec3 acceleration = EvaluateGravity(*Sources, position);
                 // Force is mass times acceleration; the body's mass is the reciprocal of its
                 // inverse mass, so the field applies the same acceleration whatever the body weighs.

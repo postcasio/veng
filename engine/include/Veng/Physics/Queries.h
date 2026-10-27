@@ -49,6 +49,9 @@ namespace Veng
         f32 Distance = 0.0f;
         /// @brief Distance as a fraction of maxDistance, in [0, 1].
         f32 Fraction = 0.0f;
+        /// @brief The hit heightfield cell's tag (CollisionHeightField::CellTags), or 0 for a body
+        ///        that is not a heightfield or a heightfield with no tags.
+        u8 SurfaceTag = 0;
     };
 
     /// @brief Where a swept shape first met a body.
@@ -66,6 +69,9 @@ namespace Veng
         /// `from.Position + (to - from.Position) * Fraction` at `from.Rotation`. A shape already
         /// overlapping something at `from` reports 0.
         f32 Fraction = 0.0f;
+        /// @brief The hit heightfield cell's tag (CollisionHeightField::CellTags), or 0 for a body
+        ///        that is not a heightfield or a heightfield with no tags.
+        u8 SurfaceTag = 0;
     };
 
     /// @brief A sphere a query tests against with no body standing for it.

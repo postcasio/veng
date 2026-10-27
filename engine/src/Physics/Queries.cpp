@@ -145,9 +145,9 @@ namespace Veng
                     {
                         const CollisionShape* geometry = shape.Geometry.Get();
                         VE_ASSERT(geometry == nullptr || !geometry->ContainsTriangleMesh(),
-                                  "ShapeCast was given a triangle-mesh CollisionShape; a concave "
-                                  "shape has no sweep, so only a convex hull, a primitive, or a "
-                                  "compound of those can be cast");
+                                  "ShapeCast was given a triangle-mesh or heightfield "
+                                  "CollisionShape; a surface has no sweep, so only a convex hull, "
+                                  "a primitive, or a compound of those can be cast");
                     }
                     m_Cached = world.GetNative().Shapes.Acquire(shape, world.GetStepCount());
                     m_Shape = m_Cached.GetPtr();
@@ -304,6 +304,14 @@ namespace Veng
             {
                 return std::nullopt;
             }
+            u8 tag = 0;
+            {
+                const JPH::BodyLockRead lock(native.System.GetBodyLockInterface(), hit.mBodyID2);
+                if (lock.Succeeded())
+                {
+                    tag = Detail::SurfaceTagOf(*lock.GetBody().GetShape(), hit.mSubShapeID2);
+                }
+            }
 
             // mPenetrationAxis points from the swept shape into the body it met, so the outward
             // normal of the hit body is its negation.
@@ -316,6 +324,7 @@ namespace Veng
                 .Position = from.Position + dvec3(Detail::FromJolt(hit.mContactPointOn2)),
                 .Normal = normal,
                 .Fraction = hit.mFraction,
+                .SurfaceTag = tag,
             };
         }
 
@@ -416,11 +425,13 @@ namespace Veng
 
         const JPH::RVec3 point = ray.GetPointOnRay(hit.mFraction);
         vec3 normal = -unit;
+        u8 tag = 0;
         const JPH::BodyLockRead lock(native.System.GetBodyLockInterfaceNoLock(), hit.mBodyID);
         if (lock.Succeeded())
         {
             normal = Detail::FromJolt(
                 lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point));
+            tag = Detail::SurfaceTagOf(*lock.GetBody().GetShape(), hit.mSubShapeID2);
         }
 
         return RayHit{
@@ -429,6 +440,7 @@ namespace Veng
             .Normal = normal,
             .Distance = hit.mFraction * maxDistance,
             .Fraction = hit.mFraction,
+            .SurfaceTag = tag,
         };
     }
 
@@ -470,8 +482,9 @@ namespace Veng
         const Collider& collider = found->second.Shape;
         VE_ASSERT(collider.Shape != ColliderShape::Mesh || collider.Geometry.Get() == nullptr ||
                       !collider.Geometry.Get()->ContainsTriangleMesh(),
-                  "ShapeCast was given entity {}, whose body is a triangle-mesh CollisionShape; a "
-                  "concave shape has no sweep, so only a convex hull, a primitive, or a compound "
+                  "ShapeCast was given entity {}, whose body is a triangle-mesh or heightfield "
+                  "CollisionShape; a surface has no sweep, so only a convex hull, a primitive, or "
+                  "a compound "
                   "of those can be cast",
                   body.Index);
 

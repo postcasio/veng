@@ -614,10 +614,16 @@ extern "C"
 /// GeneratedTexture its layer range, and BufferImageCopyRegion BaseArrayLayer and ArrayLayers. A
 /// module requests generated textures, records copies and owns renderers, so a stale one lays them
 /// out short.
+/// Version 155 adds heightfield collision geometry and gravity that falls off with distance:
+/// CollisionShape grows HeightField and Prepared, GravitySource and GravitySourceInstance grow
+/// Falloff and the instance's Origin becomes a dvec3 (EvaluateGravity takes a dvec3),
+/// CharacterController grows SyncTransform, CharacterState and CharacterMoveResult
+/// GroundSurfaceTag, and RayHit and ShapeHit SurfaceTag. A module builds shapes, spawns sources and
+/// characters and reads hits, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 154u
+#define VENG_MODULE_ABI_VERSION 155u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

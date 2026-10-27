@@ -20,7 +20,8 @@ namespace Veng
     /// left, about the character's *own* up (from the gravity field, not world up), so one on a curved
     /// or rotating surface turns in the plane it stands in. The heading lives in the body's replicated
     /// Transform::Rotation, which is what makes a remote peer's body face where it walks; pitch is
-    /// view-only through CameraLook and never touches the body.
+    /// view-only through CameraLook and never touches the body. A controller with SyncTransform
+    /// cleared keeps its pose, heading included, in its PhysicsPose instead, in double precision.
     ///
     /// Each tick it reconciles the scene's CharacterController components against the world's
     /// capsules (creating, re-creating and destroying them so the world matches the components),

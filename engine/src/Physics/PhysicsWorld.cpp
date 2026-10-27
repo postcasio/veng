@@ -19,6 +19,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
@@ -380,49 +381,130 @@ namespace Veng
                 return BuildPrimitiveLeaf(child.Kind, child.Extents);
             }
 
-            /// @brief Builds the solver shape a cooked CollisionShape describes.
-            /// @param geometry  The cooked hull, mesh, or compound of transformed children.
-            /// @return The built shape; never null (unbuildable geometry is a fatal assert).
-            [[nodiscard]] JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry)
+            /// @brief The solver's block size for a grid of @p sampleCount samples a side.
+            ///
+            /// The solver culls by blocks and needs at least two of them; it pads the grid up to a
+            /// whole number of blocks with no-collision samples, so any count of three or more
+            /// builds.
+            [[nodiscard]] u32 HeightFieldBlockSize(const u32 sampleCount)
             {
-                if (geometry.Geometry == CollisionGeometry::Convex)
-                {
-                    return BuildGeometryLeaf(geometry.Points, {}, /*triangleMesh=*/false);
-                }
-                if (geometry.Geometry == CollisionGeometry::Mesh)
-                {
-                    return BuildGeometryLeaf(geometry.Points, geometry.Indices,
-                                             /*triangleMesh=*/true);
-                }
+                return sampleCount >= 5 ? 4U : 2U;
+            }
 
-                // A StaticCompoundShape needs at least two children, so a one-child compound is that
-                // child under its own transform; a zero-child one the loader already rejected.
-                VE_ASSERT(!geometry.Children.empty(),
-                          "A compound CollisionShape carries no children");
-                if (geometry.Children.size() == 1)
-                {
-                    const CollisionChild& child = geometry.Children.front();
-                    const JPH::Ref<JPH::RotatedTranslatedShapeSettings> placed =
-                        new JPH::RotatedTranslatedShapeSettings(
-                            ToJolt(child.Offset), ToJolt(child.Rotation), BuildChildLeaf(child));
-                    const JPH::ShapeSettings::ShapeResult result = placed->Create();
-                    VE_ASSERT(result.IsValid(), "CollisionShape child is not buildable: {}",
-                              result.GetError().c_str());
-                    return result.Get();
-                }
+            /// @brief Builds the solver's heightfield from a validated grid.
+            /// @param field  The grid; ValidateHeightField must pass on it.
+            /// @return The built shape; never null (an invalid grid is a fatal assert).
+            [[nodiscard]] JPH::RefConst<JPH::Shape>
+            BuildHeightFieldShape(const CollisionHeightField& field)
+            {
+                const VoidResult valid = CollisionShape::ValidateHeightField(field);
+                VE_ASSERT(valid.has_value(), "CollisionShape heightfield is not buildable: {}",
+                          valid.has_value() ? string{} : valid.error());
 
-                const JPH::Ref<JPH::StaticCompoundShapeSettings> compound =
-                    new JPH::StaticCompoundShapeSettings();
-                for (const CollisionChild& child : geometry.Children)
+                const JPH::Ref<JPH::HeightFieldShapeSettings> settings =
+                    new JPH::HeightFieldShapeSettings();
+                settings->mOffset = ToJolt(field.Origin);
+                settings->mScale = JPH::Vec3(field.Spacing, 1.0f, field.Spacing);
+                settings->mSampleCount = field.SampleCount;
+                settings->mBlockSize = HeightFieldBlockSize(field.SampleCount);
+                settings->mHeightSamples.resize(field.Heights.size());
+                for (usize i = 0; i < field.Heights.size(); ++i)
                 {
-                    compound->AddShape(ToJolt(child.Offset), ToJolt(child.Rotation),
-                                       BuildChildLeaf(child).GetPtr());
+                    const f32 height = field.Heights[i];
+                    settings->mHeightSamples[i] =
+                        height == CollisionHeightField::Hole
+                            ? JPH::HeightFieldShapeConstants::cNoCollisionValue
+                            : height;
                 }
-                const JPH::ShapeSettings::ShapeResult result = compound->Create();
-                VE_ASSERT(result.IsValid(), "Compound CollisionShape is not buildable: {}",
+                if (!field.CellTags.empty())
+                {
+                    // A tag is the cell's solver material index; every index names the default
+                    // material, since a tag carries no friction or restitution of its own.
+                    const u8 highest = *std::ranges::max_element(field.CellTags);
+                    settings->mMaterials.reserve(usize{highest} + 1);
+                    for (u32 tag = 0; tag <= highest; ++tag)
+                    {
+                        settings->mMaterials.push_back(JPH::PhysicsMaterial::sDefault);
+                    }
+                    settings->mMaterialIndices.assign(field.CellTags.begin(), field.CellTags.end());
+                }
+                settings->mBitsPerSample = settings->CalculateBitsPerSampleForError(field.MaxError);
+
+                const JPH::ShapeSettings::ShapeResult result = settings->Create();
+                VE_ASSERT(result.IsValid(), "CollisionShape heightfield is not buildable: {}",
                           result.GetError().c_str());
                 return result.Get();
             }
+        }
+
+        JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry)
+        {
+            if (geometry.Prepared != nullptr)
+            {
+                return geometry.Prepared->Shape;
+            }
+            if (geometry.Geometry == CollisionGeometry::HeightField)
+            {
+                return BuildHeightFieldShape(geometry.HeightField);
+            }
+            if (geometry.Geometry == CollisionGeometry::Convex)
+            {
+                return BuildGeometryLeaf(geometry.Points, {}, /*triangleMesh=*/false);
+            }
+            if (geometry.Geometry == CollisionGeometry::Mesh)
+            {
+                return BuildGeometryLeaf(geometry.Points, geometry.Indices,
+                                         /*triangleMesh=*/true);
+            }
+
+            // A StaticCompoundShape needs at least two children, so a one-child compound is that
+            // child under its own transform; a zero-child one the loader already rejected.
+            VE_ASSERT(!geometry.Children.empty(), "A compound CollisionShape carries no children");
+            if (geometry.Children.size() == 1)
+            {
+                const CollisionChild& child = geometry.Children.front();
+                const JPH::Ref<JPH::RotatedTranslatedShapeSettings> placed =
+                    new JPH::RotatedTranslatedShapeSettings(
+                        ToJolt(child.Offset), ToJolt(child.Rotation), BuildChildLeaf(child));
+                const JPH::ShapeSettings::ShapeResult result = placed->Create();
+                VE_ASSERT(result.IsValid(), "CollisionShape child is not buildable: {}",
+                          result.GetError().c_str());
+                return result.Get();
+            }
+
+            const JPH::Ref<JPH::StaticCompoundShapeSettings> compound =
+                new JPH::StaticCompoundShapeSettings();
+            for (const CollisionChild& child : geometry.Children)
+            {
+                compound->AddShape(ToJolt(child.Offset), ToJolt(child.Rotation),
+                                   BuildChildLeaf(child).GetPtr());
+            }
+            const JPH::ShapeSettings::ShapeResult result = compound->Create();
+            VE_ASSERT(result.IsValid(), "Compound CollisionShape is not buildable: {}",
+                      result.GetError().c_str());
+            return result.Get();
+        }
+
+        u8 SurfaceTagOf(const JPH::Shape& shape, const JPH::SubShapeID& id)
+        {
+            JPH::SubShapeID remainder;
+            const JPH::Shape* leaf = shape.GetLeafShape(id, remainder);
+            if (leaf == nullptr || leaf->GetSubType() != JPH::EShapeSubType::HeightField)
+            {
+                return 0;
+            }
+            const auto& field = static_cast<const JPH::HeightFieldShape&>(*leaf);
+            if (field.GetMaterialList().empty())
+            {
+                return 0;
+            }
+            JPH::uint x = 0;
+            JPH::uint y = 0;
+            JPH::uint triangle = 0;
+            field.GetSubShapeCoordinates(remainder, x, y, triangle);
+            JPH::uint8 tag = 0;
+            field.GetMaterials(x, y, 1, 1, &tag, 1);
+            return tag;
         }
 
         JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider)
@@ -537,11 +619,16 @@ namespace Veng
             {
                 return {};
             }
+            // A geometry's prepared shape is also held by the geometry the entry pins, so that
+            // reference is the cache's own too, or the entry would never be swept.
+            const bool prepared = key.Geometry != nullptr && key.Geometry->Prepared != nullptr &&
+                                  key.Geometry->Prepared->Shape.GetPtr() == shape.GetPtr();
             m_Shapes.emplace(key, Entry{.Shape = shape,
                                         .Geometry = key.Geometry != nullptr
                                                         ? collider.Geometry
                                                         : AssetHandle<CollisionShape>{},
-                                        .LastUsed = step});
+                                        .LastUsed = step,
+                                        .OwnRefs = prepared ? 2U : 1U});
             return shape;
         }
 
@@ -556,10 +643,13 @@ namespace Veng
         void ShapeCache::Sweep(const u64 step)
         {
             const std::scoped_lock lock(m_Mutex);
-            // A reference count of one is the cache's own: no body or in-flight query holds it.
-            std::erase_if(
-                m_Shapes, [step](const auto& entry)
-                { return entry.second.Shape->GetRefCount() == 1 && entry.second.LastUsed < step; });
+            // A reference count of the cache's own: no body or in-flight query holds it.
+            std::erase_if(m_Shapes,
+                          [step](const auto& entry)
+                          {
+                              return entry.second.Shape->GetRefCount() == entry.second.OwnRefs &&
+                                     entry.second.LastUsed < step;
+                          });
         }
 
         usize ShapeCache::Size() const
@@ -1026,9 +1116,9 @@ namespace Veng
 
         const bool triangleMesh = IsTriangleMesh(collider);
         VE_ASSERT(!(triangleMesh && body.Motion == MotionType::Dynamic),
-                  "Entity {} carries a triangle-mesh CollisionShape on a Dynamic RigidBody; a "
-                  "triangle mesh has no interior and no inertia, so Static and Kinematic are the "
-                  "motion types it may back",
+                  "Entity {} carries a triangle-mesh or heightfield CollisionShape on a Dynamic "
+                  "RigidBody; a surface has no interior and no inertia, so Static and Kinematic "
+                  "are the motion types it may back",
                   entity.Index);
         VE_ASSERT(collider.Scale > 0.0f && std::isfinite(collider.Scale),
                   "Entity {} carries a Collider whose Scale {} is not a positive finite number",
@@ -1706,6 +1796,16 @@ namespace Veng
         return Detail::FromJolt(found->second.Character->GetLinearVelocity());
     }
 
+    dvec3 PhysicsWorld::GetCharacterPosition(const Entity entity) const
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return dvec3(0.0);
+        }
+        return Detail::FromJolt(found->second.Character->GetPosition());
+    }
+
     void PhysicsWorld::SetCharacterPose(const Entity entity, const PhysicsPose& pose)
     {
         const auto found = m_Native->Characters.find(entity);
@@ -1852,6 +1952,7 @@ namespace Veng
         const bool grounded =
             character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
         Entity groundEntity = Entity::Null;
+        u8 groundTag = 0;
         if (const JPH::BodyID ground = character.GetGroundBodyID(); !ground.IsInvalid())
         {
             const auto owner = m_Native->BodyOwners.find(ground.GetIndexAndSequenceNumber());
@@ -1859,12 +1960,19 @@ namespace Veng
             {
                 groundEntity = owner->second;
             }
+            const JPH::BodyLockRead lock(m_Native->System.GetBodyLockInterface(), ground);
+            if (lock.Succeeded())
+            {
+                groundTag = Detail::SurfaceTagOf(*lock.GetBody().GetShape(),
+                                                 character.GetGroundSubShapeID());
+            }
         }
 
         return CharacterMoveResult{
             .Grounded = grounded,
             .GroundNormal = grounded ? Detail::FromJolt(character.GetGroundNormal()) : vec3(0.0f),
             .GroundEntity = groundEntity,
+            .GroundSurfaceTag = grounded ? groundTag : u8{0},
             .LinearVelocity = Detail::FromJolt(character.GetLinearVelocity()),
             .Position = Detail::FromJolt(character.GetPosition()),
             .Rotation = Detail::FromJolt(character.GetRotation()),
@@ -1977,6 +2085,77 @@ namespace Veng
         return outcome;
     }
 
+    VoidResult CollisionShape::ValidateHeightField(const CollisionHeightField& field)
+    {
+        if (field.SampleCount < CollisionHeightField::MinSampleCount ||
+            field.SampleCount > CollisionHeightField::MaxSampleCount)
+        {
+            return std::unexpected(fmt::format("a heightfield needs between {} and {} samples a "
+                                               "side, and {} were given",
+                                               CollisionHeightField::MinSampleCount,
+                                               CollisionHeightField::MaxSampleCount,
+                                               field.SampleCount));
+        }
+        const usize samples = usize{field.SampleCount} * field.SampleCount;
+        if (field.Heights.size() != samples)
+        {
+            return std::unexpected(fmt::format("a {}-sample heightfield needs {} heights, and {} "
+                                               "were given",
+                                               field.SampleCount, samples, field.Heights.size()));
+        }
+        for (usize i = 0; i < samples; ++i)
+        {
+            const f32 height = field.Heights[i];
+            if (!std::isfinite(height) && height != CollisionHeightField::Hole)
+            {
+                return std::unexpected(
+                    fmt::format("heightfield sample {} is neither a finite height nor a hole", i));
+            }
+        }
+        if (!(field.Spacing > 0.0f) || !std::isfinite(field.Spacing))
+        {
+            return std::unexpected(
+                fmt::format("a heightfield's spacing must be a positive distance, and {} was given",
+                            field.Spacing));
+        }
+        const usize cells = usize{field.SampleCount - 1} * (field.SampleCount - 1);
+        if (!field.CellTags.empty() && field.CellTags.size() != cells)
+        {
+            return std::unexpected(fmt::format("a {}-sample heightfield takes no tags or {} cell "
+                                               "tags, and {} were given",
+                                               field.SampleCount, cells, field.CellTags.size()));
+        }
+        if (!(field.MaxError > 0.0f) || !std::isfinite(field.MaxError))
+        {
+            return std::unexpected(fmt::format(
+                "a heightfield's error bound must be a positive distance, and {} was given",
+                field.MaxError));
+        }
+        return {};
+    }
+
+    void CollisionShape::Prepare() const
+    {
+        if (Prepared != nullptr)
+        {
+            return;
+        }
+        VE_PROFILE_SCOPE("Physics/PrepareShape");
+        AcquireSolverRegistration();
+        // Scoped so the build's temporaries are released under the registration they were made in.
+        {
+            Ref<PreparedCollisionShape> built = CreateRef<PreparedCollisionShape>();
+            built->Shape = Detail::BuildCookedShape(*this);
+            Prepared = std::move(built);
+        }
+        ReleaseSolverRegistration();
+    }
+
+    const void* CollisionShape::GetPreparedShape() const
+    {
+        return Prepared != nullptr ? Prepared->Shape.GetPtr() : nullptr;
+    }
+
     u64 PhysicsWorld::HashPoses() const
     {
         const JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
@@ -2087,6 +2266,44 @@ namespace Veng
             }
         }
 
+        /// @brief Draws a heightfield as a coarse wire grid of its rows and columns, scaled about
+        ///        @p origin; a segment touching a hole is left out.
+        void DrawWireHeightField(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
+                                 const f32 scale, const CollisionHeightField& field,
+                                 const vec4 color)
+        {
+            constexpr u32 MaxLinesPerAxis = 32;
+            const u32 count = field.SampleCount;
+            if (count < 2 || field.Heights.size() != usize{count} * count)
+            {
+                return;
+            }
+            const u32 stride = std::max(1U, (count - 1 + MaxLinesPerAxis - 1) / MaxLinesPerAxis);
+            const auto at = [&](const u32 x, const u32 z)
+            {
+                const vec3 local = field.Origin + vec3(static_cast<f32>(x) * field.Spacing,
+                                                       field.Heights[usize{z} * count + x],
+                                                       static_cast<f32>(z) * field.Spacing);
+                return origin + rotation * (local * scale);
+            };
+            const auto solid = [&](const u32 x, const u32 z)
+            { return field.Heights[usize{z} * count + x] != CollisionHeightField::Hole; };
+            for (u32 line = 0; line < count; line += stride)
+            {
+                for (u32 i = 0; i + 1 < count; ++i)
+                {
+                    if (solid(i, line) && solid(i + 1, line))
+                    {
+                        sink.DrawLine(at(i, line), at(i + 1, line), color);
+                    }
+                    if (solid(line, i) && solid(line, i + 1))
+                    {
+                        sink.DrawLine(at(line, i), at(line, i + 1), color);
+                    }
+                }
+            }
+        }
+
         /// @brief Draws one compound child at its composed pose, scaled about @p origin.
         void DrawCollisionChild(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
                                 const f32 scale, const CollisionChild& child, const vec4 color)
@@ -2174,6 +2391,11 @@ namespace Veng
                     {
                         DrawCollisionChild(sink, origin, shapeRotation, scale, child, color);
                     }
+                }
+                else if (geometry->Geometry == CollisionGeometry::HeightField)
+                {
+                    DrawWireHeightField(sink, origin, shapeRotation, scale, geometry->HeightField,
+                                        color);
                 }
                 else
                 {

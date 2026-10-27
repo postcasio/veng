@@ -23,12 +23,14 @@ namespace Veng
 
     /// @brief Resolves a scene's GravitySource components into world-space evaluator instances.
     ///
-    /// Each source is authored in its entity's local frame; the entity's Transform is read as a
-    /// world pose (a physics entity is a scene-graph root, so a parent's transform is not composed
-    /// in) and used to place the field's direction, origin and region in world space. The result is
-    /// what both the physics step's per-body gravity and a character's up-vector query pass to
-    /// EvaluateGravity, so a dynamic body and a character in the same place agree by construction.
-    /// A non-uniform scale on the source entity is not applied to the region.
+    /// Each source is authored in its entity's local frame. The entity's pose in the physics
+    /// world's frame comes from ResolvePhysicsPose — the scene's PhysicsPoseResolver when one is
+    /// installed, else the entity's Transform chain — and places the field's direction, origin and
+    /// region, the origin in double precision and the region relative to it. So a consumer that
+    /// re-bases its Transforms about a moving origin each frame still feeds the field solver-frame
+    /// positions. The result is what both the physics step's per-body gravity and a character's
+    /// up-vector query pass to EvaluateGravity, so a dynamic body and a character in the same place
+    /// agree by construction. A scale on the source entity is not applied to the region.
     /// @param scene  The scene whose GravitySource components are read.
     /// @param out    Destination vector, cleared then filled.
     VE_API void GatherGravitySources(const Scene& scene, vector<GravitySourceInstance>& out);
