@@ -1969,8 +1969,16 @@ namespace Veng
         }
 
         // Gravity is the only downward push; a zero magnitude is free-fall, so the character drifts.
+        // On walkable ground only its part into the ground is applied, and none to a character
+        // standing still there: the part along a slope would slide it down any slope it can walk.
         const JPH::Vec3 gravity = up * -input.GravityMagnitude;
-        newVelocity += gravity * delta;
+        const JPH::Vec3 normal = character.GetGroundNormal();
+        const bool standing =
+            onGround && desired.IsNearZero() && groundVelocity.IsNearZero() && !input.Jump;
+        if (!standing)
+        {
+            newVelocity += (onGround ? normal * gravity.Dot(normal) : gravity) * delta;
+        }
         character.SetLinearVelocity(newVelocity);
 
         // Stepping is expressed along the current up so a character steps over obstacles on a curved
