@@ -758,7 +758,7 @@ namespace Veng::Renderer
         /// carries deliberate slack: it is four times what the materials of a plausible multi-world
         /// consumer occupy, which is the headroom that keeps a fragmented run from aborting at a
         /// capacity a tighter arena would have served. It costs only the parameter buffer it sizes
-        /// (framesInFlight * this, 2.5 MiB of host-mapped storage per frame-in-flight); no
+        /// (framesInFlight * this, 4 MiB of host-mapped storage per frame-in-flight); no
         /// descriptor array is indexed by it, and no shader reads it — a draw is handed a byte
         /// offset with the frame base already folded in. Raising it is this one number with no
         /// per-material consequence.
@@ -776,7 +776,7 @@ namespace Veng::Renderer
         /// writing a value derived from the recording view — its extents, the bindless handle of a
         /// target the pass owns per viewport — is writing a per-view value and needs this; a pass
         /// writing a value derived only from the scene may keep the shared instance.
-        static constexpr u32 MaterialArenaBytes = 2621440;
+        static constexpr u32 MaterialArenaBytes = 4194304;
 
         /// @brief The allocation quantum of the material parameter arena.
         ///
@@ -823,11 +823,11 @@ namespace Veng::Renderer
         /// where MaterialArenaBytes caps what all of them describe together. Exceeding it is a
         /// cook-time error (the cooker restates the figure, gaining no renderer-header dependency)
         /// and a load-time corruption for a blob claiming more, so it is also what makes a wild
-        /// BlockBytes in a cooked header nameable rather than a wild allocation. Eighty float4s,
-        /// which the largest material classes — the ones carrying a domain's full parameter
-        /// surface — press on first. Unlike the fixed stride it replaces it costs no memory per
-        /// material: raising it widens what one author may declare and nothing else.
-        static constexpr u32 MaxMaterialBlockBytes = 1280;
+        /// BlockBytes in a cooked header nameable rather than a wild allocation. A hundred and
+        /// twenty-eight float4s, which the largest material classes — the ones carrying a domain's
+        /// full parameter surface — press on first. Unlike the fixed stride it replaces it costs no
+        /// memory per material: raising it widens what one author may declare and nothing else.
+        static constexpr u32 MaxMaterialBlockBytes = 2048;
 
         /// @brief The fixed byte stride of one frame-in-flight's view-constants region in
         /// the ViewConstantsBinding ByteAddressBuffer.

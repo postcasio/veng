@@ -26,7 +26,7 @@ namespace Veng::Cook
         // The largest parameter block one material may declare. Mirrors
         // Renderer::BindlessRegistry::MaxMaterialBlockBytes; restated here so the
         // cooker gains no renderer-header dependency.
-        constexpr u32 MaxMaterialBlockBytes = 1280;
+        constexpr u32 MaxMaterialBlockBytes = 2048;
 
         // The set a Surface pipeline binds the skinning palette, or a sphere terrain's tiles, at.
         // Mirrors the renderer's SphereTerrainSet, restated for the same reason.

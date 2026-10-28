@@ -625,7 +625,7 @@ no second scan. It is derived at load, not cooked, so `CookedMaterialField` is u
 
 **A block is a byte-offset suballocation of one arena, not a fixed slot.** The block buffer is
 **N-buffered for frames-in-flight, host-visible + persistently mapped**: it holds `framesInFlight`
-regions of `BindlessRegistry::MaterialArenaBytes` (2.5 MiB), and each frame-in-flight owns one.
+regions of `BindlessRegistry::MaterialArenaBytes` (4 MiB), and each frame-in-flight owns one.
 `RegisterMaterial` suballocates a whole number of `MaterialGranuleBytes` (256) granules from a
 first-fit free list over one region; the resulting **block offset** is fixed for the material's
 lifetime and identical in every region, and `MaterialInstance::GetBlockOffset()` reports it.
@@ -638,7 +638,7 @@ exists to prevent), and `Release` retires the entry's CPU-side state with it so 
 cannot write stale bytes into a range since reallocated. Exhausting the arena is fatal, and the
 message names the arena size, the live bytes, the largest free run and the failed request.
 
-Two bounds, and they are different bounds: **`MaxMaterialBlockBytes`** (1280) caps what a single
+Two bounds, and they are different bounds: **`MaxMaterialBlockBytes`** (2048) caps what a single
 material may declare — a cook-time error to exceed, and the loader's `BlockBytes` corruption guard
 — while the arena caps what all of them declare together. The runtime bound on `UpdateMaterial` is
 narrower still: the material's **own allocation** (its **own block**, for the ranged form), because

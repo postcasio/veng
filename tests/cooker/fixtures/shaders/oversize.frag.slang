@@ -1,5 +1,5 @@
 // Material fragment fixture whose MaterialParams exceeds MaxMaterialBlockBytes
-// (1280 bytes): two handle uints + 84 float4 members = 8 + 1344 = 1352 bytes.
+// (2048 bytes): two handle uints + 132 float4 members = 8 + 2112 = 2120 bytes.
 // Used by the material-cook test to assert a located over-stride cook error. All
 // param members are vectors so the struct reflects cleanly — the failure is the
 // stride bound, not field support.
@@ -27,6 +27,18 @@ struct MaterialParams
     float4 P72; float4 P73; float4 P74; float4 P75;
     float4 P76; float4 P77; float4 P78; float4 P79;
     float4 P80; float4 P81; float4 P82; float4 P83;
+    float4 P84; float4 P85; float4 P86; float4 P87;
+    float4 P88; float4 P89; float4 P90; float4 P91;
+    float4 P92; float4 P93; float4 P94; float4 P95;
+    float4 P96; float4 P97; float4 P98; float4 P99;
+    float4 P100; float4 P101; float4 P102; float4 P103;
+    float4 P104; float4 P105; float4 P106; float4 P107;
+    float4 P108; float4 P109; float4 P110; float4 P111;
+    float4 P112; float4 P113; float4 P114; float4 P115;
+    float4 P116; float4 P117; float4 P118; float4 P119;
+    float4 P120; float4 P121; float4 P122; float4 P123;
+    float4 P124; float4 P125; float4 P126; float4 P127;
+    float4 P128; float4 P129; float4 P130; float4 P131;
     uint Albedo;
     uint AlbedoSampler;
 };
