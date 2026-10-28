@@ -169,8 +169,11 @@ namespace Veng::Renderer
                             SkirtDepth(tile, levelError, farthest, input.Radius, edge, agreement)};
             record.Heights = {input.LayerHeights[0], input.LayerHeights[1],
                               static_cast<f32>(edge / SphereTerrainTileCells), 0.0f};
+            const u32 flags = (hasParent ? SphereTerrainRecordHasParent : 0u) |
+                              (tile.Held ? SphereTerrainRecordHeld : 0u) |
+                              (input.TileOverlay ? SphereTerrainRecordTileOverlay : 0u);
             record.Layers = {tile.Layer, hasParent ? tile.ParentLayer : tile.Layer,
-                             hasParent ? tile.Key.GetQuadrant() : 0u, hasParent ? 1u : 0u};
+                             hasParent ? tile.Key.GetQuadrant() : 0u, flags};
             if (input.TileData)
             {
                 input.TileData(tile.Key, record.Data);

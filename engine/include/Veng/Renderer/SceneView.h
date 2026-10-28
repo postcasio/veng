@@ -606,6 +606,17 @@ namespace Veng::Renderer
         /// and skipped with it at the neutral pair (1, 1).
         f32 OutputGamma = 1.0f;
 
+        /// @brief Whether sphere terrain shows its quadtree: each drawn tile's edges, tinted by its
+        ///        level.
+        ///
+        /// A diagnostic for the tile selection. Every terrain record this view draws carries the
+        /// request, and a terrain material honours it by passing its colour through
+        /// `TerrainTileOverlay` (`Veng/sphere_terrain.slang`), which then paints the tile's level,
+        /// its morph toward its parent, whether the selection held it whole, and its edges; a
+        /// material that does not call it draws as usual. Off by default, and with it off the
+        /// helper returns its input unchanged. A per-frame value: it changes no pipeline.
+        bool SphereTerrainTiles = false;
+
         /// @brief RAW (non-tile-remapped) per-set, per-cascade world → light-clip transforms.
         ///
         /// Computed by the renderer on every Execute, one set per light granted the cascade arm

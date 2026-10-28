@@ -808,13 +808,16 @@ namespace
             }
         }
 
-        vector<u8> Render(SceneRenderer& renderer, const CameraView& camera) const
+        vector<u8> Render(SceneRenderer& renderer, const CameraView& camera,
+                          const bool tiles = false) const
         {
             Gpu.Context.ImmediateCommands(
                 [&](CommandBuffer& cmd)
                 {
-                    renderer.Execute(
-                        cmd, Renderer::SceneView{.World = *World, .Camera = camera, .Delta = 0.1f});
+                    renderer.Execute(cmd, Renderer::SceneView{.World = *World,
+                                                              .Camera = camera,
+                                                              .Delta = 0.1f,
+                                                              .SphereTerrainTiles = tiles});
                 });
             return renderer.GetOutput()->GetImage()->Download();
         }
@@ -905,6 +908,54 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
         CHECK(inside > 1000u);
         CHECK(holes == 0u);
     }
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "sphere terrain: the tile overlay is off by default and paints the tiles when on")
+{
+    TerrainDraw draw(*this, "veng_gpu_sphere_terrain_tiles.vengpack", 0.5f);
+    draw.World->Get<SphereTerrain>(draw.Sphere).Material = draw.Load(TerrainFlatMaterial);
+    const Unique<SceneRenderer> renderer =
+        draw.MakeRenderer(SceneRendererSettings{.Mode = DebugView::Albedo, .Occlusion = false});
+    const dvec3 up = glm::normalize(dvec3(0.3, 0.9, 0.2));
+    const dvec3 across = glm::normalize(glm::cross(up, dvec3(0.0, 0.0, 1.0)));
+    const CameraView camera = LookAt(up * (SmallRadius + 3000.0), dvec3(0.0), across, 1.0f, 1.0e4f);
+    CHECK_FALSE(Renderer::SceneView{.World = *draw.World, .Camera = camera}.SphereTerrainTiles);
+
+    draw.Settle(*renderer, camera, 24);
+    const vector<u8> off = draw.Render(*renderer, camera);
+    const vector<u8> on = draw.Render(*renderer, camera, true);
+
+    // The fixture's colour is (0.4, 0.6, 0.8) scaled by at most a quarter, so with the overlay
+    // off every covered pixel keeps that channel order; the overlay's level colours break it, and
+    // its outlines darken pixels the terrain covers.
+    const auto Ordered = [](const vec4& c) { return c.r < c.g && c.g < c.b; };
+    u32 covered = 0;
+    u32 offOrdered = 0;
+    u32 recoloured = 0;
+    u32 outlined = 0;
+    for (u32 y = 0; y < DrawExtent.y; y++)
+    {
+        for (u32 x = 0; x < DrawExtent.x; x++)
+        {
+            const vec4 a = DecodeTexel(off, x, y);
+            if (a.g <= 0.1f)
+            {
+                continue;
+            }
+            const vec4 b = DecodeTexel(on, x, y);
+            covered++;
+            offOrdered += Ordered(a) ? 1u : 0u;
+            recoloured += Ordered(b) ? 0u : 1u;
+            outlined += std::max({b.r, b.g, b.b}) < 0.1f ? 1u : 0u;
+        }
+    }
+    MESSAGE("covered ", covered, ", recoloured ", recoloured, ", outlined ", outlined, ", ",
+            renderer->GetSphereTerrainStats().MainViewTiles, " tiles drawn");
+    CHECK(covered > 1000u);
+    CHECK(offOrdered == covered);
+    CHECK(recoloured > 0u);
+    CHECK(outlined > 0u);
 }
 
 TEST_CASE_FIXTURE(

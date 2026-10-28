@@ -755,6 +755,7 @@ namespace Veng::Renderer
             .DofRingCount = state.DofRingCount,
             .OutputBrightness = state.OutputBrightness,
             .OutputGamma = state.OutputGamma,
+            .SphereTerrainTiles = state.SphereTerrainTiles,
             .HdrOverlays = m_HdrOverlayViews,
             .GuiTime = m_GuiTime,
         };

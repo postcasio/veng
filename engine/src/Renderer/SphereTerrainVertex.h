@@ -32,6 +32,17 @@ namespace Veng::Renderer
     /// @brief The shortest skirt a tile hangs, in metres.
     inline constexpr f32 SphereTerrainMinSkirtMetres = 0.05f;
 
+    /// @brief The record flag set when the tile has a parent to morph toward.
+    inline constexpr u32 SphereTerrainRecordHasParent = 1u << 0;
+
+    /// @brief The record flag set when the selection held the tile whole
+    ///        (SphereTerrainDrawnTile::Held).
+    inline constexpr u32 SphereTerrainRecordHeld = 1u << 1;
+
+    /// @brief The record flag set when the view draws the tile overlay
+    ///        (SceneView::SphereTerrainTiles).
+    inline constexpr u32 SphereTerrainRecordTileOverlay = 1u << 2;
+
     /// @brief One drawn tile's record, read by the terrain vertex and fragment stages; mirrors
     ///        `SphereTerrainRecord` in `Veng/sphere_terrain.slang` byte for byte (std430).
     ///
@@ -60,7 +71,8 @@ namespace Veng::Renderer
         vec4 Morph{0.0f};
         /// @brief The level layers' heights above the radius (xy), the texel size in metres (z).
         vec4 Heights{0.0f};
-        /// @brief The tile's layer, its parent's layer, its quadrant in the parent, and flags.
+        /// @brief The tile's layer, its parent's layer, its quadrant in the parent, and the
+        ///        SphereTerrainRecord* flags.
         uvec4 Layers{0u};
         /// @brief The generator's words for the tile.
         std::array<u32, MaxSphereTerrainTileWords> Data{};

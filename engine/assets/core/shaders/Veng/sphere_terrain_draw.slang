@@ -33,12 +33,19 @@ struct SphereTerrainRecord
     float4 Morph;
     // The level layers' heights above the radius (xy) and the texel size in metres (z).
     float4 Heights;
-    // The tile's layer, its parent's layer, its quadrant in the parent, flags (bit 0: has a parent).
+    // The tile's layer, its parent's layer, its quadrant in the parent, and the SphereTerrainRecord*
+    // flags.
     uint4 Layers;
     // The generator's words for the tile, and for its parent.
     uint Data[32];
     uint ParentData[32];
 };
+
+// The record flags in Layers.w; mirror the SphereTerrainRecord* constants of
+// src/Renderer/SphereTerrainVertex.h.
+static const uint SphereTerrainRecordHasParent = 1u;
+static const uint SphereTerrainRecordHeld = 2u;
+static const uint SphereTerrainRecordTileOverlay = 4u;
 
 [[vk::binding(0, 4)]] Texture2DArray<float4> g_TerrainChannel0;
 [[vk::binding(1, 4)]] Texture2DArray<float4> g_TerrainChannel1;

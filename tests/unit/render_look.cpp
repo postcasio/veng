@@ -214,6 +214,8 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     pushed.OutputGamma = 0.9f;
     pushed.DofCocScale = 123.0f;
     pushed.Delta = 0.25f;
+    CHECK_FALSE(pushed.SphereTerrainTiles);
+    pushed.SphereTerrainTiles = true;
 
     Renderer::ViewState carried = pushed;
     CopyLookKnobs(resolved, carried);
@@ -264,6 +266,7 @@ TEST_CASE("CopyLookKnobs carries exactly the per-frame fields the look mapping w
     CHECK(carried.OutputGamma == pushed.OutputGamma);
     CHECK(carried.DofCocScale == pushed.DofCocScale);
     CHECK(carried.Delta == pushed.Delta);
+    CHECK(carried.SphereTerrainTiles);
 }
 
 TEST_CASE("CopyLookKnobs keeps a Physical camera's lens and clamps what a resolver wrote")

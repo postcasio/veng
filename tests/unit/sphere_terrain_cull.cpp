@@ -1,7 +1,8 @@
 // Sphere terrain's per-view cull, device-free (BuildSphereTerrainFrame): the horizon cull never
 // drops a tile with a point the eye can see; the lists a view draws do not depend on the scale
-// about the eye, while a scaled terrain casts into no shadow view; and a level layer draws a tile
-// only where the ground dips below it.
+// about the eye, while a scaled terrain casts into no shadow view; a level layer draws a tile
+// only where the ground dips below it; and a record carries its tile's hold, and the tile overlay
+// only when the frame asks for it.
 
 #include <algorithm>
 #include <cmath>
@@ -255,4 +256,54 @@ TEST_CASE("sphere terrain cull: a level layer draws only where the ground dips b
     // A layer below every tile's ground draws nowhere.
     CHECK(frame.Lists[0][2].empty());
     CHECK(frame.Records[0].Heights.x == 10.0f);
+}
+
+TEST_CASE("sphere terrain cull: a record carries its hold, and the tile overlay only when asked")
+{
+    const FlatPool pool;
+    const dvec3 eye = Up() * (Radius + 1.0e4);
+    vector<SphereTerrainDrawnTile> drawn = Select(pool, eye);
+    REQUIRE(drawn.size() > 8);
+    std::unordered_set<u64> held;
+    for (usize i = 0; i < drawn.size(); i += 3)
+    {
+        drawn[i].Held = true;
+        held.insert(drawn[i].Key.Value);
+    }
+    SphereTerrainFrameInput input{
+        .Drawn = drawn,
+        .Radius = Radius,
+        .MinHeight = MinHeight,
+        .MaxHeight = MaxHeight,
+        .Eye = eye,
+        .CenterFromEye = -eye,
+        .PrevCenterFromCamera = -eye,
+        .Main = OpenView(),
+    };
+    CHECK_FALSE(input.TileOverlay);
+    const SphereTerrainFrame off = BuildSphereTerrainFrame(input);
+    input.TileOverlay = true;
+    const SphereTerrainFrame on = BuildSphereTerrainFrame(input);
+    REQUIRE(off.Records.size() == drawn.size());
+    REQUIRE(on.Records.size() == drawn.size());
+
+    u32 offOverlay = 0;
+    u32 onOverlay = 0;
+    u32 heldMismatch = 0;
+    u32 otherFlagsDiffer = 0;
+    for (usize i = 0; i < drawn.size(); i++)
+    {
+        const u32 offFlags = off.Records[i].Layers.w;
+        const u32 onFlags = on.Records[i].Layers.w;
+        offOverlay += (offFlags & SphereTerrainRecordTileOverlay) != 0u ? 1u : 0u;
+        onOverlay += (onFlags & SphereTerrainRecordTileOverlay) != 0u ? 1u : 0u;
+        const CubeSphereTileKey key = RecordKey(off.Records[i]);
+        heldMismatch +=
+            ((offFlags & SphereTerrainRecordHeld) != 0u) != held.contains(key.Value) ? 1u : 0u;
+        otherFlagsDiffer += (offFlags ^ onFlags) != SphereTerrainRecordTileOverlay ? 1u : 0u;
+    }
+    CHECK(offOverlay == 0u);
+    CHECK(onOverlay == drawn.size());
+    CHECK(heldMismatch == 0u);
+    CHECK(otherFlagsDiffer == 0u);
 }

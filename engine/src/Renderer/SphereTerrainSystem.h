@@ -94,8 +94,9 @@ namespace Veng::Renderer
         /// @param frameIndex The frame in flight being recorded.
         /// @param camera     The view's camera.
         /// @param shadows    The frame's shadow views, or null when no shadow pass runs.
+        /// @param tileOverlay Whether the records ask the fragment for the tile overlay.
         void PrepareFrame(u32 frameIndex, const CameraView& camera,
-                          const ShadowCasterViews* shadows);
+                          const ShadowCasterViews* shadows, bool tileOverlay);
 
         /// @brief Records the main view's terrain draws into the bound g-buffer attachments.
         /// @param cmd          The g-buffer pass's command buffer.

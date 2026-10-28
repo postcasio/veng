@@ -16,6 +16,9 @@
 //   one of them (or a curve of its own) to stand at its true depth.
 // - TerrainSurface tells a terrain's own surface (0) from its level layers (1 and up), and
 //   TerrainLayerHeight a layer's height.
+// - TerrainTileLevel and TerrainTileHeld give the fragment's tile's quadtree level and whether the
+//   selection held it whole; TerrainTileOverlay paints them over a colour when the view asks for
+//   the tile overlay (SceneView::SphereTerrainTiles), and returns the colour unchanged otherwise.
 #pragma once
 
 #include "surface.slang"
@@ -151,4 +154,68 @@ float TerrainTrueViewDepth(SphereTerrainFragmentInput input)
 float TerrainTrueDeviceDepth(SphereTerrainFragmentInput input)
 {
     return input.Surface.v_CurClip.z / input.Surface.v_CurClip.w;
+}
+
+// The fragment's tile's quadtree level.
+uint TerrainTileLevel(SphereTerrainFragmentInput input)
+{
+    return SphereTerrainTileLevel(TerrainRecord(input).Tile);
+}
+
+// Whether the selection held the fragment's tile whole: it wanted to split and was not.
+bool TerrainTileHeld(SphereTerrainFragmentInput input)
+{
+    return (TerrainRecord(input).Layers.w & SphereTerrainRecordHeld) != 0u;
+}
+
+// Whether the view asks for the tile overlay.
+bool TerrainTileOverlayRequested(SphereTerrainFragmentInput input)
+{
+    return (TerrainRecord(input).Layers.w & SphereTerrainRecordTileOverlay) != 0u;
+}
+
+// A quadtree level's overlay colour. Successive levels are a golden-ratio turn of hue apart, so
+// neighbouring levels always contrast.
+float3 SphereTerrainLevelColor(uint level)
+{
+    const float hue = frac(0.08 + 0.618034 * float(level));
+    const float3 pure = saturate(abs(frac(hue + float3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0);
+    return 0.85 * lerp(float3(1.0), pure, 0.75);
+}
+
+// The tile overlay over a colour, or the colour unchanged when the view does not ask for it.
+//
+// A tile is filled with its level's colour, striped with its parent level's as far as it has
+// morphed toward its parent (solid at a full morph, where it is drawn as its parent), darkened
+// where the selection held it whole, and outlined in near-black about a pixel wide on each side
+// of its edges, so a seam between two tiles reads as one line. Skirts take their edge's outline.
+// The colour is a fragment's surface colour before lighting, so the relief still reads through it.
+float3 TerrainTileOverlay(SphereTerrainFragmentInput input, float3 color)
+{
+    // Derivatives taken ahead of the branch, in uniform control flow.
+    const float2 st = TerrainTileParameter(input);
+    const float2 pixel = max(fwidth(st), float2(1e-7));
+    if (!TerrainTileOverlayRequested(input))
+    {
+        return color;
+    }
+
+    const uint level = TerrainTileLevel(input);
+    const float3 own = SphereTerrainLevelColor(level);
+    const float3 parent = level > 0u ? SphereTerrainLevelColor(level - 1u) : own;
+    const float morph = TerrainMorph(input);
+    const float stripeCycles = 8.0;
+    const float stripe = frac((st.x + st.y) * stripeCycles);
+    const float stripeBlur = max((pixel.x + pixel.y) * stripeCycles, 1e-4);
+    const float striped =
+        morph <= 0.0 ? 0.0 : (morph >= 1.0 ? 1.0 : saturate((morph - stripe) / stripeBlur + 0.5));
+    float3 fill = lerp(own, parent, striped);
+    if (TerrainTileHeld(input))
+    {
+        fill *= 0.55;
+    }
+
+    const float2 edgePixels = min(st, 1.0 - st) / pixel;
+    const float outline = 1.0 - saturate(min(edgePixels.x, edgePixels.y) - 0.5);
+    return lerp(fill, float3(0.02), outline);
 }

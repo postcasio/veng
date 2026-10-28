@@ -640,10 +640,13 @@ extern "C"
 /// them out short, and its cooked shaders write the surface flags at the old levels.
 /// Version 160 lets a dynamic body stay awake: RigidBody grows AllowSleeping, after StartAsleep. A
 /// module spawns bodies, so a stale one lays the component out short.
+/// Version 161 lets a view show its sphere terrain's tiles: SceneView and Viewport::ViewState grow
+/// SphereTerrainTiles, after OutputGamma. A module builds views, so a stale one lays SceneView out
+/// short and reads every field after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 160u
+#define VENG_MODULE_ABI_VERSION 161u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

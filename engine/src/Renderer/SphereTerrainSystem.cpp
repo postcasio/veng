@@ -460,7 +460,7 @@ namespace Veng::Renderer
     }
 
     void SphereTerrainSystem::PrepareFrame(const u32 frameIndex, const CameraView& camera,
-                                           const ShadowCasterViews* shadows)
+                                           const ShadowCasterViews* shadows, const bool tileOverlay)
     {
         VE_PROFILE_SCOPE("Render/SphereTerrainPrepare");
         m_FrameIndex = frameIndex;
@@ -508,6 +508,7 @@ namespace Veng::Renderer
                 .CastsShadows = terrain.CastsShadows,
                 .LayerCount = terrain.LayerCount,
                 .ArrivalFloors = &memory.Floors,
+                .TileOverlay = tileOverlay,
             };
             for (u32 layer = 0; layer < terrain.LayerCount; layer++)
             {

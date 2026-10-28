@@ -61,6 +61,8 @@ namespace Veng::Renderer
         std::span<const SphereTerrainDrawView> Shadows;
         /// @brief Per tile key, the arrival floor its morph takes this frame; null for none.
         const std::unordered_map<u64, f32>* ArrivalFloors = nullptr;
+        /// @brief Whether every record carries SphereTerrainRecordTileOverlay.
+        bool TileOverlay = false;
         /// @brief Fills a tile's generator words; null leaves them zero.
         function<void(CubeSphereTileKey, std::span<u32>)> TileData;
     };

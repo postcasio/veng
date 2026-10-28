@@ -238,6 +238,10 @@ namespace Veng::Renderer
         /// The display-calibration companion of OutputBrightness, applied in the same step and skipped
         /// at neutral (1). Carried into SceneView::OutputGamma each push; not preset-eligible.
         f32 OutputGamma = 1.0f;
+        /// @brief Whether sphere terrain shows its quadtree's tiles; off by default.
+        ///
+        /// @see SceneView::SphereTerrainTiles
+        bool SphereTerrainTiles = false;
     };
 
     /// @brief Resolves a scene's render look into what a viewport presenting it renders with.
@@ -1534,4 +1538,7 @@ VE_FIELD(OutputBrightness, .DisplayName = "Output brightness", .Display = {.Min 
          .Category = "Output")
 VE_FIELD(OutputGamma, .DisplayName = "Output gamma", .Display = {.Min = 0.1, .Max = 4.0},
          .Category = "Output")
+VE_FIELD(SphereTerrainTiles, .DisplayName = "Sphere terrain tiles",
+         .Tooltip = "Draws each terrain tile's edges, tinted by its quadtree level",
+         .Category = "Diagnostics")
 VE_REFLECT_END();

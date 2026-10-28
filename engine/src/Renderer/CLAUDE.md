@@ -4258,7 +4258,8 @@ a budget near 550, about a 700-tile pool.
   fragment takes `SphereTerrainFragmentInput` and reads `TerrainChannel` (the tile's sample blended
   with the parent's by the geometry's own morph, so the shading has no seam where the geometry has
   none), `TerrainTexelSize`, `TerrainDirectionOffset` with `TerrainCenterHigh`/`Low`,
-  `TerrainTileData`/`TerrainParentTileData`, `TerrainMorph` and `TerrainSurface`. Each drawn surface
+  `TerrainTileData`/`TerrainParentTileData`, `TerrainMorph`, `TerrainSurface`, `TerrainTileLevel`,
+  `TerrainTileHeld` and `TerrainTileOverlay` (below). Each drawn surface
   takes one `DrawBudget` slot (`DrawPhase::SphereTerrain`) for its material and an identity frame;
   the push block's `InstanceDraw` names it and `InstanceBuffer` the surface drawn.
 - **Level layers** (`SphereTerrain::LevelLayers`, at most `MaxSphereTerrainLevelLayers`): each a
@@ -4274,12 +4275,21 @@ a budget near 550, about a 700-tile pool.
   under `GBufferShadingOverride` (whose pipelines take neither its stage nor its set 4), and not
   occlusion-tested against the hi-Z pyramid; it draws one material for its own surface plus its
   layers.
+- **The tile overlay.** `SceneView::SphereTerrainTiles` (off by default; `ViewState` carries it, so
+  a viewport's debug overrides reach it) sets a flag on every record the view draws, beside the
+  record's held flag (`SphereTerrainRecord*`, `Layers.w`). A terrain material honours it by passing
+  its surface colour through `TerrainTileOverlay` (`Veng/sphere_terrain.slang`): the tile's level as
+  a colour (`SphereTerrainLevelColor`, successive levels a golden-ratio turn of hue apart), striped
+  with its parent level's colour as far as it has morphed, darkened where the selection held it, and
+  outlined at its edges from the tile parameter's screen derivative. With the flag clear the helper
+  returns its input unchanged, and a material that never calls it ignores the switch.
 - **Diagnostics.** `GetSphereTerrainStats()` adds the main view's tiles, the frustum and horizon
   culls, the shadow views' tiles, triangles, arriving tiles, skipped terrains, the budget held and
   the frustum held; `GetDrawBudgetStats().SphereTerrainDropped` counts surfaces denied a slot.
   `tests/gpu/sphere_terrain.cpp` draws a test sphere from orbit to 2 m with no hole inside its
   silhouette, holds coverage and written depth across a scale of 1×10⁻³, shows it shadowing a cube at
-  scale one and not scaled, and refuses an undeclared material.
+  scale one and not scaled, leaves its colour alone with the tile overlay off and recolours and
+  outlines it with the overlay on, and refuses an undeclared material.
 
 ## The fluid solver: advecting whatever it is handed
 

@@ -3436,7 +3436,8 @@ namespace Veng::Renderer
         m_SphereTerrain->PrepareFrame(frameIndex, view.Camera,
                                       m_ShadowPass != nullptr || m_PunctualShadowPass != nullptr
                                           ? m_Internal->ShadowCasters.get()
-                                          : nullptr);
+                                          : nullptr,
+                                      view.SphereTerrainTiles);
 
         // The instanced sets' per-instance cull for the main view and every shadow view above.
         if (m_InstancedActive)
