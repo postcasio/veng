@@ -368,6 +368,9 @@ namespace Veng::Renderer
         u64 Triangles = 0;
         /// @brief Drawn tiles still morphing in under an arrival floor.
         u32 ArrivingTiles = 0;
+        /// @brief Drawn tiles morphing out into the coarser tile replacing them, under a departure
+        ///        floor; that coarser tile waits, undrawn, until they reach its shape.
+        u32 DepartingTiles = 0;
         /// @brief Terrains skipped because their material does not declare "sphereTerrain" or
         ///        is not resident.
         u32 SkippedTerrains = 0;

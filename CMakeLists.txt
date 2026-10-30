@@ -1146,6 +1146,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/sphere_terrain_selection.cpp
             tests/unit/sphere_terrain_residency.cpp
             tests/unit/sphere_terrain_cull.cpp
+            tests/unit/sphere_terrain_transitions.cpp
             tests/unit/sphere_terrain_vertex.cpp
             tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp

@@ -10,6 +10,7 @@
 #include <Veng/Scene/Entity.h>
 
 #include "SphereTerrainDraw.h"
+#include "SphereTerrainTransitions.h"
 
 namespace Veng
 {
@@ -60,7 +61,7 @@ namespace Veng::Renderer
     /// every shadow view and writes the frame slot's records, lists and set-4 descriptor sets;
     /// the passes then record one instanced draw of the shared grid per view and surface.
     ///
-    /// The selection memory (last frame's splits, the pose, the arrival floors, the generator's
+    /// The selection memory (last frame's splits, the pose, the arrivals and departures, the generator's
     /// cached words) is keyed by the source, not the entity, so a source handed to another entity
     /// or scene keeps its hysteresis and draws what it drew the frame before. A source no Select
     /// has seen for a while is forgotten.
@@ -139,16 +140,12 @@ namespace Veng::Renderer
         {
             /// @brief The tiles split last frame.
             std::unordered_set<u64> Splits;
-            /// @brief The tiles drawn last frame.
-            std::unordered_set<u64> Drawn;
-            /// @brief Per arriving tile, the clock time its arrival began.
-            std::unordered_map<u64, f64> Arrivals;
-            /// @brief This frame's arrival floors, per tile.
+            /// @brief The tiles drawn last frame and the arrivals and departures under way.
+            SphereTerrainTransitionState Transitions;
+            /// @brief This frame's arrival and departure floors, per tile.
             std::unordered_map<u64, f32> Floors;
             /// @brief The generator's words per tile, for the tiles drawn or parenting a drawn one.
             std::unordered_map<u64, std::array<u32, MaxSphereTerrainTileWords>> TileData;
-            /// @brief The seconds this source has been selected over.
-            f64 Clock = 0.0;
             /// @brief Last frame's centre in the stable frame.
             dvec3 PrevCenter{0.0};
             /// @brief Last frame's orientation.

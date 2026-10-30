@@ -114,6 +114,7 @@ namespace Veng::Renderer
             total.ShadowViewTiles += add.ShadowViewTiles;
             total.Triangles += add.Triangles;
             total.ArrivingTiles += add.ArrivingTiles;
+            total.DepartingTiles += add.DepartingTiles;
             total.SkippedTerrains += add.SkippedTerrains;
         }
 
@@ -282,44 +283,27 @@ namespace Veng::Renderer
             }
             memory.Splits = std::move(result.Splits);
 
-            // A tile drawn this frame under one drawn last frame arrives: a split taken past its
-            // distance would otherwise show its children short of their parent's shape the frame
-            // they land, so their morph starts from the parent's and runs down to their own.
-            memory.Clock += info.Delta;
-            std::unordered_set<u64> drawn;
-            drawn.reserve(result.Drawn.size());
+            // Arrivals morph a delayed split's children in from their parent's shape; departures
+            // keep a merge's finer tiles drawing while they morph into the coarser tile replacing
+            // them, which the pool must then keep.
+            SphereTerrainTransitionFrame transition = AdvanceSphereTerrainTransitions(
+                memory.Transitions, result.Drawn, info.Delta, source.GetResidency());
+            for (const CubeSphereTileKey key : transition.Departing)
+            {
+                source.Want(key);
+            }
+            memory.Floors = std::move(transition.Floors);
+            result.Drawn = std::move(transition.Drawn);
+            result.Stats.ArrivingTiles = transition.ArrivingTiles;
+            result.Stats.DepartingTiles = static_cast<u32>(transition.Departing.size());
+            result.Stats.DrawnTiles = static_cast<u32>(result.Drawn.size());
+            result.Stats.DrawnPerLevel = {};
             for (const SphereTerrainDrawnTile& tile : result.Drawn)
             {
-                drawn.insert(tile.Key.Value);
-                if (memory.Drawn.empty() || memory.Drawn.contains(tile.Key.Value) ||
-                    memory.Arrivals.contains(tile.Key.Value))
-                {
-                    continue;
-                }
-                for (CubeSphereTileKey up = tile.Key; up.GetLevel() > 0;)
-                {
-                    up = up.GetParent();
-                    if (memory.Drawn.contains(up.Value))
-                    {
-                        memory.Arrivals[tile.Key.Value] = memory.Clock;
-                        break;
-                    }
-                }
+                result.Stats.DrawnPerLevel[tile.Key.GetLevel()]++;
             }
-            memory.Floors.clear();
-            std::erase_if(memory.Arrivals,
-                          [&](const auto& arrival)
-                          {
-                              const f64 floor = 1.0 - ((memory.Clock - arrival.second) /
-                                                       SphereTerrainArrivalSeconds);
-                              if (floor <= 0.0 || !drawn.contains(arrival.first))
-                              {
-                                  return true;
-                              }
-                              memory.Floors[arrival.first] = static_cast<f32>(floor);
-                              return false;
-                          });
             // The generator's words are kept for the tiles drawn and the parents they read.
+            const auto& drawn = memory.Transitions.Drawn;
             std::erase_if(memory.TileData,
                           [&](const auto& entry)
                           {
@@ -332,8 +316,6 @@ namespace Veng::Renderer
                                       { return drawn.contains(key.GetChild(c).Value); });
                               return !drawn.contains(entry.first) && !parents;
                           });
-            memory.Drawn = std::move(drawn);
-            result.Stats.ArrivingTiles = static_cast<u32>(memory.Floors.size());
 
             Terrain entry{
                 .Owner = entity,

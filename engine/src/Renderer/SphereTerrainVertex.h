@@ -25,10 +25,6 @@ namespace Veng::Renderer
     inline constexpr u32 SphereTerrainGridTexelStep =
         SphereTerrainTileCells / SphereTerrainGridQuads;
 
-    /// @brief How long a split's children take to morph in from their parent's shape when a
-    ///        split was delayed past its distance, in seconds.
-    inline constexpr f32 SphereTerrainArrivalSeconds = 0.25f;
-
     /// @brief The shortest skirt a tile hangs, in metres.
     inline constexpr f32 SphereTerrainMinSkirtMetres = 0.05f;
 

@@ -643,10 +643,13 @@ extern "C"
 /// Version 161 lets a view show its sphere terrain's tiles: SceneView and Viewport::ViewState grow
 /// SphereTerrainTiles, after OutputGamma. A module builds views, so a stale one lays SceneView out
 /// short and reads every field after it at a shifted offset.
+/// Version 162 morphs a sphere terrain's merges out: SphereTerrainSelectionStats grows
+/// DepartingTiles, after ArrivingTiles. A module reads the stats, so a stale one reads every field
+/// after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 161u
+#define VENG_MODULE_ABI_VERSION 162u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

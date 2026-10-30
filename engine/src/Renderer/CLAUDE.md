@@ -4236,9 +4236,16 @@ a budget near 550, about a 700-tile pool.
   the parent's triangles) by `k`, so at `k = 1` a tile *is* its parent, vertex for vertex and
   triangle for triangle. A tile appearing under one drawn last frame takes an **arrival floor**
   falling from 1 to 0 over `SphereTerrainArrivalSeconds` (0.25 s) on the view's delta, so a split
-  delayed past its distance morphs in rather than popping. A merge is not morphed: the distance
-  rule merges past the morph end, where the children already are their parent, and a split the
-  budget or the frustum takes back steps by at most the children's MorphError.
+  delayed past its distance morphs in rather than popping. A tile the selection replaces by a
+  coarser one **departs**: it keeps drawing under a floor rising from 0 to 1 over
+  `SphereTerrainDepartureSeconds` (0.25 s), wanted so the pool keeps it, and the coarser tile is
+  withheld until every tile departing under it has been drawn once wholly in its shape — so a
+  split the budget or the frustum takes back short of the morph end morphs out rather than
+  stepping. A tile changing direction mid-way keeps its floor; a departure whose tile or parent
+  leaves the pool ends at once. The morph runs one level, so a merge across two or more levels
+  fades its finest level alone. `AdvanceSphereTerrainTransitions` (`SphereTerrainTransitions.h`,
+  device-free, pinned by `tests/unit/sphere_terrain_transitions.cpp`) applies both to the
+  selection; the drawn set it returns covers the sphere once, as the selection's does.
 - **Skirts** hang each edge vertex along the vertical by the record's depth:
   `max(M_L, M_{L+1})` (the frame's largest MorphError at the tile's level and the next, the most a
   partly morphed neighbour's edge can stand off) plus the parent grid's chord sagitta, two f32 steps
@@ -4284,7 +4291,7 @@ a budget near 550, about a 700-tile pool.
   outlined at its edges from the tile parameter's screen derivative. With the flag clear the helper
   returns its input unchanged, and a material that never calls it ignores the switch.
 - **Diagnostics.** `GetSphereTerrainStats()` adds the main view's tiles, the frustum and horizon
-  culls, the shadow views' tiles, triangles, arriving tiles, skipped terrains, the budget held and
+  culls, the shadow views' tiles, triangles, arriving and departing tiles, skipped terrains, the budget held and
   the frustum held; `GetDrawBudgetStats().SphereTerrainDropped` counts surfaces denied a slot.
   `tests/gpu/sphere_terrain.cpp` draws a test sphere from orbit to 2 m with no hole inside its
   silhouette, holds coverage and written depth across a scale of 1×10⁻³, shows it shadowing a cube at

@@ -398,6 +398,7 @@ add_library(veng SHARED
         src/Renderer/SphereTerrainSelection.cpp
         src/Renderer/SphereTerrainSource.cpp
         src/Renderer/SphereTerrainSystem.cpp
+        src/Renderer/SphereTerrainTransitions.cpp
         src/Renderer/SphereTerrainVertex.cpp
         src/Renderer/GBufferShadingOverride.cpp
         src/Renderer/SurfaceShadowPipelines.cpp
@@ -669,6 +670,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Math/CubeSphere.cpp
         src/Renderer/SphereTerrainDraw.cpp
         src/Renderer/SphereTerrainSelection.cpp
+        src/Renderer/SphereTerrainTransitions.cpp
         src/Renderer/LightPacking.cpp
         src/Renderer/LodSelection.cpp
         src/Renderer/ShadowCasters.cpp
