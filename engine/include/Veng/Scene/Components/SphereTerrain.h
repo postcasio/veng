@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/SphereTerrain.h>
+#include <Veng/Scene/RenderLayer.h>
 
 namespace Veng
 {
@@ -38,7 +39,8 @@ namespace Veng
     ///
     /// Its tiles draw into the g-buffer and, at a scale of one, into the shadow views, through a
     /// Surface material declaring "sphereTerrain" (`Veng/sphere_terrain.slang`); a terrain drawn
-    /// with another material is reported once and draws nothing. It is not pickable, not drawn by
+    /// with another material is reported once and draws nothing. A view whose layer mask omits the
+    /// terrain's Layer neither draws it nor selects, marks or requests its tiles. It is not pickable, not drawn by
     /// the depth-and-normal path or under the g-buffer shading override, and not occlusion-tested.
     struct SphereTerrain
     {
@@ -46,6 +48,14 @@ namespace Veng
         AssetHandle<MaterialInstance> Material;
         /// @brief Whether the terrain is selected and drawn at all.
         bool Visible = true;
+        /// @brief The render-visibility layer the terrain sits on; a view selects and draws it only
+        ///        when its mask names the layer (see RenderLayer).
+        ///
+        /// A renderer selects a terrain's tiles for its own view and marks and requests them on the
+        /// shared source, so a view that leaves the layer out costs the source nothing: a scene
+        /// capture whose mask omits it — an image-based-lighting probe drawing only
+        /// RenderLayer::Environment — neither draws the ground nor competes for its tiles.
+        RenderLayer Layer = RenderLayer::Default;
         /// @brief Whether the terrain casts into the shadow views.
         bool CastsShadows = true;
         /// @brief The pixels one grid quad's edge may span on screen before its tile splits.
@@ -90,6 +100,7 @@ VE_REFLECT(::Veng::SphereTerrain, 0xB41B55C78CFC7E4FULL)
 VE_FIELD(Material, .DisplayName = "Material",
          .Tooltip = "A Surface material declaring sphereTerrain")
 VE_FIELD(Visible, .DisplayName = "Visible")
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(TargetPixelsPerQuad, .DisplayName = "Target pixels per quad",
          .Tooltip = "Pixels a grid quad may span before its tile splits", .Display = {.Min = 1.0})

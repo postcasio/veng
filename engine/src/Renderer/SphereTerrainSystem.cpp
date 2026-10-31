@@ -236,7 +236,9 @@ namespace Veng::Renderer
 
         for (auto [entity, terrain] : scene.View<SphereTerrain>())
         {
-            if (!terrain.Visible || terrain.Source == nullptr)
+            // A view leaving the terrain's layer out marks and requests nothing on its source.
+            if (!terrain.Visible || terrain.Source == nullptr ||
+                !RenderLayerInMask(info.VisibleLayers, terrain.Layer))
             {
                 continue;
             }

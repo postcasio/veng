@@ -3743,7 +3743,11 @@ holographic instrument) is part of it: drawn into the map, it would appear in ev
 lens sampling the capture, floating at a distance it was never at or reflected as though it were
 scenery. **Ribbons, trails and ribbon paths honour the same filter and the same exclusion**: each
 carries a `Layer`, and `GatherRibbons` takes the view's mask and excluded entity and gathers neither
-an off-mask one nor the entity a capture feeds, exactly as `GatherMeshes` does. The filter is the same closed producer→consumer machinery the
+an off-mask one nor the entity a capture feeds, exactly as `GatherMeshes` does. **A sphere terrain
+honours the filter too** (`SphereTerrain::Layer`): a face whose mask omits its layer neither draws it
+nor selects, marks or requests its tiles, so an image-based-lighting probe drawing
+`RenderLayer::Environment` alone leaves a `Default` terrain out and puts no load on its shared source
+(see [Sphere terrain](#sphere-terrain-a-quadtree-of-generated-tiles)). The filter is the same closed producer→consumer machinery the
 entity exclusion rides — `SceneView::VisibleLayers` carried into `SceneBroadphase::Sync`, applied by
 `GatherMeshes` beside the `Visible` test, a changed mask its own rebuild trigger — and the ordinary
 camera view keeps its default `AllRenderLayers`, so it draws every layer and is unaffected.
@@ -4183,6 +4187,13 @@ measured bounds and the selection); the second the drawing.
   edge in view whose coarse side was not held has the coarse side unmorphed and the fine side fully
   morphed (`tests/unit/sphere_terrain_selection.cpp`); against a held coarse side the fine side is
   partly morphed, and its edge stands off by at most its MorphError, which the skirts cover.
+- **A view selects only the terrains on its layers.** A terrain sits on a render layer
+  (`SphereTerrain::Layer`, `RenderLayer::Default` unless set), and a renderer selects it only when the
+  view's mask names that layer (`SceneView::VisibleLayers`, carried in `SphereTerrainSelectInfo`). A
+  view leaving the layer out draws no tile, marks none wanted and requests none — so a scene capture,
+  whose own renderer otherwise selects against the shared source from its own eye one face a frame,
+  costs the source nothing when its mask omits the terrain, as an environment probe drawing only
+  `RenderLayer::Environment` does (`tests/gpu/sphere_terrain.cpp`).
 - **Per renderer** (`SphereTerrainSystem`). Each `Execute` forms the eye in each sphere's body-fixed
   frame in double — `inverse(Orientation)·(FloatingOrigin::Position + camera − Center)` — selects,
   marks the wanted set (visited tiles, children of waiting splits, prefetched children within

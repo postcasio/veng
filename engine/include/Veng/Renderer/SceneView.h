@@ -135,7 +135,8 @@ namespace Veng::Renderer
         Entity Exclude = Entity::Null;
 
         /// @brief Render layers this view draws; a renderer whose MeshRenderer::Layer bit is clear is
-        ///        omitted from the gather (colour, depth and scene bound alike).
+        ///        omitted from the gather (colour, depth and scene bound alike), and a sphere terrain
+        ///        whose SphereTerrain::Layer bit is clear is neither selected nor drawn.
         ///
         /// AllRenderLayers (the default) draws every layer, so an ordinary camera view is unchanged.
         /// A view that omits a layer — an environment capture dropping RenderLayer::ViewAnchored — is

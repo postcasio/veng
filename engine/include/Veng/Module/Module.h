@@ -646,10 +646,13 @@ extern "C"
 /// Version 162 morphs a sphere terrain's merges out: SphereTerrainSelectionStats grows
 /// DepartingTiles, after ArrivingTiles. A module reads the stats, so a stale one reads every field
 /// after it at a shifted offset.
+/// Version 163 puts a sphere terrain on a render layer: SphereTerrain grows Layer, after Visible,
+/// and a view whose layer mask omits it neither draws nor selects it. A module spawns terrains, so
+/// a stale one lays the component out short and reads every field after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 162u
+#define VENG_MODULE_ABI_VERSION 163u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

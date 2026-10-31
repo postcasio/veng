@@ -7,12 +7,12 @@ namespace Veng
 {
     /// @brief The engine's closed render-visibility layer table.
     ///
-    /// Every drawable sits on exactly one layer (its MeshRenderer::Layer), and a view draws a layer
-    /// only when the view's own layer mask names it. This is the render-side counterpart of the
-    /// physics collision layers (PhysicsLayer) and shares their doctrine: the set is deliberately
-    /// **closed** — a filter is what silently drops geometry when it drifts, and a table that fits on
-    /// one screen is worth more than an extensible one. A consumer selects which layers a view draws;
-    /// it never adds a layer. The engine extends the table only with a layer that has a general,
+    /// Every drawable sits on exactly one layer (its MeshRenderer::Layer, a ribbon's or a sphere
+    /// terrain's Layer), and a view draws a layer only when the view's own layer mask names it. This
+    /// is the render-side counterpart of the physics collision layers (PhysicsLayer) and shares
+    /// their doctrine: the set is deliberately **closed** — a filter is what silently drops geometry
+    /// when it drifts, and a table that fits on one screen is worth more than an extensible one. A
+    /// consumer selects which layers a view draws; it never adds a layer. The engine extends the table only with a layer that has a general,
     /// game-agnostic justification of its own.
     ///
     /// Integer values are stable — persisted in prefabs.

@@ -2936,6 +2936,7 @@ namespace Veng::Renderer
                 .Frame = m_Context.GetFrameSerial(),
                 .Delta = view.Delta,
                 .ShadowDistance = m_Topology->ShadowActive ? m_Settings.MaxShadowDistance : 0.0f,
+                .VisibleLayers = view.VisibleLayers,
             });
         casterBounds = Union(casterBounds, m_SphereTerrain->GetCasterBounds());
 

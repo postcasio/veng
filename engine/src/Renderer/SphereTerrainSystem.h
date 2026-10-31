@@ -8,6 +8,7 @@
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/SphereTerrain.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 
 #include "SphereTerrainDraw.h"
 #include "SphereTerrainTransitions.h"
@@ -49,6 +50,9 @@ namespace Veng::Renderer
         /// @brief The renderer's shadow distance: tiles within it fold into the caster bound, and
         ///        the omnidirectional radius is raised to it.
         f32 ShadowDistance = 0.0f;
+        /// @brief The view's render-layer mask (SceneView::VisibleLayers); a terrain whose Layer it
+        ///        omits is neither selected nor drawn.
+        u32 VisibleLayers = AllRenderLayers;
     };
 
     /// @brief One renderer's sphere terrains: select each one's tiles for the view, mark and
@@ -76,8 +80,8 @@ namespace Veng::Renderer
         SphereTerrainSystem(const SphereTerrainSystem&) = delete;
         SphereTerrainSystem& operator=(const SphereTerrainSystem&) = delete;
 
-        /// @brief Selects every visible terrain of a scene for one view, and resolves what each
-        ///        one draws with.
+        /// @brief Selects every visible terrain of a scene whose layer the view draws, and resolves
+        ///        what each one draws with.
         /// @param scene  The scene rendered.
         /// @param info   The view.
         void Select(const Scene& scene, const SphereTerrainSelectInfo& info);

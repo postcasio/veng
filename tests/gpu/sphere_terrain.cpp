@@ -587,6 +587,72 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "sphere terrain: a view whose layer mask omits the terrain neither draws nor "
+                  "requests its tiles")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+    Context.GetGeneratedTextures().SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+    const Ref<SphereTerrainSource> source = MakeSource(Context, assets, 99, 512);
+
+    RegisterBuiltinTypes(Types);
+    const Unique<Scene> world = Scene::Create(Types);
+    Scene& scene = *world;
+    const dvec3 eye = glm::normalize(dvec3(0.3, 0.9, 0.2)) * (Radius + 1.0e4);
+    scene.Add<FloatingOrigin>(scene.CreateEntity()).Position = eye;
+    const Entity sphere = scene.CreateEntity();
+    scene.Add<SphereTerrain>(sphere).Source = source;
+    CHECK(scene.Get<SphereTerrain>(sphere).Layer == RenderLayer::Default);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 1000.0f);
+    camera.SetView(vec3(0.0f), vec3(glm::normalize(-eye)), vec3(1.0f, 0.0f, 0.0f));
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Format::RGBA16Sfloat,
+        .Extent = {64, 64},
+        .Settings = SceneRendererSettings{.Mode = DebugView::Albedo, .Occlusion = false},
+    });
+    const auto run = [&](const u32 visibleLayers, const u32 frames)
+    {
+        u32 requests = 0;
+        u32 drawn = 0;
+        for (u32 frame = 0; frame < frames; frame++)
+        {
+            CommandBuffer& cmd = Context.BeginFrame();
+            renderer->Execute(cmd, Renderer::SceneView{.World = scene,
+                                                       .Camera = camera,
+                                                       .Delta = 0.0f,
+                                                       .VisibleLayers = visibleLayers});
+            Context.EndFrame();
+            requests += renderer->GetSphereTerrainStats().Requests;
+            drawn += renderer->GetSphereTerrainStats().DrawnTiles;
+        }
+        return std::pair{requests, drawn};
+    };
+
+    // Left out: the pool holds the pinned top it requests itself, and nothing more.
+    const auto [omittedRequests, omittedDrawn] =
+        run(AllRenderLayers & ~RenderLayerBit(RenderLayer::Default), 40);
+    const SphereTerrainSourceStats omitted = source->GetStats();
+    MESSAGE("omitted: ", omitted.ResidentTiles, " resident, ", omitted.PinnedTiles, " pinned, ",
+            omitted.PendingTiles, " pending");
+    CHECK(omittedRequests == 0u);
+    CHECK(omittedDrawn == 0u);
+    CHECK(renderer->GetSphereTerrainSelection(sphere).empty());
+    CHECK(omitted.ResidentTiles == omitted.PinnedTiles);
+    CHECK(omitted.PendingTiles == 0u);
+
+    // Named: the same view selects, draws and fills the pool past the pinned top.
+    const auto [namedRequests, namedDrawn] = run(RenderLayerBit(RenderLayer::Default), 40);
+    CHECK(namedRequests > 0u);
+    CHECK(namedDrawn > 0u);
+    CHECK_FALSE(renderer->GetSphereTerrainSelection(sphere).empty());
+    CHECK(source->GetStats().ResidentTiles > omitted.PinnedTiles);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
                   "sphere terrain: the device places a terrain vertex to the millimetre")
 {
     AssetManager assets(Context, Tasks, Types);
