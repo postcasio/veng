@@ -232,6 +232,29 @@ namespace Veng::Renderer
         /// MarkDirty).
         u32 VisibleLayers = DefaultEnvironmentCaptureLayers;
 
+        /// @brief Near plane of the capture's face cameras, in world units (CaptureView::Near).
+        ///
+        /// Must be positive and below the nearest surface the capture is meant to record. Drive
+        /// forwards it with every view it pushes, so a change reaches the next face rendered.
+        f32 Near = 0.05f;
+
+        /// @brief Far plane of the capture's face cameras, in world units; ignored when InfiniteFar
+        ///        is set (CaptureView::Far).
+        ///
+        /// Geometry past it is absent from the map and the direction reads as the sky behind it. The
+        /// default suits a scene measured in metres and a few kilometres across; a capture whose
+        /// environment reaches further raises it or sets InfiniteFar.
+        f32 Far = 10000.0f;
+
+        /// @brief Whether the face cameras project with no far plane, so geometry at any distance
+        ///        draws; Far is then ignored.
+        ///
+        /// The same infinite reverse-Z projection a Camera with InfiniteFar uses (see InfiniteFar):
+        /// device depth is `Near / viewDepth` and the cleared 0 stays the sky, so a capture of an
+        /// environment spanning many orders of magnitude loses essentially no depth precision to it.
+        /// A flag beside Far, as on Camera, so Far stays a finite number an authored record holds.
+        bool InfiniteFar = false;
+
         /// @brief Name of the sibling material's texture slot the capture output binds onto.
         ///
         /// Drive binds the capture's octahedral output handle onto the material field of this name
@@ -547,6 +570,13 @@ VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(Alignment, .DisplayName = "Alignment")
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(VisibleLayers, .DisplayName = "Visible Layers")
+VE_FIELD(Near, .DisplayName = "Near", .Display = {.Min = 0.000001})
+VE_FIELD(Far, .DisplayName = "Far",
+         .Tooltip = "Far clip distance; ignored when Infinite Far is set.")
+VE_FIELD(InfiniteFar, .DisplayName = "Infinite Far",
+         .Tooltip =
+             "Projects the faces with no far plane, so geometry at any distance is captured; "
+             "Far is ignored.")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")

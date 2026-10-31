@@ -15,6 +15,7 @@
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/CaptureSurface.h>
+#include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Scene/Entity.h>
 
 using namespace Veng;
@@ -63,6 +64,9 @@ TEST_CASE("CaptureSurface reflects its authored config but not the runtime recor
     CHECK(HasField(info, "SamplerSlot"));
     CHECK(HasField(info, "CenterSlot"));
     CHECK(HasField(info, "OrientationSlot"));
+    CHECK(HasField(info, "Near"));
+    CHECK(HasField(info, "Far"));
+    CHECK(HasField(info, "InfiniteFar"));
     CHECK_FALSE(HasField(info, "Runtime"));
 }
 
@@ -88,6 +92,9 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
         {"SamplerSlot", "CaptureSampler"},
         {"CenterSlot", "CaptureCenter"},
         {"OrientationSlot", "CaptureFrame"},
+        {"Near", 0.5},
+        {"Far", 250000.0},
+        {"InfiniteFar", true},
     };
 
     CaptureSurface surface;
@@ -102,6 +109,9 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(surface.SamplerSlot == "CaptureSampler");
     CHECK(surface.CenterSlot == "CaptureCenter");
     CHECK(surface.OrientationSlot == "CaptureFrame");
+    CHECK(surface.Near == doctest::Approx(0.5f));
+    CHECK(surface.Far == doctest::Approx(250000.0f));
+    CHECK(surface.InfiniteFar);
 
     // Re-serializing yields the same authored record — the on-disk field identity is stable, and the
     // runtime never appears in the document.
@@ -115,6 +125,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(out["SamplerSlot"] == "CaptureSampler");
     CHECK(out["CenterSlot"] == "CaptureCenter");
     CHECK(out["OrientationSlot"] == "CaptureFrame");
+    CHECK(out["InfiniteFar"] == true);
     CHECK_FALSE(out.contains("Runtime"));
 }
 
@@ -137,6 +148,12 @@ TEST_CASE("CaptureSurface defaults are the every-frame environment probe")
     // space declares neither field.
     CHECK(surface.CenterSlot.empty());
     CHECK(surface.OrientationSlot.empty());
+    // The planes are a bare capture view's, with a finite far, so a surface authoring none captures
+    // what a SceneCapture driven directly would.
+    const CaptureView view;
+    CHECK(surface.Near == view.Near);
+    CHECK(surface.Far == view.Far);
+    CHECK_FALSE(surface.InfiniteFar);
     CHECK(surface.GetCapture() == nullptr);
     CHECK_FALSE(surface.GetOutputHandle().IsValid());
     // An every-frame capture reports refreshing before it ever drives — it re-renders each frame.

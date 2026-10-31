@@ -59,7 +59,8 @@ namespace Veng::Renderer
             u32 DepthAtlasTexture;
             u32 Sampler;
             f32 Near;
-            f32 Far;
+            // Near / Far, so an infinite far plane (NearOverFar 0) needs no special case.
+            f32 NearOverFar;
         };
 
         // The six face bases, +X -X +Y -Y +Z -Z. Mirrors capture_octahedral.frag.slang's
@@ -591,7 +592,7 @@ namespace Veng::Renderer
             .DepthAtlasTexture = m_DepthAtlasHandle.Index,
             .Sampler = m_DistanceSamplerHandle.Index,
             .Near = m_View.Near,
-            .Far = m_View.Far,
+            .NearOverFar = std::isinf(m_View.Far) ? 0.0f : m_View.Near / m_View.Far,
         });
         cmd.DrawFullscreenTriangle();
         cmd.EndRendering();

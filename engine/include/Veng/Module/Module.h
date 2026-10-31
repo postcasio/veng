@@ -653,10 +653,13 @@ extern "C"
 /// AllRenderLayers grow, and SceneView, CaptureView and CaptureSurface default their VisibleLayers to
 /// masks that leave one of the two out. A module builds views and authors layer masks, so a stale
 /// one carries the old masks and draws a capture-only stand-in in its camera views.
+/// Version 165 gives a capture surface its own planes: CaptureSurface grows Near, Far and
+/// InfiniteFar, after VisibleLayers. A module spawns capture surfaces, so a stale one lays the
+/// component out short and reads every field after it at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 164u
+#define VENG_MODULE_ABI_VERSION 165u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

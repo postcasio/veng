@@ -119,7 +119,11 @@ namespace Veng::Renderer
         f32 Alpha = 0.0f;
         /// @brief Near plane of the face cameras, in world units.
         f32 Near = 0.05f;
-        /// @brief Far plane of the face cameras, in world units.
+        /// @brief Far plane of the face cameras, in world units, or InfiniteFar for none.
+        ///
+        /// Under InfiniteFar the faces project in the infinite reverse-Z form a camera view uses
+        /// (CameraView::SetPerspective), so geometry at any distance is captured and the distance map
+        /// stays exact; only a direction that saw no geometry reads the sky.
         f32 Far = 10000.0f;
     };
 

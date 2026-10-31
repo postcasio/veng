@@ -17,6 +17,8 @@
 //    rotation for an entity-aligned one — and teardown returns it to the identity;
 //  - the layer mask: a surface's authored VisibleLayers reaches its faces through the drive, so a
 //    drawable on a layer outside the mask is absent from the map while one inside it is present;
+//  - the planes: a surface's authored far plane bounds what its faces record, and InfiniteFar records
+//    a wall past any finite far at its true distance;
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
 //    material it fed stops sampling the capture rather than freezing on a released bindless slot;
@@ -1839,6 +1841,89 @@ TEST_CASE_FIXTURE(
     // The box is open at +Y: that direction saw no geometry, so it records the sky sentinel.
     const f32 openSky = DistanceInDirection(map, edge, vec3(0.05f, 1.0f, 0.05f));
     CHECK(openSky >= SceneCapture::DistanceSkySentinel);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture planes: a surface's far plane bounds what its faces capture, and an "
+                  "infinite far captures past any distance")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> wall =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    REQUIRE(wall.has_value());
+
+    // The distance case's box scaled up until its walls stand at H = 20,000, twice the default far
+    // plane, still open at +Y.
+    constexpr f32 Scale = 5000.0f;
+    constexpr f32 H = 4.0f * Scale;
+    vector<Ref<Mesh>> meshes;
+    const Unique<Scene> scene = Scene::Create(Types);
+    const f32 wallEdge = 12.0f * Scale;
+    const f32 wallCentre = 10.0f * Scale;
+    AddWall(*scene, assets, meshes, *wall, "Box +X", vec3(wallCentre, 0.0f, 0.0f), wallEdge,
+            Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -X", vec3(-wallCentre, 0.0f, 0.0f), wallEdge,
+            Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -Y", vec3(0.0f, -wallCentre, 0.0f), wallEdge,
+            Context);
+    AddWall(*scene, assets, meshes, *wall, "Box +Z", vec3(0.0f, 0.0f, wallCentre), wallEdge,
+            Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -Z", vec3(0.0f, 0.0f, -wallCentre), wallEdge,
+            Context);
+
+    const Entity captureEntity = AddDistanceCapture(*scene, 64, 64);
+
+    // Drives a full refresh with the surface's planes as authored and returns the recorded distance
+    // in a wall's direction (the +X face centre, off-axis to stay clear of the octahedral fold) and in
+    // the open one.
+    const auto Capture = [&](const f32 near, const f32 far, const bool infinite)
+    {
+        auto& surface = scene->Get<CaptureSurface>(captureEntity);
+        surface.Near = near;
+        surface.Far = far;
+        surface.InfiniteFar = infinite;
+        const CaptureSurface& capture = surface;
+        for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+        {
+            auto* const built = capture.Drive(Context, assets, *scene, captureEntity, vec3(0.0f),
+                                              0.0f, mat3(1.0f), AssetHandle<MaterialInstance>{});
+            REQUIRE(built != nullptr);
+            Context.ImmediateCommands([&](CommandBuffer& cmd) { built->Render(cmd); });
+        }
+        const SceneCapture* built = capture.GetCapture();
+        REQUIRE(built != nullptr);
+        const u32 edge = built->GetDistanceOutput()->GetImage()->GetExtent().x;
+        const vector<u8> map = built->GetDistanceOutput()->GetImage()->Download();
+        return std::pair{DistanceInDirection(map, edge, vec3(1.0f, 0.05f, 0.05f)),
+                         DistanceInDirection(map, edge, vec3(0.05f, 1.0f, 0.05f))};
+    };
+    const f32 expected = BoxRadialDistance(H, vec3(1.0f, 0.05f, 0.05f));
+
+    SUBCASE("the default planes leave a wall past 10,000 units out")
+    {
+        const CaptureSurface defaults;
+        const auto [toWall, open] = Capture(defaults.Near, defaults.Far, defaults.InfiniteFar);
+        CHECK(toWall >= SceneCapture::DistanceSkySentinel);
+        CHECK(open >= SceneCapture::DistanceSkySentinel);
+    }
+
+    SUBCASE("a raised far plane captures the wall at its distance")
+    {
+        const auto [toWall, open] = Capture(0.05f, 100000.0f, false);
+        CHECK(toWall == doctest::Approx(expected).epsilon(0.06));
+        CHECK(open >= SceneCapture::DistanceSkySentinel);
+    }
+
+    SUBCASE("an infinite far captures the wall at its distance, ignoring Far")
+    {
+        const auto [toWall, open] = Capture(0.05f, 1.0f, true);
+        CHECK(toWall == doctest::Approx(expected).epsilon(0.06));
+        CHECK(open >= SceneCapture::DistanceSkySentinel);
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

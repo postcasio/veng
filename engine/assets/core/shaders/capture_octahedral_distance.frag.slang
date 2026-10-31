@@ -26,7 +26,7 @@ struct PushConstants
     uint DepthAtlasTexture; // the 3×2 face depth atlas (bindless index)
     uint Sampler;           // point clamp sampler (no filtering across a depth discontinuity)
     float Near;             // the face cameras' near plane, in world units
-    float Far;              // the face cameras' far plane, in world units
+    float NearOverFar;      // near / far of the face cameras; 0 for an infinite far plane
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -104,9 +104,10 @@ float fsMain(VSOutput input) : SV_Target0
 
     // Linearize the reverse-Z depth to the view-space forward distance (along the face axis). With the
     // engine's reverse-Z convention (near→1, far→0) over a Vulkan [0,1] projection, the forward
-    // distance is near·far / (far − (1 − depth)·(far − near)). Dividing by the axis cosine recovers the
-    // radial distance along `dir`, which is what a direction-indexed map must carry.
-    const float forward =
-        (g_PC.Near * g_PC.Far) / (g_PC.Far - (1.0 - depth) * (g_PC.Far - g_PC.Near));
+    // distance is near·far / (near + depth·(far − near)) — written over near/far, which has no
+    // cancellation at a large far and is exactly near / depth for an infinite one. Dividing by the
+    // axis cosine recovers the radial distance along `dir`, which is what a direction-indexed map must
+    // carry.
+    const float forward = g_PC.Near / (g_PC.NearOverFar + depth * (1.0 - g_PC.NearOverFar));
     return forward / max(axisCos, 1.0e-4);
 }

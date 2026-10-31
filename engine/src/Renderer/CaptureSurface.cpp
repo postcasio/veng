@@ -471,7 +471,9 @@ namespace Veng::Renderer
                                       .FaceBasis = basis,
                                       .Exclude = entity,
                                       .VisibleLayers = VisibleLayers,
-                                      .Alpha = alpha});
+                                      .Alpha = alpha,
+                                      .Near = Near,
+                                      .Far = InfiniteFar ? Veng::InfiniteFar : Far});
             if (runtime.PendingFaces > 0)
             {
                 --runtime.PendingFaces;

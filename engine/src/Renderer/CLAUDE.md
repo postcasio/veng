@@ -2535,8 +2535,10 @@ projection, and how it stands under an infinite far:
   z column, which the infinite form keeps), every frustum consumer (the box test, the instanced cull
   shader's copy, the sphere test, the cube-face reach test and the cascade clip all pass a
   zero-normal plane), and sphere terrain (its selection reads the four side planes only).
-- **Independent of the camera's far:** punctual shadow views (the light's range), `SceneCapture`
-  and its distance shader, model portraits, the editor fly camera, and the depth debug view.
+- **Independent of the camera's far:** punctual shadow views (the light's range), model portraits,
+  the editor fly camera, and the depth debug view. `SceneCapture` carries its own planes
+  (`CaptureView::Near`/`Far`, which may be `InfiniteFar`), and its distance resample linearizes
+  through `near / far`, exact under an infinite far.
 - **No MCP tool or editor panel prints a camera's far** other than through the reflected fields,
   which carry the flag and a finite `Far`.
 
@@ -3764,6 +3766,19 @@ under the geometry it replaces, and can stand exactly where that geometry is. No
 layer until a consumer puts it there, so a scene using neither renders and captures as it would
 without them. A capture that names its own mask (an IBL probe drawing `RenderLayer::Environment`
 alone) adds `CaptureOnly` when it relies on a stand-in.
+
+**A capture carries its own near and far planes.** `CaptureView::Near`/`Far` (0.05 / 10,000 world
+units by default) set every face camera's projection, and `CaptureSurface::Near`, `Far` and
+`InfiniteFar` author them, forwarded with every view `Drive` pushes, so a change reaches the next face.
+`InfiniteFar` is the flag `Camera` carries beside `Far` (see [An infinite far plane](#an-infinite-far-plane)):
+the faces project in the infinite reverse-Z form, so device depth is `near / viewDepth` and the
+cleared 0 stays the sky. The defaults suit a scene measured in metres and a few kilometres across;
+geometry past the far plane is absent from the map and its direction reads as whatever lies behind it,
+so a capture of an environment reaching further — terrain to a horizon, a sky shell overhead, distant
+bodies — raises the far or sets `InfiniteFar`. The near must stay below the nearest surface the capture
+is meant to record. The distance map linearizes its depth through `near / far`
+(`capture_octahedral_distance.frag`), which is zero under an infinite far and carries no cancellation
+at a large finite one.
 
 Deliberately **not** here: an *arbitrary* per-entity visibility mask (the entity filter is one
 nominated entity in a closed producer→consumer pair, and layer membership is a closed table, not a
