@@ -220,12 +220,14 @@ namespace Veng::Renderer
 
         /// @brief Render layers the capture's faces draw (see RenderLayer).
         ///
-        /// DefaultEnvironmentCaptureLayers (the default) draws every layer but RenderLayer::ViewAnchored
-        /// and RenderLayer::Display, because a capture records the environment around its position and
-        /// neither camera-anchored decoration — a near-field particle shell, a billboard — nor content
-        /// presented to a viewer is part of it: drawn into the map, it would appear in every reflection
-        /// or lens sampling this capture, floating at a distance it was never at. Author AllRenderLayers
-        /// to capture everything, or a narrower mask to drop more. Drive forwards the mask with every
+        /// DefaultEnvironmentCaptureLayers (the default) draws every layer but RenderLayer::ViewAnchored,
+        /// RenderLayer::Display and RenderLayer::CameraOnly, because a capture records the environment
+        /// around its position and neither camera-anchored decoration — a near-field particle shell, a
+        /// billboard — nor content presented to a viewer is part of it: drawn into the map, it would
+        /// appear in every reflection or lens sampling this capture, floating at a distance it was
+        /// never at. CameraOnly geometry is left to the camera views, and RenderLayer::CaptureOnly
+        /// stand-ins are drawn in its place. Author AllRenderLayers to capture everything, or a
+        /// narrower mask to drop more. Drive forwards the mask with every
         /// view it pushes, so a change reaches the next face rendered (an OnDemand capture's after
         /// MarkDirty).
         u32 VisibleLayers = DefaultEnvironmentCaptureLayers;

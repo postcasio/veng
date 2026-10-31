@@ -214,7 +214,10 @@ the gather entirely, so it is neither drawn, nor a caster, nor part of the scene
 (a `RenderLayer`, default `Default`) names the render-visibility layer it sits on — a view draws it
 only when the view's mask names the layer, so `RenderLayer::ViewAnchored` marks a camera-anchored mesh
 the ordinary view still draws but an environment probe skips, and `RenderLayer::Display` marks content
-presented to a viewer — a readout, a holographic instrument — which a probe skips likewise. `Ribbon`,
+presented to a viewer — a readout, a holographic instrument — which a probe skips likewise.
+`RenderLayer::CameraOnly` is drawn by camera views and left out of scene captures by default, and
+`RenderLayer::CaptureOnly` the reverse — a stand-in seen only in reflections and image-based lighting
+(see the renderer guide's SceneCapture section). `Ribbon`,
 `Trail` and `RibbonPath` carry the same `Layer`, honoured the same way. `Visible` is
 what hiding something reaches for: removing the component loses the resolved mesh and any sibling
 bound onto it — a `GuiSurface` draws its document *into* that mesh — and collapsing the

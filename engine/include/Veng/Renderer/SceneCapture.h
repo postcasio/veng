@@ -103,11 +103,12 @@ namespace Veng::Renderer
         Entity Exclude = Entity::Null;
         /// @brief Render layers the face renders draw (SceneView::VisibleLayers).
         ///
-        /// AllRenderLayers (the default here) captures every layer. A driver capturing an environment
-        /// passes DefaultEnvironmentCaptureLayers to drop RenderLayer::ViewAnchored and
-        /// RenderLayer::Display — neither is part of the environment a probe records (see
+        /// DefaultSceneCaptureLayers (the default here) captures every layer but
+        /// RenderLayer::CameraOnly. A driver capturing an environment passes
+        /// DefaultEnvironmentCaptureLayers to drop RenderLayer::ViewAnchored and
+        /// RenderLayer::Display too — neither is part of the environment a probe records (see
         /// CaptureSurface::VisibleLayers, which CaptureSurface::Drive forwards here).
-        u32 VisibleLayers = AllRenderLayers;
+        u32 VisibleLayers = DefaultSceneCaptureLayers;
         /// @brief Interpolation fraction the face renders draw the scene at, in [0, 1).
         ///
         /// Forwarded to the face renderer as SceneView::Alpha, so the captured content sits at the

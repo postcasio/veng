@@ -9,7 +9,11 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/SceneCapture.h>
+#include <Veng/Renderer/SceneView.h>
+#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RenderLayer.h>
 #include <Veng/Scene/Scene.h>
@@ -306,4 +310,45 @@ TEST_CASE("GatherMeshes: a layer mask excludes off-mask renderers")
     // The exclude and the mask compose: excluding the only on-mask entity leaves nothing.
     GatherMeshes(*scene, out, outBounds, ordinary, DefaultEnvironmentCaptureLayers);
     CHECK(out.empty());
+}
+
+TEST_CASE("GatherMeshes: a camera view's default mask draws CameraOnly and a capture's draws "
+          "CaptureOnly, each leaving out the other")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+
+    const Entity cameraOnly = scene->CreateEntity();
+    scene->Add<Transform>(cameraOnly);
+    scene->Add<MeshRenderer>(cameraOnly,
+                             MeshRenderer{.Mesh = mesh, .Layer = RenderLayer::CameraOnly});
+    const Entity captureOnly = scene->CreateEntity();
+    scene->Add<Transform>(captureOnly, Transform{.Position = vec3(4.0f, 0.0f, 0.0f)});
+    scene->Add<MeshRenderer>(captureOnly,
+                             MeshRenderer{.Mesh = mesh, .Layer = RenderLayer::CaptureOnly});
+
+    // The masks as each kind of view carries them unless told otherwise.
+    const CameraView camera;
+    const Renderer::SceneView view{.World = *scene, .Camera = camera};
+    const Renderer::CaptureView capture;
+    const Renderer::CaptureSurface surface;
+
+    const auto gathered = [&](const u32 mask)
+    {
+        vector<VisibleMesh> out;
+        AABB outBounds = AABB::Empty();
+        GatherMeshes(*scene, out, outBounds, Entity::Null, mask);
+        REQUIRE(out.size() == 1);
+        return out[0].Owner;
+    };
+    CHECK(gathered(view.VisibleLayers) == cameraOnly);
+    CHECK(gathered(capture.VisibleLayers) == captureOnly);
+    CHECK(gathered(surface.VisibleLayers) == captureOnly);
 }

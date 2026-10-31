@@ -138,10 +138,10 @@ namespace Veng::Renderer
         ///        omitted from the gather (colour, depth and scene bound alike), and a sphere terrain
         ///        whose SphereTerrain::Layer bit is clear is neither selected nor drawn.
         ///
-        /// AllRenderLayers (the default) draws every layer, so an ordinary camera view is unchanged.
-        /// A view that omits a layer — an environment capture dropping RenderLayer::ViewAnchored — is
-        /// the one caller that narrows it (see CaptureView::VisibleLayers).
-        u32 VisibleLayers = AllRenderLayers;
+        /// DefaultCameraViewLayers (the default) draws every layer but RenderLayer::CaptureOnly, whose
+        /// stand-ins exist for scene captures alone. A capture's face renders pass the capture's own
+        /// mask instead (see CaptureView::VisibleLayers).
+        u32 VisibleLayers = DefaultCameraViewLayers;
 
         /// @brief Whether this view renders a face of a SceneCapture.
         ///

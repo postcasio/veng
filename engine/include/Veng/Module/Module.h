@@ -649,10 +649,14 @@ extern "C"
 /// Version 163 puts a sphere terrain on a render layer: SphereTerrain grows Layer, after Visible,
 /// and a view whose layer mask omits it neither draws nor selects it. A module spawns terrains, so
 /// a stale one lays the component out short and reads every field after it at a shifted offset.
+/// Version 164 adds the CameraOnly and CaptureOnly render layers: RenderLayerCount and
+/// AllRenderLayers grow, and SceneView, CaptureView and CaptureSurface default their VisibleLayers to
+/// masks that leave one of the two out. A module builds views and authors layer masks, so a stale
+/// one carries the old masks and draws a capture-only stand-in in its camera views.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 163u
+#define VENG_MODULE_ABI_VERSION 164u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -8,7 +8,9 @@ namespace Veng
     /// @brief The engine's closed render-visibility layer table.
     ///
     /// Every drawable sits on exactly one layer (its MeshRenderer::Layer, a ribbon's or a sphere
-    /// terrain's Layer), and a view draws a layer only when the view's own layer mask names it. This
+    /// terrain's Layer), and a view draws a layer only when the view's own layer mask names it. A
+    /// camera view draws DefaultCameraViewLayers and a scene capture DefaultSceneCaptureLayers
+    /// unless told otherwise; the two differ only in CameraOnly and CaptureOnly. This
     /// is the render-side counterpart of the physics collision layers (PhysicsLayer) and shares
     /// their doctrine: the set is deliberately **closed** — a filter is what silently drops geometry
     /// when it drifts, and a table that fits on one screen is worth more than an extensible one. A
@@ -51,10 +53,30 @@ namespace Veng
         /// display that was drawn for whoever looks at it, often from the wrong side and always
         /// doubled. Environment captures therefore drop it by default, as they drop ViewAnchored.
         Display = 3,
+        /// @brief Geometry only the camera views draw: too costly, or wrong, to draw from a
+        ///        capture's viewpoint — a streamed sphere terrain, whose tiles a capture would
+        ///        select from its own eye against a pool the camera view is filling.
+        ///
+        /// A scene capture renders the scene again from another point, one face a frame, and
+        /// geometry whose cost or level of detail is decided per view pays that again from a
+        /// viewpoint nobody looks through: a streamed terrain selects and requests tiles for each
+        /// face, against residency the camera view needs. Captures therefore drop it by default
+        /// (DefaultSceneCaptureLayers, DefaultEnvironmentCaptureLayers), while the camera view
+        /// draws it like Default. A consumer that wants it in a reflection stands a stand-in on
+        /// CaptureOnly.
+        CameraOnly = 4,
+        /// @brief Geometry only scene captures draw: a stand-in for what a capture leaves out, seen
+        ///        in reflections and image-based lighting but never in the primary image — a
+        ///        simplified surface in place of a CameraOnly terrain.
+        ///
+        /// The camera view drops it by default (DefaultCameraViewLayers), so a stand-in need not
+        /// hide under the geometry it replaces and may stand exactly where that geometry is. Every
+        /// default capture mask draws it.
+        CaptureOnly = 5,
     };
 
     /// @brief Number of members in the closed RenderLayer table.
-    inline constexpr u32 RenderLayerCount = 4;
+    inline constexpr u32 RenderLayerCount = 6;
 
     /// @brief The bit a layer occupies in a render-layer mask.
     /// @param layer  The layer whose bit to compute.
@@ -64,7 +86,7 @@ namespace Veng
         return 1U << static_cast<u32>(layer);
     }
 
-    /// @brief A mask naming every render layer — the default a view draws, changing nothing.
+    /// @brief A mask naming every render layer.
     inline constexpr u32 AllRenderLayers = (1U << RenderLayerCount) - 1U;
 
     /// @brief Whether @p mask names @p layer, i.e. a view carrying it draws that layer.
@@ -76,17 +98,30 @@ namespace Veng
         return (mask & RenderLayerBit(layer)) != 0;
     }
 
+    /// @brief The layers a camera view draws unless it names another set (SceneView::VisibleLayers):
+    ///        every layer but CaptureOnly, whose stand-ins exist for captures alone.
+    inline constexpr u32 DefaultCameraViewLayers =
+        AllRenderLayers & ~RenderLayerBit(RenderLayer::CaptureOnly);
+
+    /// @brief The layers a scene capture draws unless its driver names another set
+    ///        (CaptureView::VisibleLayers): every layer but CameraOnly, which no capture draws by
+    ///        default (see RenderLayer::CameraOnly).
+    inline constexpr u32 DefaultSceneCaptureLayers =
+        AllRenderLayers & ~RenderLayerBit(RenderLayer::CameraOnly);
+
     /// @brief The layers a reflection capture draws unless a consumer names another set.
     ///
-    /// Every layer but ViewAnchored and Display: a probe captures the scene around a point, and
-    /// neither camera-anchored decoration nor content presented to a viewer is part of that scene
-    /// (see RenderLayer::ViewAnchored, RenderLayer::Display). This carries only the *universal*
-    /// exclusions — both are wrong in every capture. It keeps both Default (nearby
-    /// scene geometry) and Environment (the distant backdrop), which is what a general specular
+    /// Every layer a scene capture draws by default but ViewAnchored and Display: a probe captures
+    /// the scene around a point, and neither camera-anchored decoration nor content presented to a
+    /// viewer is part of that scene (see RenderLayer::ViewAnchored, RenderLayer::Display). This
+    /// carries only the *universal* exclusions — both are wrong in every capture, as CameraOnly is.
+    /// It keeps Default (nearby scene geometry), Environment (the distant backdrop) and
+    /// CaptureOnly (stand-ins for what captures leave out), which is what a general specular
     /// reflection wants; a capture that wants only the distant surroundings — an IBL probe sitting
-    /// within the local geometry — names RenderLayer::Environment alone instead.
+    /// within the local geometry — names RenderLayer::Environment alone instead, adding CaptureOnly
+    /// when it relies on a stand-in.
     inline constexpr u32 DefaultEnvironmentCaptureLayers =
-        AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored) &
+        DefaultSceneCaptureLayers & ~RenderLayerBit(RenderLayer::ViewAnchored) &
         ~RenderLayerBit(RenderLayer::Display);
 }
 
@@ -95,4 +130,6 @@ VE_ENUMERATOR(Default)
 VE_ENUMERATOR(ViewAnchored)
 VE_ENUMERATOR(Environment)
 VE_ENUMERATOR(Display)
+VE_ENUMERATOR(CameraOnly)
+VE_ENUMERATOR(CaptureOnly)
 VE_ENUM_END();

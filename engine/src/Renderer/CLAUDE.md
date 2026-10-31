@@ -3736,7 +3736,7 @@ renderer, so the field is read when the runtime materializes and is not live-tun
 the one nominated entity, a capture filters by `RenderLayer` (`Veng/Scene/RenderLayer.h`): every
 drawable sits on a layer (`MeshRenderer::Layer`), and `CaptureView::VisibleLayers` names the layers
 the faces draw. `CaptureSurface::VisibleLayers` defaults to `DefaultEnvironmentCaptureLayers` — every
-layer but `RenderLayer::ViewAnchored` and `RenderLayer::Display` — because a probe records the
+layer but `RenderLayer::ViewAnchored`, `RenderLayer::Display` and `RenderLayer::CameraOnly` — because a probe records the
 environment around its position, and neither camera-anchored decoration (a near-field particle
 shell, a billboard slaved to the eye) nor content presented to a viewer (a world-space readout, a
 holographic instrument) is part of it: drawn into the map, it would appear in every reflection or
@@ -3749,8 +3749,21 @@ nor selects, marks or requests its tiles, so an image-based-lighting probe drawi
 `RenderLayer::Environment` alone leaves a `Default` terrain out and puts no load on its shared source
 (see [Sphere terrain](#sphere-terrain-a-quadtree-of-generated-tiles)). The filter is the same closed producer→consumer machinery the
 entity exclusion rides — `SceneView::VisibleLayers` carried into `SceneBroadphase::Sync`, applied by
-`GatherMeshes` beside the `Visible` test, a changed mask its own rebuild trigger — and the ordinary
-camera view keeps its default `AllRenderLayers`, so it draws every layer and is unaffected.
+`GatherMeshes` beside the `Visible` test, a changed mask its own rebuild trigger.
+
+**Two layers split the camera views from the captures.** A camera view draws
+`DefaultCameraViewLayers` (`SceneView::VisibleLayers`' default) and a bare `SceneCapture`
+`DefaultSceneCaptureLayers` (`CaptureView::VisibleLayers`' default); the two differ only in
+`RenderLayer::CameraOnly`, which the camera views draw and every default capture mask leaves out, and
+`RenderLayer::CaptureOnly`, which every default capture mask draws and the camera views leave out.
+`CameraOnly` is for geometry too costly or too view-dependent to draw again from a capture's
+viewpoint — a streamed sphere terrain, whose capture faces would each select and request tiles from
+their own eye against the pool the camera view is filling. `CaptureOnly` is for the stand-in that
+replaces it in reflections and image-based lighting: since no camera view draws it, it need not hide
+under the geometry it replaces, and can stand exactly where that geometry is. Nothing sits on either
+layer until a consumer puts it there, so a scene using neither renders and captures as it would
+without them. A capture that names its own mask (an IBL probe drawing `RenderLayer::Environment`
+alone) adds `CaptureOnly` when it relies on a stand-in.
 
 Deliberately **not** here: an *arbitrary* per-entity visibility mask (the entity filter is one
 nominated entity in a closed producer→consumer pair, and layer membership is a closed table, not a
@@ -4193,7 +4206,9 @@ measured bounds and the selection); the second the drawing.
   view leaving the layer out draws no tile, marks none wanted and requests none — so a scene capture,
   whose own renderer otherwise selects against the shared source from its own eye one face a frame,
   costs the source nothing when its mask omits the terrain, as an environment probe drawing only
-  `RenderLayer::Environment` does (`tests/gpu/sphere_terrain.cpp`).
+  `RenderLayer::Environment` does (`tests/gpu/sphere_terrain.cpp`). A terrain on
+  `RenderLayer::CameraOnly` is left out of every capture at its default mask, and drawn by every
+  camera view.
 - **Per renderer** (`SphereTerrainSystem`). Each `Execute` forms the eye in each sphere's body-fixed
   frame in double — `inverse(Orientation)·(FloatingOrigin::Position + camera − Center)` — selects,
   marks the wanted set (visited tiles, children of waiting splits, prefetched children within

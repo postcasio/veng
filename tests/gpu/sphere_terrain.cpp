@@ -14,6 +14,9 @@
 //      to the ground; a scale about the eye changes neither its coverage nor its written depth;
 //      it casts into the cascades at scale one and not when scaled; and one drawn with a material
 //      not declaring "sphereTerrain" draws nothing.
+//   8. A view whose layer mask omits a terrain's layer neither draws nor requests its tiles, and a
+//      terrain on the camera-only layer is left out at every default capture mask and drawn at the
+//      camera view's.
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
@@ -31,6 +34,7 @@
 #include <Veng/Path.h>
 #include <Veng/Renderer/AsyncReadback.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>
@@ -40,6 +44,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/SphereTerrain.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -650,6 +655,71 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     CHECK(namedDrawn > 0u);
     CHECK_FALSE(renderer->GetSphereTerrainSelection(sphere).empty());
     CHECK(source->GetStats().ResidentTiles > omitted.PinnedTiles);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "sphere terrain: a terrain on the camera-only layer requests no tiles from a "
+                  "default capture mask and is drawn by a default camera view")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+    Context.GetGeneratedTextures().SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+    const Ref<SphereTerrainSource> source = MakeSource(Context, assets, 99, 512);
+
+    RegisterBuiltinTypes(Types);
+    const Unique<Scene> world = Scene::Create(Types);
+    Scene& scene = *world;
+    const dvec3 eye = glm::normalize(dvec3(-0.4, 0.8, 0.3)) * (Radius + 1.0e4);
+    scene.Add<FloatingOrigin>(scene.CreateEntity()).Position = eye;
+    const Entity sphere = scene.CreateEntity();
+    auto& terrain = scene.Add<SphereTerrain>(sphere);
+    terrain.Source = source;
+    terrain.Layer = RenderLayer::CameraOnly;
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 1000.0f);
+    camera.SetView(vec3(0.0f), vec3(glm::normalize(-eye)), vec3(1.0f, 0.0f, 0.0f));
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Format::RGBA16Sfloat,
+        .Extent = {64, 64},
+        .Settings = SceneRendererSettings{.Mode = DebugView::Albedo, .Occlusion = false},
+    });
+    // Each view at the mask its kind carries unless told otherwise.
+    const auto run = [&](const optional<u32> visibleLayers, const u32 frames)
+    {
+        u32 requests = 0;
+        u32 drawn = 0;
+        for (u32 frame = 0; frame < frames; frame++)
+        {
+            CommandBuffer& cmd = Context.BeginFrame();
+            Renderer::SceneView view{.World = scene, .Camera = camera, .Delta = 0.0f};
+            if (visibleLayers.has_value())
+            {
+                view.VisibleLayers = *visibleLayers;
+            }
+            renderer->Execute(cmd, view);
+            Context.EndFrame();
+            requests += renderer->GetSphereTerrainStats().Requests;
+            drawn += renderer->GetSphereTerrainStats().DrawnTiles;
+        }
+        return std::pair{requests, drawn};
+    };
+
+    for (const u32 capture : {CaptureView{}.VisibleLayers, CaptureSurface{}.VisibleLayers})
+    {
+        const auto [requests, drawn] = run(capture, 20);
+        CHECK(requests == 0u);
+        CHECK(drawn == 0u);
+    }
+    const SphereTerrainSourceStats captured = source->GetStats();
+    CHECK(captured.ResidentTiles == captured.PinnedTiles);
+    CHECK(captured.PendingTiles == 0u);
+
+    const auto [cameraRequests, cameraDrawn] = run(std::nullopt, 20);
+    CHECK(cameraRequests > 0u);
+    CHECK(cameraDrawn > 0u);
 }
 
 TEST_CASE_FIXTURE(Test::GpuFixture,
