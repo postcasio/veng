@@ -15,8 +15,8 @@
 //   evaluated identically. The shadow maps hold only opaque casters, so a translucent surface is
 //   shadowed by opaque geometry and never by another translucent one.
 // - The ambient arm (split-sum IBL, SH skylight, or the flat floor) is the one the view's sky
-//   selects — the flat floor for a surface setting DeclinesEnvironmentLighting — scaled by
-//   ForwardSurface.Occlusion. Screen-space AO is not applied: it is computed
+//   selects — the flat floor for a surface setting DeclinesEnvironmentLighting, its specular alone
+//   for one setting DeclinesAmbientDiffuse — scaled by ForwardSurface.Occlusion. Screen-space AO is not applied: it is computed
 //   from the opaque depth, which describes what lies behind a translucent surface, not the surface.
 // - Emission is not part of the result; a fragment adds its own.
 //
@@ -48,7 +48,7 @@
 
 // The surface a forward-lit fragment shades, in world space.
 //
-// A declared `ForwardSurface s;` is default-constructed: the two flags start false, Occlusion
+// A declared `ForwardSurface s;` is default-constructed: the three flags start false, Occlusion
 // starts at 1 and LightChannels at channel 0 alone, so a material sets only what it shades with.
 struct ForwardSurface
 {
@@ -65,6 +65,9 @@ struct ForwardSurface
     // The forward twin of SurfaceFlagNoEnvironmentLighting (Veng/surface_flags.slang): the view's
     // flat ambient floor in place of the sky's IBL or SH arm.
     bool   DeclinesEnvironmentLighting;
+    // The forward twin of SurfaceFlagNoAmbientDiffuse (Veng/surface_flags.slang): the ambient arm's
+    // diffuse term is dropped and its specular kept.
+    bool   DeclinesAmbientDiffuse;
     // The light channels the surface is in (bit c for channel c), the forward twin of
     // SurfaceLightChannels (Veng/surface_flags.slang): a light sharing none of them skips it.
     uint   LightChannels;
@@ -80,6 +83,7 @@ struct ForwardSurface
         Occlusion = 1.0;
         DeclinesShadowMaps = false;
         DeclinesEnvironmentLighting = false;
+        DeclinesAmbientDiffuse = false;
         LightChannels = SurfaceLightChannelsDefault;
     }
 };
@@ -109,6 +113,7 @@ ForwardLighting EvaluateForwardLighting(ForwardSurface s)
                                                   s.DeclinesEnvironmentLighting,
                                                   NormalScreenVariance(s.Normal));
     surface.LightChannels = s.LightChannels;
+    surface.DeclinesAmbientDiffuse = s.DeclinesAmbientDiffuse;
 
     // The tile's forward mask, found by projecting the surface: this layer may render at another
     // resolution than the opaque pass the tiles were laid over.

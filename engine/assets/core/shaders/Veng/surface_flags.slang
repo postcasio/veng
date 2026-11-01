@@ -8,6 +8,8 @@
 // which UNORM8 stores exactly and a decode reads back by rounding:
 // - bit 0 declines shadow-map reception, bit 1 environment lighting;
 // - bits 2-4 are the surface's light-channel membership (SurfaceLightChannels);
+// - bit 5 declines the ambient arm's diffuse term, keeping its specular;
+// - bit 6 is free;
 // - bit 7 excludes the surface from the exposure meter. It is the highest bit because a Translucent
 //   material raises it over the surface behind it through a MAX blend, which yields a value carrying
 //   it only when it is worth more than every other bit together.
@@ -46,6 +48,16 @@ static const float SurfaceFlagNoShadowReception = 1.0 / 255.0;
 // object the sky would tint wrongly — keeps a dim, uniform ambient instead, so in shadow it reads
 // dim rather than black. Direct lights and their shadows are untouched.
 static const float SurfaceFlagNoEnvironmentLighting = 2.0 / 255.0;
+
+// Written into ORM.a by a material that supplies its own diffuse lighting: the ambient arm's diffuse
+// term (the IBL irradiance, the SH skylight or the flat floor, whichever the surface takes) is
+// dropped, while its specular term (the split-sum IBL reflection) is kept, scaled by occlusion as
+// for any surface. A surface that writes its own sky-lit diffuse into emissive would otherwise be
+// lit twice by the sky, and declining all ambient through an occlusion of zero would also take
+// away its reflection of the environment. Direct lights and their shadows are untouched. Beside
+// SurfaceFlagNoEnvironmentLighting the surface takes no ambient at all, since the flat floor has no
+// specular term.
+static const float SurfaceFlagNoAmbientDiffuse = 32.0 / 255.0;
 
 // Written into ORM.a by a material whose emission is a source of light — a lamp, a light panel, a
 // lit sign — that the auto-exposure meter does not read. The meter then exposes for the light such a
@@ -92,6 +104,12 @@ bool GBufferDeclinesShadowMaps(float ormAlpha)
 bool GBufferDeclinesEnvironmentLighting(float ormAlpha)
 {
     return (SurfaceFlagsCode(ormAlpha) & 2u) != 0u;
+}
+
+// True when a flags value carries SurfaceFlagNoAmbientDiffuse.
+bool GBufferDeclinesAmbientDiffuse(float ormAlpha)
+{
+    return (SurfaceFlagsCode(ormAlpha) & 32u) != 0u;
 }
 
 // True when a flags value carries SurfaceFlagExcludedFromMetering.

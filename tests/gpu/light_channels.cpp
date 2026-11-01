@@ -263,7 +263,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     grid->SetParam("Mode", 1.0f);
     const Ref<MaterialInstance> lowerBits = opaque->Get()->Clone("Lower Bits");
     lowerBits->SetParam("Mode", 2.0f);
-    lowerBits->SetParam("RawFlags", 31.0f / 255.0f);
+    lowerBits->SetParam("RawFlags", 63.0f / 255.0f);
 
     // A plane filling the view, seen from above.
     const Unique<Scene> scene = Scene::Create(Types);
@@ -282,12 +282,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const auto Stored = [&](const u32 x, const u32 y)
     { return orm[(static_cast<usize>(y) * Extent.x + x) * 4 + 3]; };
 
-    // Cell i holds bits 0-4 of i at bits 0-4 and bit 5 at bit 7.
+    // Cell i of the 16×8 grid holds bits 0-5 of i at bits 0-5 and bit 6 at bit 7.
+    constexpr uvec2 Cells{16, 8};
     u32 mismatches = 0;
-    for (u32 i = 0; i < 64; ++i)
+    for (u32 i = 0; i < Cells.x * Cells.y; ++i)
     {
-        const u32 code = (i & 0x1Fu) | ((i & 0x20u) << 2u);
-        const uvec2 centre = uvec2(i % 8u, i / 8u) * (Extent / 8u) + Extent / 16u;
+        const u32 code = (i & 0x3Fu) | ((i & 0x40u) << 1u);
+        const uvec2 centre =
+            uvec2(i % Cells.x, i / Cells.x) * (Extent / Cells) + Extent / (Cells * 2u);
         mismatches += Stored(centre.x, centre.y) == code ? 0u : 1u;
     }
     CHECK(mismatches == 0);
@@ -306,7 +308,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         blended[(static_cast<usize>(Extent.y / 2) * Extent.x + Extent.x / 2) * 4 + 3];
     const u8 open = blended[(static_cast<usize>(4) * Extent.x + 4) * 4 + 3];
     CHECK((underGlow & 0x80u) != 0u);
-    CHECK(open == 31u);
+    CHECK(open == 63u);
 
     std::filesystem::remove(outArchive);
 }

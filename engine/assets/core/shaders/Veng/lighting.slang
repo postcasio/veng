@@ -61,6 +61,7 @@ struct LightingSurface
     float  ViewDepth;        // positive view-space distance in front of the camera (cascade select)
     bool   DeclinesShadowMaps; // take full visibility in place of every shadow-atlas lookup
     bool   DeclinesEnvironmentLighting; // take the flat ambient floor in place of the sky's arm
+    bool   DeclinesAmbientDiffuse; // drop the ambient arm's diffuse term, keeping its specular
     uint   LightChannels;    // the channels the surface is in (bit c for channel c); a light sharing none skips it
 };
 
@@ -94,6 +95,9 @@ float NormalScreenVariance(float3 normal)
 // variation across one pixel lands on it one frame and misses it the next; the widened one covers
 // the pixel. A zero σ² adds exactly nothing. The result is converted back to perceptual roughness,
 // which is what Roughness holds and every reader expects.
+//
+// The surface starts in channel 0 alone and taking the ambient diffuse; a caller sets LightChannels
+// and DeclinesAmbientDiffuse on the result.
 LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 normal,
                                     float3 view, float3 albedo, float roughness, float metallic,
                                     bool declinesShadowMaps, bool declinesEnvironmentLighting,
@@ -115,6 +119,7 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     s.ViewDepth = -mul(vc.View, float4(position, 1.0)).z;
     s.DeclinesShadowMaps = declinesShadowMaps;
     s.DeclinesEnvironmentLighting = declinesEnvironmentLighting;
+    s.DeclinesAmbientDiffuse = false;
     s.LightChannels = SurfaceLightChannelsDefault;
     return s;
 }
@@ -498,7 +503,8 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
 //
 // A surface that declines environment lighting takes the flat floor whatever the view's arm: the
 // floor is carried in the view block under every arm, so the surface reads the same ambient it
-// would in a view with no lit sky.
+// would in a view with no lit sky. A surface that declines the ambient diffuse keeps only the
+// specular term, which the image-based arm alone has.
 LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, float ambientOcclusion)
 {
     float3 N = s.Normal;
@@ -545,6 +551,10 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
     else
     {
         ambient.Diffuse = vc.AmbientFloor.rgb * s.Albedo * ambientOcclusion;
+    }
+    if (s.DeclinesAmbientDiffuse)
+    {
+        ambient.Diffuse = float3(0.0);
     }
     return ambient;
 }

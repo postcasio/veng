@@ -2968,7 +2968,7 @@ float2 Velocity : SV_Target3; float3 Emissive : SV_Target4;`). Albedo (G0) is sR
 (sampled back as linear); the normal (G1) is the tangent-space-perturbed world normal in a signed
 float format; ORM (G2) packs occlusion (R), roughness (G), and metallic (B) — the
 metallic-roughness PBR channel set — with **the alpha the surface-flags channel**, whose values and
-predicates live in the core shader header `Veng/surface_flags.slang`. Three independent flags are
+predicates live in the core shader header `Veng/surface_flags.slang`. Four independent flags are
 defined. `SurfaceFlagNoShadowReception` is written by a material whose drawn geometry does not stand
 where its shading says it does (an impostor, a sky proxy, a matte-painting shell, a proxy drawn at a
 compressed distance), so the lighting pass takes full visibility in place of every shadow atlas
@@ -2977,6 +2977,10 @@ lookup — the receiving counterpart of `MeshRenderer::CastsShadows = false`.
 split-sum IBL and SH skylight arms are replaced, for that surface alone, by the view's flat ambient
 floor (`SceneView::AmbientFloor`, carried in the view block under every arm), so a flagged surface in
 shadow reads dim rather than black; its direct lights and shadows are untouched.
+`SurfaceFlagNoAmbientDiffuse` is written by a material that supplies its own diffuse lighting: the
+ambient arm's diffuse term (irradiance, SH skylight or flat floor) is dropped and its specular term,
+the split-sum reflection of the environment scaled by occlusion and SSAO, is kept — the one ambient
+decline an occlusion of zero cannot express, since occlusion scales both terms.
 `SurfaceFlagExcludedFromMetering` is written by a material whose emission is a source of light — a
 lamp, a light panel — that the auto-exposure meter should not read (see "Auto-exposure"); its own
 shading is untouched. Beside them the surface's **light channels** (see "Light channels" under
@@ -2984,20 +2988,20 @@ Shadows) are written through `SurfaceLightChannels(mask)` and read back by `GBuf
 are material properties rather than per-instance ones because they describe how the surface shades
 (a per-instance value reaches a material through an instance parameter). The channel holds an
 eight-bit code over `/255`, which UNORM8 stores exactly: bit 0 shadow reception, bit 1 environment
-lighting, bits 2–4 the channels, bit 7 metering — kept highest, since a translucent material raises it
+lighting, bits 2–4 the channels, bit 5 the ambient diffuse, bit 6 free, bit 7 metering — kept highest, since a translucent material raises it
 by a MAX blend (see "Additive translucent materials"). Membership is stored **relative to the
 default**: bit 2 marks a surface that leaves channel 0, bits 3 and 4 one that joins channels 1 and 2,
 so `SurfaceLightChannels(0x1)` is 0. Each flag's value is its bit's level, so a material writes any
 sum of them (`SurfaceFlagNoShadowReception + SurfaceLightChannels(0x2)`), or `SurfaceFlagsNone`; a
-material writing 0 is unaffected. `tests/gpu/light_channels.cpp` writes all 64 combinations of the
-two flags, the channel bits and the metering bit and reads each back from the target, and the MAX
-blend over a surface carrying every lower bit. The
+material writing 0 is unaffected. `tests/gpu/light_channels.cpp` writes all 128 combinations of
+the three lighting flags, the channel bits and the metering bit and reads each back from the target,
+and the MAX blend over a surface carrying every lower bit. The
 lighting pass and the meter read the channel with a **point load** (`LoadSurfaceFlags`), not through
-the g-buffer's linear sampler: no scalar encoding of independent flags survives a filtered blend between surfaces. The forward path carries the same two
-flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting`, and the membership as
-`ForwardSurface::LightChannels`, which a translucent material sets before `EvaluateForwardLighting`;
-`ForwardSurface`'s default constructor clears both flags and starts in channel 0.
-The third reaches the g-buffer from a translucent material through its own output (see "Additive
+the g-buffer's linear sampler: no scalar encoding of independent flags survives a filtered blend between surfaces. The forward path carries the three
+lighting flags as `ForwardSurface::DeclinesShadowMaps` / `DeclinesEnvironmentLighting` /
+`DeclinesAmbientDiffuse`, and the membership as `ForwardSurface::LightChannels`, which a translucent
+material sets before `EvaluateForwardLighting`; `ForwardSurface`'s default constructor clears the
+flags and starts in channel 0. The metering flag reaches the g-buffer from a translucent material through its own output (see "Additive
 translucent materials"), since the meter reads it after the translucent passes have drawn. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
 vector
 (`curUV - prevUV`) the TAA resolve reprojects through, written by the shared `ComputeMotionVector`
@@ -3074,8 +3078,9 @@ meant to reach it are on (`SurfaceLightChannels(0x2)`, the directional on channe
 on channels 0 and 1), writes its own directional term, shadowed through `LightVisibility`, into
 emissive, and computes that light's specular itself with `Veng/brdf.slang`. Every local light then
 lights it through the ordinary deferred path; the ambient is the sky's with SSAO, the flat floor
-under `SurfaceFlagNoEnvironmentLighting`, or none with `ORM.r = 0` (the ambient arm and SSAO scale
-by occlusion, never direct light). `tests/gpu/surface_light_visibility.cpp` holds a shadow-reading
+under `SurfaceFlagNoEnvironmentLighting`, the sky's reflection alone under
+`SurfaceFlagNoAmbientDiffuse` (for a surface that carries its sky-lit diffuse in its emissive too),
+or none with `ORM.r = 0` (the ambient arm and SSAO scale by occlusion, never direct light). `tests/gpu/surface_light_visibility.cpp` holds a shadow-reading
 plane under a box caster to the regions where its default-lit twin reads shadowed and lit, and the
 skinned and instanced-set stages to reading an occluded and an open surface as such;
 `tests/gpu/sphere_terrain.cpp` a terrain material likewise.

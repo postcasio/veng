@@ -10,7 +10,9 @@
 // The same pair carries the environment-lighting surface flag: the opaque twin writes
 // SurfaceFlagNoEnvironmentLighting into the g-buffer, the translucent twin sets
 // ForwardSurface::DeclinesEnvironmentLighting, and both must take the flat ambient floor under an
-// image-based or SH sky.
+// image-based or SH sky. It carries the ambient-diffuse surface flag the same way: under an
+// image-based sky a flagged surface keeps exactly the reflection an albedo-zero surface takes, and
+// under any other arm, which has no reflection, it takes no ambient at all.
 //
 // And it carries the environment light tint: under either sky arm, a tinted face reads the tint
 // times the untinted face per channel, deferred and forward, while a face declining the sky's light
@@ -103,6 +105,7 @@ namespace
     constexpr AssetId WarmPanorama{0x62F1025508D196B5ULL};
     constexpr AssetId CoolPanorama{0x95D20444346C88C0ULL};
     constexpr AssetId NeutralPanorama{0x87CFEDC28BDDBBCAULL};
+    constexpr AssetId BrightPanorama{0x9837D84C5856CB49ULL};
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -330,6 +333,141 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // the environment's content does not reach it. The tolerance covers the g-buffer's 8-bit albedo
     // against the forward path's exact floats.
     CHECK(flaggedError < 0.01f);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "forward lighting: a surface declining the ambient diffuse keeps the sky's "
+                  "reflection and loses its diffuse light, deferred and forward alike")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path outArchive = CookForwardPack("veng_gpu_forward_ambient_diffuse_flag.vengpack");
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const MountHandle brightMount =
+        assets.MountMemory(PanoramaArchive(BrightPanorama, vec3(1.6f, 1.2f, 0.8f)), "bright sky");
+    const AssetResult<AssetHandle<EnvironmentMap>> bright =
+        assets.LoadSync<EnvironmentMap>(BrightPanorama);
+    REQUIRE(bright.has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> opaque =
+        assets.LoadSync<MaterialInstance>(AssetId{0xF34FF2CE488F7B19ULL});
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(AssetId{0xA1F58FB895475E00ULL});
+    REQUIRE(opaque.has_value());
+    REQUIRE(translucent.has_value());
+
+    const Ref<Mesh> opaqueCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *opaque), "Ambient Diffuse Opaque");
+    const Ref<Mesh> translucentCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *translucent), "Ambient Diffuse Lit");
+
+    // No light at all: the face's radiance is its ambient term alone.
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    // A dielectric, so the reflectance is the flat 0.04 whatever the albedo and the reflection is
+    // the same for any albedo.
+    constexpr vec4 Albedo{0.8f, 0.5f, 0.25f, 1.0f};
+    const auto Set = [&](const vec4& albedo, bool declinesDiffuse, bool declinesEnvironment)
+    {
+        for (const AssetHandle<MaterialInstance>* instance : {&*opaque, &*translucent})
+        {
+            auto& material = const_cast<MaterialInstance&>(*instance->Get());
+            material.SetParam("BaseColor", albedo);
+            material.SetParam("Metallic", 0.0f);
+            material.SetParam("DeclinesAmbientDiffuse", declinesDiffuse ? 1.0f : 0.0f);
+            material.SetParam("DeclinesEnvironment", declinesEnvironment ? 1.0f : 0.0f);
+        }
+    };
+
+    // The front face's centre texel through the identity tone curve, so the readback is linear in
+    // the ambient term.
+    const auto FaceColour = [&](const Ref<Mesh>& mesh) -> vec3
+    {
+        const Entity cube = scene->CreateEntity();
+        scene->Add<Transform>(cube).Position = vec3(0.0f, 0.0f, -0.5f);
+        scene->Add<MeshRenderer>(cube).Mesh = assets.Adopt(mesh);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = 0.5f,
+                                                           .Tonemapper = Tonemapper::None});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        scene->DestroyEntity(cube);
+        return DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    };
+    const auto MaxAbs = [](const vec3& v) { return glm::max(v.r, glm::max(v.g, v.b)); };
+
+    // Under no sky the arm is the flat floor, which has no reflection: a flagged surface is dark,
+    // and an unflagged one is not.
+    Set(Albedo, false, false);
+    REQUIRE(MaxAbs(FaceColour(opaqueCube)) > 0.001f);
+    f32 unlitError = 0.0f;
+    Set(Albedo, true, false);
+    for (const Ref<Mesh>& mesh : {opaqueCube, translucentCube})
+    {
+        unlitError = glm::max(unlitError, MaxAbs(FaceColour(mesh)));
+    }
+
+    const Entity skyEntity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(skyEntity);
+    auto* source = static_cast<EnvironmentSky*>(sky.Source.SetActive(TypeIdOf<EnvironmentSky>()));
+    source->Map = *bright;
+
+    sky.Lighting = SkyLighting::IBL;
+    f32 reflectionError = 0.0f;
+    for (const Ref<Mesh>& mesh : {opaqueCube, translucentCube})
+    {
+        Set(Albedo, false, false);
+        const vec3 lit = FaceColour(mesh);
+        Set(vec4(0.0f, 0.0f, 0.0f, 1.0f), false, false);
+        const vec3 reflection = FaceColour(mesh);
+        Set(Albedo, true, false);
+        const vec3 flagged = FaceColour(mesh);
+
+        // Short of the clamp, so the readback is the ambient term; the sky's reflection is really
+        // there, and so is the diffuse light the flag takes away.
+        REQUIRE(MaxAbs(lit) < 0.95f);
+        CHECK(glm::min(reflection.r, glm::min(reflection.g, reflection.b)) > 0.005f);
+        CHECK(lit.r - reflection.r > 0.1f);
+        reflectionError = glm::max(reflectionError, MaxAbs(glm::abs(flagged - reflection)));
+
+        // Beside the environment flag the surface takes the floor, and so no ambient at all.
+        Set(Albedo, true, true);
+        unlitError = glm::max(unlitError, MaxAbs(FaceColour(mesh)));
+    }
+
+    // The SH skylight is diffuse alone, so a flagged surface takes nothing from it.
+    sky.Lighting = SkyLighting::SH;
+    Set(Albedo, true, false);
+    for (const Ref<Mesh>& mesh : {opaqueCube, translucentCube})
+    {
+        unlitError = glm::max(unlitError, MaxAbs(FaceColour(mesh)));
+    }
+
+    // A flagged surface's ambient is exactly the reflection an albedo-zero surface takes (the
+    // tolerance covers the half-float output), and nothing under an arm with no reflection.
+    CHECK(reflectionError < 1e-3f);
+    CHECK(unlitError < 1e-4f);
 
     std::filesystem::remove(outArchive);
 }

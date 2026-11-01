@@ -122,7 +122,8 @@ float4 fsMain(VSOutput input) : SV_Target
     // surface's flags rather than a blend no surface wrote. A fragment declining shadow-map
     // reception is lit exactly as any other, but every atlas lookup below resolves to full
     // visibility: the world position reconstructed for it is not where its geometry stands. A
-    // fragment declining environment lighting takes the flat ambient floor in place of the sky's.
+    // fragment declining environment lighting takes the flat ambient floor in place of the sky's,
+    // and one declining the ambient diffuse keeps only the ambient specular.
     float surfaceFlags =
         LoadSurfaceFlags(g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)], sampleUV);
     bool declinesShadowMaps = GBufferDeclinesShadowMaps(surfaceFlags);
@@ -140,6 +141,7 @@ float4 fsMain(VSOutput input) : SV_Target
                                                   declinesShadowMaps, declinesEnvironmentLighting,
                                                   normalVariance);
     surface.LightChannels = GBufferLightChannels(surfaceFlags);
+    surface.DeclinesAmbientDiffuse = GBufferDeclinesAmbientDiffuse(surfaceFlags);
 
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade
