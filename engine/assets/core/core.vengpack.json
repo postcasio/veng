@@ -232,6 +232,11 @@
       "source": "shaders/light_tile_cull.comp.shader.json"
     },
     {
+      "id": "0xA800B88B38A9D722",
+      "type": "Shader",
+      "source": "shaders/sky_bake_field_sum.comp.shader.json"
+    },
+    {
       "id": "0x7900FF4E551FA995",
       "type": "Shader",
       "source": "shaders/gbuffer_shading_override.frag.shader.json"

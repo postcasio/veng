@@ -2318,6 +2318,45 @@ sharing one cube drive it and the first with a landed bake does the copy. There 
 registry or content-key dedup: sharing is the caller owning one cube and pointing several `CubeSky`
 sources at it — a consumer that wants one sky per some content key owns the cube and the key.
 
+**A layered bake may begin with a field, and a re-bake may re-composite over it.** A baked sky's
+cost is usually one smooth, expensive evaluation (a volume march, a multiple-scattering integral),
+while its look depends on full-resolution detail. A reduced-resolution Picture base only upsamples
+that evaluation into the cube as a finished picture; a **Field** base
+(`SkyBakeLayer::Role = SkyBakeRole::Field`, first layer only, `RequestBake` only) instead bakes
+physical quantities at its `FaceSizeDivisor` into one to four `RGBA16Sfloat` field cubes
+(`FieldTargets`, which must equal its Sky material's cooked `"fieldTargets"`; the fragment writes
+them as ordinary multiple render targets), and every later layer reads them:
+
+- **The job runs in phases, each tile at its own layer's cost**: every field tile, then one step that
+  box-reduces each target's full mip chain (2×2 linear blits), writes each face's solid-angle-weighted
+  sum (`sky_bake_field_sum.comp`, one workgroup per face, each texel weighted by its exact solid
+  angle) and leaves the targets sampled, then the Picture layers' tiles — the first of them clearing
+  every tile, since nothing was promoted beneath it. The costs ride
+  `GeneratedTextureRequest::CostPhases`, so each layer's `Cost` prices its own ticks (a promote or
+  field step charges one). The displayed cube is untouched until the composite lands.
+- **The field is read through the view block.** The targets are registered bindless cubes
+  (`g_Cubes`, set 2), and a Picture tile of a field bake writes their slots, the sums' storage-buffer
+  slot, a trilinear clamp sampler and the field's face size into the view block's
+  `SkyBakeFieldCubes` / `SkyBakeFieldInfo`. `Veng/sky_bake.slang` (which re-exports
+  `Veng/sky.slang`) reads them: `SkyBakeField(pc, target, dir)` filters mip 0 with a cubic
+  B-spline as four bilinear taps laid out on the direction's face (taps past an edge land on the
+  neighbour), `SkyBakeFieldLod(pc, target, dir, lod)` samples a mip bilinear, and
+  `SkyBakeFieldMean(pc, target)` sums the six face sums over 4π. Every other block — a scene view, a
+  direct sky, a picture-only bake, the field layer itself — carries a zero count, and all three return
+  zero. The block grew to 896 bytes for it.
+- **Re-compositing.** `RequestBake`'s `fieldKey` names the field a request bakes. A field
+  **stands** once its every tile, mips and sums have landed; a request naming the standing field's key
+  at the same face size and target count skips the field phase and runs only the Picture layers
+  (`GetFieldTilesRecorded` counts what ran). The field's first tile clears the standing key, so a
+  supersede mid-field leaves none; a new face size recreates the targets and leaves none; an empty key
+  always runs the field. A cache hit runs no tick, so it leaves whatever stood standing. The targets
+  are kept between bakes (about 4.2 MB each at 256 per face with mips).
+- **The cube needs the asset manager to bake a field**: `BakedSkyCube::Create`'s optional
+  `AssetManager*` loads the sum shader and allocates its storage then; a field bake on a cube created
+  without one is fatal. `tests/gpu/sky_bake_field.cpp` reads each of three targets back bicubically
+  at every texel (face edges and corners included), the mean against the CPU's solid-angle sum of the
+  same texels, and pins the re-composite, supersede and per-phase cost behaviour.
+
 **A capture of the scene can light it in place of the sky — the lights model again.** A
 `CaptureSurface` whose `Output` is `CaptureOutput::SceneLighting` is an environment probe: it renders
 a radiance cube (`SceneCaptureInfo::Cube`) and binds no material. Each `Resolve`, the resolver takes
@@ -2455,7 +2494,7 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **864 bytes**. The shadow system's own state — each cascade
+latency instead of starving whichever captures registered last. Its stride is **896 bytes**. The shadow system's own state — each cascade
 set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
 instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 

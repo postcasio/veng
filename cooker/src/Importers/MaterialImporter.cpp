@@ -381,6 +381,35 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1j'''. Parse the optional sky-field declaration (default 0) ---
+
+        // Set by a Sky material whose fragment writes a layered bake's field: physical quantities
+        // a later layer reads, not radiance. Its fragment then writes this many float4 targets,
+        // SV_Target0 onward, where a picture sky writes one.
+        u32 fieldTargets = 0;
+        if (vmat.contains("fieldTargets"))
+        {
+            if (!vmat["fieldTargets"].is_number_unsigned())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'fieldTargets' must be an unsigned integer",
+                    vmatPath.string()));
+            }
+            fieldTargets = vmat["fieldTargets"].get<u32>();
+            if (domainValue != MaterialDomain::Sky)
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'fieldTargets' requires the Sky domain",
+                                vmatPath.string()));
+            }
+            if (fieldTargets < 1 || fieldTargets > MaxSkyFieldTargets)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'fieldTargets' must be between 1 and {}, not {}",
+                    vmatPath.string(), MaxSkyFieldTargets, fieldTargets));
+            }
+        }
+
         // --- 1j'. Parse the optional reactive declaration (default false) ---
 
         // Set by a Translucent material whose fragment writes the temporal resolve's reactive mask
@@ -714,16 +743,30 @@ namespace Veng::Cook
         {
             // A Sky material outputs radiance into the single scene-color target, not the
             // g-buffer MRT — a single float4 SV_Target0. A sky fragment that writes the
-            // g-buffer set (or any further target) violates the sky-slot contract.
-            const bool ok = outputs->size() == 1 && (*outputs)[0].TargetIndex == 0 &&
-                            (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
-            if (!ok)
+            // g-buffer set (or any further target) violates the sky-slot contract. A field
+            // material ("fieldTargets") writes exactly that many float4 targets instead.
+            const u32 expected = std::max(fieldTargets, 1u);
+            bool ok = outputs->size() == expected;
+            for (u32 i = 0; ok && i < expected; ++i)
+            {
+                ok = (*outputs)[i].TargetIndex == i && (*outputs)[i].IsFloat &&
+                     (*outputs)[i].ComponentCount == 4;
+            }
+            if (!ok && fieldTargets == 0)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': sky material must write a single float4 SV_Target0 "
                     "(background radiance) and no further targets — not the g-buffer MRT; its "
                     "fragment shader does not",
                     vmatPath.string()));
+            }
+            if (!ok)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': a sky field material declaring 'fieldTargets' {} "
+                    "must write exactly that many float4 targets, SV_Target0 onward; its fragment "
+                    "shader does not",
+                    vmatPath.string(), fieldTargets));
             }
         }
         else if (domainValue == MaterialDomain::Translucent)
@@ -1266,6 +1309,7 @@ namespace Veng::Cook
         header.Reactive = reactive ? 1u : 0u;
         header.ExcludedFromMetering = excludedFromMetering ? 1u : 0u;
         header.SphereTerrain = sphereTerrain ? 1u : 0u;
+        header.SkyFieldTargets = fieldTargets;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

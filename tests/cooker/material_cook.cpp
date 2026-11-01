@@ -575,6 +575,25 @@ TEST_CASE("Cooker: a sky material whose fragment writes the MRT is a located coo
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a sky field material writes exactly its declared targets")
+{
+    // "fieldTargets": 3 asks for three float4 targets; the g-buffer fragment writes five, not all
+    // float4, so the declaration and the shader disagree and the cook names it.
+    const path packJson = FixtureDir / "material_sky_field_wrong_output_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_sky_field_wrong.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("declaring 'fieldTargets' 3") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: a translucent material cooks with domain 3")
 {
     // A Translucent material declares "domain": "Translucent" and its fragment writes a single

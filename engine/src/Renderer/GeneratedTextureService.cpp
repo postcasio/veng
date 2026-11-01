@@ -283,7 +283,20 @@ namespace Veng::Renderer
             return false;
         }
 
-        if (!m_Queue->Add(request.Key, request.TickCount, request.Priority, request.Cost))
+        u64 phaseTicks = 0;
+        for (const GeneratedTextureCostPhase& phase : request.CostPhases)
+        {
+            phaseTicks += phase.Ticks;
+        }
+        if (!request.CostPhases.empty() && phaseTicks != std::max(1u, request.TickCount))
+        {
+            Log::Error("generated-texture job '{}' declares cost phases covering {} ticks of {}",
+                       request.Name, phaseTicks, request.TickCount);
+            return false;
+        }
+
+        if (!m_Queue->Add(request.Key, request.TickCount, request.Priority, request.Cost,
+                          request.CostPhases))
         {
             return false;
         }
@@ -698,7 +711,9 @@ namespace Veng::Renderer
         u32 applied = 0;
         for (const auto& [record, job] : staged)
         {
-            const u64 cost = record->Cost;
+            // A restore stands in for the job's whole fill, so it charges one tick at the first
+            // tick's cost.
+            const u64 cost = GeneratedTextureTickCost(*record, 0);
             const bool untouched = spent == 0 && budget > 0;
             if (!untouched && spent + cost > budget)
             {

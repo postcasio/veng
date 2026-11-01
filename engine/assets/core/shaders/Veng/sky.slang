@@ -11,6 +11,7 @@
 // lit scene color with LoadOp::Load, exactly where the procedural atmosphere and the cubemap
 // skybox composite. It reuses the fullscreen vertex stage (no per-vertex sky state), like a
 // PostProcess material, so only its fragment declares a push block.
+#pragma once
 
 // The canonical per-frame view-constants block (set 0, binding 5): the sky reconstructs
 // the view ray from InvViewProj + CameraPosition and maps the sub-rect depth UV through it.

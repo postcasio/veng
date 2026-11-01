@@ -443,6 +443,9 @@ namespace Veng
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
     inline constexpr u32 CookedMaterialVersion = 19u;
 
+    /// @brief The most targets a sky field material may write (CookedMaterialHeader::SkyFieldTargets).
+    inline constexpr u32 MaxSkyFieldTargets = 4u;
+
     /// @brief Cooked header for a material asset.
     ///
     /// A material pairs a vertex and fragment shader (each an ordinary Shader asset referenced by
@@ -564,8 +567,13 @@ namespace Veng
         /// pipeline, with the terrain's set 4 in its layout. Surface domain only, exclusive with
         /// InstancedSets, enforced at cook.
         u32 SphereTerrain = 0;
-        /// @brief Zero; holds the header to a multiple of eight bytes with no unnamed padding.
-        u32 Reserved = 0;
+        /// @brief How many float4 targets a sky field material's fragment writes (the
+        ///        "fieldTargets" key; default 0, a picture sky writing one radiance target).
+        ///
+        /// A field is the first layer of a layered sky bake that writes physical quantities later
+        /// layers read rather than radiance; its fragment writes SV_Target0 onward, one target per
+        /// field cube, at most MaxSkyFieldTargets. Sky domain only, enforced at cook.
+        u32 SkyFieldTargets = 0;
     };
     static_assert(sizeof(CookedMaterialHeader) == 80,
                   "CookedMaterialHeader carries no unnamed padding");

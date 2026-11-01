@@ -11,6 +11,7 @@
 
 namespace Veng
 {
+    class AssetManager;
     class MaterialInstance;
 }
 
@@ -23,6 +24,8 @@ namespace Veng::Renderer
     class Image;
     class ImageView;
     class Sampler;
+    class Buffer;
+    class ComputePipeline;
     class DescriptorSet;
     class DescriptorSetLayout;
     class GeneratedTextureService;
@@ -65,6 +68,14 @@ namespace Veng::Renderer
     /// The scratch cube is the reason VRAM is two full-size cubes, not one; only the displayed one
     /// carries the reduction chain down to the SH readback level, which the SH ambient tier reads
     /// back without blocking through RecordReductionMips + AsyncReadback.
+    ///
+    /// **An amortized bake may begin with a field.** A baked sky's cost is usually one smooth,
+    /// expensive evaluation (a volume march, a multiple-scattering integral) while its look depends
+    /// on full-resolution detail. A first layer with the Field role evaluates that expensive part at
+    /// a reduced face resolution into up to four field cubes of physical quantities, not radiance,
+    /// and every later layer reads them (Veng/sky_bake.slang) while it renders the picture at full
+    /// resolution. A re-bake naming the field that already stands (RequestBake's `fieldKey`) skips
+    /// the field and re-runs only the picture layers.
     class VE_API BakedSkyCube
     {
     public:
@@ -77,10 +88,14 @@ namespace Veng::Renderer
         ///                       cube target renders at this format so the baked radiance round-trips
         ///                       the skybox sampler with no conversion.
         /// @param faceSize      Cube face edge length in texels.
+        /// @param assets        The asset manager the field's solid-angle reduction shader loads
+        ///                      from during this call, or null for a cube that never bakes a field
+        ///                      layer. A field bake on a cube created without one is fatal.
         /// @return A new BakedSkyCube.
         static Unique<BakedSkyCube> Create(Context& context,
                                            const Ref<DescriptorSetLayout>& consumerLayout,
-                                           Format sceneColorFormat, u32 faceSize);
+                                           Format sceneColorFormat, u32 faceSize,
+                                           AssetManager* assets = nullptr);
 
         /// @brief Creates the descriptor-set layout a baked cube's consumer set (and the skybox
         ///        pipeline that binds it) is built against — the single definition of that shape.
@@ -120,6 +135,22 @@ namespace Veng::Renderer
         /// at any face resolution, so the reduction is a partial evaluation of the same integral.
         static constexpr u32 ShReadbackFaceSize = 64;
 
+        /// @brief The most field targets a field layer may write.
+        static constexpr u32 MaxFieldTargets = 4;
+
+        /// @brief The format every field target is stored in.
+        static constexpr Format FieldFormat = Format::RGBA16Sfloat;
+
+        /// @brief What a layer of a composited bake produces.
+        enum class SkyBakeRole : u8
+        {
+            /// @brief Radiance composited into the cube by the layer's blend.
+            Picture,
+            /// @brief Physical quantities the later layers read, written into the field cubes
+            ///        rather than the radiance cube. Only the first layer may be a field.
+            Field,
+        };
+
         /// @brief One layer of a composited bake: a material's fragment and how it blends over the
         ///        layers already in the cube.
         ///
@@ -130,10 +161,27 @@ namespace Veng::Renderer
         /// framebuffer blend does the compositing with no read of the in-progress cube: an emissive
         /// overlay uses `(ONE, SRC_ALPHA)` (add its light, attenuate the backdrop behind it by its
         /// alpha) and a pure light overlay uses Additive.
+        ///
+        /// A first layer with the Field role writes its material's targets into the field cubes
+        /// instead (see SkyBakeRole::Field); the first Picture layer after it clears the face, and
+        /// every later layer reads the field through Veng/sky_bake.slang.
         struct SkyBakeLayer
         {
             /// @brief The resident Sky-domain material whose fragment fills this layer.
             const MaterialInstance* Material = nullptr;
+            /// @brief Whether the layer renders radiance (the default) or the bake's field.
+            ///
+            /// A Field layer's material declares "fieldTargets" at cook time and writes that many
+            /// float4 targets; a Picture layer's declares none. Only the first layer may be a field,
+            /// it bakes only through the amortized RequestBake, and at least one Picture layer
+            /// follows it.
+            SkyBakeRole Role = SkyBakeRole::Picture;
+            /// @brief How many field targets a Field layer writes, from one to MaxFieldTargets.
+            ///
+            /// Must equal the count its material declares. Each is a FieldFormat cube at the face
+            /// size over FaceSizeDivisor, with a full box-reduced mip chain. Ignored by a Picture
+            /// layer.
+            u32 FieldTargets = 1;
             /// @brief How this layer blends onto the layers beneath it. The first layer clears the
             ///        face, so its blend is typically Opaque; later layers Load and blend.
             BlendState Blend = BlendState::Opaque();
@@ -145,9 +193,10 @@ namespace Veng::Renderer
             /// varies slowly across the sky — need not be evaluated at full face resolution: baking it
             /// into a coarser scratch cube and upsampling cuts its fragment count by the divisor
             /// squared while the detail layers stay full resolution. Only the **first** layer may set a
-            /// divisor above 1: it is the opaque base, promoted into the cube by an upsampling blit
-            /// that replaces (rather than blends) the region, so a later layer — which Loads and blends
-            /// over what is already there — must be full resolution.
+            /// divisor above 1: a Picture base is promoted into the cube by an upsampling blit that
+            /// replaces (rather than blends) the region, and a Field base is the field cubes' face size,
+            /// so a later layer — which Loads and blends over what is already there — must be full
+            /// resolution.
             u32 FaceSizeDivisor = 1;
 
             /// @brief Edge length in texels of one amortization tile for this layer, or 0 for the
@@ -168,10 +217,10 @@ namespace Veng::Renderer
             /// The pump spends a total cost budget per frame (see GeneratedTextureRequest::Cost), so a
             /// higher cost runs fewer of this bake's ticks per frame — the amortization half of the
             /// caller's control, the companion to TilePixels: TilePixels bounds one tick's work, Cost
-            /// bounds how many run a frame. **Only the base (first) layer's Cost is honored:** a
-            /// composited sky is one amortized job at a single per-tick cost, and the base — the dear,
-            /// tile-dominating backdrop — sets it; the overlay layers' Cost is ignored. A layer that
-            /// names none takes the default weight of one.
+            /// bounds how many run a frame. Each layer's tiles charge its own Cost, so a cheap overlay
+            /// tick is not priced like an expensive backdrop's (GeneratedTextureRequest::CostPhases).
+            /// The single steps between layers — a coarse base's promotion, a field's mips and sums —
+            /// charge the default weight of one. A layer that names none takes the default weight.
             u32 Cost = 1;
         };
 
@@ -197,6 +246,7 @@ namespace Veng::Renderer
         /// @param layers The ordered layer stack; each layer's material must be resident with its
         ///               param block uploaded this frame.
         /// @pre Every layer's material is a MaterialDomain::Sky material.
+        /// @pre No layer is a Field or sets FaceSizeDivisor above 1; both need RequestBake.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void Bake(CommandBuffer& cmd, std::span<const SkyBakeLayer> layers);
 
@@ -255,16 +305,29 @@ namespace Veng::Renderer
         /// across the frame budget, so a heavy multi-layer sky never blocks a frame. RecordAmortized
         /// copies the finished composite into the displayed cube on completion. Supersedes any bake
         /// still in flight.
+        ///
+        /// A stack beginning with a Field layer runs in two phases, each tile charging its own
+        /// layer's Cost: every tile of the field, one step that builds each field target's mip chain
+        /// and its solid-angle sums and makes the field readable, then the Picture layers' tiles.
         /// @param service  The service the job runs through.
         /// @param layers   The ordered layer stack; each layer's material must stay resident with its
         ///                 param block uploaded until the bake completes.
         /// @param cacheKey The key the finished composite is stored under in the service's attached
         ///                 cache, or empty for an uncached bake. The caller composes it from
         ///                 everything the composite depends on that the cache's generation does not;
-        ///                 a hit restores the stored texels and the layer march never runs.
+        ///                 a hit restores the stored texels and the layer march never runs. A hit
+        ///                 leaves no field standing.
+        /// @param fieldKey The identity of the field a Field layer bakes, or empty. When it names
+        ///                 the field standing in the field cubes — one whose every tile, mips and
+        ///                 sums have landed, at the same face size and target count — the field
+        ///                 phase is skipped and only the Picture layers run. Starting a field phase
+        ///                 clears the standing field, so a bake superseded mid-field leaves none; an
+        ///                 empty key always runs the field. Ignored by a stack with no field.
         /// @pre Every layer's material is a MaterialDomain::Sky material.
+        /// @pre A Field layer is the first layer, is followed by a Picture layer, and the cube was
+        ///      created with an AssetManager.
         void RequestBake(GeneratedTextureService& service, std::span<const SkyBakeLayer> layers,
-                         string cacheKey = {});
+                         string cacheKey = {}, string fieldKey = {});
 
         /// @brief Requests an amortized bake of the procedural atmosphere into the scratch cube.
         ///
@@ -351,9 +414,21 @@ namespace Veng::Renderer
         /// across a dirty signal to see how many draws a re-bake cost. Exposed for tests.
         [[nodiscard]] u64 GetFaceRendersRecorded() const { return m_FaceRendersRecorded; }
 
+        /// @brief Field-layer tile draws this bake has recorded over its lifetime.
+        ///
+        /// Counted within GetFaceRendersRecorded too. A re-composite over a standing field adds
+        /// none. Exposed for tests.
+        [[nodiscard]] u64 GetFieldTilesRecorded() const { return m_FieldTilesRecorded; }
+
+        /// @brief Whether a field stands in the field cubes, readable by a re-composite.
+        [[nodiscard]] bool IsFieldStanding() const { return m_FieldStanding; }
+
+        /// @brief The face edge length of the field cubes in texels, or 0 before any field bake.
+        [[nodiscard]] u32 GetFieldFaceSize() const { return m_FieldFaceSize; }
+
     private:
         BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
-                     Format sceneColorFormat, u32 faceSize);
+                     Format sceneColorFormat, u32 faceSize, AssetManager* assets);
 
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
@@ -362,12 +437,16 @@ namespace Veng::Renderer
         ///
         /// The shared body of EnsurePipeline and EnsureLayerPipelines: the material's own fragment +
         /// the fullscreen vertex, its pipeline layout, and the given blend state on the one cube-face
-        /// color attachment.
-        /// @param material The Sky-domain material whose shaders + layout the pipeline is built from.
-        /// @param blend    The blend state for the cube-face color attachment.
+        /// color attachment, or on each of a field's attachments.
+        /// @param material     The Sky-domain material whose shaders + layout the pipeline is built
+        ///                     from.
+        /// @param blend        The blend state for every color attachment.
+        /// @param fieldTargets 0 for the one cube-face attachment, else that many FieldFormat field
+        ///                     attachments.
         /// @return The bake pipeline.
         [[nodiscard]] Ref<GraphicsPipeline> CreateBakePipeline(const MaterialInstance& material,
-                                                               const BlendState& blend);
+                                                               const BlendState& blend,
+                                                               u32 fieldTargets = 0);
 
         /// @brief Builds/refreshes the per-layer bake pipelines to match a layer stack, once per change.
         ///
@@ -394,6 +473,20 @@ namespace Veng::Renderer
         /// @param cmd The command buffer the blit is recorded into.
         void RecordCoarsePromote(CommandBuffer& cmd);
 
+        /// @brief Ensures the first `count` field targets exist at the given face size.
+        ///
+        /// A face-size change recreates every target (and leaves no field standing); a larger count
+        /// creates the missing targets and keeps the rest.
+        /// @param faceSize The field cubes' face edge length in texels.
+        /// @param count    The targets the field layer writes.
+        void EnsureFieldTargets(u32 faceSize, u32 count);
+
+        /// @brief Makes a just-baked field readable: builds each target's box-reduced mip chain,
+        ///        writes its per-face solid-angle sums, and leaves every target sampled.
+        /// @param cmd   The command buffer the reductions are recorded into.
+        /// @param count The targets the field layer wrote.
+        void RecordFieldFinish(CommandBuffer& cmd, u32 count);
+
         /// @brief Claims (or reuses) the view slot carrying a face's basis, for a tile about to draw.
         ///
         /// Every tile of a face writes the identical face basis, so one view slot serves them all: a
@@ -404,8 +497,10 @@ namespace Veng::Renderer
         /// tick budget.
         /// @param face      The cube face index, selecting its fixed view-ray basis.
         /// @param faceFirst Whether this is the first tile of its face (forces a fresh claim).
+        /// @param fieldTargets The standing field's target count the slot carries for a layer that
+        ///                  reads it, or 0 for a slot that reads none.
         /// @return The view-constants index the tile pushes.
-        u32 AcquireFaceViewSlot(u32 face, bool faceFirst);
+        u32 AcquireFaceViewSlot(u32 face, bool faceFirst, u32 fieldTargets = 0);
 
         /// @brief Records one material tile render into a target face view.
         ///
@@ -418,16 +513,18 @@ namespace Veng::Renderer
         /// @param cmd        The command buffer the tile render is recorded into.
         /// @param pipeline   The bake pipeline to bind (its blend state carries the layer's compositing).
         /// @param material   The resident Sky-domain material to bake; supplies the selector it pushes.
-        /// @param faceView   The single-layer color target for this face.
+        /// @param faceViews  The single-layer color targets for this face, one per attachment.
         /// @param faceSize   The face edge length in texels (the viewport extent).
         /// @param face       The cube face index, selecting its fixed view-ray basis.
         /// @param tileOffset The tile's top-left pixel offset within the face.
         /// @param tileExtent The tile's pixel extent (clamped to the face on the last row/column).
         /// @param clear      Clear the tile's render-area (the first layer's first tile) or Load it.
+        /// @param fieldTargets The standing field's target count the layer reads, or 0.
         void RecordMaterialRegion(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
-                                  const MaterialInstance& material, const Ref<ImageView>& faceView,
-                                  u32 faceSize, u32 face, uvec2 tileOffset, uvec2 tileExtent,
-                                  bool clear);
+                                  const MaterialInstance& material,
+                                  std::span<const Ref<ImageView>> faceViews, u32 faceSize, u32 face,
+                                  uvec2 tileOffset, uvec2 tileExtent, bool clear,
+                                  u32 fieldTargets = 0);
 
         /// @brief Records one atmosphere tile render into a target face view.
         ///
@@ -469,6 +566,7 @@ namespace Veng::Renderer
         u32 m_TilesPerAxis;  // tiles along one face axis, ceil(m_FaceSize / tile size)
         u32 m_TilesPerFace;  // m_TilesPerAxis², the amortized tick count per face
         u64 m_FaceRendersRecorded = 0;
+        u64 m_FieldTilesRecorded = 0;
 
         Ref<Image> m_CubeImage;
         Ref<ImageView> m_CubeView; // Cube view, mip 0 only — sampled by the skybox pass
@@ -495,6 +593,50 @@ namespace Veng::Renderer
         std::array<Ref<ImageView>, CubeFaces> m_CoarseScratchFaceViews;
         u32 m_CoarseFaceSize =
             0; // the coarse cube's face edge, 0 until a divisor > 1 bake allocates it
+
+        /// @brief One field target: a FieldFormat cube with a full mip chain.
+        struct FieldTarget
+        {
+            /// @brief The cube image.
+            Ref<Image> Cube;
+            /// @brief Every mip as a cube: registered bindless for the later layers to sample.
+            Ref<ImageView> CubeView;
+            /// @brief Mip 0 as a six-layer array: what the solid-angle sum reads.
+            Ref<ImageView> SumView;
+            /// @brief Mip 0 of each face as a 2D view: what the field layer renders.
+            std::array<Ref<ImageView>, CubeFaces> FaceViews;
+            /// @brief Each mip as a six-layer array, for the mip chain's transitions.
+            vector<Ref<ImageView>> MipViews;
+            /// @brief The cube's bindless slot.
+            CubeHandle Handle;
+            /// @brief The solid-angle sum's set: SumView and the sum buffer.
+            Ref<DescriptorSet> SumSet;
+        };
+
+        /// @brief The field targets created so far; the first m_FieldTargetsCreated are live.
+        std::array<FieldTarget, MaxFieldTargets> m_FieldTargets;
+        /// @brief How many field targets exist.
+        u32 m_FieldTargetsCreated = 0;
+        /// @brief The field cubes' face edge in texels; 0 until a field bake allocates them.
+        u32 m_FieldFaceSize = 0;
+        /// @brief The field cubes' mip count.
+        u32 m_FieldMipCount = 0;
+        /// @brief The per-target, per-face solid-angle sums (MaxFieldTargets × CubeFaces float4).
+        Ref<Buffer> m_FieldSums;
+        /// @brief The sum buffer's storage-buffer slot.
+        StorageBufferHandle m_FieldSumsHandle;
+        /// @brief The trilinear clamp sampler the later layers read the field through.
+        SamplerHandle m_FieldSamplerHandle;
+        /// @brief The solid-angle sum's descriptor-set layout.
+        Ref<DescriptorSetLayout> m_FieldSumSetLayout;
+        /// @brief The solid-angle sum's compute pipeline.
+        Ref<ComputePipeline> m_FieldSumPipeline;
+        /// @brief Whether a complete field stands in the field cubes.
+        bool m_FieldStanding = false;
+        /// @brief The standing field's key; empty when none stands or it was baked unkeyed.
+        string m_FieldKey;
+        /// @brief The standing field's target count.
+        u32 m_FieldStandingTargets = 0;
 
         // The amortized bake's service job key (unique per instance) and its lifecycle state. The
         // material path also records the resolved instance's identity + revision so a re-request for
@@ -530,6 +672,7 @@ namespace Veng::Renderer
             Ref<GraphicsPipeline> Pipeline;
             const ShaderModule* Fragment = nullptr;
             BlendState Blend;
+            u32 FieldTargets = 0;
         };
         vector<LayerPipeline> m_LayerPipelines;
 
@@ -544,6 +687,8 @@ namespace Veng::Renderer
         u64 m_LastTileViewEpoch = ~0ULL;
         /// @brief The face the shared slot carries the basis of.
         u32 m_LastTileFace = ~0u;
+        /// @brief The field target count the shared slot carries.
+        u32 m_LastTileFieldTargets = ~0u;
         /// @brief The view-constants index of the shared face slot.
         u32 m_LastTileViewIndex = 0;
     };

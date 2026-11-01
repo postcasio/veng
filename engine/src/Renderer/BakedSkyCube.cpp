@@ -2,14 +2,21 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstring>
 
 #include <fmt/format.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
@@ -20,6 +27,8 @@
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
+
+#include "GpuBlocks.h"
 
 namespace Veng::Renderer
 {
@@ -83,35 +92,18 @@ namespace Veng::Renderer
             f32 Pad2;
         };
 
-        // A full view-constants region (set 0 binding 5), mirroring view_constants.slang byte-for-byte
-        // so the material fragment's LoadViewConstants reads the face basis. Only InvViewProj +
-        // CameraPosition + the sub-rect mapping matter to a sky; the rest is zero.
-        struct ViewConstantsRegion
-        {
-            mat4 InvViewProj;
-            mat4 InvViewRotProj;
-            vec4 CameraPosition;
-            mat4 View;
-            mat4 Proj;
-            mat4 PrevViewProj;
-            mat4 CurViewProj;
-            vec4 RenderScaleUV;
-            vec4 MaxValidUV;
-            // Zeroed: a bake face renders in the sky source's own frame, and a zero quaternion
-            // turns nothing.
-            vec4 SkyFromWorld;
-            vec4 EnvironmentFromWorld;
-            std::array<vec4, 9> SkyShCoeffs;
-            // Zeroed: a baked source is static (no frame clock) and has no scene behind it. The
-            // fields still belong in the write so a bake face's ring slot never inherits a scene
-            // view's stale handles.
-            vec4 TimeParams;
-            vec4 ExtentParams;
-            uvec4 SceneColor;
-        };
+        static_assert(BakedSkyCube::MaxFieldTargets == MaxSkyFieldTargets,
+                      "a field layer writes at most as many targets as a material may declare");
 
-        static_assert(sizeof(ViewConstantsRegion) <= BindlessRegistry::ViewConstantsStride,
-                      "ViewConstantsRegion must fit one ring-buffered view-constants region");
+        // The solid-angle sum's compute shader (sky_bake_field_sum.comp).
+        constexpr AssetId SkyBakeFieldSumCompId{0xA800B88B38A9D722ULL};
+
+        // The solid-angle sum's push block, matching sky_bake_field_sum.comp PushConstants.
+        struct FieldSumPush
+        {
+            u32 FaceSize;
+            u32 OutputBase;
+        };
 
         // The per-face InvViewProj: maps a fullscreen [0,1]² UV, unprojected as (st.x, st.y, 1, 1)
         // with st = uv*2-1, to the face's world direction. The mapping is built directly from the
@@ -208,14 +200,16 @@ namespace Veng::Renderer
 
     Unique<BakedSkyCube> BakedSkyCube::Create(Context& context,
                                               const Ref<DescriptorSetLayout>& consumerLayout,
-                                              const Format sceneColorFormat, const u32 faceSize)
+                                              const Format sceneColorFormat, const u32 faceSize,
+                                              AssetManager* assets)
     {
         return Unique<BakedSkyCube>(
-            new BakedSkyCube(context, consumerLayout, sceneColorFormat, faceSize));
+            new BakedSkyCube(context, consumerLayout, sceneColorFormat, faceSize, assets));
     }
 
     BakedSkyCube::BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
-                               const Format sceneColorFormat, const u32 faceSize)
+                               const Format sceneColorFormat, const u32 faceSize,
+                               AssetManager* assets)
         : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
           m_ShReadbackMip(ComputeShReadbackMip(faceSize)),
           m_TilesPerAxis(TilesPerFaceAxis(faceSize, SkyBakeTilePixels)),
@@ -306,6 +300,68 @@ namespace Veng::Renderer
         }
         m_JobKey = NextSkyBakeJobKey();
 
+        // A cube that may bake a field loads the field's solid-angle sum and its storage up front,
+        // so a field bake later needs nothing from the asset manager.
+        if (assets != nullptr)
+        {
+            BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+            const AssetResult<AssetHandle<Veng::Shader>> sumCs =
+                assets->LoadSync<Veng::Shader>(SkyBakeFieldSumCompId);
+            VE_ASSERT(sumCs.has_value(), "BakedSkyCube: field sum shader load failed: {}",
+                      sumCs.error().Detail);
+            m_FieldSumSetLayout = DescriptorSetLayout::Create(
+                m_Context, {
+                               .Name = "Sky Bake Field Sum Set Layout",
+                               .Bindings =
+                                   {
+                                       {.Binding = 0,
+                                        .Type = DescriptorType::SampledImage,
+                                        .Count = 1,
+                                        .Stages = ShaderStage::Compute},
+                                       {.Binding = 1,
+                                        .Type = DescriptorType::StorageBuffer,
+                                        .Count = 1,
+                                        .Stages = ShaderStage::Compute},
+                                   },
+                           });
+            const Ref<PipelineLayout> layout = PipelineLayout::Create(
+                m_Context, {
+                               .Name = "Sky Bake Field Sum Layout",
+                               .DescriptorSetLayouts = {m_FieldSumSetLayout},
+                               .PushConstantRanges = {PushConstantRange::Of<FieldSumPush>(
+                                   ShaderStage::Compute)},
+                           });
+            m_FieldSumPipeline = ComputePipeline::Create(
+                m_Context, {
+                               .Name = "Sky Bake Field Sum Pipeline",
+                               .PipelineLayout = layout,
+                               .ShaderStage = {.Stage = ShaderStage::Compute,
+                                               .Module = sumCs.value().Get()->Module},
+                           });
+
+            // One float4 sum per face of every target the field may write.
+            m_FieldSums = Buffer::Create(
+                m_Context, {
+                               .Name = "Sky Bake Field Sums",
+                               .Size = static_cast<u64>(MaxFieldTargets) * CubeFaces * sizeof(vec4),
+                               .Usage = BufferUsage::Storage,
+                               .DeviceLocal = true,
+                           });
+            m_FieldSumsHandle = registry.Register(m_FieldSums);
+            m_FieldSamplerHandle = registry
+                                       .AcquireSampler({
+                                           .Name = "Sky Bake Field Sampler",
+                                           .MagFilter = Filter::Linear,
+                                           .MinFilter = Filter::Linear,
+                                           .MipmapMode = MipmapMode::Linear,
+                                           .AddressModeU = AddressMode::ClampToEdge,
+                                           .AddressModeV = AddressMode::ClampToEdge,
+                                           .AddressModeW = AddressMode::ClampToEdge,
+                                           .MaxLod = LodClampNone,
+                                       })
+                                       .Handle;
+        }
+
         // A 1×1 stand-in depth image holding the far-plane value (reverse-Z: 0.0), bound in the
         // fragment's depth slot so SkyIsBackground passes for every baked pixel — there is no
         // g-buffer at bake time. Sampled as a color texture (the fragment reads .r), so it is an
@@ -387,24 +443,43 @@ namespace Veng::Renderer
         // Tear down any amortized bake still in flight so its tick/completion callbacks — which
         // capture this — never fire after it is gone.
         CancelBake();
-        m_Context.GetBindlessRegistry().Release(m_DepthHandle);
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        registry.Release(m_DepthHandle);
+        for (u32 i = 0; i < m_FieldTargetsCreated; ++i)
+        {
+            registry.Release(m_FieldTargets[i].Handle);
+        }
+        if (m_FieldSumsHandle.IsValid())
+        {
+            registry.Release(m_FieldSumsHandle);
+        }
     }
 
     Ref<GraphicsPipeline> BakedSkyCube::CreateBakePipeline(const MaterialInstance& material,
-                                                           const BlendState& blend)
+                                                           const BlendState& blend,
+                                                           const u32 fieldTargets)
     {
         VE_ASSERT(material.GetDomain() == MaterialDomain::Sky,
                   "BakedSkyCube: material '{}' is not a Sky material", material.GetName());
 
         // The material's own fragment + the fullscreen vertex, against the cube-face color format with
-        // the layer's blend on the one attachment. The layout (set 0 reserved, the sky push range)
-        // comes from the material loader, so the fragment binds and pushes exactly as in the direct
-        // path — it is unchanged and unaware of the bake.
+        // the layer's blend on the one attachment — or a field's targets, one attachment each. The
+        // layout (set 0 reserved, the sky push range) comes from the material loader, so the fragment
+        // binds and pushes exactly as in the direct path — it is unchanged and unaware of the bake.
+        vector<PipelineAttachmentInfo> attachments;
+        if (fieldTargets == 0)
+        {
+            attachments.push_back({.Format = m_SceneColorFormat, .Blend = blend});
+        }
+        for (u32 i = 0; i < fieldTargets; ++i)
+        {
+            attachments.push_back({.Format = FieldFormat, .Blend = blend});
+        }
         return GraphicsPipeline::Create(
             m_Context,
             {
                 .Name = fmt::format("Sky Bake Pipeline ({})", material.GetName()),
-                .ColorAttachments = {{.Format = m_SceneColorFormat, .Blend = blend}},
+                .ColorAttachments = std::move(attachments),
                 .PipelineLayout = material.GetPipelineLayout(),
                 .ShaderStages =
                     {
@@ -438,17 +513,21 @@ namespace Veng::Renderer
             const SkyBakeLayer& layer = layers[i];
             VE_ASSERT(layer.Material != nullptr, "BakedSkyCube: bake layer {} has no material", i);
             const ShaderModule* const fragment = layer.Material->GetFragmentModule().get();
+            const u32 fieldTargets =
+                layer.Role == SkyBakeRole::Field ? std::max(layer.FieldTargets, 1u) : 0u;
             LayerPipeline& slot = m_LayerPipelines[i];
-            // Reuse the slot's pipeline when the layer's fragment and blend are unchanged — a re-bake
-            // of the same stack recompiles no sky shader, the same reuse EnsurePipeline gives the
-            // single-material path.
-            if (slot.Pipeline && slot.Fragment == fragment && BlendEqual(slot.Blend, layer.Blend))
+            // Reuse the slot's pipeline when the layer's fragment, blend and targets are unchanged —
+            // a re-bake of the same stack recompiles no sky shader, the same reuse EnsurePipeline
+            // gives the single-material path.
+            if (slot.Pipeline && slot.Fragment == fragment && BlendEqual(slot.Blend, layer.Blend) &&
+                slot.FieldTargets == fieldTargets)
             {
                 continue;
             }
-            slot.Pipeline = CreateBakePipeline(*layer.Material, layer.Blend);
+            slot.Pipeline = CreateBakePipeline(*layer.Material, layer.Blend, fieldTargets);
             slot.Fragment = fragment;
             slot.Blend = layer.Blend;
+            slot.FieldTargets = fieldTargets;
         }
     }
 
@@ -524,7 +603,175 @@ namespace Veng::Renderer
             vk::Filter::eLinear);
     }
 
-    u32 BakedSkyCube::AcquireFaceViewSlot(const u32 face, const bool faceFirst)
+    void BakedSkyCube::EnsureFieldTargets(const u32 faceSize, const u32 count)
+    {
+        VE_ASSERT(m_FieldSumPipeline != nullptr,
+                  "BakedSkyCube: a field bake needs the cube created with an AssetManager");
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        if (m_FieldFaceSize != faceSize)
+        {
+            // A new face size invalidates every target; the old ones retire through the deferred
+            // path and their slots with them.
+            for (u32 i = 0; i < m_FieldTargetsCreated; ++i)
+            {
+                registry.Release(m_FieldTargets[i].Handle);
+                m_FieldTargets[i] = {};
+            }
+            m_FieldTargetsCreated = 0;
+            m_FieldFaceSize = faceSize;
+            m_FieldMipCount = static_cast<u32>(std::bit_width(faceSize));
+            m_FieldStanding = false;
+            m_FieldKey.clear();
+        }
+
+        for (u32 i = m_FieldTargetsCreated; i < count; ++i)
+        {
+            FieldTarget& target = m_FieldTargets[i];
+            target.Cube = Image::Create(
+                m_Context, {
+                               .Name = fmt::format("Sky Bake Field {}", i),
+                               .Extent = {faceSize, faceSize, 1},
+                               .MipLevels = m_FieldMipCount,
+                               .Layers = CubeFaces,
+                               .Format = FieldFormat,
+                               .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
+                                        ImageUsage::TransferSrc | ImageUsage::TransferDst,
+                           });
+            target.CubeView =
+                ImageView::Create(m_Context, {
+                                                 .Name = fmt::format("Sky Bake Field {} Cube", i),
+                                                 .Image = target.Cube,
+                                                 .ViewType = ImageViewType::Cube,
+                                                 .MipLevels = m_FieldMipCount,
+                                                 .ArrayLayers = CubeFaces,
+                                             });
+            target.SumView =
+                ImageView::Create(m_Context, {
+                                                 .Name = fmt::format("Sky Bake Field {} Sum", i),
+                                                 .Image = target.Cube,
+                                                 .ViewType = ImageViewType::Array2D,
+                                                 .MipLevels = 1,
+                                                 .ArrayLayers = CubeFaces,
+                                             });
+            for (u32 face = 0; face < CubeFaces; ++face)
+            {
+                target.FaceViews[face] = ImageView::Create(
+                    m_Context, {
+                                   .Name = fmt::format("Sky Bake Field {} Face {}", i, face),
+                                   .Image = target.Cube,
+                                   .ViewType = ImageViewType::Type2D,
+                                   .MipLevels = 1,
+                                   .BaseArrayLayer = face,
+                                   .ArrayLayers = 1,
+                               });
+            }
+            target.MipViews.clear();
+            for (u32 mip = 0; mip < m_FieldMipCount; ++mip)
+            {
+                target.MipViews.push_back(ImageView::Create(
+                    m_Context, {
+                                   .Name = fmt::format("Sky Bake Field {} Mip {}", i, mip),
+                                   .Image = target.Cube,
+                                   .ViewType = ImageViewType::Array2D,
+                                   .BaseMipLevel = mip,
+                                   .MipLevels = 1,
+                                   .ArrayLayers = CubeFaces,
+                               }));
+            }
+            target.Handle = registry.RegisterCube(target.CubeView);
+            target.SumSet = DescriptorSet::Create(
+                m_Context, {.Name = "Sky Bake Field Sum Set", .Layout = m_FieldSumSetLayout});
+            target.SumSet->Write(0, target.SumView);
+            target.SumSet->Write(1, m_FieldSums);
+        }
+        m_FieldTargetsCreated = std::max(m_FieldTargetsCreated, count);
+    }
+
+    void BakedSkyCube::RecordFieldFinish(CommandBuffer& cmd, const u32 count)
+    {
+        const vk::CommandBuffer vkCmd = GetVkCommandBuffer(cmd);
+        for (u32 t = 0; t < count; ++t)
+        {
+            const FieldTarget& target = m_FieldTargets[t];
+            // A 2x2 box per level: a linear blit at exactly half the extent averages each quad.
+            u32 size = m_FieldFaceSize;
+            for (u32 dst = 1; dst < m_FieldMipCount; ++dst)
+            {
+                cmd.PrepareForAccess(target.MipViews[dst - 1], AccessKind::TransferSrc);
+                cmd.PrepareForAccess(target.MipViews[dst], AccessKind::TransferDst);
+                const u32 half = std::max(1u, size / 2);
+                const vk::ImageBlit blit{
+                    .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                       .mipLevel = dst - 1,
+                                       .baseArrayLayer = 0,
+                                       .layerCount = CubeFaces},
+                    .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                    vk::Offset3D{.x = static_cast<i32>(size),
+                                                 .y = static_cast<i32>(size),
+                                                 .z = 1}}},
+                    .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                       .mipLevel = dst,
+                                       .baseArrayLayer = 0,
+                                       .layerCount = CubeFaces},
+                    .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                    vk::Offset3D{.x = static_cast<i32>(half),
+                                                 .y = static_cast<i32>(half),
+                                                 .z = 1}}},
+                };
+                vkCmd.blitImage(GetVkImage(*target.Cube), vk::ImageLayout::eTransferSrcOptimal,
+                                GetVkImage(*target.Cube), vk::ImageLayout::eTransferDstOptimal, 1,
+                                &blit, vk::Filter::eLinear);
+                size = half;
+            }
+            cmd.PrepareForAccess(target.SumView, AccessKind::SampleCompute);
+        }
+
+        // An earlier bake's later layers read the sums in their fragments: order this write after
+        // those reads, and this bake's reads after the write.
+        const vk::MemoryBarrier beforeWrite{.srcAccessMask = vk::AccessFlagBits::eShaderRead,
+                                            .dstAccessMask = vk::AccessFlagBits::eShaderWrite};
+        vkCmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eComputeShader, {}, 1, &beforeWrite, 0, nullptr, 0, nullptr);
+        cmd.BindPipeline(m_FieldSumPipeline);
+        m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+        for (u32 t = 0; t < count; ++t)
+        {
+            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                .Sets = {m_FieldTargets[t].SumSet},
+                .FirstSet = BindlessRegistry::FirstUserSet,
+                .PipelineBindPoint = PipelineBindPoint::Compute,
+            });
+            cmd.PushConstants(
+                FieldSumPush{.FaceSize = m_FieldFaceSize, .OutputBase = t * CubeFaces});
+            cmd.Dispatch(1, 1, CubeFaces);
+            // The set binds the whole buffer, so each target's dispatch is ordered after the last
+            // although it writes only its own six sums.
+            if (t + 1 < count)
+            {
+                const vk::MemoryBarrier betweenWrites{
+                    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+                    .dstAccessMask = vk::AccessFlagBits::eShaderWrite};
+                vkCmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                      vk::PipelineStageFlagBits::eComputeShader, {}, 1,
+                                      &betweenWrites, 0, nullptr, 0, nullptr);
+            }
+        }
+        const vk::MemoryBarrier afterWrite{.srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+                                           .dstAccessMask = vk::AccessFlagBits::eShaderRead};
+        vkCmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                              vk::PipelineStageFlagBits::eFragmentShader, {}, 1, &afterWrite, 0,
+                              nullptr, 0, nullptr);
+
+        for (u32 t = 0; t < count; ++t)
+        {
+            cmd.PrepareForAccess(m_FieldTargets[t].CubeView, AccessKind::SampleAny);
+        }
+    }
+
+    u32 BakedSkyCube::AcquireFaceViewSlot(const u32 face, const bool faceFirst,
+                                          const u32 fieldTargets)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
@@ -537,13 +784,16 @@ namespace Veng::Renderer
         // split across frames re-claims each frame, since a slot claimed in a prior frame is not
         // this frame's to reference. The epoch, not the command buffer, marks the recording: two
         // frames a slot apart share one command buffer.
-        if (faceFirst || registry.GetViewEpoch() != m_LastTileViewEpoch || face != m_LastTileFace)
+        if (faceFirst || registry.GetViewEpoch() != m_LastTileViewEpoch || face != m_LastTileFace ||
+            fieldTargets != m_LastTileFieldTargets)
         {
             const bool claimed = registry.TryBeginView();
             VE_ASSERT(claimed,
                       "BakedSkyCube: the frame's view budget is spent; a bake tick declares its "
                       "view slot so the generated-texture pump defers it instead");
-            ViewConstantsRegion region{};
+            // Every field a bake face does not read stays zero: no scene, no clock, no exposure, and
+            // a zero sky rotation, which turns nothing.
+            ViewConstantsBlock region{};
             region.InvViewProj = m_FaceInvViewProj[face];
             // The face basis is already a pure direction mapping with no camera translation in it, so
             // it is its own rotation-only inverse and serves SkyViewDirection unchanged.
@@ -551,20 +801,28 @@ namespace Veng::Renderer
             region.CameraPosition = vec4(0.0f);
             region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
             region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            if (fieldTargets > 0)
+            {
+                for (u32 t = 0; t < fieldTargets; ++t)
+                {
+                    region.SkyBakeFieldCubes[static_cast<i32>(t)] = m_FieldTargets[t].Handle.Index;
+                }
+                region.SkyBakeFieldInfo = {fieldTargets, m_FieldSumsHandle.Index,
+                                           m_FieldSamplerHandle.Index, m_FieldFaceSize};
+            }
             registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
             m_LastTileViewIndex = registry.GetCurrentViewConstantsIndex();
             m_LastTileViewEpoch = registry.GetViewEpoch();
             m_LastTileFace = face;
+            m_LastTileFieldTargets = fieldTargets;
         }
         return m_LastTileViewIndex;
     }
 
-    void BakedSkyCube::RecordMaterialRegion(CommandBuffer& cmd,
-                                            const Ref<GraphicsPipeline>& pipeline,
-                                            const MaterialInstance& material,
-                                            const Ref<ImageView>& faceView, const u32 faceSize,
-                                            const u32 face, const uvec2 tileOffset,
-                                            const uvec2 tileExtent, const bool clear)
+    void BakedSkyCube::RecordMaterialRegion(
+        CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline, const MaterialInstance& material,
+        const std::span<const Ref<ImageView>> faceViews, const u32 faceSize, const u32 face,
+        const uvec2 tileOffset, const uvec2 tileExtent, const bool clear, const u32 fieldTargets)
     {
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 selector = material.GetMaterialSelector();
@@ -574,20 +832,26 @@ namespace Veng::Renderer
         // tile (offset 0,0) — which under a layered bake is not the layer that clears, so the claim is
         // keyed on the tile, not the clear.
         const bool faceFirst = tileOffset.x == 0 && tileOffset.y == 0;
-        const u32 viewIndex = AcquireFaceViewSlot(face, faceFirst);
+        const u32 viewIndex = AcquireFaceViewSlot(face, faceFirst, fieldTargets);
 
-        cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
         // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
         // tiles already baked into this face); Clear the face's first tile, Load every later one.
-        cmd.BeginRendering({
-            .Offset = {static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
-            .Extent = tileExtent,
-            .ColorAttachments = {{
+        vector<RenderingAttachmentInfo> attachments;
+        attachments.reserve(faceViews.size());
+        for (const Ref<ImageView>& faceView : faceViews)
+        {
+            cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
+            attachments.push_back({
                 .ImageView = faceView,
                 .LoadOp = clear ? LoadOp::Clear : LoadOp::Load,
                 .StoreOp = StoreOp::Store,
                 .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-            }},
+            });
+        }
+        cmd.BeginRendering({
+            .Offset = {static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
+            .Extent = tileExtent,
+            .ColorAttachments = std::move(attachments),
         });
         cmd.BindPipeline(pipeline);
         // Viewport spans the whole face so the SV_Position → UV → world-direction mapping is the
@@ -614,8 +878,8 @@ namespace Veng::Renderer
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            RecordMaterialRegion(cmd, m_Pipeline, material, m_FaceViews[face], m_FaceSize, face,
-                                 {0, 0}, {m_FaceSize, m_FaceSize}, true);
+            RecordMaterialRegion(cmd, m_Pipeline, material, std::span(&m_FaceViews[face], 1),
+                                 m_FaceSize, face, {0, 0}, {m_FaceSize, m_FaceSize}, true);
         }
         // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
         // fragment, and the IBL convolution reads it with a dispatch.
@@ -632,6 +896,8 @@ namespace Veng::Renderer
         {
             VE_ASSERT(layer.FaceSizeDivisor <= 1,
                       "BakedSkyCube::Bake: FaceSizeDivisor > 1 needs the amortized RequestBake");
+            VE_ASSERT(layer.Role == SkyBakeRole::Picture,
+                      "BakedSkyCube::Bake: a Field layer needs the amortized RequestBake");
         }
         // The synchronous layered path renders whole faces, layer by layer: the first layer clears
         // each face, every later layer Loads and blends over it, so the finished cube is the
@@ -641,7 +907,7 @@ namespace Veng::Renderer
             for (u32 face = 0; face < CubeFaces; ++face)
             {
                 RecordMaterialRegion(cmd, m_LayerPipelines[layer].Pipeline, *layers[layer].Material,
-                                     m_FaceViews[face], m_FaceSize, face, {0, 0},
+                                     std::span(&m_FaceViews[face], 1), m_FaceSize, face, {0, 0},
                                      {m_FaceSize, m_FaceSize}, layer == 0);
             }
         }
@@ -810,85 +1076,166 @@ namespace Veng::Renderer
     }
 
     void BakedSkyCube::RequestBake(GeneratedTextureService& service,
-                                   const std::span<const SkyBakeLayer> layers, string cacheKey)
+                                   const std::span<const SkyBakeLayer> layers, string cacheKey,
+                                   string fieldKey)
     {
         VE_ASSERT(!layers.empty(), "BakedSkyCube::RequestBake: a bake needs at least one layer");
-        EnsureLayerPipelines(layers);
 
         // Supersede whatever bake is outstanding: a fresh dirty signal wants the newest content in
         // the scratch cube, not a completed or half-filled older one.
         CancelBake();
 
-        // The base layer (layer 0, the opaque clear) may bake at a reduced resolution into the coarse
+        // The base layer (layer 0) may bake at a reduced resolution: a Picture base into the coarse
         // scratch cube, upsampled into the full cube by a replacing blit before the finer layers
-        // composite over it; only it may, because the later blended layers must Load over it at full
-        // resolution.
+        // composite over it; a Field base into the field cubes the later layers read. Only it may,
+        // because the later blended layers must Load at full resolution.
+        const bool hasField = layers[0].Role == SkyBakeRole::Field;
         const u32 baseDivisor = std::max(layers[0].FaceSizeDivisor, 1u);
         VE_ASSERT(
             (baseDivisor & (baseDivisor - 1)) == 0 && m_FaceSize % baseDivisor == 0,
             "BakedSkyCube::RequestBake: base FaceSizeDivisor {} must be a power of two dividing "
             "the face size {}",
             baseDivisor, m_FaceSize);
-        for (usize i = 1; i < layers.size(); ++i)
-        {
-            VE_ASSERT(layers[i].FaceSizeDivisor <= 1,
-                      "BakedSkyCube::RequestBake: only the base layer may set FaceSizeDivisor > 1 "
-                      "(layer {} set {})",
-                      i, layers[i].FaceSizeDivisor);
-        }
-
-        // Resolve each layer into what its ticks need — the pipeline, the material, and the tile grid
-        // its own tile size induces over its face — and capture the list by value, so the tick lambda
-        // is decoupled from m_LayerPipelines (a superseding request rebuilds that in place) while each
-        // layer bounds one tick's work with its own caller-set granularity. A layer naming no tile
-        // size takes the engine default.
-        struct LayerRender
-        {
-            Ref<GraphicsPipeline> Pipeline;
-            const MaterialInstance* Material;
-            u32 FaceSize;     // the coarse face for a reduced base, else the full face
-            u32 TilePixels;   // this layer's tile size — its granularity
-            u32 TilesPerAxis; // tiles along one face axis
-            u32 TilesPerFace; // TilesPerAxis², so CubeFaces × this is the layer's tick span
-            bool Coarse;      // the base rendered into the coarse scratch cube
-        };
-        vector<LayerRender> render;
-        render.reserve(layers.size());
         for (usize i = 0; i < layers.size(); ++i)
         {
-            const bool coarse = i == 0 && baseDivisor > 1;
-            const u32 faceSize = coarse ? m_FaceSize / baseDivisor : m_FaceSize;
+            const SkyBakeLayer& layer = layers[i];
+            const u32 declared = layer.Material->GetParent().Get()->GetSkyFieldTargets();
+            if (layer.Role == SkyBakeRole::Field)
+            {
+                VE_ASSERT(i == 0,
+                          "BakedSkyCube::RequestBake: only the first layer may be a Field "
+                          "(layer {} is one)",
+                          i);
+                VE_ASSERT(layer.FieldTargets >= 1 && layer.FieldTargets <= MaxFieldTargets &&
+                              layer.FieldTargets == declared,
+                          "BakedSkyCube::RequestBake: the field layer names {} targets and its "
+                          "material '{}' declares {}",
+                          layer.FieldTargets, layer.Material->GetName(), declared);
+            }
+            else
+            {
+                VE_ASSERT(declared == 0,
+                          "BakedSkyCube::RequestBake: layer {} is a Picture layer drawn with the "
+                          "field material '{}'",
+                          i, layer.Material->GetName());
+            }
+            VE_ASSERT(i == 0 || layer.FaceSizeDivisor <= 1,
+                      "BakedSkyCube::RequestBake: only the base layer may set FaceSizeDivisor > 1 "
+                      "(layer {} set {})",
+                      i, layer.FaceSizeDivisor);
+        }
+        VE_ASSERT(!hasField || layers.size() > 1,
+                  "BakedSkyCube::RequestBake: a field layer needs a Picture layer after it");
+        EnsureLayerPipelines(layers);
+
+        const u32 fieldTargets = hasField ? layers[0].FieldTargets : 0u;
+        const u32 fieldFaceSize = m_FaceSize / baseDivisor;
+        if (hasField)
+        {
+            EnsureFieldTargets(fieldFaceSize, fieldTargets);
+        }
+        else if (baseDivisor > 1)
+        {
+            EnsureCoarseScratch(fieldFaceSize);
+        }
+        // A standing field this request names again is read as it stands, so only the Picture
+        // layers run.
+        const bool runField =
+            hasField && !(m_FieldStanding && !fieldKey.empty() && fieldKey == m_FieldKey &&
+                          m_FieldStandingTargets == fieldTargets);
+
+        // The job is a list of phases run in order, each one or more ticks at its own cost: a layer's
+        // tiles face-major over its own grid, or a single step between layers. Each tile phase
+        // captures what its ticks need by value, so the tick lambda is decoupled from
+        // m_LayerPipelines (a superseding request rebuilds that in place).
+        enum class PhaseKind : u8
+        {
+            Tiles,       // one tile of one face of a layer per tick
+            Promote,     // the coarse Picture base's upsampling blit
+            FieldFinish, // the field's mips and sums
+        };
+        enum class Destination : u8
+        {
+            Scratch,       // the full-resolution scratch cube
+            CoarseScratch, // the coarse scratch cube a reduced Picture base renders into
+            Field,         // the field cubes
+        };
+        struct Phase
+        {
+            PhaseKind Kind = PhaseKind::Tiles;
+            u32 Ticks = 1;
+            u32 Cost = 1;
+            Ref<GraphicsPipeline> Pipeline;
+            const MaterialInstance* Material = nullptr;
+            Destination Target = Destination::Scratch;
+            u32 FaceSize = 0;
+            u32 TilePixels = 0;
+            u32 TilesPerAxis = 0;
+            u32 TilesPerFace = 0;
+            // Clear a face's first tile (a base), every tile (the first layer after a field), or none.
+            bool ClearFirstTile = false;
+            bool ClearEveryTile = false;
+            // The field targets this layer reads, 0 for none.
+            u32 ReadsField = 0;
+        };
+        const auto tilePhase = [&](const usize layer, const Destination target, const u32 faceSize)
+        {
             const u32 tilePixels =
-                layers[i].TilePixels != 0 ? layers[i].TilePixels : SkyBakeTilePixels;
+                layers[layer].TilePixels != 0 ? layers[layer].TilePixels : SkyBakeTilePixels;
             const u32 tilesPerAxis = TilesPerFaceAxis(faceSize, tilePixels);
-            render.push_back({
-                .Pipeline = m_LayerPipelines[i].Pipeline,
-                .Material = layers[i].Material,
+            return Phase{
+                .Kind = PhaseKind::Tiles,
+                .Ticks = CubeFaces * tilesPerAxis * tilesPerAxis,
+                .Cost = std::max(1u, layers[layer].Cost),
+                .Pipeline = m_LayerPipelines[layer].Pipeline,
+                .Material = layers[layer].Material,
+                .Target = target,
                 .FaceSize = faceSize,
                 .TilePixels = tilePixels,
                 .TilesPerAxis = tilesPerAxis,
                 .TilesPerFace = tilesPerAxis * tilesPerAxis,
-                .Coarse = coarse,
-            });
-        }
-        if (baseDivisor > 1)
+            };
+        };
+
+        vector<Phase> phases;
+        if (hasField)
         {
-            EnsureCoarseScratch(render[0].FaceSize);
+            if (runField)
+            {
+                Phase field = tilePhase(0, Destination::Field, fieldFaceSize);
+                field.ClearFirstTile = true;
+                phases.push_back(std::move(field));
+                phases.push_back({.Kind = PhaseKind::FieldFinish});
+            }
+        }
+        else
+        {
+            Phase base =
+                tilePhase(0, baseDivisor > 1 ? Destination::CoarseScratch : Destination::Scratch,
+                          fieldFaceSize);
+            base.ClearFirstTile = true;
+            phases.push_back(std::move(base));
+            if (baseDivisor > 1)
+            {
+                phases.push_back({.Kind = PhaseKind::Promote});
+            }
+        }
+        for (usize layer = 1; layer < layers.size(); ++layer)
+        {
+            Phase picture = tilePhase(layer, Destination::Scratch, m_FaceSize);
+            picture.ClearEveryTile = hasField && layer == 1;
+            picture.ReadsField = fieldTargets;
+            phases.push_back(std::move(picture));
         }
 
-        // The tick index enumerates, in order: the base layer's (face, tile) over its grid, the one
-        // promote tick (a reduced base only), then each finer layer's (face, tile) over its own grid.
-        const u32 promoteTicks = baseDivisor > 1 ? 1u : 0u;
-        u32 tickCount = promoteTicks;
-        for (const LayerRender& r : render)
+        u32 tickCount = 0;
+        vector<GeneratedTextureCostPhase> costPhases;
+        costPhases.reserve(phases.size());
+        for (const Phase& phase : phases)
         {
-            tickCount += CubeFaces * r.TilesPerFace;
+            tickCount += phase.Ticks;
+            costPhases.push_back({.Ticks = phase.Ticks, .Cost = phase.Cost});
         }
-
-        // The amortized bake is one generated-texture job at a single per-tick cost; the base layer —
-        // the dear, tile-dominating backdrop — declares it, so a dear sky runs fewer ticks a frame
-        // while a cheap one runs its default weight.
-        const u32 jobCost = std::max(1u, layers[0].Cost);
 
         GeneratedTextureRequest request{
             .Key = m_JobKey,
@@ -900,66 +1247,71 @@ namespace Veng::Renderer
             }},
             .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
-            .Cost = jobCost,
+            .CostPhases = std::move(costPhases),
             // A face tile renders through a view slot of its own (AcquireFaceViewSlot).
             .ViewSlots = 1,
             .OnTick =
-                [this, render = std::move(render),
-                 promoteTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+                [this, phases = std::move(phases), fieldTargets, fieldKey = std::move(fieldKey)](
+                    CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
                 u32 idx = context.TickIndex;
-
-                // The base layer, face-major over its own tile grid, into the coarse scratch cube (a
-                // reduced base) or the full scratch cube. Its first tile of each face clears; the rest
-                // Load.
+                for (const Phase& phase : phases)
                 {
-                    const LayerRender& base = render[0];
-                    const u32 baseTicks = CubeFaces * base.TilesPerFace;
-                    if (idx < baseTicks)
+                    if (idx >= phase.Ticks)
                     {
-                        const u32 face = idx / base.TilesPerFace;
-                        const u32 tile = idx % base.TilesPerFace;
-                        const TileRect rect =
-                            TileRectFor(tile, base.TilesPerAxis, base.FaceSize, base.TilePixels);
-                        const Ref<ImageView>& faceView =
-                            base.Coarse ? m_CoarseScratchFaceViews[face] : m_ScratchFaceViews[face];
-                        RecordMaterialRegion(cmd, base.Pipeline, *base.Material, faceView,
-                                             base.FaceSize, face, rect.Offset, rect.Extent,
-                                             tile == 0);
-                        return;
+                        idx -= phase.Ticks;
+                        continue;
                     }
-                    idx -= baseTicks;
-                }
-
-                // One blit upsamples the whole coarse base into the full scratch, when the base was
-                // reduced, before the finer layers composite over it.
-                if (promoteTicks != 0)
-                {
-                    if (idx < promoteTicks)
+                    switch (phase.Kind)
                     {
+                    case PhaseKind::Promote:
                         RecordCoarsePromote(cmd);
                         return;
-                    }
-                    idx -= promoteTicks;
-                }
-
-                // The finer layers, full-resolution, each over its own tile grid, Loading and blending
-                // over the base already in the scratch cube.
-                for (usize layer = 1; layer < render.size(); ++layer)
-                {
-                    const LayerRender& r = render[layer];
-                    const u32 layerTicks = CubeFaces * r.TilesPerFace;
-                    if (idx < layerTicks)
-                    {
-                        const u32 face = idx / r.TilesPerFace;
-                        const u32 tile = idx % r.TilesPerFace;
-                        const TileRect rect =
-                            TileRectFor(tile, r.TilesPerAxis, r.FaceSize, r.TilePixels);
-                        RecordMaterialRegion(cmd, r.Pipeline, *r.Material, m_ScratchFaceViews[face],
-                                             r.FaceSize, face, rect.Offset, rect.Extent, false);
+                    case PhaseKind::FieldFinish:
+                        RecordFieldFinish(cmd, fieldTargets);
+                        m_FieldStanding = true;
+                        m_FieldKey = fieldKey;
+                        m_FieldStandingTargets = fieldTargets;
                         return;
+                    case PhaseKind::Tiles:
+                        break;
                     }
-                    idx -= layerTicks;
+
+                    const u32 face = idx / phase.TilesPerFace;
+                    const u32 tile = idx % phase.TilesPerFace;
+                    const TileRect rect =
+                        TileRectFor(tile, phase.TilesPerAxis, phase.FaceSize, phase.TilePixels);
+                    std::array<Ref<ImageView>, MaxFieldTargets> views;
+                    u32 viewCount = 1;
+                    switch (phase.Target)
+                    {
+                    case Destination::Scratch:
+                        views[0] = m_ScratchFaceViews[face];
+                        break;
+                    case Destination::CoarseScratch:
+                        views[0] = m_CoarseScratchFaceViews[face];
+                        break;
+                    case Destination::Field:
+                        // The field's first tile overwrites what stood: from here until its
+                        // sums land, no field stands.
+                        if (idx == 0)
+                        {
+                            m_FieldStanding = false;
+                            m_FieldKey.clear();
+                        }
+                        viewCount = fieldTargets;
+                        for (u32 t = 0; t < fieldTargets; ++t)
+                        {
+                            views[t] = m_FieldTargets[t].FaceViews[face];
+                        }
+                        ++m_FieldTilesRecorded;
+                        break;
+                    }
+                    const bool clear = phase.ClearEveryTile || (phase.ClearFirstTile && tile == 0);
+                    RecordMaterialRegion(cmd, phase.Pipeline, *phase.Material,
+                                         std::span(views.data(), viewCount), phase.FaceSize, face,
+                                         rect.Offset, rect.Extent, clear, phase.ReadsField);
+                    return;
                 }
             },
             .OnComplete = [this](const GeneratedTextureResult&)

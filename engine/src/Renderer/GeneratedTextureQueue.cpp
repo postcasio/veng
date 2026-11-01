@@ -6,19 +6,47 @@
 
 namespace Veng::Renderer
 {
+    u32 GeneratedTextureTickCost(const GeneratedTextureJobRecord& record, const u32 tickIndex)
+    {
+        if (record.CostPhases.empty())
+        {
+            return record.Cost;
+        }
+        u32 first = 0;
+        for (const GeneratedTextureCostPhase& phase : record.CostPhases)
+        {
+            if (tickIndex < first + phase.Ticks)
+            {
+                return std::max(1u, phase.Cost);
+            }
+            first += phase.Ticks;
+        }
+        return std::max(1u, record.CostPhases.back().Cost);
+    }
+
     bool GeneratedTextureQueue::Add(const u64 key, const u32 tickCount, const i32 priority,
-                                    const u32 cost)
+                                    const u32 cost,
+                                    const std::span<const GeneratedTextureCostPhase> phases)
     {
         if (Contains(key))
         {
             return false;
         }
+        u64 phaseTicks = 0;
+        for (const GeneratedTextureCostPhase& phase : phases)
+        {
+            phaseTicks += phase.Ticks;
+        }
+        VE_ASSERT(phases.empty() || phaseTicks == std::max(1u, tickCount),
+                  "generated-texture job {}: its cost phases cover {} ticks of {}", key, phaseTicks,
+                  tickCount);
         m_Jobs.push_back({
             .Key = key,
             .Priority = priority,
             .Sequence = m_NextSequence++,
             .TickCount = std::max(1u, tickCount),
             .Cost = std::max(1u, cost),
+            .CostPhases = {phases.begin(), phases.end()},
         });
         return true;
     }
@@ -148,7 +176,7 @@ namespace Veng::Renderer
             // The first tick of a pump runs whenever there is a positive budget to draw on, so a
             // tick dearer than the whole budget still advances one-a-frame rather than stalling;
             // after that, and always for a zero budget, a tick runs only while its cost fits.
-            const u64 cost = record->Cost;
+            const u64 cost = GeneratedTextureTickCost(*record, record->TicksDone);
             const bool untouched = ticks == 0 && spent == 0 && budget > 0;
             if (!untouched && spentCost + cost > budget)
             {

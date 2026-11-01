@@ -27,10 +27,10 @@ namespace Veng
           m_ExcludesFromMetering(info.ExcludesFromMetering), m_Layer(info.Layer),
           m_Blend(info.Blend), m_ReadsSceneColor(info.ReadsSceneColor),
           m_ReadsSceneDepth(info.ReadsSceneDepth), m_InstancedSets(info.InstancedSets),
-          m_SphereTerrain(info.SphereTerrain), m_Pipeline(info.Pipeline),
-          m_VertexShader(info.VertexShader), m_FragmentShader(info.FragmentShader),
-          m_Textures(info.Textures), m_Block(info.Block), m_Fields(info.Fields),
-          m_SelectorOffset(info.SelectorOffset)
+          m_SphereTerrain(info.SphereTerrain), m_SkyFieldTargets(info.SkyFieldTargets),
+          m_Pipeline(info.Pipeline), m_VertexShader(info.VertexShader),
+          m_FragmentShader(info.FragmentShader), m_Textures(info.Textures), m_Block(info.Block),
+          m_Fields(info.Fields), m_SelectorOffset(info.SelectorOffset)
     {
         // Unfinalized at construction: the default block's handle slots are patched and the
         // pipeline is stored in Finalize().

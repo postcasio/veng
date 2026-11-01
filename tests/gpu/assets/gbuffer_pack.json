@@ -40,6 +40,26 @@
       "id": "0x00000000000024A3",
       "type": "Material",
       "source": "materials/analytic_sky.vmat.json"
+    },
+    {
+      "id": "0xD2C90D8986773CAA",
+      "type": "Shader",
+      "source": "shaders/sky_field.frag.shader.json"
+    },
+    {
+      "id": "0xBFAC8ADDCCC400FE",
+      "type": "Material",
+      "source": "materials/sky_field.vmat.json"
+    },
+    {
+      "id": "0xC43F0299F556E358",
+      "type": "Shader",
+      "source": "shaders/sky_field_read.frag.shader.json"
+    },
+    {
+      "id": "0x7165A2FEB1EF6F28",
+      "type": "Material",
+      "source": "materials/sky_field_read.vmat.json"
     }
   ]
 }

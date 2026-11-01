@@ -2286,6 +2286,11 @@ if (VENG_BUILD_TESTS)
             # the per-direction analytic radiance, in-place re-bake, and the baked cube
             # round-tripping the skybox display path (baked ≈ direct through the renderer).
             tests/gpu/sky_bake.cpp
+            # A layered bake beginning with a field: the later layers read each field target back
+            # bicubically, by mip and by its solid-angle mean; a re-composite over a standing field
+            # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
+            # ticks charge their own layer's cost.
+            tests/gpu/sky_bake_field.cpp
             # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
             # the Sky lights until the first sweep lands, the capture then re-lights once per
             # completed sweep under a baked, direct, environment or absent Sky, disabling it

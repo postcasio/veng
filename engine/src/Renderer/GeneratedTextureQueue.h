@@ -5,7 +5,10 @@
 // pure function of the job set and is unit-testable with no ICD (the FrameTopology / DrawBudget
 // precedent). It records nothing, owns no resource, and knows nothing about what a tick does.
 
+#include <span>
+
 #include <Veng/Veng.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 
 namespace Veng::Renderer
 {
@@ -40,6 +43,9 @@ namespace Veng::Renderer
         /// budget spends fewer of its ticks per frame. At the default of one, a budget of N spends N
         /// ticks per frame — the tick-count schedule this replaced.
         u32 Cost = 1;
+        /// @brief The job's ticks as consecutive phases with their own costs, or empty for every
+        ///        tick to charge Cost. See GeneratedTextureRequest::CostPhases.
+        vector<GeneratedTextureCostPhase> CostPhases;
         /// @brief The job's lifecycle state.
         GeneratedTextureState State = GeneratedTextureState::Queued;
         /// @brief Whether the job is live but excluded from selection, so no tick is spent on it.
@@ -49,6 +55,13 @@ namespace Veng::Renderer
         /// running a tick would spend the work the answer might make unnecessary.
         bool Held = false;
     };
+
+    /// @brief The cost a job's tick charges: its phase's when the job declares phases, else Cost.
+    /// @param record    The job's record.
+    /// @param tickIndex The tick, counting from zero; one past the phases charges the last phase's.
+    /// @return The tick's cost, at least one.
+    [[nodiscard]] VE_API u32 GeneratedTextureTickCost(const GeneratedTextureJobRecord& record,
+                                                      u32 tickIndex);
 
     /// @brief What else bounds one Spend beyond its cost budget.
     struct GeneratedTextureSpendLimits
@@ -84,8 +97,12 @@ namespace Veng::Renderer
         /// @param priority  Initial priority; higher runs first.
         /// @param cost      Cost one of the job's ticks charges against a pump's budget; zero is
         ///                  treated as one, and one — the default — reproduces the tick-count schedule.
+        /// @param phases    Consecutive tick phases with their own costs, replacing @p cost; empty
+        ///                  for every tick to charge @p cost.
         /// @return True when the job was added; false when the key was already live.
-        bool Add(u64 key, u32 tickCount, i32 priority, u32 cost = 1);
+        /// @pre An engaged @p phases sums to @p tickCount (asserted).
+        bool Add(u64 key, u32 tickCount, i32 priority, u32 cost = 1,
+                 std::span<const GeneratedTextureCostPhase> phases = {});
 
         /// @brief Removes a job whatever its state.
         /// @param key The job's key.
@@ -135,7 +152,8 @@ namespace Veng::Renderer
 
         /// @brief Spends up to @p budget of summed tick cost across the pending jobs, in order.
         ///
-        /// Runs ticks in selection order, charging each job's Cost against the budget, and stops once
+        /// Runs ticks in selection order, charging each tick's cost (GeneratedTextureTickCost)
+        /// against the budget, and stops once
         /// the next tick's cost would exceed what remains. The first tick of a pump always runs when
         /// the budget is a positive, untouched one, so a single tick dearer than the whole budget
         /// still advances one-a-frame instead of stalling forever; a budget of zero spends nothing.

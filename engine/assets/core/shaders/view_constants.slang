@@ -138,9 +138,17 @@ struct ViewConstants
     // Zero in a block no tonemapped view wrote (a sky-bake face) — ViewInverseExposure reads that
     // as an exposure of 1.
     float4 ExposureParams;
+
+    // A layered sky bake's field (Veng/sky_bake.slang): the g_Cubes slot of each field target, read
+    // only for the targets SkyBakeFieldInfo.x counts.
+    uint4 SkyBakeFieldCubes;
+    // x the field's target count, zero in every block but a field bake's later layers; y the
+    // g_Buffers slot of the per-face solid-angle sums SkyBakeFieldMean reads; z the sampler slot
+    // the targets are read through; w the field cube's face edge in texels.
+    uint4 SkyBakeFieldInfo;
 };
 
-static const uint ViewConstantsStride = 864;
+static const uint ViewConstantsStride = 896;
 
 // Rotates `v` by the unit quaternion `q` (xyz the vector part, w the scalar). The zero quaternion
 // leaves `v` unchanged.

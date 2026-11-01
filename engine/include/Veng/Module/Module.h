@@ -656,10 +656,16 @@ extern "C"
 /// Version 165 gives a capture surface its own planes: CaptureSurface grows Near, Far and
 /// InfiniteFar, after VisibleLayers. A module spawns capture surfaces, so a stale one lays the
 /// component out short and reads every field after it at a shifted offset.
+/// Version 166 lets a layered sky bake begin with a field: BakedSkyCube::SkyBakeLayer grows Role
+/// and FieldTargets, BakedSkyCube its field cubes, GeneratedTextureRequest CostPhases, MaterialInfo
+/// and Material the sky field-target count, and the view-constants block the field's slots
+/// (ViewConstantsStride 864 → 896). A module builds bake layers, requests generated textures,
+/// owns cubes and indexes view regions by the stride, so a stale one lays them out short and reads
+/// every region past the first at the wrong offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 165u
+#define VENG_MODULE_ABI_VERSION 166u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

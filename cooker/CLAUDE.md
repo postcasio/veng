@@ -111,7 +111,9 @@ at cook time:
   count the same way. The fragment
   outputs are validated against the material domain's contract (Surface →
   the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
-  emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). A Translucent
+  emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`, a Sky material
+  declaring `"fieldTargets": N` → N float4 targets from `SV_Target0`, the key a located error off the
+  Sky domain or outside 1–4). A Translucent
   material may declare `"blend": "additive"` (default `"alpha"`), a located cook error on any other
   domain, `"readsSceneColor": true` when its fragment samples the pre-translucent scene-colour
   grab (the renderer runs the grab only on a frame some drawn material declares it), and

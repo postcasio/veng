@@ -9,6 +9,7 @@
 // pure integer/order arithmetic, so the whole policy surface is pinned here rather than through a
 // GPU case that would only observe it indirectly.
 
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -388,4 +389,28 @@ TEST_CASE("GeneratedTextureQueue: the tick ceiling bounds a spend whatever the b
     CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedCost, recorder.Tick(), recorder.Complete()) ==
           7u);
     CHECK(queue.Find(1)->State == GeneratedTextureState::Resident);
+}
+
+TEST_CASE("GeneratedTextureQueue: each cost phase charges its own ticks")
+{
+    // Two dear ticks at four, then four cheap ones at one, under a budget of four: each dear tick
+    // runs alone, and the cheap phase runs four to a pump. The tick cost follows the phase.
+    GeneratedTextureQueue queue;
+    const std::array<GeneratedTextureCostPhase, 2> phases{
+        {{.Ticks = 2, .Cost = 4}, {.Ticks = 4, .Cost = 1}}};
+    REQUIRE(queue.Add(1, 6, 0, 1, phases));
+    const GeneratedTextureJobRecord& record = *queue.Find(1);
+    CHECK(GeneratedTextureTickCost(record, 0) == 4u);
+    CHECK(GeneratedTextureTickCost(record, 1) == 4u);
+    CHECK(GeneratedTextureTickCost(record, 2) == 1u);
+    CHECK(GeneratedTextureTickCost(record, 5) == 1u);
+
+    std::vector<u32> ticksPerPump;
+    while (queue.GetPendingCount() > 0)
+    {
+        ticksPerPump.push_back(queue.Spend(4, [](u64, u32, u32) {}, [](u64) {}));
+        CHECK(queue.GetLastSpentCost() <= 4u);
+        REQUIRE(ticksPerPump.size() < 10u);
+    }
+    CHECK(ticksPerPump == std::vector<u32>{1, 1, 4});
 }

@@ -426,6 +426,9 @@ namespace Veng
         const auto blend = static_cast<TranslucentBlend>(header.Blend);
         VE_ASSERT(header.Layer <= static_cast<u32>(TranslucentLayer::PostResolve),
                   "material: header Layer {} is out of range for TranslucentLayer", header.Layer);
+        VE_ASSERT(header.SkyFieldTargets <= MaxSkyFieldTargets,
+                  "material: header SkyFieldTargets {} exceeds {}", header.SkyFieldTargets,
+                  MaxSkyFieldTargets);
 
         // The single block must fit the registry's per-material bound.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaxMaterialBlockBytes)
@@ -594,10 +597,12 @@ namespace Veng
         const bool readsSceneDepth = header.ReadsSceneDepth != 0;
         const bool instancedSets = header.InstancedSets != 0;
         const bool sphereTerrain = header.SphereTerrain != 0;
+        const u32 skyFieldTargets = header.SkyFieldTargets;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask, reactive,
                            meteringExcluded, layer, readsSceneColor, readsSceneDepth, instancedSets,
-                           sphereTerrain](AssetManager& manager,
-                                          std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+                           sphereTerrain,
+                           skyFieldTargets](AssetManager& manager,
+                                            std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
             Renderer::Context& context = manager.GetContext();
@@ -628,6 +633,7 @@ namespace Veng
                 .ReadsSceneDepth = readsSceneDepth,
                 .InstancedSets = instancedSets,
                 .SphereTerrain = sphereTerrain,
+                .SkyFieldTargets = skyFieldTargets,
                 .Pipeline = nullptr,
                 .VertexShader = vsHandle,
                 .FragmentShader = fsHandle,

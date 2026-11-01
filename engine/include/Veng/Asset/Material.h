@@ -280,6 +280,14 @@ namespace Veng
         /// domain only, exclusive with InstancedSets (cook-enforced).
         bool SphereTerrain = false;
 
+        /// @brief How many float4 targets a sky field material's fragment writes, or 0 for a
+        ///        picture sky writing one radiance target.
+        ///
+        /// A field material is the first layer of a layered sky bake (BakedSkyCube::SkyBakeLayer
+        /// with the Field role): it writes physical quantities the later layers read. Sky domain
+        /// only, at most MaxSkyFieldTargets (cook-enforced).
+        u32 SkyFieldTargets = 0;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -414,6 +422,13 @@ namespace Veng
         /// pipeline and it draws on nothing else; a terrain drawn with a material that does not
         /// declare it is reported and draws nothing.
         [[nodiscard]] bool IsSphereTerrain() const { return m_SphereTerrain; }
+
+        /// @brief Returns how many float4 targets a sky field material writes, or 0 for a picture
+        ///        sky.
+        ///
+        /// A material declares it at cook time ("fieldTargets": N). A layered sky bake renders a
+        /// field material only as its first, Field-role layer.
+        [[nodiscard]] u32 GetSkyFieldTargets() const { return m_SkyFieldTargets; }
 
         /// @brief Returns whether the material's fragment reads the shadow maps.
         ///
@@ -627,6 +642,7 @@ namespace Veng
         bool m_ReadsSceneDepth = false;
         bool m_InstancedSets = false;
         bool m_SphereTerrain = false;
+        u32 m_SkyFieldTargets = 0;
         /// @brief Whether the fragment declares SurfaceShadowMapSet; resolved at Finalize.
         bool m_ReadsShadowMaps = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;

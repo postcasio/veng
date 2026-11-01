@@ -732,6 +732,12 @@ reflected set-4 binding the terrain's does not carry), so one set the renderer w
 under every terrain material. A terrain drawn with an undeclared material is reported once and draws
 nothing. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Sphere terrain".
 
+**A Sky material may declare itself a field**, `"fieldTargets": N` (1 to `MaxSkyFieldTargets`, 4;
+`Material::GetSkyFieldTargets`, 0 for a picture sky), its fragment writing N float4 targets from
+SV_Target0 rather than one radiance target. Sky domain only, and the output count is checked at cook.
+A layered sky bake renders such a material only as its first, Field-role layer; see
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "A layered bake may begin with a field".
+
 **A Surface fragment declaring the shadow set reads the shadow maps** (`Material::ReadsShadowMaps`:
 its reflected interface declares `SurfaceShadowMapSet`, 5, through `Veng/light_visibility.slang`;
 no key declares it). Such a material builds no g-buffer pipeline of its own — `GetPipeline` and

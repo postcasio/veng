@@ -79,6 +79,11 @@ namespace Veng::Renderer
         // block no tonemapped view wrote (a sky-bake face), which a reader treats as an exposure
         // of 1.
         vec4 ExposureParams;
+        // The g_Cubes slot of each of a layered sky bake's field targets (BakedSkyCube).
+        uvec4 SkyBakeFieldCubes;
+        // x the field's target count (zero outside a field bake's later layers), y the per-face
+        // solid-angle sums' storage-buffer slot, z the field's sampler slot, w its face edge.
+        uvec4 SkyBakeFieldInfo;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

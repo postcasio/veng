@@ -218,6 +218,19 @@ namespace Veng::Renderer
         std::span<const Unique<GeneratedTexture>> Targets;
     };
 
+    /// @brief A run of a job's ticks charging one cost, for a job whose ticks are not alike.
+    ///
+    /// A job that does two kinds of work — an expensive evaluation, then a cheap pass over its
+    /// result — declares its ticks as consecutive phases so each charges what it costs, rather than
+    /// pricing every tick like the dearest.
+    struct GeneratedTextureCostPhase
+    {
+        /// @brief The number of consecutive ticks in the phase.
+        u32 Ticks = 0;
+        /// @brief The cost each of the phase's ticks charges; zero is treated as one.
+        u32 Cost = 1;
+    };
+
     /// @brief A job: the images to fill, how many ticks that takes, and what each tick records.
     struct GeneratedTextureRequest
     {
@@ -255,6 +268,12 @@ namespace Veng::Renderer
         /// a Kth the ticks-per-frame of a baseline job. The default of one reproduces the pump's
         /// prior tick-count schedule exactly, so a job that declares no cost is unchanged.
         u32 Cost = 1;
+        /// @brief The job's ticks as consecutive phases, each with its own per-tick cost, or empty
+        ///        for every tick to charge Cost.
+        ///
+        /// When set, the phases' tick counts sum to TickCount (a request whose do not is refused),
+        /// tick i charges the cost of the phase it falls in, and Cost is ignored.
+        vector<GeneratedTextureCostPhase> CostPhases;
         /// @brief The most frame view slots one of this job's ticks may claim through
         ///        BindlessRegistry::TryBeginView.
         ///
