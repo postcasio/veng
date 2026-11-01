@@ -115,6 +115,12 @@ namespace Veng::Renderer
         ///        platform-encoder surface presents, so an image imported from one maps here.
         ///        Appended at the fixed ordinal 31 for cooked-blob integer stability.
         A2R10G10B10Unorm,
+        /// @brief BC6H block-compressed RGB unsigned half float (4x4 16-byte blocks, no alpha).
+        ///        High-dynamic-range radiance at one byte per texel: non-negative values up to the
+        ///        half-float maximum, each block two endpoints and per-texel weights in a
+        ///        logarithm-like half-float space. Appended at the fixed ordinal 32 for cooked-blob
+        ///        integer stability.
+        BC6HUfloat,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

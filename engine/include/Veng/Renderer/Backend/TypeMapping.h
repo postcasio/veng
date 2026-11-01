@@ -51,6 +51,8 @@ namespace Veng::Renderer
             return vk::Format::eBc5UnormBlock;
         case Format::BC4Unorm:
             return vk::Format::eBc4UnormBlock;
+        case Format::BC6HUfloat:
+            return vk::Format::eBc6HUfloatBlock;
         case Format::B10G11R11Ufloat:
             return vk::Format::eB10G11R11UfloatPack32;
         case Format::R32Uint:
@@ -123,6 +125,8 @@ namespace Veng::Renderer
             return Format::BC5Unorm;
         case vk::Format::eBc4UnormBlock:
             return Format::BC4Unorm;
+        case vk::Format::eBc6HUfloatBlock:
+            return Format::BC6HUfloat;
         case vk::Format::eB10G11R11UfloatPack32:
             return Format::B10G11R11Ufloat;
         case vk::Format::eR32Uint:

@@ -428,6 +428,34 @@ TEST_CASE("generated texture blob: shapes and texels round-trip")
     CHECK(BeginGeneratedTextureBlob(blob.Shapes, blob.Texels.size() - 1).empty());
 }
 
+TEST_CASE("generated texture blob: a block-compressed chain sizes whole blocks, one per small mip")
+{
+    using namespace Veng::Renderer;
+
+    // An 8x8 BC6H cube with its full chain: mip 0 is 2x2 blocks, and the 4x4, 2x2 and 1x1 mips
+    // each take one partial block, so a copy of any level reads whole 16-byte blocks.
+    const GeneratedTextureBlobShape cube{.TexelFormat = Format::BC6HUfloat,
+                                         .Type = ImageType::Type2D,
+                                         .Extent = {8, 8, 1},
+                                         .Layers = 6,
+                                         .MipLevels = 4};
+    CHECK(GeneratedTextureLayerBytes(cube, 0) == 64u);
+    for (u32 mip = 1; mip < cube.MipLevels; mip++)
+    {
+        CHECK(GeneratedTextureLayerBytes(cube, mip) == 16u);
+    }
+    CHECK(GeneratedTextureShapeBytes(cube) == 6u * (64u + 3u * 16u));
+    CHECK(GeneratedTextureMipOffset(cube, 2) == 6u * (64u + 16u));
+
+    GeneratedTextureBlob blob;
+    blob.Shapes.push_back(cube);
+    blob.Texels.resize(GeneratedTextureTexelBytes(blob.Shapes));
+    const optional<GeneratedTextureBlob> decoded =
+        DecodeGeneratedTextureBlob(EncodeGeneratedTextureBlob(blob));
+    REQUIRE(decoded.has_value());
+    CHECK(decoded->Shapes == blob.Shapes);
+}
+
 TEST_CASE("generated texture blob: a header parses out of a bounded prefix of the payload")
 {
     using namespace Veng::Renderer;

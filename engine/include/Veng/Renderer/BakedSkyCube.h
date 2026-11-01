@@ -65,9 +65,25 @@ namespace Veng::Renderer
     /// RecordAmortized copies
     /// the finished scratch cube into the displayed one on completion — so a dirty sky never blocks
     /// a frame on six fullscreen sky evaluations, and the previous cube stands until the new lands.
-    /// The scratch cube is the reason VRAM is two full-size cubes, not one; only the displayed one
-    /// carries the reduction chain down to the SH readback level, which the SH ambient tier reads
-    /// back without blocking through RecordReductionMips + AsyncReadback.
+    /// The scratch cube is the reason VRAM is two full-size cubes, not one.
+    ///
+    /// **The displayed cube carries a full mip chain**, so the skybox samples it trilinear and a face
+    /// finer than a pixel's view angle minifies without aliasing. **Lighting derives from a float
+    /// lighting reduction** of at most LightingFaceSize per face, never from the display cube: the
+    /// SH tier reads it back and the IBL convolution samples it (GetLightingView). For a float cube
+    /// the reduction is the display cube's own mip tail from the first level at or below that size;
+    /// for a block-compressed cube it is a separate float cube the bake writes beside it.
+    ///
+    /// **The displayed cube may be block-compressed.** Created with Format::BC6HUfloat as its
+    /// display format, it holds the same radiance at one byte per texel. BC6H blocks cannot be
+    /// rendered to or blended over, so an amortized bake then runs its picture layers **tile by
+    /// tile**: each tick renders every picture layer, in order, into one tile-sized float target,
+    /// builds the tile's mips, copies its matching mip into the lighting reduction, and encodes the
+    /// mips whose share of the tile is at least one 4x4 block into the compressed scratch cube on
+    /// the GPU. One last step builds the lighting reduction's mips and encodes the coarser face mips
+    /// from them. So no full-size float cube ever exists, and peak memory is the two compressed
+    /// cubes, two lighting reductions and one float tile. Only the layered RequestBake (and the
+    /// single-material RequestBake, its one-layer case) bake a compressed cube.
     ///
     /// **An amortized bake may begin with a field.** A baked sky's cost is usually one smooth,
     /// expensive evaluation (a volume march, a multiple-scattering integral) while its look depends
@@ -88,14 +104,23 @@ namespace Veng::Renderer
         ///                       cube target renders at this format so the baked radiance round-trips
         ///                       the skybox sampler with no conversion.
         /// @param faceSize      Cube face edge length in texels.
-        /// @param assets        The asset manager the field's solid-angle reduction shader loads
-        ///                      from during this call, or null for a cube that never bakes a field
-        ///                      layer. A field bake on a cube created without one is fatal.
+        /// @param assets        The asset manager the field's solid-angle reduction shader and the
+        ///                      block encoder load from during this call, or null for a float cube
+        ///                      that never bakes a field layer. A field bake on a cube created
+        ///                      without one is fatal.
+        /// @param displayFormat The format the displayed cube stores: `sceneColorFormat` (the
+        ///                      default, also selected by Format::Undefined) or Format::BC6HUfloat.
+        ///                      A BC6H cube renders through `sceneColorFormat` and encodes as it
+        ///                      bakes (see the class description).
         /// @return A new BakedSkyCube.
+        /// @pre A BC6H display format needs Context::IsBlockCompressionSupported(), an AssetManager,
+        ///      and a power-of-two face size of at least 4. The caller checks support first and
+        ///      chooses its own fallback.
         static Unique<BakedSkyCube> Create(Context& context,
                                            const Ref<DescriptorSetLayout>& consumerLayout,
                                            Format sceneColorFormat, u32 faceSize,
-                                           AssetManager* assets = nullptr);
+                                           AssetManager* assets = nullptr,
+                                           Format displayFormat = Format::Undefined);
 
         /// @brief Creates the descriptor-set layout a baked cube's consumer set (and the skybox
         ///        pipeline that binds it) is built against — the single definition of that shape.
@@ -123,17 +148,35 @@ namespace Veng::Renderer
         /// amortized tick claims one slot per tile — one slot at a time, spread across frames.
         static constexpr u32 CubeFaces = 6;
 
-        /// @brief Face edge length the SH readback reduces the cube to before reading it back.
+        /// @brief Face edge length the SH readback reads the lighting reduction at.
         ///
         /// A spherical-harmonic ambient tier projects nine order-2 coefficients, which resolve
         /// angular features no finer than roughly 45°. A cube at 64 texels per face samples the
         /// sphere at ~1.4° — far finer than the basis can represent — so reading back the full
         /// display face (which a sky material sizes for point features like a star, thousands of
-        /// texels per face) to produce those nine numbers is wasted bandwidth and CPU. The bake
-        /// reduces the cube to this size through a box-averaging blit chain and reads that level.
-        /// The projection's own per-texel solid-angle weight makes it a proper spherical integral
-        /// at any face resolution, so the reduction is a partial evaluation of the same integral.
+        /// texels per face) to produce those nine numbers is wasted bandwidth and CPU. The readback
+        /// reads the lighting reduction's first mip at or below this size. The projection's own
+        /// per-texel solid-angle weight makes it a proper spherical integral at any face
+        /// resolution, so the reduction is a partial evaluation of the same integral.
         static constexpr u32 ShReadbackFaceSize = 64;
+
+        /// @brief The largest face edge of the lighting reduction the IBL and SH derive from.
+        ///
+        /// The split-sum convolution and the SH projection integrate over wide lobes, so a face
+        /// finer than this adds cost and nothing they can resolve; it also bounds the float cube a
+        /// block-compressed display cube keeps beside it.
+        static constexpr u32 LightingFaceSize = 256;
+
+        /// @brief The default edge length of a block-compressed bake's encode tile, before it is
+        ///        clamped to the face size and to the face over MaxEncodeTilesPerAxis.
+        static constexpr u32 DefaultEncodeTilePixels = 256;
+
+        /// @brief The most encode tiles along one face axis a block-compressed bake may use.
+        ///
+        /// A face mip whose share of a tile is under one 4x4 block is encoded from the lighting
+        /// reduction's chain instead, so every such mip must be no larger than LightingFaceSize:
+        /// a tile of at least the face over 128 keeps them at 256 or below.
+        static constexpr u32 MaxEncodeTilesPerAxis = 128;
 
         /// @brief The most field targets a field layer may write.
         static constexpr u32 MaxFieldTargets = 4;
@@ -235,6 +278,7 @@ namespace Veng::Renderer
         /// @param material The resident Sky-domain material to bake.
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
+        /// @pre The display format is not block-compressed.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
 
         /// @brief Records the six face renders of a composited layer stack into the radiance cube.
@@ -248,6 +292,7 @@ namespace Veng::Renderer
         /// @pre Every layer's material is a MaterialDomain::Sky material.
         /// @pre No layer is a Field or sets FaceSizeDivisor above 1; both need RequestBake.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
+        /// @pre The display format is not block-compressed.
         void Bake(CommandBuffer& cmd, std::span<const SkyBakeLayer> layers);
 
         /// @brief Records the six face renders of the procedural atmosphere into the radiance cube.
@@ -267,21 +312,10 @@ namespace Veng::Renderer
         /// @param intensity     Scales the baked sky radiance + sun disc.
         /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere` this frame.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
+        /// @pre The display format is not block-compressed.
         void BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
                             const Ref<DescriptorSet>& atmosphereSet, const Atmosphere& atmosphere,
                             const vec3& sunDirection, f32 intensity);
-
-        /// @brief Reduces the baked cube to the SH readback level through a box-averaging blit chain.
-        ///
-        /// Records a halving blit per mip step from mip 0 down to `GetShReadbackMipLevel()`, each
-        /// step a linear 2× downsample (a proper 2×2 box average) across all six layers, so the
-        /// readback level holds a spherical-integral-preserving reduction of the display face. Leaves
-        /// mip 0 in a sampled layout for the skybox pass and the readback level in a transfer layout
-        /// for the copy that follows. A no-op when the face already sits at or below
-        /// `ShReadbackFaceSize`. Records into the frame command buffer after the display bake, so the
-        /// deferred SH readback reads the cube that bake produced rather than baking a second one.
-        /// @param cmd The command buffer the reduction blits are recorded into.
-        void RecordReductionMips(CommandBuffer& cmd);
 
         /// @brief Requests an amortized bake of `material` into the scratch cube through the service.
         ///
@@ -309,6 +343,12 @@ namespace Veng::Renderer
         /// A stack beginning with a Field layer runs in two phases, each tile charging its own
         /// layer's Cost: every tile of the field, one step that builds each field target's mip chain
         /// and its solid-angle sums and makes the field readable, then the Picture layers' tiles.
+        ///
+        /// On a block-compressed cube the Picture layers run tile by tile on one shared grid of
+        /// `encodeTilePixels` tiles, every layer of a tile in one tick, then one step encodes the
+        /// coarse mips; a tick charges each layer's Cost scaled by the tile's area over that layer's
+        /// own TilePixels area. The finished compressed chain and its lighting reduction are the
+        /// job's two targets, so a cache stores and restores both.
         /// @param service  The service the job runs through.
         /// @param layers   The ordered layer stack; each layer's material must stay resident with its
         ///                 param block uploaded until the bake completes.
@@ -323,11 +363,17 @@ namespace Veng::Renderer
         ///                 phase is skipped and only the Picture layers run. Starting a field phase
         ///                 clears the standing field, so a bake superseded mid-field leaves none; an
         ///                 empty key always runs the field. Ignored by a stack with no field.
+        /// @param encodeTilePixels The edge length of a block-compressed bake's picture tile, or 0
+        ///                 for DefaultEncodeTilePixels clamped to the face. A power of two dividing
+        ///                 the face size, at least 4 and at least the face over
+        ///                 MaxEncodeTilesPerAxis. It bounds one tick's work exactly as TilePixels
+        ///                 does for a float cube, whose bake ignores it.
         /// @pre Every layer's material is a MaterialDomain::Sky material.
         /// @pre A Field layer is the first layer, is followed by a Picture layer, and the cube was
         ///      created with an AssetManager.
+        /// @pre On a block-compressed cube, no Picture layer sets FaceSizeDivisor above 1.
         void RequestBake(GeneratedTextureService& service, std::span<const SkyBakeLayer> layers,
-                         string cacheKey = {}, string fieldKey = {});
+                         string cacheKey = {}, string fieldKey = {}, u32 encodeTilePixels = 0);
 
         /// @brief Requests an amortized bake of the procedural atmosphere into the scratch cube.
         ///
@@ -341,6 +387,7 @@ namespace Veng::Renderer
         /// @param sunDirection  The normalized toward-sun direction.
         /// @param intensity     Scales the baked sky radiance + sun disc.
         /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere` and stay resident until done.
+        /// @pre The display format is not block-compressed.
         void RequestBakeAtmosphere(GeneratedTextureService& service,
                                    const Ref<GraphicsPipeline>& pipeline,
                                    const Ref<DescriptorSet>& atmosphereSet,
@@ -359,10 +406,11 @@ namespace Veng::Renderer
         /// @brief Copies a just-landed amortized bake into the displayed cube, once.
         ///
         /// Records nothing until an amortized bake has completed; on the frame after completion it
-        /// copies the finished scratch cube into the displayed cube (leaving it in a sampled layout)
-        /// and returns true, so the caller knows to refresh whatever it derives from the cube (the
-        /// SH readback, the IBL convolution). Records into `cmd` before the graph that samples the
-        /// cube. A no-op returning false on every other frame.
+        /// copies the finished scratch cube into the displayed cube — rebuilding a float cube's mip
+        /// chain, or copying a compressed cube's whole chain and its lighting reduction — and leaves
+        /// both sampled, then returns true, so the caller knows to refresh whatever it derives from
+        /// the cube (the SH readback, the IBL convolution). Records into `cmd` before the graph that
+        /// samples the cube. A no-op returning false on every other frame.
         /// @param cmd The command buffer the copy is recorded into.
         /// @return True on the one frame the displayed cube was refreshed from a completed bake.
         bool RecordAmortized(CommandBuffer& cmd);
@@ -385,20 +433,46 @@ namespace Veng::Renderer
         /// sampler), so the skybox pipeline samples it exactly as it samples the IBL radiance cube.
         [[nodiscard]] const Ref<DescriptorSet>& GetSet() const { return m_ConsumerSet; }
 
-        /// @brief The cube image view of the baked radiance, exposed for tests.
+        /// @brief The cube view of the displayed radiance, every mip, which the skybox samples.
         [[nodiscard]] const Ref<ImageView>& GetCubeView() const { return m_CubeView; }
 
-        /// @brief The owned radiance cube image, exposed for tests reading back the baked faces.
+        /// @brief The displayed radiance cube image, in the display format with its full mip chain.
+        ///
+        /// A float cube reads back with a plain copy; a block-compressed one through a sampling
+        /// pass (ReadbackTexels).
         [[nodiscard]] const Ref<Image>& GetCubeImage() const { return m_CubeImage; }
+
+        /// @brief The format the displayed cube stores.
+        [[nodiscard]] Format GetDisplayFormat() const { return m_DisplayFormat; }
+
+        /// @brief Whether the displayed cube is block-compressed (BC6H).
+        [[nodiscard]] bool IsCompressed() const { return m_DisplayFormat == Format::BC6HUfloat; }
 
         /// @brief The cube face edge length in texels.
         [[nodiscard]] u32 GetFaceSize() const { return m_FaceSize; }
 
-        /// @brief The mip level RecordReductionMips reduces to, and the SH readback reads back.
+        /// @brief The float image holding the lighting reduction.
+        ///
+        /// The display cube itself for a float cube (its mips from GetLightingBaseMip on), a
+        /// separate cube for a block-compressed one. Both the SH readback and the IBL read it.
+        [[nodiscard]] const Ref<Image>& GetLightingImage() const { return m_LightingImage; }
+
+        /// @brief A cube view of the lighting reduction and its coarser mips, which the IBL
+        ///        convolution samples. The display view itself for a float cube of at most
+        ///        LightingFaceSize.
+        [[nodiscard]] const Ref<ImageView>& GetLightingView() const { return m_LightingView; }
+
+        /// @brief The mip of GetLightingImage() the lighting reduction begins at.
+        [[nodiscard]] u32 GetLightingBaseMip() const { return m_LightingBaseMip; }
+
+        /// @brief The lighting reduction's face edge length in texels.
+        [[nodiscard]] u32 GetLightingFaceSize() const { return m_LightingFaceSize; }
+
+        /// @brief The mip of GetLightingImage() the SH readback reads back.
         [[nodiscard]] u32 GetShReadbackMipLevel() const { return m_ShReadbackMip; }
 
-        /// @brief The face edge length of the reduced readback level (`GetFaceSize()` >> this level).
-        [[nodiscard]] u32 GetShReadbackFaceSize() const { return m_FaceSize >> m_ShReadbackMip; }
+        /// @brief The face edge length of the SH readback level.
+        [[nodiscard]] u32 GetShReadbackFaceSize() const { return m_ShReadbackFaceSize; }
 
         /// @brief Tiles a face is divided into for an amortized bake (one per tick).
         ///
@@ -428,7 +502,47 @@ namespace Veng::Renderer
 
     private:
         BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
-                     Format sceneColorFormat, u32 faceSize, AssetManager* assets);
+                     Format sceneColorFormat, u32 faceSize, AssetManager* assets,
+                     Format displayFormat);
+
+        /// @brief Creates the block encoder's pipeline, the compressed scratch cube and the
+        ///        double-buffered lighting reduction of a BC6H cube.
+        /// @param assets The asset manager the encoder shader loads from.
+        void CreateCompressedTargets(AssetManager& assets);
+
+        /// @brief Ensures the float tile a compressed bake renders into exists at the given edge,
+        ///        with its mip views and encode sets, and the encode buffer is large enough.
+        /// @param tilePixels The tile's edge length in texels.
+        void EnsureEncodeTile(u32 tilePixels);
+
+        /// @brief Records one encode dispatch: the blocks of one source mip into the encode
+        ///        buffer, starting at `outputBase` blocks.
+        /// @param cmd        The command buffer the dispatch is recorded into.
+        /// @param set        The encode set binding the source mip and the buffer.
+        /// @param sourceSize The source mip's edge length in texels.
+        /// @param layers     The source layers encoded.
+        /// @param outputBase The first block written.
+        /// @return The blocks written.
+        u32 RecordEncodeDispatch(CommandBuffer& cmd, const Ref<DescriptorSet>& set, u32 sourceSize,
+                                 u32 layers, u32 outputBase);
+
+        /// @brief Finishes one rendered tile of a compressed bake: builds the tile's mips, copies
+        ///        the lighting reduction's share into its scratch, and encodes every face mip whose
+        ///        share of the tile is at least one block into the compressed scratch cube.
+        /// @param cmd    The command buffer the work is recorded into.
+        /// @param face   The cube face the tile belongs to.
+        /// @param origin The tile's top-left texel within the face.
+        void RecordTileEncode(CommandBuffer& cmd, u32 face, uvec2 origin);
+
+        /// @brief Finishes a compressed bake's picture phase: builds the lighting reduction's mips
+        ///        and encodes the coarse face mips from them.
+        /// @param cmd The command buffer the work is recorded into.
+        void RecordEncodeFinish(CommandBuffer& cmd);
+
+        /// @brief Rebuilds a float display cube's mip chain from mip 0 by 2x2 box blits and leaves
+        ///        the whole cube sampled.
+        /// @param cmd The command buffer the blits are recorded into.
+        void RecordDisplayMips(CommandBuffer& cmd);
 
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
@@ -516,15 +630,20 @@ namespace Veng::Renderer
         /// @param faceViews  The single-layer color targets for this face, one per attachment.
         /// @param faceSize   The face edge length in texels (the viewport extent).
         /// @param face       The cube face index, selecting its fixed view-ray basis.
-        /// @param tileOffset The tile's top-left pixel offset within the face.
+        /// @param tileOffset The tile's top-left pixel offset within the target.
         /// @param tileExtent The tile's pixel extent (clamped to the face on the last row/column).
         /// @param clear      Clear the tile's render-area (the first layer's first tile) or Load it.
+        /// @param faceFirst  Whether this is the first draw of its face, which claims a fresh view
+        ///                   slot rather than reusing the face's.
         /// @param fieldTargets The standing field's target count the layer reads, or 0.
+        /// @param viewportOffset Where the face's viewport begins within the target: zero for a
+        ///                   face-sized target, minus the tile's origin for a tile-sized one, so
+        ///                   every fragment keeps its face mapping.
         void RecordMaterialRegion(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
                                   const MaterialInstance& material,
                                   std::span<const Ref<ImageView>> faceViews, u32 faceSize, u32 face,
-                                  uvec2 tileOffset, uvec2 tileExtent, bool clear,
-                                  u32 fieldTargets = 0);
+                                  uvec2 tileOffset, uvec2 tileExtent, bool clear, bool faceFirst,
+                                  u32 fieldTargets = 0, ivec2 viewportOffset = {0, 0});
 
         /// @brief Records one atmosphere tile render into a target face view.
         ///
@@ -561,27 +680,73 @@ namespace Veng::Renderer
 
         Context& m_Context;
         Format m_SceneColorFormat;
+        /// @brief The format the displayed cube stores.
+        Format m_DisplayFormat;
         u32 m_FaceSize;
-        u32 m_ShReadbackMip; // halving steps from the face down to ShReadbackFaceSize
-        u32 m_TilesPerAxis;  // tiles along one face axis, ceil(m_FaceSize / tile size)
-        u32 m_TilesPerFace;  // m_TilesPerAxis², the amortized tick count per face
+        /// @brief The displayed cube's mip count: a full chain down to one texel.
+        u32 m_MipCount;
+        /// @brief The mip of m_LightingImage the lighting reduction begins at.
+        u32 m_LightingBaseMip = 0;
+        /// @brief The lighting reduction's face edge in texels.
+        u32 m_LightingFaceSize = 0;
+        /// @brief The mip of m_LightingImage the SH readback reads.
+        u32 m_ShReadbackMip = 0;
+        /// @brief The SH readback level's face edge in texels.
+        u32 m_ShReadbackFaceSize = 0;
+        u32 m_TilesPerAxis; // tiles along one face axis, ceil(m_FaceSize / tile size)
+        u32 m_TilesPerFace; // m_TilesPerAxis², the amortized tick count per face
         u64 m_FaceRendersRecorded = 0;
         u64 m_FieldTilesRecorded = 0;
 
         Ref<Image> m_CubeImage;
-        Ref<ImageView> m_CubeView; // Cube view, mip 0 only — sampled by the skybox pass
+        Ref<ImageView> m_CubeView; // Cube view, every mip — sampled by the skybox pass
         std::array<Ref<ImageView>, CubeFaces>
-            m_FaceViews; // one single-layer mip-0 view per face — rendered
-        // One all-six-layers view per mip from 0 to m_ShReadbackMip — for the reduction/readback
-        // layout transitions (the raw blit itself addresses subresources directly).
+            m_FaceViews; // one single-layer mip-0 view per face — rendered (float cube only)
+        // One all-six-layers view per mip — for the mip chain's layout transitions (the raw blit
+        // itself addresses subresources directly).
         vector<Ref<ImageView>> m_MipViews;
 
-        // The scratch cube an amortized bake fills a face at a time, held off the displayed cube so
-        // the skybox samples the last completed bake untouched while the next fills. Mip-0 only: it
-        // is copied into the displayed cube (which carries the reduction chain) on completion.
+        // The scratch cube an amortized bake fills, held off the displayed cube so the skybox samples
+        // the last completed bake untouched while the next fills. A float scratch is mip 0 only and
+        // the displayed cube rebuilds its chain on landing; a compressed scratch holds the whole
+        // encoded chain.
         Ref<Image> m_ScratchImage;
-        Ref<ImageView> m_ScratchView; // all six layers, mip 0 — for the copy's layout transitions
+        Ref<ImageView> m_ScratchView; // all six layers, every mip — for the copy's transitions
         std::array<Ref<ImageView>, CubeFaces> m_ScratchFaceViews; // one single-layer view per face
+
+        /// @brief The float image the lighting reduction lives in (the display cube when float).
+        Ref<Image> m_LightingImage;
+        /// @brief The lighting reduction as a cube, from its base mip down.
+        Ref<ImageView> m_LightingView;
+        /// @brief A compressed bake's lighting reduction scratch, the bake job's second target.
+        Ref<Image> m_LightingScratchImage;
+        /// @brief Every mip and layer of the lighting scratch, for its copy's transitions.
+        Ref<ImageView> m_LightingScratchView;
+        /// @brief One six-layer view per lighting scratch mip: its chain's transitions and the
+        ///        coarse encode's source.
+        vector<Ref<ImageView>> m_LightingScratchMipViews;
+        /// @brief One encode set per lighting scratch mip.
+        vector<Ref<DescriptorSet>> m_LightingEncodeSets;
+
+        /// @brief The float tile a compressed bake's picture layers render into.
+        Ref<Image> m_TileImage;
+        /// @brief Mip 0 of the tile as a 2D view: what the picture layers render.
+        Ref<ImageView> m_TileRenderView;
+        /// @brief One single-layer array view per tile mip: the chain's transitions and the
+        ///        encode's source.
+        vector<Ref<ImageView>> m_TileMipViews;
+        /// @brief One encode set per tile mip the tile encodes.
+        vector<Ref<DescriptorSet>> m_TileEncodeSets;
+        /// @brief The tile's edge length; 0 until a compressed bake allocates it.
+        u32 m_EncodeTilePixels = 0;
+        /// @brief The encode's descriptor-set layout: a layered source mip and the block buffer.
+        Ref<DescriptorSetLayout> m_EncodeSetLayout;
+        /// @brief The BC6H block encoder.
+        Ref<ComputePipeline> m_EncodePipeline;
+        /// @brief The blocks one encode step writes, copied from here into the compressed scratch.
+        Ref<Buffer> m_EncodeBlocks;
+        /// @brief The block capacity of m_EncodeBlocks.
+        u64 m_EncodeBlockCapacity = 0;
 
         // The coarse scratch cube a reduced-resolution base layer (SkyBakeLayer::FaceSizeDivisor > 1)
         // renders into, upsampled into m_ScratchImage by a blit before the finer layers composite over

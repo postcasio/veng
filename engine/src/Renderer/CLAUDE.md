@@ -2299,7 +2299,7 @@ warning (bake to light). Both lighting tiers read the resolved source's one cube
 to the irradiance SH the lighting pass folds into its ambient arm
 (`EnvironmentIbl::ProjectCubeToIrradianceSh`, a device-free readback), `IBL` convolves it into the
 split-sum maps (`EnvironmentIbl::GenerateFromCube`) — one cube→SH / cube→IBL path for every
-source, no per-source special case. `SceneView::EnvironmentIntensity`/`AtmosphereIntensity` are
+source, no per-source special case. (For a baked cube both read its lighting reduction, below.) `SceneView::EnvironmentIntensity`/`AtmosphereIntensity` are
 per-frame push values (no recompile). (The cooked `EnvironmentMap` asset — the
 radiance/irradiance/prefiltered/BRDF maps — is `AssetTypes::Environment`; the `EnvironmentSky`
 source is the scene-authoring front-end that references it.)
@@ -2356,6 +2356,51 @@ them as ordinary multiple render targets), and every later layer reads them:
   without one is fatal. `tests/gpu/sky_bake_field.cpp` reads each of three targets back bicubically
   at every texel (face edges and corners included), the mean against the CPU's solid-angle sum of the
   same texels, and pins the re-composite, supersede and per-phase cost behaviour.
+
+**A baked cube displays through its mips and lights from a float reduction.** The displayed cube
+carries a full chain, and its consumer set's sampler is trilinear with the LOD unclamped, so the
+skybox (`skybox.frag`, explicit gradients taken ahead of its depth discard) minifies a face finer
+than a pixel's view angle without aliasing; a float bake rebuilds the chain by box blits when it
+lands (`RecordAmortized`, and after the synchronous `Bake`/`BakeAtmosphere`). The IBL and SH never
+read the display cube: they read the **lighting reduction**, at most `LightingFaceSize` (256) per
+face — `GetLightingView` for the convolution, `GetLightingImage` at `GetShReadbackMipLevel` for the
+SH readback. For a float cube it is the display cube's own mip tail from the first level at or below
+256, so a float cube that small lights from exactly what it displays. The convolution samples the
+reduction's mips too, so its filtered importance sampling has a chain to read.
+
+**A baked cube may display block-compressed.** `BakedSkyCube::Create`'s display format is the
+scene-colour float format (the default) or `Format::BC6HUfloat` — HDR radiance at one byte per
+texel, where a 2048 float cube costs 200 MB twice over while a bake is in flight. Requesting it
+needs `Context::IsBlockCompressionSupported()` (asserted; the caller checks and picks its own
+fallback), an `AssetManager`, and a power-of-two face. BC6H blocks cannot be rendered to or blended
+over, so a compressed cube bakes only through the layered `RequestBake`, and its Picture layers run
+**tile-major**:
+
+- **One tile grid for every layer.** `RequestBake`'s `encodeTilePixels` (default 256, clamped to the
+  face) is a power of two dividing the face and at least the face over `MaxEncodeTilesPerAxis`
+  (128). Each tick renders every Picture layer, in order and blended, into one tile-sized float
+  target, through a viewport offset by minus the tile's origin, so each fragment keeps its face
+  mapping. The per-layer `TilePixels` then applies only to a field phase; a Picture base with
+  `FaceSizeDivisor > 1` is refused. A tick charges each layer's `Cost` scaled by the tile's area
+  over that layer's own `TilePixels` area.
+- **The per-tile encode.** The tick box-blits the tile's own mips, copies its mip at the
+  reduction's scale into the lighting-reduction scratch, and encodes every face mip whose share of
+  the tile is at least one 4×4 block (`sky_bake_bc6h.comp`, Krzysztof Narkowicz's real-time encoder
+  under MIT, run with its two-region partition search so an isolated bright texel does not drag a
+  block's colour line) into a buffer copied into the compressed scratch cube, whose producer access
+  is `TransferDst`. One last step builds the reduction's mips and encodes the coarser face mips from
+  them — the bound on the tile is what keeps those mips at 256 or below, where the reduction has
+  them.
+- **Double-buffered.** The compressed scratch and the reduction scratch are the job's two targets,
+  so the bake cache stores and restores the whole chain and the reduction together (16 bytes per
+  4×4 block; a mip under a block takes one partial block). `RecordAmortized` copies both across, so
+  a renderer never reads either half-written. Peak memory is the two compressed cubes, two 256
+  reductions, and one float tile with its mips; no full-size float cube exists.
+- **Reading it back** is a sampling pass (`ReadbackTexels`), not a copy.
+  `tests/gpu/sky_bake_compressed.cpp` holds a compressed bake to a float one of the same pattern: a
+  smooth sky within BC6H's bound, isolated bright texels kept as their blocks' brightest, speckle
+  within luminance and chroma bounds, the reduction and mips as box reductions, and a cached cube
+  restoring its chain and reduction.
 
 **A capture of the scene can light it in place of the sky — the lights model again.** A
 `CaptureSurface` whose `Output` is `CaptureOutput::SceneLighting` is an environment probe: it renders

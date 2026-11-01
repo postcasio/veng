@@ -13,13 +13,14 @@ using namespace Veng::Renderer;
 
 TEST_CASE("FormatInfo: block geometry of the block-compressed formats")
 {
-    // BC7, BC5, and ASTC 4x4 are 16-byte 4x4 blocks; BC4 is the 8-byte half-rate arm.
+    // BC7, BC6H, BC5, and ASTC 4x4 are 16-byte 4x4 blocks; BC4 is the 8-byte half-rate arm.
     CHECK(GetFormatBlockInfo(Format::BC7Unorm).Bytes == 16u);
+    CHECK(GetFormatBlockInfo(Format::BC6HUfloat).Bytes == 16u);
     CHECK(GetFormatBlockInfo(Format::ASTC4x4Unorm).Bytes == 16u);
     CHECK(GetFormatBlockInfo(Format::BC5Unorm).Bytes == 16u);
     CHECK(GetFormatBlockInfo(Format::BC4Unorm).Bytes == 8u);
 
-    for (const Format format : {Format::BC5Unorm, Format::BC4Unorm})
+    for (const Format format : {Format::BC5Unorm, Format::BC4Unorm, Format::BC6HUfloat})
     {
         CHECK(GetFormatBlockInfo(format).BlockWidth == 4u);
         CHECK(GetFormatBlockInfo(format).BlockHeight == 4u);
@@ -126,8 +127,8 @@ TEST_CASE("FormatInfo: FormatName covers every declared enumerator, distinctly")
     // The property that matters is coverage: a format added to Types.h and left out of the switch
     // reports "Unknown", so a diagnostic silently stops naming it. Walking the declared range
     // catches that at the point the enumerator is added rather than the day someone reads a dump.
-    // A2R10G10B10Unorm is the last declared value; the loop is the whole closed set.
-    constexpr auto Last = static_cast<u32>(Format::A2R10G10B10Unorm);
+    // BC6HUfloat is the last declared value; the loop is the whole closed set.
+    constexpr auto Last = static_cast<u32>(Format::BC6HUfloat);
     std::set<string_view> names;
     for (u32 value = 0; value <= Last; ++value)
     {

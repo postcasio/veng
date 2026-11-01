@@ -122,19 +122,106 @@ namespace Veng::Renderer
             return m;
         }
 
-        // Halving steps from a face of the given size down to the SH readback size: the readback
-        // level's mip index, and one less than the cube's mip count. Halts at the readback size or
-        // the first odd level, so a non-power-of-two face reduces as far as it evenly can.
-        u32 ComputeShReadbackMip(const u32 faceSize)
+        // The first mip of a chain whose face edge is at or below `limit`.
+        u32 FirstMipAtOrBelow(const u32 faceSize, const u32 limit)
         {
             u32 mip = 0;
-            u32 size = faceSize;
-            while (size > BakedSkyCube::ShReadbackFaceSize && (size % 2 == 0))
+            while ((faceSize >> mip) > limit)
             {
-                size /= 2;
                 ++mip;
             }
             return mip;
+        }
+
+        // The encode's push block, matching sky_bake_bc6h.comp PushConstants.
+        struct EncodePush
+        {
+            uvec2 SourceSize;
+            uvec2 BlocksPerAxis;
+            u32 OutputBase;
+            u32 Pad0;
+            u32 Pad1;
+            u32 Pad2;
+        };
+
+        // The BC6H block encoder's compute shader (sky_bake_bc6h.comp).
+        constexpr AssetId SkyBakeBc6hCompId{0x7014DD2D79F894ECULL};
+
+        // Bytes of one BC6H block.
+        constexpr u64 EncodeBlockBytes = 16;
+
+        // The 4x4 blocks along one axis of an edge, a partial block counting as one.
+        constexpr u32 BlocksAlong(const u32 texels)
+        {
+            return (texels + 3) / 4;
+        }
+
+        // Records a memory dependency between two stages of the encode's block buffer.
+        void BufferBarrier(const CommandBuffer& cmd, const vk::PipelineStageFlags srcStage,
+                           const vk::AccessFlags srcAccess, const vk::PipelineStageFlags dstStage,
+                           const vk::AccessFlags dstAccess)
+        {
+            const vk::MemoryBarrier barrier{.srcAccessMask = srcAccess, .dstAccessMask = dstAccess};
+            GetVkCommandBuffer(cmd).pipelineBarrier(srcStage, dstStage, {}, 1, &barrier, 0, nullptr,
+                                                    0, nullptr);
+        }
+
+        // A 2x2 box blit from one mip to the next over `layerCount` layers from `baseLayer`.
+        void RecordHalvingBlit(const CommandBuffer& cmd, const Image& image, const u32 dstMip,
+                               const u32 srcSize, const u32 baseLayer, const u32 layerCount)
+        {
+            const u32 half = std::max(1u, srcSize / 2);
+            const vk::ImageBlit blit{
+                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = dstMip - 1,
+                                   .baseArrayLayer = baseLayer,
+                                   .layerCount = layerCount},
+                .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                vk::Offset3D{.x = static_cast<i32>(srcSize),
+                                             .y = static_cast<i32>(srcSize),
+                                             .z = 1}}},
+                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = dstMip,
+                                   .baseArrayLayer = baseLayer,
+                                   .layerCount = layerCount},
+                .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                vk::Offset3D{.x = static_cast<i32>(half),
+                                             .y = static_cast<i32>(half),
+                                             .z = 1}}},
+            };
+            GetVkCommandBuffer(cmd).blitImage(
+                GetVkImage(image), vk::ImageLayout::eTransferSrcOptimal, GetVkImage(image),
+                vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
+        }
+
+        // Copies every mip of every layer of one cube into another of the same shape and format.
+        void RecordWholeChainCopy(const CommandBuffer& cmd, const Image& source,
+                                  const Image& destination)
+        {
+            const u32 faceSize = source.GetExtent().x;
+            vector<vk::ImageCopy> copies;
+            copies.reserve(source.GetMipLevels());
+            for (u32 mip = 0; mip < source.GetMipLevels(); ++mip)
+            {
+                const u32 size = std::max(1u, faceSize >> mip);
+                copies.push_back({
+                    .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                       .mipLevel = mip,
+                                       .baseArrayLayer = 0,
+                                       .layerCount = BakedSkyCube::CubeFaces},
+                    .srcOffset = {.x = 0, .y = 0, .z = 0},
+                    .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                       .mipLevel = mip,
+                                       .baseArrayLayer = 0,
+                                       .layerCount = BakedSkyCube::CubeFaces},
+                    .dstOffset = {.x = 0, .y = 0, .z = 0},
+                    .extent = {.width = size, .height = size, .depth = 1},
+                });
+            }
+            GetVkCommandBuffer(cmd).copyImage(
+                GetVkImage(source), vk::ImageLayout::eTransferSrcOptimal, GetVkImage(destination),
+                vk::ImageLayout::eTransferDstOptimal, static_cast<u32>(copies.size()),
+                copies.data());
         }
 
         // The default edge length in texels of one amortization tile — the size a bake layer that
@@ -201,45 +288,60 @@ namespace Veng::Renderer
     Unique<BakedSkyCube> BakedSkyCube::Create(Context& context,
                                               const Ref<DescriptorSetLayout>& consumerLayout,
                                               const Format sceneColorFormat, const u32 faceSize,
-                                              AssetManager* assets)
+                                              AssetManager* assets, const Format displayFormat)
     {
-        return Unique<BakedSkyCube>(
-            new BakedSkyCube(context, consumerLayout, sceneColorFormat, faceSize, assets));
+        return Unique<BakedSkyCube>(new BakedSkyCube(context, consumerLayout, sceneColorFormat,
+                                                     faceSize, assets, displayFormat));
     }
 
     BakedSkyCube::BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
                                const Format sceneColorFormat, const u32 faceSize,
-                               AssetManager* assets)
-        : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
-          m_ShReadbackMip(ComputeShReadbackMip(faceSize)),
+                               AssetManager* assets, const Format displayFormat)
+        : m_Context(context), m_SceneColorFormat(sceneColorFormat),
+          m_DisplayFormat(displayFormat == Format::Undefined ? sceneColorFormat : displayFormat),
+          m_FaceSize(faceSize), m_MipCount(static_cast<u32>(std::bit_width(faceSize))),
           m_TilesPerAxis(TilesPerFaceAxis(faceSize, SkyBakeTilePixels)),
           m_TilesPerFace(m_TilesPerAxis * m_TilesPerAxis), m_FaceInvViewProj(BuildFaceMatrices())
     {
-        // The radiance cube: six layers rendered as color attachments, sampled as a cube. Uses the
-        // scene-color format so the baked radiance round-trips the skybox sampler with no conversion.
-        // Carries a mip chain down to the SH readback level, filled by a box-averaging blit chain
-        // (so the reduction is both a transfer source and destination); the skybox still samples
-        // mip 0 alone.
-        m_CubeImage = Image::Create(m_Context,
-                                    {
-                                        .Name = "Sky Bake Radiance Cube",
-                                        .Extent = {m_FaceSize, m_FaceSize, 1},
-                                        .MipLevels = m_ShReadbackMip + 1,
-                                        .Layers = CubeFaces,
-                                        .Format = m_SceneColorFormat,
-                                        .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
-                                                 ImageUsage::TransferSrc | ImageUsage::TransferDst,
-                                    });
-        // The skybox samples mip 0 only — the reduction chain is a readback path, not a display
-        // change — so the sampled cube view exposes a single mip level.
+        const bool compressed = IsCompressed();
+        VE_ASSERT(m_DisplayFormat == m_SceneColorFormat || compressed,
+                  "BakedSkyCube: the display format must be the scene-color format or BC6HUfloat");
+        if (compressed)
+        {
+            VE_ASSERT(m_Context.IsBlockCompressionSupported(),
+                      "BakedSkyCube: a BC6H cube needs a device with BC block compression");
+            VE_ASSERT(assets != nullptr, "BakedSkyCube: a BC6H cube needs an AssetManager");
+            VE_ASSERT(m_FaceSize >= 4 && std::has_single_bit(m_FaceSize),
+                      "BakedSkyCube: a BC6H cube's face size {} must be a power of two of at "
+                      "least 4",
+                      m_FaceSize);
+        }
+
+        // The radiance cube: six layers sampled as a cube, with a full mip chain the skybox samples
+        // trilinear. A float cube renders its faces at the scene-color format, so its radiance
+        // round-trips the skybox sampler with no conversion, and rebuilds its chain by box blits; a
+        // compressed one is written only by copies of the encoded chain.
+        m_CubeImage = Image::Create(
+            m_Context,
+            {
+                .Name = "Sky Bake Radiance Cube",
+                .Extent = {m_FaceSize, m_FaceSize, 1},
+                .MipLevels = m_MipCount,
+                .Layers = CubeFaces,
+                .Format = m_DisplayFormat,
+                .Usage = compressed ? ImageUsage::Sampled | ImageUsage::TransferSrc |
+                                          ImageUsage::TransferDst
+                                    : ImageUsage::Sampled | ImageUsage::ColorAttachment |
+                                          ImageUsage::TransferSrc | ImageUsage::TransferDst,
+            });
         m_CubeView = ImageView::Create(m_Context, {
                                                       .Name = "Sky Bake Radiance Cube View",
                                                       .Image = m_CubeImage,
                                                       .ViewType = ImageViewType::Cube,
-                                                      .MipLevels = 1,
+                                                      .MipLevels = m_MipCount,
                                                       .ArrayLayers = CubeFaces,
                                                   });
-        for (u32 face = 0; face < CubeFaces; ++face)
+        for (u32 face = 0; face < CubeFaces && !compressed; ++face)
         {
             m_FaceViews[face] =
                 ImageView::Create(m_Context, {
@@ -250,10 +352,10 @@ namespace Veng::Renderer
                                                  .ArrayLayers = 1,
                                              });
         }
-        // One all-six-layers view per mip level, for the reduction/readback layout transitions (the
-        // raw blit addresses subresources directly, but PrepareForAccess tracks through a view).
-        m_MipViews.reserve(m_ShReadbackMip + 1);
-        for (u32 mip = 0; mip <= m_ShReadbackMip; ++mip)
+        // One all-six-layers view per mip level, for the chain's layout transitions (the raw blit
+        // addresses subresources directly, but PrepareForAccess tracks through a view).
+        m_MipViews.reserve(m_MipCount);
+        for (u32 mip = 0; mip < m_MipCount; ++mip)
         {
             m_MipViews.push_back(
                 ImageView::Create(m_Context, {
@@ -267,27 +369,54 @@ namespace Veng::Renderer
                                              }));
         }
 
-        // The scratch cube an amortized bake fills a face at a time. Mip 0 only — it is copied into
-        // the displayed cube (which owns the reduction chain) once every face has been rendered, so
-        // it needs no mips of its own. TransferSrc for that copy; TransferDst so a reduced-resolution
-        // base layer's coarse cube can be upsampled into it by a blit; the service ORs in the rest.
+        // The lighting reduction of a float cube is its own mip tail from the first level at or
+        // below LightingFaceSize, so a float cube that small lights from exactly what it displays.
+        if (!compressed)
+        {
+            m_LightingImage = m_CubeImage;
+            m_LightingBaseMip = FirstMipAtOrBelow(m_FaceSize, LightingFaceSize);
+            m_LightingFaceSize = std::max(1u, m_FaceSize >> m_LightingBaseMip);
+            m_LightingView =
+                m_LightingBaseMip == 0
+                    ? m_CubeView
+                    : ImageView::Create(m_Context, {
+                                                       .Name = "Sky Bake Lighting View",
+                                                       .Image = m_CubeImage,
+                                                       .ViewType = ImageViewType::Cube,
+                                                       .BaseMipLevel = m_LightingBaseMip,
+                                                       .MipLevels = m_MipCount - m_LightingBaseMip,
+                                                       .ArrayLayers = CubeFaces,
+                                                   });
+            m_ShReadbackMip = FirstMipAtOrBelow(m_FaceSize, ShReadbackFaceSize);
+            m_ShReadbackFaceSize = std::max(1u, m_FaceSize >> m_ShReadbackMip);
+        }
+
+        // The scratch cube an amortized bake fills. A float scratch is mip 0 only — the displayed
+        // cube rebuilds its chain from it on landing — and is TransferDst so a reduced-resolution
+        // base layer's coarse cube can be upsampled into it by a blit; a compressed scratch holds
+        // the whole encoded chain, written by copies. The service ORs in the rest.
         m_ScratchImage = Image::Create(
-            m_Context, {
-                           .Name = "Sky Bake Scratch Cube",
-                           .Extent = {m_FaceSize, m_FaceSize, 1},
-                           .MipLevels = 1,
-                           .Layers = CubeFaces,
-                           .Format = m_SceneColorFormat,
-                           .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
-                                    ImageUsage::TransferSrc | ImageUsage::TransferDst,
-                       });
-        m_ScratchView = ImageView::Create(m_Context, {
-                                                         .Name = "Sky Bake Scratch Cube View",
-                                                         .Image = m_ScratchImage,
-                                                         .ViewType = ImageViewType::Array2D,
-                                                         .ArrayLayers = CubeFaces,
-                                                     });
-        for (u32 face = 0; face < CubeFaces; ++face)
+            m_Context,
+            {
+                .Name = "Sky Bake Scratch Cube",
+                .Extent = {m_FaceSize, m_FaceSize, 1},
+                .MipLevels = compressed ? m_MipCount : 1,
+                .Layers = CubeFaces,
+                .Format = m_DisplayFormat,
+                .Usage = compressed ? ImageUsage::Sampled | ImageUsage::TransferSrc |
+                                          ImageUsage::TransferDst
+                                    : ImageUsage::Sampled | ImageUsage::ColorAttachment |
+                                          ImageUsage::TransferSrc | ImageUsage::TransferDst,
+            });
+        m_ScratchView =
+            ImageView::Create(m_Context, {
+                                             .Name = "Sky Bake Scratch Cube View",
+                                             .Image = m_ScratchImage,
+                                             .ViewType = ImageViewType::Array2D,
+                                             .MipLevels = m_ScratchImage->GetMipLevels(),
+                                             .ArrayLayers = CubeFaces,
+                                         });
+        for (u32 face = 0; face < CubeFaces && !compressed; ++face)
         {
             m_ScratchFaceViews[face] = ImageView::Create(
                 m_Context, {
@@ -361,6 +490,10 @@ namespace Veng::Renderer
                                        })
                                        .Handle;
         }
+        if (compressed)
+        {
+            CreateCompressedTargets(*assets);
+        }
 
         // A 1×1 stand-in depth image holding the far-plane value (reverse-Z: 0.0), bound in the
         // fragment's depth slot so SkyIsBackground passes for every baked pixel — there is no
@@ -386,55 +519,96 @@ namespace Veng::Renderer
                                    .Handle;
 
         // The consumer set the skybox pass binds: the baked cube at the radiance binding, plus a
-        // linear clamp sampler at the sampler binding — the IBL consumer set's shape for those two.
+        // trilinear clamp sampler at the sampler binding — the IBL consumer set's shape for those
+        // two. The LOD is unclamped so the skybox minifies through the whole chain.
         const Ref<Sampler> sampler =
             Sampler::Create(m_Context, {
                                            .Name = "Sky Bake Sampler",
                                            .MagFilter = Filter::Linear,
                                            .MinFilter = Filter::Linear,
+                                           .MipmapMode = MipmapMode::Linear,
                                            .AddressModeU = AddressMode::ClampToEdge,
                                            .AddressModeV = AddressMode::ClampToEdge,
                                            .AddressModeW = AddressMode::ClampToEdge,
                                            .AnisotropyEnabled = false,
+                                           .MaxLod = LodClampNone,
                                        });
         m_ConsumerSet = DescriptorSet::Create(
             m_Context, {.Name = "Sky Bake Consumer Set", .Layout = consumerLayout});
         m_ConsumerSet->Write(RadianceBinding, m_CubeView);
         m_ConsumerSet->Write(SamplerBinding, sampler);
 
-        // Clear the displayed cube to black and leave it sampled, so the skybox pass samples a
-        // defined cube from the very first frame — the amortized fill lands a bake into it a few
-        // frames later, and before that there is nothing baked to show. The stand-in depth is
-        // cleared to the far-plane value (reverse-Z: 0.0) the same way. Both are setup work, so a
-        // cube built mid-frame records them into the frame rather than waiting behind it.
+        // Clear the displayed cube (and a compressed cube's lighting reduction) to black and leave
+        // it sampled, so the skybox pass samples a defined cube from the very first frame — the
+        // amortized fill lands a bake into it a few frames later, and before that there is nothing
+        // baked to show. A compressed image cannot be cleared, so it takes copies of a zeroed
+        // buffer instead: an all-zero BC6H block decodes to black. The stand-in depth is cleared to
+        // the far-plane value (reverse-Z: 0.0). All of it is setup work, so a cube built mid-frame
+        // records it into the frame rather than waiting behind it.
+        const Ref<Buffer> zeroBlocks =
+            compressed
+                ? Buffer::Create(m_Context,
+                                 {
+                                     .Name = "Sky Bake Zero Blocks",
+                                     .Size = static_cast<u64>(BlocksAlong(m_FaceSize)) *
+                                             BlocksAlong(m_FaceSize) * EncodeBlockBytes,
+                                     .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
+                                     .DeviceLocal = true,
+                                 })
+                : nullptr;
         m_Context.RecordSetupCommands(
-            [cubeImage = m_CubeImage, cubeView = m_CubeView, depthImage = m_DepthImage,
-             depthView = m_DepthView](CommandBuffer& cmd)
+            [cubeImage = m_CubeImage, cubeView = m_CubeView, lightingImage = m_LightingImage,
+             lightingView = m_LightingView, depthImage = m_DepthImage, depthView = m_DepthView,
+             zeroBlocks, mipCount = m_MipCount, faceSize = m_FaceSize](CommandBuffer& cmd)
             {
-                const vk::ImageSubresourceRange cubeRange{.aspectMask =
-                                                              vk::ImageAspectFlagBits::eColor,
-                                                          .baseMipLevel = 0,
-                                                          .levelCount = 1,
-                                                          .baseArrayLayer = 0,
-                                                          .layerCount = CubeFaces};
-                const vk::ImageSubresourceRange depthRange{.aspectMask =
-                                                               vk::ImageAspectFlagBits::eColor,
-                                                           .baseMipLevel = 0,
-                                                           .levelCount = 1,
-                                                           .baseArrayLayer = 0,
-                                                           .layerCount = 1};
-                cmd.PrepareForAccess(cubeView, AccessKind::TransferDst);
-                cmd.PrepareForAccess(depthView, AccessKind::TransferDst);
                 const vk::ClearColorValue black{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
                 const vk::ClearColorValue farPlane{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 0.0f}};
-                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*cubeImage),
-                                                        vk::ImageLayout::eTransferDstOptimal,
-                                                        &black, 1, &cubeRange);
-                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*depthImage),
-                                                        vk::ImageLayout::eTransferDstOptimal,
-                                                        &farPlane, 1, &depthRange);
-                cmd.PrepareForAccess(cubeView, AccessKind::SampleAny);
-                cmd.PrepareForAccess(depthView, AccessKind::SampleAny);
+                const auto clear = [&](const Ref<Image>& image, const Ref<ImageView>& view,
+                                       const vk::ClearColorValue& value)
+                {
+                    const vk::ImageSubresourceRange range{.aspectMask =
+                                                              vk::ImageAspectFlagBits::eColor,
+                                                          .baseMipLevel = 0,
+                                                          .levelCount = image->GetMipLevels(),
+                                                          .baseArrayLayer = 0,
+                                                          .layerCount = image->GetLayers()};
+                    cmd.PrepareForAccess(view, AccessKind::TransferDst);
+                    GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*image),
+                                                            vk::ImageLayout::eTransferDstOptimal,
+                                                            &value, 1, &range);
+                    cmd.PrepareForAccess(view, AccessKind::SampleAny);
+                };
+                if (zeroBlocks)
+                {
+                    GetVkCommandBuffer(cmd).fillBuffer(GetVkBuffer(*zeroBlocks), 0, VK_WHOLE_SIZE,
+                                                       0);
+                    BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer,
+                                  vk::AccessFlagBits::eTransferWrite,
+                                  vk::PipelineStageFlagBits::eTransfer,
+                                  vk::AccessFlagBits::eTransferRead);
+                    // Every subresource reads the same zeroed prefix of the buffer.
+                    vector<BufferImageCopyRegion> regions;
+                    for (u32 mip = 0; mip < mipCount; ++mip)
+                    {
+                        const u32 size = std::max(1u, faceSize >> mip);
+                        for (u32 face = 0; face < CubeFaces; ++face)
+                        {
+                            regions.push_back({.MipLevel = mip,
+                                               .BaseArrayLayer = face,
+                                               .ArrayLayers = 1,
+                                               .Extent = {size, size, 1}});
+                        }
+                    }
+                    cmd.PrepareForAccess(cubeView, AccessKind::TransferDst);
+                    cmd.CopyBufferToImage(zeroBlocks, cubeImage, regions);
+                    cmd.PrepareForAccess(cubeView, AccessKind::SampleAny);
+                    clear(lightingImage, lightingView, black);
+                }
+                else
+                {
+                    clear(cubeImage, cubeView, black);
+                }
+                clear(depthImage, depthView, farPlane);
             });
     }
 
@@ -575,8 +749,7 @@ namespace Veng::Renderer
         // Upsample all six coarse faces into the full-resolution scratch in one blit with a linear
         // filter, replacing their contents — the base the finer layers Load and blend over. Whole-image
         // transitions match the service's per-tick whole-image producer-access transition, so the
-        // promote does not fight it face-by-face; one blit over all layers is the RecordReductionMips
-        // pattern.
+        // promote does not fight it face-by-face.
         cmd.PrepareForAccess(m_CoarseScratchView, AccessKind::TransferSrc);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferDst);
         const vk::ImageBlit blit{
@@ -770,6 +943,342 @@ namespace Veng::Renderer
         }
     }
 
+    void BakedSkyCube::CreateCompressedTargets(AssetManager& assets)
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> encodeCs =
+            assets.LoadSync<Veng::Shader>(SkyBakeBc6hCompId);
+        VE_ASSERT(encodeCs.has_value(), "BakedSkyCube: BC6H encoder shader load failed: {}",
+                  encodeCs.error().Detail);
+        m_EncodeSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "Sky Bake Encode Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::StorageBuffer,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+        const Ref<PipelineLayout> layout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "Sky Bake Encode Layout",
+                .DescriptorSetLayouts = {m_EncodeSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<EncodePush>(ShaderStage::Compute)},
+            });
+        m_EncodePipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "Sky Bake Encode Pipeline",
+                           .PipelineLayout = layout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = encodeCs.value().Get()->Module},
+                       });
+
+        // The lighting reduction, double-buffered: the bake writes the scratch a tile at a time and
+        // RecordAmortized copies it across, so a renderer never reads one half-written.
+        m_LightingFaceSize = std::min(m_FaceSize, LightingFaceSize);
+        const u32 lightingMips = static_cast<u32>(std::bit_width(m_LightingFaceSize));
+        const auto createLighting = [&](const char* name)
+        {
+            return Image::Create(m_Context,
+                                 {
+                                     .Name = name,
+                                     .Extent = {m_LightingFaceSize, m_LightingFaceSize, 1},
+                                     .MipLevels = lightingMips,
+                                     .Layers = CubeFaces,
+                                     .Format = m_SceneColorFormat,
+                                     .Usage = ImageUsage::Sampled | ImageUsage::TransferSrc |
+                                              ImageUsage::TransferDst,
+                                 });
+        };
+        m_LightingImage = createLighting("Sky Bake Lighting Reduction");
+        m_LightingView = ImageView::Create(m_Context, {
+                                                          .Name = "Sky Bake Lighting View",
+                                                          .Image = m_LightingImage,
+                                                          .ViewType = ImageViewType::Cube,
+                                                          .MipLevels = lightingMips,
+                                                          .ArrayLayers = CubeFaces,
+                                                      });
+        m_LightingBaseMip = 0;
+        m_ShReadbackMip = FirstMipAtOrBelow(m_LightingFaceSize, ShReadbackFaceSize);
+        m_ShReadbackFaceSize = std::max(1u, m_LightingFaceSize >> m_ShReadbackMip);
+
+        m_LightingScratchImage = createLighting("Sky Bake Lighting Scratch");
+        m_LightingScratchView =
+            ImageView::Create(m_Context, {
+                                             .Name = "Sky Bake Lighting Scratch View",
+                                             .Image = m_LightingScratchImage,
+                                             .ViewType = ImageViewType::Array2D,
+                                             .MipLevels = lightingMips,
+                                             .ArrayLayers = CubeFaces,
+                                         });
+        for (u32 mip = 0; mip < lightingMips; ++mip)
+        {
+            m_LightingScratchMipViews.push_back(ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("Sky Bake Lighting Scratch Mip {}", mip),
+                               .Image = m_LightingScratchImage,
+                               .ViewType = ImageViewType::Array2D,
+                               .BaseMipLevel = mip,
+                               .MipLevels = 1,
+                               .ArrayLayers = CubeFaces,
+                           }));
+        }
+    }
+
+    void BakedSkyCube::EnsureEncodeTile(const u32 tilePixels)
+    {
+        if (m_TileImage && m_EncodeTilePixels == tilePixels)
+        {
+            return;
+        }
+
+        // The buffer holds one step's blocks: a tile's encoded mips, or the six faces of the coarse
+        // mips the finish encodes from the lighting reduction.
+        const u32 tileMips = static_cast<u32>(std::bit_width(tilePixels));
+        const u32 encodedTileMips = tileMips - 2;
+        u64 tileBlocks = 0;
+        for (u32 mip = 0; mip < encodedTileMips; ++mip)
+        {
+            const u64 blocks = BlocksAlong(tilePixels >> mip);
+            tileBlocks += blocks * blocks;
+        }
+        u64 coarseBlocks = 0;
+        for (u32 mip = encodedTileMips; mip < m_MipCount; ++mip)
+        {
+            const u64 blocks = BlocksAlong(std::max(1u, m_FaceSize >> mip));
+            coarseBlocks += blocks * blocks * CubeFaces;
+        }
+        const u64 capacity = std::max(tileBlocks, coarseBlocks);
+        if (capacity > m_EncodeBlockCapacity)
+        {
+            m_EncodeBlocks = Buffer::Create(
+                m_Context, {
+                               .Name = "Sky Bake Encoded Blocks",
+                               .Size = capacity * EncodeBlockBytes,
+                               .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
+                               .DeviceLocal = true,
+                           });
+            m_EncodeBlockCapacity = capacity;
+        }
+
+        m_EncodeTilePixels = tilePixels;
+        m_TileImage = Image::Create(m_Context,
+                                    {
+                                        .Name = "Sky Bake Encode Tile",
+                                        .Extent = {tilePixels, tilePixels, 1},
+                                        .MipLevels = tileMips,
+                                        .Format = m_SceneColorFormat,
+                                        .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
+                                                 ImageUsage::TransferSrc | ImageUsage::TransferDst,
+                                    });
+        m_TileRenderView = ImageView::Create(m_Context, {
+                                                            .Name = "Sky Bake Encode Tile Render",
+                                                            .Image = m_TileImage,
+                                                        });
+        m_TileMipViews.clear();
+        m_TileEncodeSets.clear();
+        for (u32 mip = 0; mip < tileMips; ++mip)
+        {
+            m_TileMipViews.push_back(ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("Sky Bake Encode Tile Mip {}", mip),
+                               .Image = m_TileImage,
+                               .ViewType = ImageViewType::Array2D,
+                               .BaseMipLevel = mip,
+                               .MipLevels = 1,
+                           }));
+        }
+        const auto encodeSet = [&](const Ref<ImageView>& source)
+        {
+            Ref<DescriptorSet> set = DescriptorSet::Create(
+                m_Context, {.Name = "Sky Bake Encode Set", .Layout = m_EncodeSetLayout});
+            set->Write(0, source);
+            set->Write(1, m_EncodeBlocks);
+            return set;
+        };
+        for (u32 mip = 0; mip < encodedTileMips; ++mip)
+        {
+            m_TileEncodeSets.push_back(encodeSet(m_TileMipViews[mip]));
+        }
+        // Rebuilt with the tile, since they name the buffer the tile may have just replaced.
+        m_LightingEncodeSets.clear();
+        for (const Ref<ImageView>& view : m_LightingScratchMipViews)
+        {
+            m_LightingEncodeSets.push_back(encodeSet(view));
+        }
+    }
+
+    u32 BakedSkyCube::RecordEncodeDispatch(CommandBuffer& cmd, const Ref<DescriptorSet>& set,
+                                           const u32 sourceSize, const u32 layers,
+                                           const u32 outputBase)
+    {
+        const u32 blocks = BlocksAlong(sourceSize);
+        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+            .Sets = {set},
+            .FirstSet = BindlessRegistry::FirstUserSet,
+            .PipelineBindPoint = PipelineBindPoint::Compute,
+        });
+        cmd.PushConstants(EncodePush{.SourceSize = {sourceSize, sourceSize},
+                                     .BlocksPerAxis = {blocks, blocks},
+                                     .OutputBase = outputBase});
+        cmd.Dispatch((blocks + 7) / 8, (blocks + 7) / 8, layers);
+        return blocks * blocks * layers;
+    }
+
+    void BakedSkyCube::RecordTileEncode(CommandBuffer& cmd, const u32 face, const uvec2 origin)
+    {
+        const u32 tilePixels = m_EncodeTilePixels;
+        const u32 tileMips = static_cast<u32>(m_TileMipViews.size());
+
+        // The tile's own chain, so each face mip's share of it is a box reduction of the tile.
+        for (u32 dst = 1; dst < tileMips; ++dst)
+        {
+            cmd.PrepareForAccess(m_TileMipViews[dst - 1], AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_TileMipViews[dst], AccessKind::TransferDst);
+            RecordHalvingBlit(cmd, *m_TileImage, dst, tilePixels >> (dst - 1), 0, 1);
+        }
+
+        // The lighting reduction's share: the tile mip at the reduction's scale. The service holds
+        // the lighting scratch in TransferDst for the job's ticks.
+        const u32 lightingMip = static_cast<u32>(std::countr_zero(m_FaceSize / m_LightingFaceSize));
+        cmd.PrepareForAccess(m_TileMipViews[lightingMip], AccessKind::TransferSrc);
+        const u32 lightingTile = tilePixels >> lightingMip;
+        const vk::ImageCopy lightingCopy{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = lightingMip,
+                               .baseArrayLayer = 0,
+                               .layerCount = 1},
+            .srcOffset = {.x = 0, .y = 0, .z = 0},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = face,
+                               .layerCount = 1},
+            .dstOffset = {.x = static_cast<i32>(origin.x >> lightingMip),
+                          .y = static_cast<i32>(origin.y >> lightingMip),
+                          .z = 0},
+            .extent = {.width = lightingTile, .height = lightingTile, .depth = 1},
+        };
+        GetVkCommandBuffer(cmd).copyImage(GetVkImage(*m_TileImage),
+                                          vk::ImageLayout::eTransferSrcOptimal,
+                                          GetVkImage(*m_LightingScratchImage),
+                                          vk::ImageLayout::eTransferDstOptimal, 1, &lightingCopy);
+
+        // Encode every tile mip of at least one whole block. The block buffer was last read by the
+        // previous step's copy.
+        BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer, vk::AccessFlagBits::eTransferRead,
+                      vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderWrite);
+        cmd.BindPipeline(m_EncodePipeline);
+        m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+        vector<BufferImageCopyRegion> regions;
+        u32 written = 0;
+        for (u32 mip = 0; mip < m_TileEncodeSets.size(); ++mip)
+        {
+            const u32 size = tilePixels >> mip;
+            cmd.PrepareForAccess(m_TileMipViews[mip], AccessKind::SampleCompute);
+            // Each dispatch writes its own blocks, but the set binds the whole buffer.
+            if (mip > 0)
+            {
+                BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
+                              vk::AccessFlagBits::eShaderWrite,
+                              vk::PipelineStageFlagBits::eComputeShader,
+                              vk::AccessFlagBits::eShaderWrite);
+            }
+            regions.push_back({
+                .BufferOffset = written * EncodeBlockBytes,
+                .MipLevel = mip,
+                .BaseArrayLayer = face,
+                .ArrayLayers = 1,
+                .ImageOffset = {origin.x >> mip, origin.y >> mip, 0},
+                .Extent = {size, size, 1},
+            });
+            written += RecordEncodeDispatch(cmd, m_TileEncodeSets[mip], size, 1, written);
+        }
+        BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
+                      vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eTransfer,
+                      vk::AccessFlagBits::eTransferRead);
+        cmd.CopyBufferToImage(m_EncodeBlocks, m_ScratchImage, regions);
+    }
+
+    void BakedSkyCube::RecordEncodeFinish(CommandBuffer& cmd)
+    {
+        // The lighting reduction's chain, from the mip 0 the tiles filled.
+        const u32 lightingMips = static_cast<u32>(m_LightingScratchMipViews.size());
+        for (u32 dst = 1; dst < lightingMips; ++dst)
+        {
+            cmd.PrepareForAccess(m_LightingScratchMipViews[dst - 1], AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_LightingScratchMipViews[dst], AccessKind::TransferDst);
+            RecordHalvingBlit(cmd, *m_LightingScratchImage, dst, m_LightingFaceSize >> (dst - 1), 0,
+                              CubeFaces);
+        }
+
+        // The face mips too coarse for a tile to hold a block of, each from the lighting mip of its
+        // size: both are box reductions of the same texels.
+        const u32 lightingMip = static_cast<u32>(std::countr_zero(m_FaceSize / m_LightingFaceSize));
+        const u32 firstCoarse = static_cast<u32>(m_TileEncodeSets.size());
+        BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer, vk::AccessFlagBits::eTransferRead,
+                      vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderWrite);
+        cmd.BindPipeline(m_EncodePipeline);
+        m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+        vector<BufferImageCopyRegion> regions;
+        u32 written = 0;
+        for (u32 mip = firstCoarse; mip < m_MipCount; ++mip)
+        {
+            const u32 size = std::max(1u, m_FaceSize >> mip);
+            const u32 source = mip - lightingMip;
+            cmd.PrepareForAccess(m_LightingScratchMipViews[source], AccessKind::SampleCompute);
+            if (mip > firstCoarse)
+            {
+                BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
+                              vk::AccessFlagBits::eShaderWrite,
+                              vk::PipelineStageFlagBits::eComputeShader,
+                              vk::AccessFlagBits::eShaderWrite);
+            }
+            regions.push_back({
+                .BufferOffset = written * EncodeBlockBytes,
+                .MipLevel = mip,
+                .BaseArrayLayer = 0,
+                .ArrayLayers = CubeFaces,
+                .Extent = {size, size, 1},
+            });
+            written +=
+                RecordEncodeDispatch(cmd, m_LightingEncodeSets[source], size, CubeFaces, written);
+        }
+        BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
+                      vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eTransfer,
+                      vk::AccessFlagBits::eTransferRead);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferDst);
+        cmd.CopyBufferToImage(m_EncodeBlocks, m_ScratchImage, regions);
+        // One state across the reduction's mips, so the job's completion transition reads it right.
+        for (const Ref<ImageView>& mip : m_LightingScratchMipViews)
+        {
+            cmd.PrepareForAccess(mip, AccessKind::SampleAny);
+        }
+    }
+
+    void BakedSkyCube::RecordDisplayMips(CommandBuffer& cmd)
+    {
+        for (u32 dst = 1; dst < m_MipCount; ++dst)
+        {
+            cmd.PrepareForAccess(m_MipViews[dst - 1], AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_MipViews[dst], AccessKind::TransferDst);
+            RecordHalvingBlit(cmd, *m_CubeImage, dst, std::max(1u, m_FaceSize >> (dst - 1)), 0,
+                              CubeFaces);
+        }
+        // Every mip sampled for this frame's readers: the skybox in a fragment, the IBL convolution
+        // in a dispatch, and the SH readback's copy. Mip by mip, since the chain left the levels in
+        // different layouts and a transition reads its range's state from its first level.
+        for (const Ref<ImageView>& mip : m_MipViews)
+        {
+            cmd.PrepareForAccess(mip, AccessKind::SampleAny);
+        }
+    }
+
     u32 BakedSkyCube::AcquireFaceViewSlot(const u32 face, const bool faceFirst,
                                           const u32 fieldTargets)
     {
@@ -822,16 +1331,14 @@ namespace Veng::Renderer
     void BakedSkyCube::RecordMaterialRegion(
         CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline, const MaterialInstance& material,
         const std::span<const Ref<ImageView>> faceViews, const u32 faceSize, const u32 face,
-        const uvec2 tileOffset, const uvec2 tileExtent, const bool clear, const u32 fieldTargets)
+        const uvec2 tileOffset, const uvec2 tileExtent, const bool clear, const bool faceFirst,
+        const u32 fieldTargets, const ivec2 viewportOffset)
     {
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 selector = material.GetMaterialSelector();
 
         // Draw the material fragment through the face's fixed basis, with the far-plane stand-in in
-        // the depth slot so SkyIsBackground passes. A fresh view slot is claimed at the face's first
-        // tile (offset 0,0) — which under a layered bake is not the layer that clears, so the claim is
-        // keyed on the tile, not the clear.
-        const bool faceFirst = tileOffset.x == 0 && tileOffset.y == 0;
+        // the depth slot so SkyIsBackground passes.
         const u32 viewIndex = AcquireFaceViewSlot(face, faceFirst, fieldTargets);
 
         // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
@@ -857,7 +1364,7 @@ namespace Veng::Renderer
         // Viewport spans the whole face so the SV_Position → UV → world-direction mapping is the
         // full-face one; the tile render-area + scissor clip the fullscreen triangle to this tile's
         // texels, each computing the same cube direction it would in a whole-face draw.
-        cmd.SetViewport({0, 0}, {faceSize, faceSize});
+        cmd.SetViewport(viewportOffset, {faceSize, faceSize});
         cmd.SetScissor({static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
                        tileExtent);
         registry.Bind(cmd);
@@ -874,20 +1381,20 @@ namespace Veng::Renderer
 
     void BakedSkyCube::Bake(CommandBuffer& cmd, const MaterialInstance& material)
     {
+        VE_ASSERT(!IsCompressed(), "BakedSkyCube::Bake: a BC6H cube bakes through RequestBake");
         EnsurePipeline(material);
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
             RecordMaterialRegion(cmd, m_Pipeline, material, std::span(&m_FaceViews[face], 1),
-                                 m_FaceSize, face, {0, 0}, {m_FaceSize, m_FaceSize}, true);
+                                 m_FaceSize, face, {0, 0}, {m_FaceSize, m_FaceSize}, true, true);
         }
-        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
-        // fragment, and the IBL convolution reads it with a dispatch.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+        RecordDisplayMips(cmd);
     }
 
     void BakedSkyCube::Bake(CommandBuffer& cmd, const std::span<const SkyBakeLayer> layers)
     {
+        VE_ASSERT(!IsCompressed(), "BakedSkyCube::Bake: a BC6H cube bakes through RequestBake");
         EnsureLayerPipelines(layers);
         // A reduced-resolution base is amortized-path only: the promote is an extra scratch cube and a
         // blit that the whole-face synchronous path does not carry, and the sync path is a reference
@@ -908,65 +1415,10 @@ namespace Veng::Renderer
             {
                 RecordMaterialRegion(cmd, m_LayerPipelines[layer].Pipeline, *layers[layer].Material,
                                      std::span(&m_FaceViews[face], 1), m_FaceSize, face, {0, 0},
-                                     {m_FaceSize, m_FaceSize}, layer == 0);
+                                     {m_FaceSize, m_FaceSize}, layer == 0, true);
             }
         }
-        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
-        // fragment, and the IBL convolution reads it with a dispatch.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
-    }
-
-    void BakedSkyCube::RecordReductionMips(CommandBuffer& cmd)
-    {
-        // The display face already sits at or below the readback size; the readback reads mip 0.
-        if (m_ShReadbackMip == 0)
-        {
-            return;
-        }
-
-        u32 width = m_FaceSize;
-        u32 height = m_FaceSize;
-        for (u32 dst = 1; dst <= m_ShReadbackMip; ++dst)
-        {
-            const u32 src = dst - 1;
-            cmd.PrepareForAccess(m_MipViews[src], AccessKind::TransferSrc);
-            cmd.PrepareForAccess(m_MipViews[dst], AccessKind::TransferDst);
-
-            const u32 dstWidth = std::max(1u, width / 2);
-            const u32 dstHeight = std::max(1u, height / 2);
-            // One blit downsamples all six layers at once; a linear filter over a 2× reduction is a
-            // 2×2 box average, so the chain reaches the readback level as a spherical-integral-
-            // preserving reduction rather than a point resample.
-            const vk::ImageBlit blit{
-                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = src,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = CubeFaces},
-                .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                vk::Offset3D{.x = static_cast<i32>(width),
-                                             .y = static_cast<i32>(height),
-                                             .z = 1}}},
-                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = dst,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = CubeFaces},
-                .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                vk::Offset3D{.x = static_cast<i32>(dstWidth),
-                                             .y = static_cast<i32>(dstHeight),
-                                             .z = 1}}},
-            };
-            GetVkCommandBuffer(cmd).blitImage(
-                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferSrcOptimal,
-                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
-                vk::Filter::eLinear);
-
-            width = dstWidth;
-            height = dstHeight;
-        }
-
-        // Restore mip 0 (the display cube) to a sampled layout for this frame's fragment and
-        // dispatch readers; the readback level is left in TransferDst for the caller's copy.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+        RecordDisplayMips(cmd);
     }
 
     void BakedSkyCube::RecordAtmosphereRegion(CommandBuffer& cmd,
@@ -1040,6 +1492,8 @@ namespace Veng::Renderer
                                       const Atmosphere& atmosphere, const vec3& sunDirection,
                                       const f32 intensity)
     {
+        VE_ASSERT(!IsCompressed(),
+                  "BakedSkyCube::BakeAtmosphere: a BC6H cube bakes only Sky material layers");
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
@@ -1047,9 +1501,7 @@ namespace Veng::Renderer
                                    intensity, m_FaceViews[face], m_FaceSize, face, {0, 0},
                                    {m_FaceSize, m_FaceSize}, true);
         }
-        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
-        // fragment, and the IBL convolution reads it with a dispatch.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+        RecordDisplayMips(cmd);
     }
 
     void BakedSkyCube::AbandonBake()
@@ -1077,7 +1529,7 @@ namespace Veng::Renderer
 
     void BakedSkyCube::RequestBake(GeneratedTextureService& service,
                                    const std::span<const SkyBakeLayer> layers, string cacheKey,
-                                   string fieldKey)
+                                   string fieldKey, const u32 encodeTilePixels)
     {
         VE_ASSERT(!layers.empty(), "BakedSkyCube::RequestBake: a bake needs at least one layer");
 
@@ -1126,7 +1578,27 @@ namespace Veng::Renderer
         }
         VE_ASSERT(!hasField || layers.size() > 1,
                   "BakedSkyCube::RequestBake: a field layer needs a Picture layer after it");
+        const bool compressed = IsCompressed();
+        VE_ASSERT(!compressed || hasField || baseDivisor == 1,
+                  "BakedSkyCube::RequestBake: a BC6H cube's Picture layers render whole tiles, so "
+                  "its base may not set FaceSizeDivisor > 1");
         EnsureLayerPipelines(layers);
+
+        // A compressed cube's picture layers share one tile grid, every layer of a tile in one tick.
+        u32 encodeTile = 0;
+        if (compressed)
+        {
+            const u32 smallest = std::max(4u, m_FaceSize / MaxEncodeTilesPerAxis);
+            encodeTile = encodeTilePixels != 0
+                             ? encodeTilePixels
+                             : std::clamp(DefaultEncodeTilePixels, smallest, m_FaceSize);
+            VE_ASSERT(std::has_single_bit(encodeTile) && encodeTile >= smallest &&
+                          encodeTile <= m_FaceSize,
+                      "BakedSkyCube::RequestBake: encode tile {} must be a power of two from {} to "
+                      "the face size {}",
+                      encodeTile, smallest, m_FaceSize);
+            EnsureEncodeTile(encodeTile);
+        }
 
         const u32 fieldTargets = hasField ? layers[0].FieldTargets : 0u;
         const u32 fieldFaceSize = m_FaceSize / baseDivisor;
@@ -1150,9 +1622,11 @@ namespace Veng::Renderer
         // m_LayerPipelines (a superseding request rebuilds that in place).
         enum class PhaseKind : u8
         {
-            Tiles,       // one tile of one face of a layer per tick
-            Promote,     // the coarse Picture base's upsampling blit
-            FieldFinish, // the field's mips and sums
+            Tiles,        // one tile of one face of a layer per tick
+            Promote,      // the coarse Picture base's upsampling blit
+            FieldFinish,  // the field's mips and sums
+            EncodeTiles,  // one tile of one face of every Picture layer, encoded, per tick
+            EncodeFinish, // the lighting reduction's mips and the coarse face mips
         };
         enum class Destination : u8
         {
@@ -1177,6 +1651,8 @@ namespace Veng::Renderer
             bool ClearEveryTile = false;
             // The field targets this layer reads, 0 for none.
             u32 ReadsField = 0;
+            // The Picture layers an EncodeTiles tick renders, in order.
+            vector<std::pair<Ref<GraphicsPipeline>, const MaterialInstance*>> Draws;
         };
         const auto tilePhase = [&](const usize layer, const Destination target, const u32 faceSize)
         {
@@ -1198,7 +1674,7 @@ namespace Veng::Renderer
         };
 
         vector<Phase> phases;
-        if (hasField)
+        if (hasField || compressed)
         {
             if (runField)
             {
@@ -1220,12 +1696,42 @@ namespace Veng::Renderer
                 phases.push_back({.Kind = PhaseKind::Promote});
             }
         }
-        for (usize layer = 1; layer < layers.size(); ++layer)
+        if (compressed)
         {
-            Phase picture = tilePhase(layer, Destination::Scratch, m_FaceSize);
-            picture.ClearEveryTile = hasField && layer == 1;
-            picture.ReadsField = fieldTargets;
+            // Each layer's Cost prices a tile of its own TilePixels, so a shared tile charges it by
+            // area.
+            const u32 tilesPerAxis = m_FaceSize / encodeTile;
+            Phase picture{
+                .Kind = PhaseKind::EncodeTiles,
+                .Ticks = CubeFaces * tilesPerAxis * tilesPerAxis,
+                .Cost = 0,
+                .TilePixels = encodeTile,
+                .TilesPerAxis = tilesPerAxis,
+                .TilesPerFace = tilesPerAxis * tilesPerAxis,
+                .ReadsField = fieldTargets,
+            };
+            for (usize layer = hasField ? 1 : 0; layer < layers.size(); ++layer)
+            {
+                const u64 layerTile =
+                    layers[layer].TilePixels != 0 ? layers[layer].TilePixels : SkyBakeTilePixels;
+                const u64 cost = static_cast<u64>(std::max(1u, layers[layer].Cost)) * encodeTile *
+                                 encodeTile / (layerTile * layerTile);
+                picture.Cost += static_cast<u32>(std::max<u64>(1, cost));
+                picture.Draws.emplace_back(m_LayerPipelines[layer].Pipeline,
+                                           layers[layer].Material);
+            }
             phases.push_back(std::move(picture));
+            phases.push_back({.Kind = PhaseKind::EncodeFinish});
+        }
+        else
+        {
+            for (usize layer = 1; layer < layers.size(); ++layer)
+            {
+                Phase picture = tilePhase(layer, Destination::Scratch, m_FaceSize);
+                picture.ClearEveryTile = hasField && layer == 1;
+                picture.ReadsField = fieldTargets;
+                phases.push_back(std::move(picture));
+            }
         }
 
         u32 tickCount = 0;
@@ -1237,14 +1743,26 @@ namespace Veng::Renderer
             costPhases.push_back({.Ticks = phase.Ticks, .Cost = phase.Cost});
         }
 
+        // A compressed bake's ticks write both of its targets by copies; its lighting reduction is
+        // the second target so a cache stores and restores it with the chain.
+        vector<GeneratedTextureTargetInfo> targets{{
+            .Adopt = m_ScratchImage,
+            .ProducerAccess = compressed ? AccessKind::TransferDst : AccessKind::ColorAttachment,
+            .SampledViewType = ImageViewType::Cube,
+        }};
+        if (compressed)
+        {
+            targets.push_back({
+                .Adopt = m_LightingScratchImage,
+                .ProducerAccess = AccessKind::TransferDst,
+                .SampledViewType = ImageViewType::Cube,
+            });
+        }
+
         GeneratedTextureRequest request{
             .Key = m_JobKey,
             .Name = "Sky Bake",
-            .Targets = {{
-                .Adopt = m_ScratchImage,
-                .ProducerAccess = AccessKind::ColorAttachment,
-                .SampledViewType = ImageViewType::Cube,
-            }},
+            .Targets = std::move(targets),
             .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
             .CostPhases = std::move(costPhases),
@@ -1273,6 +1791,30 @@ namespace Veng::Renderer
                         m_FieldKey = fieldKey;
                         m_FieldStandingTargets = fieldTargets;
                         return;
+                    case PhaseKind::EncodeFinish:
+                        RecordEncodeFinish(cmd);
+                        return;
+                    case PhaseKind::EncodeTiles:
+                    {
+                        const u32 face = idx / phase.TilesPerFace;
+                        const u32 tile = idx % phase.TilesPerFace;
+                        const TileRect rect =
+                            TileRectFor(tile, phase.TilesPerAxis, m_FaceSize, phase.TilePixels);
+                        // The tile target is the tile, so the face's viewport begins at minus the
+                        // tile's origin and every fragment keeps its face mapping.
+                        const ivec2 viewportOffset{-static_cast<i32>(rect.Offset.x),
+                                                   -static_cast<i32>(rect.Offset.y)};
+                        for (usize draw = 0; draw < phase.Draws.size(); ++draw)
+                        {
+                            RecordMaterialRegion(
+                                cmd, phase.Draws[draw].first, *phase.Draws[draw].second,
+                                std::span(&m_TileRenderView, 1), m_FaceSize, face, {0, 0},
+                                rect.Extent, draw == 0, draw == 0 && tile == 0, phase.ReadsField,
+                                viewportOffset);
+                        }
+                        RecordTileEncode(cmd, face, rect.Offset);
+                        return;
+                    }
                     case PhaseKind::Tiles:
                         break;
                     }
@@ -1310,7 +1852,8 @@ namespace Veng::Renderer
                     const bool clear = phase.ClearEveryTile || (phase.ClearFirstTile && tile == 0);
                     RecordMaterialRegion(cmd, phase.Pipeline, *phase.Material,
                                          std::span(views.data(), viewCount), phase.FaceSize, face,
-                                         rect.Offset, rect.Extent, clear, phase.ReadsField);
+                                         rect.Offset, rect.Extent, clear, tile == 0,
+                                         phase.ReadsField);
                     return;
                 }
             },
@@ -1327,6 +1870,9 @@ namespace Veng::Renderer
                                              const Atmosphere& atmosphere, const vec3& sunDirection,
                                              const f32 intensity)
     {
+        VE_ASSERT(!IsCompressed(),
+                  "BakedSkyCube::RequestBakeAtmosphere: a BC6H cube bakes only Sky material "
+                  "layers");
         CancelBake();
 
         GeneratedTextureRequest request{
@@ -1367,29 +1913,43 @@ namespace Veng::Renderer
             return false;
         }
 
-        // The scratch cube holds a complete bake. Copy its six faces into the displayed cube's mip 0
-        // in one step — an atomic swap of content, so the skybox never samples a half-filled cube —
-        // and leave the displayed cube sampled for this frame's skybox pass. The reduction chain the
-        // SH readback needs is regenerated from the fresh mip 0 by the caller's RecordReductionMips.
-        cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
-        cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
-        const vk::ImageCopy copy{
-            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .srcOffset = {.x = 0, .y = 0, .z = 0},
-            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .dstOffset = {.x = 0, .y = 0, .z = 0},
-            .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
-        };
-        GetVkCommandBuffer(cmd).copyImage(
-            GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferSrcOptimal,
-            GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
-        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+        // The scratch holds a complete bake. Copy it into the displayed cube in one step — an atomic
+        // swap of content, so the skybox never samples a half-filled cube — and leave everything a
+        // renderer reads sampled for this frame. A compressed bake carries its whole chain and its
+        // lighting reduction; a float one rebuilds its chain from the fresh mip 0.
+        if (IsCompressed())
+        {
+            cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_CubeView, AccessKind::TransferDst);
+            RecordWholeChainCopy(cmd, *m_ScratchImage, *m_CubeImage);
+            cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+            cmd.PrepareForAccess(m_LightingScratchView, AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_LightingView, AccessKind::TransferDst);
+            RecordWholeChainCopy(cmd, *m_LightingScratchImage, *m_LightingImage);
+            cmd.PrepareForAccess(m_LightingView, AccessKind::SampleAny);
+        }
+        else
+        {
+            cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
+            const vk::ImageCopy copy{
+                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = 0,
+                                   .baseArrayLayer = 0,
+                                   .layerCount = CubeFaces},
+                .srcOffset = {.x = 0, .y = 0, .z = 0},
+                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = 0,
+                                   .baseArrayLayer = 0,
+                                   .layerCount = CubeFaces},
+                .dstOffset = {.x = 0, .y = 0, .z = 0},
+                .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+            };
+            GetVkCommandBuffer(cmd).copyImage(
+                GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferSrcOptimal,
+                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
+            RecordDisplayMips(cmd);
+        }
 
         // Drop the completed job (its adopted target is this bake's own scratch image, which stays)
         // so the key is free for the next re-bake.

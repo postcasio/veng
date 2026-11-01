@@ -42,8 +42,8 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
 {
     // Walk the declared range rather than a hand-listed set: a format appended to Types.h and
     // left out of either switch is then caught the day it is declared, not the day a hand-kept
-    // array is remembered. A2R10G10B10Unorm is the last declared value.
-    constexpr auto Last = static_cast<Veng::u32>(Format::A2R10G10B10Unorm);
+    // array is remembered. BC6HUfloat is the last declared value.
+    constexpr auto Last = static_cast<Veng::u32>(Format::BC6HUfloat);
 
     std::set<std::underlying_type_t<vk::Format>> distinct;
     for (Veng::u32 value = 0; value <= Last; ++value)
@@ -69,6 +69,7 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
     // Appended, never inserted: cooked blobs persist a format by its integer, so an ordinal that
     // moved would silently reinterpret every pack written before it.
     CHECK(static_cast<Veng::u32>(Format::A2R10G10B10Unorm) == 31u);
+    CHECK(static_cast<Veng::u32>(Format::BC6HUfloat) == 32u);
 }
 
 TEST_CASE("ImageLayout round-trips through ToVk/FromVk")
@@ -98,7 +99,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
     {
         constexpr std::array v = {ImageType::Type1D, ImageType::Type2D, ImageType::Type3D};
         std::set<std::underlying_type_t<vk::ImageType>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -112,7 +113,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             ImageViewType::CubeArray,
         };
         std::set<std::underlying_type_t<vk::ImageViewType>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -130,7 +131,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             CompareOp::GreaterOrEqual, CompareOp::Always,
         };
         std::set<std::underlying_type_t<vk::CompareOp>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -155,7 +156,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             AddressMode::ClampToBorder,
         };
         std::set<std::underlying_type_t<vk::SamplerAddressMode>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -177,7 +178,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             DescriptorType::StorageBuffer,
         };
         std::set<std::underlying_type_t<vk::DescriptorType>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -192,7 +193,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             BlendFactor::DstAlpha, BlendFactor::OneMinusDstAlpha,
         };
         std::set<std::underlying_type_t<vk::BlendFactor>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }
@@ -204,7 +205,7 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             BlendOp::Add, BlendOp::Subtract, BlendOp::ReverseSubtract, BlendOp::Min, BlendOp::Max,
         };
         std::set<std::underlying_type_t<vk::BlendOp>> s;
-        for (auto e : v)
+        for (const auto e : v)
         {
             s.insert(Underlying(ToVk(e)));
         }

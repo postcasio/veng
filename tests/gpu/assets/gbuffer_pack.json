@@ -60,6 +60,16 @@
       "id": "0x7165A2FEB1EF6F28",
       "type": "Material",
       "source": "materials/sky_field_read.vmat.json"
+    },
+    {
+      "id": "0xF63781DCFE4856BF",
+      "type": "Shader",
+      "source": "shaders/sky_bc6h_pattern.frag.shader.json"
+    },
+    {
+      "id": "0x3C76517F9B8DF612",
+      "type": "Material",
+      "source": "materials/sky_bc6h_pattern.vmat.json"
     }
   ]
 }

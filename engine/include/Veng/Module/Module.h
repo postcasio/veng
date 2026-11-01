@@ -662,10 +662,14 @@ extern "C"
 /// (ViewConstantsStride 864 → 896). A module builds bake layers, requests generated textures,
 /// owns cubes and indexes view regions by the stride, so a stale one lays them out short and reads
 /// every region past the first at the wrong offset.
+/// Version 167 lets a baked sky cube display block-compressed: Renderer::Format gains BC6HUfloat,
+/// BakedSkyCube grows its display format, lighting reduction and encode targets, and
+/// BakedSkyCube::Create and RequestBake take a display format and an encode tile. A module owns
+/// cubes and requests their bakes, so a stale one lays the cube out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 166u
+#define VENG_MODULE_ABI_VERSION 167u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

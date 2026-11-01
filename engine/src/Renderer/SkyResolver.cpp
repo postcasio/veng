@@ -133,13 +133,13 @@ namespace Veng::Renderer
     {
         // A lighting cube wins over the sky's own, in the precedence the derive applies — it is held
         // even when the displayed sky is something else (a probe lighting a star-field view).
-        // Otherwise the resolved baked cube is what the IBL convolved from; null when neither backs
-        // the lighting.
+        // Otherwise the resolved baked cube's lighting reduction is what the IBL convolved from;
+        // null when neither backs the lighting.
         if (m_LightingCaptureCube != nullptr)
         {
             return m_LightingCaptureCube;
         }
-        return m_ResolvedCube != nullptr ? m_ResolvedCube->GetCubeView() : nullptr;
+        return m_ResolvedCube != nullptr ? m_ResolvedCube->GetLightingView() : nullptr;
     }
 
     Ref<Image> SkyResolver::GetDisplayedSkyCube() const
@@ -388,7 +388,7 @@ namespace Veng::Renderer
             if (m_ResolvedCube->IsBaked() && m_ResolvedSkyLighting == SkyLighting::SH &&
                 (cubeChanged || !m_SkyShDerived))
             {
-                BeginDeferredShReadback(cmd);
+                BeginDeferredShReadback();
                 m_SkyShDerived = true;
             }
         }
@@ -432,8 +432,8 @@ namespace Veng::Renderer
                 if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
                 {
                     m_Ibl->EnsureInitialized(cmd);
-                    m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
-                                            m_ResolvedCube->GetFaceSize());
+                    m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetLightingView(),
+                                            m_ResolvedCube->GetLightingFaceSize());
                     m_SkyCubeConvolved = true;
                     m_IblHoldsLightingCube = false;
                 }
@@ -466,7 +466,7 @@ namespace Veng::Renderer
         }
     }
 
-    void SkyResolver::BeginDeferredShReadback(CommandBuffer& cmd)
+    void SkyResolver::BeginDeferredShReadback()
     {
         AsyncReadback& readback = m_Context.GetAsyncReadback();
 
@@ -478,9 +478,8 @@ namespace Veng::Renderer
         }
         m_ShReadback.Handles.clear();
 
-        // Reduce the resolved cube (owned or borrowed) to the readback level in this command buffer.
-        m_ResolvedCube->RecordReductionMips(cmd);
-
+        // The resolved cube's lighting reduction already holds the readback level: a landed bake
+        // builds its mips.
         const u32 faceSize = m_ResolvedCube->GetShReadbackFaceSize();
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
         m_ShReadback.FaceSize = faceSize;
@@ -493,7 +492,7 @@ namespace Veng::Renderer
         {
             const AsyncReadbackHandle handle = readback.Request({
                 .Name = "Sky SH Readback",
-                .Image = m_ResolvedCube->GetCubeImage(),
+                .Image = m_ResolvedCube->GetLightingImage(),
                 .MipLevel = m_ResolvedCube->GetShReadbackMipLevel(),
                 .ArrayLayer = face,
                 .RestoreTo = AccessKind::SampleAny,

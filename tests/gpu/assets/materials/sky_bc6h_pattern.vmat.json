@@ -1,0 +1,15 @@
+{
+  "defaultInstance": "0x0560B81C3F365974",
+  "domain": "Sky",
+  "shaders": {
+    "vertex": "0x00000000000024A2",
+    "fragment": "0xF63781DCFE4856BF"
+  },
+  "fields": [
+    {
+      "name": "Mode",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    }
+  ]
+}

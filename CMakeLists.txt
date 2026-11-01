@@ -2291,6 +2291,10 @@ if (VENG_BUILD_TESTS)
             # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
             # ticks charge their own layer's cost.
             tests/gpu/sky_bake_field.cpp
+            # A bake into a block-compressed cube against the same bake into a float one: a smooth
+            # sky within BC6H's bound, bright texels and speckle kept, the lighting reduction and
+            # the mip chain as box reductions of the source, and a cached cube restoring both.
+            tests/gpu/sky_bake_compressed.cpp
             # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
             # the Sky lights until the first sweep lands, the capture then re-lights once per
             # completed sweep under a baked, direct, environment or absent Sky, disabling it

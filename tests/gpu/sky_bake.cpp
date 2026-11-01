@@ -462,16 +462,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "sky bake: a dirty SH-tier re-bake rec
     const Unique<BakedSkyCube> bake =
         BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
 
-    // The SH path costs one bake: one display bake fills the cube, and the reduced readback reads
-    // that same cube back (RecordReductionMips + a deferred copy, no face render), so a dirty SH sky
-    // — including the tier's cold start — never bakes the cube a second time to seed its coefficients.
+    // The SH path costs one bake: one display bake fills the cube and its mips, and the reduced
+    // readback reads that same cube back (a deferred copy, no face render), so a dirty SH sky —
+    // including the tier's cold start — never bakes the cube a second time to seed its coefficients.
     const u64 beforeSteady = bake->GetFaceRendersRecorded();
-    Context.ImmediateCommands(
-        [&](CommandBuffer& cmd)
-        {
-            bake->Bake(cmd, *material.Get());
-            bake->RecordReductionMips(cmd);
-        });
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { bake->Bake(cmd, *material.Get()); });
     CHECK(bake->GetFaceRendersRecorded() - beforeSteady == BakedSkyCube::CubeFaces);
 }
 
@@ -492,17 +487,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(bake->GetShReadbackFaceSize() == BakedSkyCube::ShReadbackFaceSize);
     CHECK(bake->GetShReadbackMipLevel() == 2);
 
-    // Bake the display face and reduce it, then project both the display level and the reduced
-    // readback level. They must agree: the reduction preserves the coefficients the full face
-    // produces, and the readback reads a validly-filled level (a wrong or unwritten level would not
-    // project to the same light) — the display bake's own cube, read back reduced rather than
-    // baked a second time.
-    Context.ImmediateCommands(
-        [&](CommandBuffer& cmd)
-        {
-            bake->Bake(cmd, *material.Get());
-            bake->RecordReductionMips(cmd);
-        });
+    // Bake the display face, which builds its mips, then project both the display level and the
+    // reduced readback level. They must agree: the reduction preserves the coefficients the full
+    // face produces, and the readback reads a validly-filled level (a wrong or unwritten level would
+    // not project to the same light) — the display bake's own cube, read back reduced rather than
+    // baked a second time. A float cube of this size is its own lighting reduction.
+    CHECK(bake->GetLightingImage() == bake->GetCubeImage());
+    CHECK(bake->GetLightingView() == bake->GetCubeView());
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { bake->Bake(cmd, *material.Get()); });
     const vector<u8> full = DownloadCubeLevel(Context, *bake, 0, FaceSize);
     const vector<u8> reduced = DownloadCubeLevel(Context, *bake, bake->GetShReadbackMipLevel(),
                                                  bake->GetShReadbackFaceSize());

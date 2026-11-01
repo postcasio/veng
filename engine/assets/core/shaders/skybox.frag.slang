@@ -44,9 +44,25 @@ float4 fsMain(VSOutput input) : SV_Target
     SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
+    // The view ray direction through this pixel, reconstructed through the translation-free
+    // InvViewRotProj (see Veng/sky.slang SkyViewDirection). A far point through InvViewProj minus
+    // the camera is a difference of two large near-equal numbers whose cancellation grows with the
+    // camera's distance from the world origin — and reverse-Z makes it worse, since NDC z = 1 is now
+    // the near plane (a small baseline) rather than the far. A rotation-only inverse has no camera
+    // term to cancel and is exact wherever the camera is. The cube holds the sky in its own frame;
+    // the sky's orientation turns the lookup, not the cube.
+    float2 ndcXY = input.v_UV * 2.0 - 1.0;
+    float3 dir = SkyDirection(vc, normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz));
+
+    // The cube is sampled through its mips so a face finer than a pixel's view angle minifies
+    // without aliasing. The direction's derivatives are taken here, before the per-pixel discard
+    // below, since a discarded neighbour leaves an implicit derivative undefined.
+    float3 dirDx = ddx(dir);
+    float3 dirDy = ddy(dir);
+
     // The depth target is rendered into the dynamic-resolution sub-rect; remap the logical UV
     // into the valid region before sampling (identity at scale 1.0). The NDC reconstruction
-    // below keeps the raw logical UV — the view is logically full-screen.
+    // above keeps the raw logical UV — the view is logically full-screen.
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
@@ -57,17 +73,6 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    // The view ray direction through this background pixel, reconstructed through the
-    // translation-free InvViewRotProj (see Veng/sky.slang SkyViewDirection). A far point through
-    // InvViewProj minus the camera is a difference of two large near-equal numbers whose
-    // cancellation grows with the camera's distance from the world origin — and reverse-Z makes
-    // it worse, since NDC z = 1 is now the near plane (a small baseline) rather than the far.
-    // A rotation-only inverse has no camera term to cancel and is exact wherever the camera is.
-    float2 ndcXY = input.v_UV * 2.0 - 1.0;
-    float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
-
-    // The cube holds the sky in its own frame; the sky's orientation turns the lookup, not the cube.
-    float3 sky =
-        g_Radiance.SampleLevel(g_IblSampler, SkyDirection(vc, dir), 0.0).rgb * g_PC.EnvIntensity;
+    float3 sky = g_Radiance.SampleGrad(g_IblSampler, dir, dirDx, dirDy).rgb * g_PC.EnvIntensity;
     return float4(sky, 1.0);
 }

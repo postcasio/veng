@@ -175,7 +175,8 @@ namespace Veng::Renderer
 
         /// @brief The cube the IBL convolved its lighting from this resolve, for the debug view.
         ///
-        /// The active scene-lighting capture's cube, else the resolved sky's own baked cube, else null
+        /// The active scene-lighting capture's cube, else the resolved baked cube's lighting
+        /// reduction (BakedSkyCube::GetLightingView), else null
         /// when nothing backs the lighting — the pre-convolution input, as opposed to
         /// GetIbl().GetPrefilterCubeView()'s convolved output.
         [[nodiscard]] Ref<ImageView> GetLightingDebugCube() const;
@@ -203,16 +204,15 @@ namespace Veng::Renderer
     private:
         SkyResolver(Context& context, AssetManager& assets);
 
-        /// @brief Reduces the just-baked cube and reads it back deferred to reproject the skylight SH.
+        /// @brief Reads the baked cube's lighting reduction back deferred to reproject the skylight SH.
         ///
-        /// The steady-state SH path (every re-bake after the first): records the reduction blit
-        /// chain into @p cmd and requests a non-blocking per-face readback of the reduced level.
+        /// The steady-state SH path (every re-bake after the first): requests a non-blocking per-face
+        /// readback of the lighting reduction's SH level, which the landed bake already reduced.
         /// The completions, delivered a frame or two later, accumulate the six faces and reproject
         /// m_SkySh — so a dirty SH sky costs one bake and is lit by the previous bake's coefficients
         /// for the frame in between. Supersedes any still-in-flight readback so a stale completion
         /// never overwrites fresher coefficients.
-        /// @param cmd The frame command buffer the reduction blits are recorded into.
-        void BeginDeferredShReadback(CommandBuffer& cmd);
+        void BeginDeferredShReadback();
 
         Context& m_Context;
 
