@@ -42,8 +42,8 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
 {
     // Walk the declared range rather than a hand-listed set: a format appended to Types.h and
     // left out of either switch is then caught the day it is declared, not the day a hand-kept
-    // array is remembered. BC6HUfloat is the last declared value.
-    constexpr auto Last = static_cast<Veng::u32>(Format::BC6HUfloat);
+    // array is remembered. RG16Unorm is the last declared value.
+    constexpr auto Last = static_cast<Veng::u32>(Format::RG16Unorm);
 
     std::set<std::underlying_type_t<vk::Format>> distinct;
     for (Veng::u32 value = 0; value <= Last; ++value)
@@ -59,6 +59,7 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
     CHECK(ToVk(Format::RGBA8Unorm) == vk::Format::eR8G8B8A8Unorm);
     CHECK(ToVk(Format::D32Sfloat) == vk::Format::eD32Sfloat);
     CHECK(ToVk(Format::RGBA16Unorm) == vk::Format::eR16G16B16A16Unorm);
+    CHECK(ToVk(Format::RG16Unorm) == vk::Format::eR16G16Unorm);
 
     // The two ten-bit packed formats are opposite channel orders of the same word, so a mapping
     // that collapsed them would be invisible to the round-trip above until a channel came back
@@ -70,6 +71,7 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
     // moved would silently reinterpret every pack written before it.
     CHECK(static_cast<Veng::u32>(Format::A2R10G10B10Unorm) == 31u);
     CHECK(static_cast<Veng::u32>(Format::BC6HUfloat) == 32u);
+    CHECK(static_cast<Veng::u32>(Format::RG16Unorm) == 33u);
 }
 
 TEST_CASE("ImageLayout round-trips through ToVk/FromVk")

@@ -121,6 +121,10 @@ namespace Veng::Renderer
         ///        logarithm-like half-float space. Appended at the fixed ordinal 32 for cooked-blob
         ///        integer stability.
         BC6HUfloat,
+        /// @brief 16-bit per channel RG, normalized [0,1]. Two bounded fields quantised uniformly
+        ///        at range/65535 without the two idle channels of an RGBA16Unorm: four bytes per
+        ///        texel. Appended at the fixed ordinal 33 for cooked-blob integer stability.
+        RG16Unorm,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

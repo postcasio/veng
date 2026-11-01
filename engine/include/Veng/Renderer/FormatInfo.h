@@ -62,6 +62,7 @@ namespace Veng::Renderer
         case Format::A2B10G10R10Unorm:
         case Format::A2R10G10B10Unorm:
         case Format::RG16Sfloat:
+        case Format::RG16Unorm:
         case Format::R32Sfloat:
         case Format::R32Uint:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 4};
@@ -237,6 +238,8 @@ namespace Veng::Renderer
             return "A2R10G10B10Unorm";
         case Format::BC6HUfloat:
             return "BC6HUfloat";
+        case Format::RG16Unorm:
+            return "RG16Unorm";
         }
         return "Unknown";
     }
