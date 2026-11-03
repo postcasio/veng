@@ -162,7 +162,8 @@ float3 Downsample(uint index, uint2 id, uint2 destExtent)
         return center * 0.5 + (tl + tr + bl + br) * 0.125;
     }
 
-    float2 o = texel;
+    // In source texels, as bloom_down's.
+    float2 o = texel * 0.5;
     float3 a = SampleAbove(index, uv + float2(-2, -2) * o);
     float3 b = SampleAbove(index, uv + float2(0, -2) * o);
     float3 c = SampleAbove(index, uv + float2(2, -2) * o);

@@ -78,15 +78,15 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
 
     // The destination texel center in [0,1]. Every level, mip 0 included, halves its source,
-    // so one destination texel spans two source texels; the kernel offsets below are in
-    // destination texels.
+    // so one destination texel spans two source texels.
     float2 texel = 1.0 / float2(g_PC.DestExtent);
     float2 uv = (float2(id.xy) + 0.5) * texel;
 
     // The 13-tap kernel: a center, an inner 2x2 ring and an outer 3x3 ring of the
-    // COD/Jimenez "Next Generation Post Processing" downsample. Offsets are in
-    // destination texels (== two source texels each).
-    float2 o = texel;
+    // COD/Jimenez "Next Generation Post Processing" downsample. Offsets are in source texels:
+    // each bilinear tap covers two of them, so at this spacing the taps overlap with no gaps a
+    // small bright source could fall between.
+    float2 o = texel * 0.5;
 
     float3 a = SampleSource(uv + float2(-2, -2) * o);
     float3 b = SampleSource(uv + float2(0, -2) * o);

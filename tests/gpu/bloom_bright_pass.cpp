@@ -5,7 +5,8 @@
 //     same energy at every sub-texel offset (both kernels give every source texel the same total
 //     weight, a quarter for a 2:1 downsample, wherever it falls on the destination grid);
 //   - one extreme texel seeds no more than the ceiling's worth, and keeps its hue;
-//   - a NaN or an inf seeds nothing, and leaves the rest of the level finite.
+//   - a NaN or an inf seeds nothing, and leaves the rest of the level finite;
+//   - a single bright texel seeds a solid patch, with no holes between the kernel's taps.
 
 #include <array>
 #include <cmath>
@@ -74,6 +75,10 @@ namespace
     {
         dvec3 Rgb{0.0};
         u32 NonFinite = 0;
+        // The destination texels holding any light, and the box bounding them.
+        u32 Lit = 0;
+        uvec2 LitMin{~0u};
+        uvec2 LitMax{0u};
 
         [[nodiscard]] f64 Luma() const { return 0.2126 * Rgb.r + 0.7152 * Rgb.g + 0.0722 * Rgb.b; }
     };
@@ -225,6 +230,14 @@ namespace
                     continue;
                 }
                 sum.Rgb += dvec3(c);
+                if (c.r > 0.0f || c.g > 0.0f || c.b > 0.0f)
+                {
+                    const uvec2 texel{static_cast<u32>(i / 4) % DestExtent.x,
+                                      static_cast<u32>(i / 4) / DestExtent.x};
+                    ++sum.Lit;
+                    sum.LitMin = glm::min(sum.LitMin, texel);
+                    sum.LitMax = glm::max(sum.LitMax, texel);
+                }
             }
             return sum;
         }
@@ -364,6 +377,28 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
             CHECK(most <= ceiling * 1.002);
             CHECK(least >= ceiling * 0.95);
             CHECK(offHue == 0.0);
+        }
+    }
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture, "bloom bright pass: a single bright texel seeds no holes")
+{
+    AssetManager assets(Context, Tasks, Types);
+    BrightPassRig rig(Context, assets);
+
+    for (usize kernel = 0; kernel < 2; ++kernel)
+    {
+        CAPTURE(kernel);
+        // Both parities on each axis, since a destination texel spans two source texels.
+        for (const uvec2 source : {uvec2{30, 30}, uvec2{31, 30}, uvec2{30, 31}, uvec2{31, 31}})
+        {
+            CAPTURE(source);
+            std::vector<vec3> field = EmptyField();
+            At(field, source.x, source.y) = vec3(24.0f);
+            const LevelSum level = rig.Run(kernel, field, 64.0f);
+            REQUIRE(level.Lit > 0u);
+            const uvec2 box = level.LitMax - level.LitMin + 1u;
+            CHECK(level.Lit == box.x * box.y);
         }
     }
 }
