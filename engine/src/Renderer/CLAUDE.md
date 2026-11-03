@@ -4282,8 +4282,8 @@ measured bounds and the selection); the second the drawing.
   pure). A level's range is `D_L = max(s_L·K/τ, c·Ď_L)`, both terms upper bounds that halve exactly
   per level, so `D_{L−1} = 2 D_L`. Distances are to the tile's bound, an oriented box in the tile's
   own frame (so its diameter is the tile's, whatever face it is on). A drawn tile splits under
-  `(1 − h)·D_L` and merges past `(1 + h)·D_L`, or splits when its `MorphError` projected at its
-  distance exceeds `TargetHeightErrorPixels`; a split needs all four children resident, else the tile
+  `(1 − h)·D_L` and merges past `(1 + h)·D_L`, by distance alone, so a rough sphere draws the same
+  levels as a smooth one; a split needs all four children resident, else the tile
   is drawn and its children requested (the parent fallback). Subtrees are pruned below the horizon
   (all eight bound corners hidden by the sphere of `Radius + MinHeight`), past their range, and —
   **beyond `OmnidirectionalRadius`** (64 m, raised to the renderer's shadow distance) — when their

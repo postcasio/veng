@@ -314,9 +314,6 @@ namespace Veng::Renderer
         /// @brief The floor on a level's range, in tile diameters, which holds the neighbour
         ///        invariant at any field of view.
         f32 PlanarRangeFloor = 3.0f;
-        /// @brief The relief, in pixels at the tile's distance, its parent's grid may misplace
-        ///        before the tile splits.
-        f32 TargetHeightErrorPixels = 1.0f;
         /// @brief How far past a drawn tile's split distance its children are prefetched, as a
         ///        multiple of it.
         f32 PrefetchRangeScale = 1.3f;

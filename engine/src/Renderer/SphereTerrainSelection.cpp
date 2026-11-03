@@ -178,21 +178,10 @@ namespace Veng::Renderer
 
                 const bool distanceWants =
                     wasSplit ? distance <= (1.0 + h) * range : distance < (1.0 - h) * range;
-                f64 projected = 0.0;
-                bool heightWants = false;
-                if (record->Bound.Measured && settings.TargetHeightErrorPixels > 0.0f)
-                {
-                    projected =
-                        record->Bound.MorphError * In.PixelsPerRadian / std::max(distance, 1e-6);
-                    const f64 target = settings.TargetHeightErrorPixels;
-                    heightWants =
-                        wasSplit ? projected > target * (1.0 - h) : projected > target * (1.0 + h);
-                }
-
                 const bool nearEye = distance <= settings.OmnidirectionalRadius;
                 const bool inFrustum = IsInFrustum(box);
                 const f64 order = distance * (wasSplit ? 1.0 - h : 1.0 + h);
-                if (canDeepen && (distanceWants || heightWants))
+                if (canDeepen && distanceWants)
                 {
                     if (!nearEye && !inFrustum)
                     {
@@ -200,9 +189,7 @@ namespace Veng::Renderer
                         Out.Stats.HeldForFrustum++;
                         return;
                     }
-                    const f64 urgency =
-                        std::max((1.0 - h) * range / std::max(distance, 1e-3),
-                                 projected / std::max<f64>(settings.TargetHeightErrorPixels, 1e-6));
+                    const f64 urgency = (1.0 - h) * range / std::max(distance, 1e-3);
                     Splits.push({.Order = order,
                                  .Key = key,
                                  .Urgency = static_cast<f32>(urgency),
