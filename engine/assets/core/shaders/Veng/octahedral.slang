@@ -11,6 +11,8 @@
 // by area, or measuring a distance between two texels, must take the per-texel solid angle and the
 // great-circle arc rather than assuming the square's own metric.
 
+#pragma once
+
 // Per-component sign that never returns zero, the octahedral fold's reflection factor.
 float2 OctSignNotZero(float2 v)
 {

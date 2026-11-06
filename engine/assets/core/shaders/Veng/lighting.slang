@@ -20,6 +20,8 @@
 // VE_SHADOW_SET (see shadow.slang). This file declares, through Veng/ibl_maps.slang, the
 // image-based-lighting maps at set 4, and through Veng/light_buffer.slang the set-0 light and
 // area-vertex buffers (bindings 6 and 7).
+#pragma once
+
 #include "../shadow.slang"
 #include "Veng/brdf.slang"
 #include "Veng/light_buffer.slang"

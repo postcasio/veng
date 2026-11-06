@@ -9,6 +9,7 @@
 // The form factor these return is the normalized clamped-cosine fraction in [0, 1] — a facing disk
 // of angular rim-radius a returns sin^2(a) — so the caller multiplies it by the emitter radiance and
 // the BRDF terms directly, with no further solid-angle normalization.
+#pragma once
 
 static const float LtcPi = 3.14159265358979323846;
 // A Sphere light is integrated as a shading-point-facing disk of this many edges.

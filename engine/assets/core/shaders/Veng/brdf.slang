@@ -7,6 +7,7 @@
 // Roughness: a material authors perceptual roughness r; the GGX width is alpha = r². The
 // distribution and the sampler take alpha, so a caller that widens the lobe works in alpha
 // directly. The geometry and roughness-aware Fresnel terms take r, since their fits are in r.
+#pragma once
 
 static const float BrdfPi = 3.14159265358979323846;
 

@@ -45,6 +45,7 @@
 //
 // The Surface, PostProcess, and Sky domains have their own contracts in Veng/surface.slang,
 // Veng/postprocess.slang, and Veng/sky.slang.
+#pragma once
 
 #include "Veng/surface.slang"
 // SceneScreenUV, SceneDepthAvailable, the scene-depth reads (filtered, point and footprint) and

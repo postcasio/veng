@@ -37,6 +37,7 @@
 // what a material writes: a material that scales either component up (dividing specular by its
 // coverage multiplies it by the coverage's reciprocal) or sums them with other radiance passes its
 // final colour through GuardLightingOutput before returning it.
+#pragma once
 
 #include "Veng/translucent.slang"
 
