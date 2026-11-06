@@ -2403,10 +2403,16 @@ namespace Veng::Renderer
         const u32 setSlots = budget.GetSlotCursor() - setSlotsBefore;
 
         // Each drawn terrain surface takes one slot, for its material; its tiles are drawn
-        // outside the budget.
+        // outside the budget. A translucent level layer joins the full-resolution translucent
+        // draws on its own slot, sorted among them.
         const u32 terrainSlotsBefore = budget.GetSlotCursor();
-        m_SphereTerrain->ClaimDrawSlots(
-            static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()) + frameBase, budget);
+        const u32 terrainTranslucentDraws = m_SphereTerrain->ClaimDrawSlots(
+            static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()) + frameBase, budget,
+            translucentPlan.Draws);
+        if (terrainTranslucentDraws > 0)
+        {
+            std::ranges::sort(translucentPlan.Draws, TranslucentDrawsBefore);
+        }
         const u32 terrainSlots = budget.GetSlotCursor() - terrainSlotsBefore;
 
         // The layer draws only once its passes are wired AND its view region was written this
@@ -2551,7 +2557,7 @@ namespace Veng::Renderer
             static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
                              translucentPlan.Draws.size() + halfResPlan.Draws.size() +
                              postResolvePlan.Draws.size()) +
-            setSlots + terrainSlots;
+            setSlots + terrainSlots - terrainTranslucentDraws;
         VE_ASSERT(gatheredSlots == slotCursor,
                   "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
                   gatheredSlots, slotCursor);

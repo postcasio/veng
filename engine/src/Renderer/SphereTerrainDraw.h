@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Renderer/SphereTerrain.h>
 
 #include "SphereTerrainVertex.h"
@@ -13,6 +14,33 @@ namespace Veng::Renderer
 {
     /// @brief The surfaces a terrain draws: its own, then each level layer.
     inline constexpr u32 SphereTerrainSurfaceCount = 1 + MaxSphereTerrainLevelLayers;
+
+    /// @brief What a terrain makes of a surface's material.
+    enum class SphereTerrainMaterialVerdict : u8
+    {
+        /// @brief Drawn into the g-buffer and the shadow views.
+        Opaque,
+        /// @brief Drawn in the translucent pass, casting nothing: a level layer of a Translucent
+        ///        material.
+        Translucent,
+        /// @brief Not drawn: the material does not declare "sphereTerrain".
+        NotTerrain,
+        /// @brief Not drawn: the terrain's own surface asks for a Translucent material. The ground
+        ///        is what every level layer is drawn over, so it is always opaque.
+        TranslucentGround,
+        /// @brief Not drawn: a domain no terrain surface draws in.
+        WrongDomain,
+    };
+
+    /// @brief Decides whether, and in which pass, a terrain draws a surface with a material.
+    ///
+    /// Device-free and pure. A terrain's own surface draws with a Surface material declaring
+    /// "sphereTerrain"; a level layer with a Surface or a Translucent one.
+    /// @param domain        The parent material's domain.
+    /// @param sphereTerrain Whether the parent material declares "sphereTerrain".
+    /// @param levelLayer    Whether the surface is a level layer rather than the terrain's own.
+    [[nodiscard]] VE_API SphereTerrainMaterialVerdict
+    CheckSphereTerrainMaterial(MaterialDomain domain, bool sphereTerrain, bool levelLayer);
 
     /// @brief One view a terrain's tiles are culled against, in the sphere's body-fixed frame.
     struct SphereTerrainDrawView
@@ -55,6 +83,9 @@ namespace Veng::Renderer
         std::array<f32, MaxSphereTerrainLevelLayers> LayerHeights{};
         /// @brief The level layers drawn.
         u32 LayerCount = 0;
+        /// @brief Per level layer, whether it draws in the translucent pass: its main-view tiles go
+        ///        to SphereTerrainFrame::TranslucentLists, and it casts into no shadow view.
+        std::array<bool, MaxSphereTerrainLevelLayers> TranslucentLayers{};
         /// @brief The main view.
         SphereTerrainDrawView Main;
         /// @brief The shadow views, in the frame's shadow-view order.
@@ -72,9 +103,13 @@ namespace Veng::Renderer
     {
         /// @brief One record per tile some view draws.
         vector<SphereTerrainDrawRecord> Records;
-        /// @brief Per view (0 the main view, 1 + n shadow view n), per surface (0 the terrain,
-        ///        1 + l level layer l), the records it draws, as indices into Records.
+        /// @brief Per view (0 the main view's g-buffer, 1 + n shadow view n), per surface (0 the
+        ///        terrain, 1 + l level layer l), the records it draws, as indices into Records. A
+        ///        translucent layer's lists here are empty.
         vector<std::array<vector<u32>, SphereTerrainSurfaceCount>> Lists;
+        /// @brief Per surface, the records the main view draws in the translucent pass; empty but
+        ///        for a translucent layer.
+        std::array<vector<u32>, SphereTerrainSurfaceCount> TranslucentLists;
         /// @brief Drawn tiles the main view's frustum culled.
         u32 CulledByFrustum = 0;
         /// @brief Drawn tiles the main view culled below the horizon.
@@ -89,7 +124,8 @@ namespace Veng::Renderer
     /// the sphere of `Radius + MinHeight`. Culling is in unscaled metres, so the main view's lists
     /// do not depend on the scale; a terrain at a scale other than one, or not casting, draws into
     /// no shadow view. A level layer draws a tile only where the tile's working range dips below
-    /// the layer's height.
+    /// the layer's height. A translucent layer's main-view tiles go to the translucent lists alone,
+    /// and it draws into no shadow view.
     [[nodiscard]] VE_API SphereTerrainFrame
     BuildSphereTerrainFrame(const SphereTerrainFrameInput& input);
 }

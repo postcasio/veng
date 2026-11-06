@@ -287,6 +287,11 @@
       "source": "shaders/surface_terrain.vert.shader.json"
     },
     {
+      "id": "0x5F1D9CD1FCD81A8F",
+      "type": "Shader",
+      "source": "shaders/translucent_terrain.vert.shader.json"
+    },
+    {
       "id": "0xBB4E25CF3570CDD5",
       "type": "Shader",
       "source": "shaders/shadow_depth_terrain.vert.shader.json"

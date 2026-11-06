@@ -91,10 +91,16 @@ namespace Veng
         // stand for (the renderer's carries an immutable comparison sampler), so its reflected
         // bindings are dropped, set 4 is left empty where the stages declare none, and the set is
         // shadowLayout when one is given and absent otherwise.
+        //
+        // A Translucent sphere-terrain material's stages declare the forward-lighting sets 4 and 5,
+        // which the translucent pass supplies as the renderer's own, and the terrain set 6, which
+        // binds only under the terrain's own layout; so its reflected bindings past set 3 are
+        // dropped, sets 4 and 5 are left empty and set 6 is the terrain's layout.
         Result<Ref<Renderer::PipelineLayout>>
         BuildPipelineLayout(Renderer::Context& context, AssetId id, MaterialDomain domain,
                             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
-                            const Ref<Renderer::DescriptorSetLayout>& shadowLayout = nullptr)
+                            const Ref<Renderer::DescriptorSetLayout>& shadowLayout = nullptr,
+                            const bool translucentTerrain = false)
         {
             const bool readsShadowMaps = Detail::FragmentReadsShadowMaps(domain, fsAsset.Interface);
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
@@ -148,6 +154,28 @@ namespace Veng
                                   { return binding.Set == SurfaceShadowMapSet; });
                 }
 
+                if (translucentTerrain)
+                {
+                    for (const Renderer::ShaderBinding& binding : merged.Bindings)
+                    {
+                        const bool terrainSet =
+                            binding.Set == Renderer::TranslucentSphereTerrainSet;
+                        if (binding.Set > Renderer::TranslucentSphereTerrainSet ||
+                            (terrainSet &&
+                             !Renderer::IsSphereTerrainBinding(binding.Binding, binding.Type)))
+                        {
+                            return std::unexpected(fmt::format(
+                                "material: Translucent sphere-terrain binding '{}' (set {}, "
+                                "binding {}) is not one the terrain's set {} carries",
+                                binding.Name, binding.Set, binding.Binding,
+                                Renderer::TranslucentSphereTerrainSet));
+                        }
+                    }
+                    std::erase_if(
+                        merged.Bindings, [](const Renderer::ShaderBinding& binding)
+                        { return binding.Set > Renderer::BindlessRegistry::FirstUserSet; });
+                }
+
                 const vector<Ref<Renderer::DescriptorSetLayout>> setLayouts =
                     merged.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
                 for (auto& l : setLayouts)
@@ -170,6 +198,26 @@ namespace Veng
                     {
                         descLayouts.push_back(shadowLayout);
                     }
+                }
+
+                if (translucentTerrain)
+                {
+                    constexpr usize terrainIndex = Renderer::TranslucentSphereTerrainSet -
+                                                   Renderer::BindlessRegistry::FirstUserSet;
+                    if (descLayouts.empty())
+                    {
+                        return std::unexpected(string(
+                            "material: a Translucent sphere-terrain material's stages declare no "
+                            "set 3: its vertex stage is not the core translucent terrain stage"));
+                    }
+                    while (descLayouts.size() < terrainIndex)
+                    {
+                        descLayouts.push_back(Renderer::DescriptorSetLayout::Create(
+                            context, {.Name = fmt::format("Material{} Set {}", id.Value,
+                                                          Renderer::BindlessRegistry::FirstUserSet +
+                                                              descLayouts.size())}));
+                    }
+                    descLayouts.push_back(Renderer::CreateSphereTerrainSetLayout(context));
                 }
             }
 
@@ -657,8 +705,9 @@ namespace Veng
                         domain == MaterialDomain::Surface
                             ? Detail::BuildSurfacePipelineLayout(context, id, *vsHandle.Get(),
                                                                  *fsHandle.Get(), sphereTerrain)
-                            : BuildPipelineLayout(context, id, domain, *vsHandle.Get(),
-                                                  *fsHandle.Get());
+                            : BuildPipelineLayout(
+                                  context, id, domain, *vsHandle.Get(), *fsHandle.Get(), nullptr,
+                                  domain == MaterialDomain::Translucent && sphereTerrain);
                     if (!layout)
                     {
                         return std::unexpected(layout.error());

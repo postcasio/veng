@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/SphereTerrain.h>
+#include <Veng/Renderer/Types.h>
 #include <Veng/Result.h>
 
 namespace Veng::Renderer
@@ -13,11 +14,21 @@ namespace Veng::Renderer
     /// @brief The descriptor set the terrain stages read the pool and the frame's tiles through.
     inline constexpr u32 SphereTerrainSet = 4;
 
+    /// @brief The set a Translucent level layer's stages read the terrain set at.
+    ///
+    /// A translucent pipeline's sets 4 and 5 are forward lighting's (the IBL maps and the shadow
+    /// system), so the terrain set follows them; Veng/sphere_terrain_translucent.slang declares it
+    /// there.
+    inline constexpr u32 TranslucentSphereTerrainSet = 6;
+
     /// @brief The binding of the frame's tile records; channel n is at binding n below it.
     inline constexpr u32 SphereTerrainRecordsBinding = MaxSphereTerrainChannels;
 
     /// @brief The binding of the frame's per-view tile lists.
     inline constexpr u32 SphereTerrainListBinding = MaxSphereTerrainChannels + 1;
+
+    /// @brief Whether the terrain set carries a binding of this index and type.
+    [[nodiscard]] VE_API bool IsSphereTerrainBinding(u32 binding, DescriptorType type);
 
     /// @brief Creates the terrain's set-4 layout: every channel's array as a sampled image, the
     ///        records and the lists as storage buffers, all visible to the vertex and fragment

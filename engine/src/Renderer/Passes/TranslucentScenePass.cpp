@@ -18,9 +18,14 @@
 #include <Veng/Renderer/ShaderInterface.h>
 
 #include "../HalfResTranslucency.h"
+#include "../SphereTerrainLayout.h"
+#include "../SphereTerrainSystem.h"
 
 namespace Veng::Renderer
 {
+    static_assert(TranslucentSphereTerrainSet == ForwardLightingShadowSet + 1,
+                  "a translucent level layer's terrain set follows the forward-lighting sets");
+
     TranslucentScenePass::TranslucentScenePass(
         Context& context, const uvec2 extent, const TranslucentDrawPlan* plan,
         const ResourceId targetId, const ResourceId depthId, const ResourceId sceneColorId,
@@ -207,6 +212,26 @@ namespace Veng::Renderer
             });
     }
 
+    Ref<PipelineLayout> TranslucentScenePass::TerrainLayoutFor(const Material& parent) const
+    {
+        const Ref<PipelineLayout>& reflected = parent.GetPipelineLayout();
+        const vector<Ref<DescriptorSetLayout>>& authored = reflected->GetDescriptorSetLayouts();
+        // The material loader lays a translucent terrain material out as its DrawData set, two
+        // empty sets for forward lighting and the terrain's own set.
+        constexpr usize terrainIndex = TranslucentSphereTerrainSet - BindlessRegistry::FirstUserSet;
+        VE_ASSERT(authored.size() == terrainIndex + 1,
+                  "TranslucentScenePass: sphere-terrain material '{}' carries {} author sets, not "
+                  "the DrawData, forward-lighting and terrain sets 3-{}",
+                  parent.GetName(), authored.size(), TranslucentSphereTerrainSet);
+        return PipelineLayout::Create(
+            m_Context, {
+                           .Name = fmt::format("Translucent Terrain Layout ({})", parent.GetName()),
+                           .DescriptorSetLayouts = {authored.front(), m_Forward.IblLayout,
+                                                    m_Forward.ShadowLayout, authored[terrainIndex]},
+                           .PushConstantRanges = reflected->GetPushConstantRanges(),
+                       });
+    }
+
     const TranslucentScenePass::CachedPipeline&
     TranslucentScenePass::PipelineFor(const MaterialInstance& material) const
     {
@@ -220,9 +245,14 @@ namespace Veng::Renderer
         // A forward-lit fragment reads the renderer's IBL and shadow sets, so its pipeline is built
         // against their layouts: the reflected shadow set cannot carry the immutable comparison
         // sampler, and only an identically-defined layout accepts the renderer's set.
-        const bool forwardLit = IsForwardLit(*parent);
-        const Ref<PipelineLayout> layout =
-            forwardLit ? ForwardLitLayoutFor(*parent) : material.GetPipelineLayout();
+        // A level layer draws the terrain's grid through the terrain's stage, which reads no vertex
+        // input and finds its tile through the instance index; it binds the forward-lighting sets
+        // whatever its fragment declares, and the terrain set after them.
+        const bool terrain = parent->IsSphereTerrain();
+        const bool forwardLit = terrain || IsForwardLit(*parent);
+        const Ref<PipelineLayout> layout = terrain      ? TerrainLayoutFor(*parent)
+                                           : forwardLit ? ForwardLitLayoutFor(*parent)
+                                                        : material.GetPipelineLayout();
 
         vector<PipelineAttachmentInfo> attachments = {
             {.Format = m_TargetFormat,
@@ -280,10 +310,11 @@ namespace Veng::Renderer
                 .Name = fmt::format("Translucent Pipeline ({})", material.GetName()),
                 .ColorAttachments = std::move(attachments),
                 .DepthAttachmentFormat = m_PostResolve ? Format::Undefined : GBuffer::DepthFormat,
-                .VertexBufferLayout = Mesh::CanonicalLayout(),
+                .VertexBufferLayout =
+                    terrain ? optional<VertexBufferLayout>{} : Mesh::CanonicalLayout(),
                 // The surface vertex stage reads the per-draw candidate id as an
                 // instance-rate attribute on binding 1 (fetched at firstInstance).
-                .InstanceCandidateId = true,
+                .InstanceCandidateId = !terrain,
                 .PipelineLayout = layout,
                 .ShaderStages =
                     {
@@ -362,6 +393,14 @@ namespace Veng::Renderer
                 cmd.PushConstants(plan.Push);
                 lastPipeline = pipeline.get();
                 lastMesh = nullptr;
+            }
+            if (draw.Terrain != nullptr)
+            {
+                // The terrain binds its grid's indices and pushes its own surface.
+                draw.Terrain->RecordTranslucent(cmd, draw, plan.Push);
+                lastPipeline = nullptr;
+                lastMesh = nullptr;
+                continue;
             }
             if (draw.SourceMesh != lastMesh)
             {

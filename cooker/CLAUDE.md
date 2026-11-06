@@ -130,10 +130,14 @@ every fragment output must compile to the location its SV_Target index
   carries an explicit `[[vk::location(N)]]`, and the importer refuses one that does not. A Surface
   material may declare `"instancedSets": true` when an instanced mesh set may draw it, a located cook
   error on any other domain, and `"sphereTerrain": true` when it shades sphere terrain — a located
-  error off the Surface domain, beside `"instancedSets"`, or unless its vertex shader is the core
-  `surface_terrain.vert`, which no other material may name. A Surface fragment's reflected
+  error off the Surface and Translucent domains, beside `"instancedSets"`, on a Translucent material
+  in the half-resolution or post-resolve layer, or unless its vertex shader is its domain's core
+  terrain stage (`surface_terrain.vert` for Surface, `translucent_terrain.vert` for a Translucent
+  level layer), which no other material may name. A Surface fragment's reflected
   descriptor sets are checked too: set 4 (the skinning palette's, or a terrain's tiles) is a located
-  error outside `"sphereTerrain"`, and so is any set past the shadow set 5. Because the
+  error outside `"sphereTerrain"`, and so is any set past the shadow set 5. A Translucent fragment's
+  set 6 (a level layer's terrain tiles) is a located error outside `"sphereTerrain"`, and so is any
+  set past it. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects

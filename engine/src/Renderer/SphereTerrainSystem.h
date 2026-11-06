@@ -10,6 +10,7 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/RenderLayer.h>
 
+#include "DrawPlan.h"
 #include "SphereTerrainDraw.h"
 #include "SphereTerrainTransitions.h"
 
@@ -56,14 +57,15 @@ namespace Veng::Renderer
     };
 
     /// @brief One renderer's sphere terrains: select each one's tiles for the view, mark and
-    ///        request them on its source, cull them per view, and draw them into the g-buffer and
-    ///        the shadow views.
+    ///        request them on its source, cull them per view, and draw them into the g-buffer, the
+    ///        translucent pass and the shadow views.
     ///
     /// Each frame Select runs the selection (from the true eye, whatever scale the terrain draws
     /// at) and resolves each terrain's materials; ClaimDrawSlots gives each drawn surface one
-    /// DrawData slot for its material; PrepareFrame culls every tile against the main view and
-    /// every shadow view and writes the frame slot's records, lists and set-4 descriptor sets;
-    /// the passes then record one instanced draw of the shared grid per view and surface.
+    /// DrawData slot for its material and hands each translucent level layer to the frame's
+    /// translucent draws; PrepareFrame culls every tile against the main view and every shadow
+    /// view and writes the frame slot's records, lists and terrain descriptor sets; the passes
+    /// then record one instanced draw of the shared grid per view and surface.
     ///
     /// The selection memory (last frame's splits, the pose, the arrivals and departures, the generator's
     /// cached words) is keyed by the source, not the entity, so a source handed to another entity
@@ -89,10 +91,19 @@ namespace Veng::Renderer
         /// @brief The scene-space bound of the shadow-casting tiles within the shadow distance.
         [[nodiscard]] const AABB& GetCasterBounds() const { return m_CasterBounds; }
 
-        /// @brief Gives each drawn surface one draw slot and writes its DrawData record.
-        /// @param drawData  The frame's DrawData region (already offset by the frame base).
-        /// @param budget    The frame's draw budget.
-        void ClaimDrawSlots(GpuDrawData* drawData, DrawBudget& budget);
+        /// @brief Gives each drawn surface one draw slot and writes its DrawData record, and
+        ///        appends a draw for each seated translucent level layer.
+        ///
+        /// A translucent layer's draw sorts with the frame's other translucent draws by its
+        /// material's priority, then at its sphere's centre distance from the eye, so within a
+        /// priority it draws behind every translucent nearer than the centre. Its slot is one of
+        /// the slots claimed here, not one of the appended draws'.
+        /// @param drawData     The frame's DrawData region (already offset by the frame base).
+        /// @param budget       The frame's draw budget.
+        /// @param translucent  The frame's full-resolution translucent draws, appended to unsorted.
+        /// @return The translucent draws appended.
+        u32 ClaimDrawSlots(GpuDrawData* drawData, DrawBudget& budget,
+                           vector<TranslucentDraw>& translucent);
 
         /// @brief Culls the selected tiles per view and writes the frame slot's records, lists and
         ///        descriptor sets.
@@ -112,6 +123,18 @@ namespace Veng::Renderer
         void RecordGBuffer(CommandBuffer& cmd, const SurfacePush& push,
                            const Ref<DescriptorSet>& drawDataSet,
                            SurfaceShadowPipelines& shadowReaders) const;
+
+        /// @brief Records one translucent level layer's main-view tiles.
+        ///
+        /// The translucent pass has bound the layer's pipeline and sets 3 to 5; this binds the
+        /// terrain set at TranslucentSphereTerrainSet, pushes the surface push with the layer's
+        /// slot and surface, and draws the grid once per tile in the layer's translucent list.
+        /// Nothing records when the frame's cull left the layer no tile.
+        /// @param cmd      The translucent pass's command buffer.
+        /// @param draw     The draw ClaimDrawSlots appended.
+        /// @param push     The pass's surface push (frame base and view constants index).
+        void RecordTranslucent(CommandBuffer& cmd, const TranslucentDraw& draw,
+                               const SurfacePush& push) const;
 
         /// @brief Whether any terrain casts into shadow view @p shadowView this frame.
         [[nodiscard]] bool HasShadowDraws(u32 shadowView) const;
@@ -173,6 +196,8 @@ namespace Veng::Renderer
             u32 DrawSlot = 0;
             /// @brief Whether ClaimDrawSlots seated it.
             bool Seated = false;
+            /// @brief Whether it draws in the translucent pass rather than the g-buffer.
+            bool Translucent = false;
         };
 
         /// @brief One selected terrain this frame.
@@ -198,6 +223,8 @@ namespace Veng::Renderer
             bool CastsShadows = true;
             /// @brief Per view, per surface, its list's first entry and count in the list buffer.
             vector<std::array<uvec2, SphereTerrainSurfaceCount>> Lists;
+            /// @brief Per surface, its translucent list's first entry and count in the list buffer.
+            std::array<uvec2, SphereTerrainSurfaceCount> TranslucentLists{};
             /// @brief The frame slot's set-4 descriptor set it binds.
             const DescriptorSet* Set = nullptr;
         };
@@ -244,6 +271,8 @@ namespace Veng::Renderer
         vec3 m_CameraPosition{0.0f};
         /// @brief Where the selected scene's origin stands in the stable frame.
         dvec3 m_FrameOrigin{0.0};
+        /// @brief The selected view's eye in the stable frame.
+        dvec3 m_EyeStable{0.0};
         /// @brief The shadow views the frame prepared lists for.
         u32 m_ShadowViewCount = 0;
 

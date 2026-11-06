@@ -1,10 +1,13 @@
-// Sphere terrain's drawing core, shared by the g-buffer and shadow stages: the set-4 bindings, the
-// per-tile record, the precise placement and the geometric morph. One function places a vertex for
-// both stages, so a tile's shadow cannot disagree with its colour.
+// Sphere terrain's drawing core, shared by the g-buffer, translucent and shadow stages: the terrain
+// set's bindings, the per-tile record, the precise placement and the geometric morph. One function
+// places a vertex for every stage, so a tile's shadow cannot disagree with its colour.
 //
-// Set 4 holds the source's pool: channel n's array at binding n (channel 0 the height), the frame's
-// tile records at binding 8 and the per-view lists at binding 9. A draw's firstInstance is its list
-// start, so SV_VulkanInstanceID names the list entry, and the entry names the record.
+// The terrain set holds the source's pool: channel n's array at binding n (channel 0 the height), the
+// frame's tile records at binding 8 and the per-view lists at binding 9. A draw's firstInstance is its
+// list start, so SV_VulkanInstanceID names the list entry, and the entry names the record.
+//
+// VE_SPHERE_TERRAIN_SET names the set: 4 for the g-buffer and shadow stages (the default), 6 for a
+// translucent level layer, whose sets 4 and 5 are forward lighting's (Veng/sphere_terrain_translucent.slang).
 //
 // The engine's C++ twin of the placement and the morph is src/Renderer/SphereTerrainVertex.h; the
 // two are kept in step so the unit band can bound the device's arithmetic on the host.
@@ -47,16 +50,20 @@ static const uint SphereTerrainRecordHasParent = 1u;
 static const uint SphereTerrainRecordHeld = 2u;
 static const uint SphereTerrainRecordTileOverlay = 4u;
 
-[[vk::binding(0, 4)]] Texture2DArray<float4> g_TerrainChannel0;
-[[vk::binding(1, 4)]] Texture2DArray<float4> g_TerrainChannel1;
-[[vk::binding(2, 4)]] Texture2DArray<float4> g_TerrainChannel2;
-[[vk::binding(3, 4)]] Texture2DArray<float4> g_TerrainChannel3;
-[[vk::binding(4, 4)]] Texture2DArray<float4> g_TerrainChannel4;
-[[vk::binding(5, 4)]] Texture2DArray<float4> g_TerrainChannel5;
-[[vk::binding(6, 4)]] Texture2DArray<float4> g_TerrainChannel6;
-[[vk::binding(7, 4)]] Texture2DArray<float4> g_TerrainChannel7;
-[[vk::binding(8, 4)]] StructuredBuffer<SphereTerrainRecord> g_TerrainRecords;
-[[vk::binding(9, 4)]] StructuredBuffer<uint> g_TerrainList;
+#ifndef VE_SPHERE_TERRAIN_SET
+#define VE_SPHERE_TERRAIN_SET 4
+#endif
+
+[[vk::binding(0, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel0;
+[[vk::binding(1, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel1;
+[[vk::binding(2, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel2;
+[[vk::binding(3, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel3;
+[[vk::binding(4, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel4;
+[[vk::binding(5, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel5;
+[[vk::binding(6, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel6;
+[[vk::binding(7, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel7;
+[[vk::binding(8, VE_SPHERE_TERRAIN_SET)]] StructuredBuffer<SphereTerrainRecord> g_TerrainRecords;
+[[vk::binding(9, VE_SPHERE_TERRAIN_SET)]] StructuredBuffer<uint> g_TerrainList;
 
 // The grid a tile is drawn with: 32 quads a side, vertex k on texel 2 + 4k.
 static const uint SphereTerrainGridQuads = 32u;

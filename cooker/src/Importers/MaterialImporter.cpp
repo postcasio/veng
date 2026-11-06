@@ -32,6 +32,10 @@ namespace Veng::Cook
         // Mirrors the renderer's SphereTerrainSet, restated for the same reason.
         constexpr u32 SphereTerrainDescriptorSet = 4;
 
+        // The set a Translucent level layer binds a sphere terrain's tiles at, past the
+        // forward-lighting sets 4 and 5. Mirrors the renderer's TranslucentSphereTerrainSet.
+        constexpr u32 TranslucentSphereTerrainDescriptorSet = 6;
+
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
         void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
@@ -353,7 +357,8 @@ namespace Veng::Cook
 
         // --- 1j''. Parse the optional sphere-terrain declaration (default false) ---
 
-        // Set by a Surface material that shades sphere terrain. Its vertex stage must be the core
+        // Set by a Surface material that shades sphere terrain, or a Translucent one that shades a
+        // terrain's level layer in the translucent pass. Its vertex stage must be the domain's core
         // terrain stage, which places the shared grid about the eye and writes the terrain's
         // interpolants, so the key and the vertex shader are checked together; a terrain material
         // draws on nothing else, so it cannot also serve instanced sets.
@@ -367,10 +372,12 @@ namespace Veng::Cook
                                 vmatPath.string()));
             }
             sphereTerrain = vmat["sphereTerrain"].get<bool>();
-            if (sphereTerrain && domainValue != MaterialDomain::Surface)
+            if (sphereTerrain && domainValue != MaterialDomain::Surface &&
+                domainValue != MaterialDomain::Translucent)
             {
                 return std::unexpected(fmt::format(
-                    "material importer: '{}': 'sphereTerrain' requires the Surface domain",
+                    "material importer: '{}': 'sphereTerrain' requires the Surface or Translucent "
+                    "domain",
                     vmatPath.string()));
             }
             if (sphereTerrain && instancedSets)
@@ -523,6 +530,16 @@ namespace Veng::Cook
                 "post-resolve surface never enters the temporal history",
                 vmatPath.string()));
         }
+        // The terrain path records in the full-resolution scene pass alone.
+        if (sphereTerrain && domainValue == MaterialDomain::Translucent &&
+            layer != TranslucentLayer::Full)
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': a Translucent 'sphereTerrain' material is exclusive with "
+                "'resolution: half' and 'placement: postResolve' — a level layer draws in the "
+                "full-resolution scene pass",
+                vmatPath.string()));
+        }
         if (excludedFromMetering && layer != TranslucentLayer::Full)
         {
             return std::unexpected(fmt::format(
@@ -570,15 +587,25 @@ namespace Veng::Cook
         const u64 vertexShaderId = vertexParsed->Value;
         const u64 fragmentShaderId = fragmentParsed->Value;
 
-        if (sphereTerrain != (vertexShaderId == SphereTerrainVertexShaderId.Value))
+        // Each terrain domain has its own stage: the Translucent one reads the terrain set past the
+        // forward-lighting sets.
+        const AssetId terrainStage = domainValue == MaterialDomain::Translucent
+                                         ? TranslucentSphereTerrainVertexShaderId
+                                         : SphereTerrainVertexShaderId;
+        const bool namesTerrainStage =
+            vertexShaderId == SphereTerrainVertexShaderId.Value ||
+            vertexShaderId == TranslucentSphereTerrainVertexShaderId.Value;
+        if (sphereTerrain ? vertexShaderId != terrainStage.Value : namesTerrainStage)
         {
             return std::unexpected(fmt::format(
                 "material importer: '{}': {}", vmatPath.string(),
                 sphereTerrain
                     ? fmt::format("'sphereTerrain' requires the core sphere-terrain vertex stage "
-                                  "{} as 'shaders.vertex'",
-                                  FormatHexId(SphereTerrainVertexShaderId.Value))
-                    : string("the core sphere-terrain vertex stage is only for a material "
+                                  "{} as 'shaders.vertex' in the {} domain",
+                                  FormatHexId(terrainStage.Value),
+                                  domainValue == MaterialDomain::Translucent ? "Translucent"
+                                                                             : "Surface")
+                    : string("the core sphere-terrain vertex stages are only for a material "
                              "declaring 'sphereTerrain'")));
         }
 
@@ -716,6 +743,25 @@ namespace Veng::Cook
                         "material importer: '{}': a Surface fragment declares set {}; a Surface "
                         "fragment declares no set past the shadow system's set {}",
                         vmatPath.string(), set, SurfaceShadowMapSet));
+                }
+            }
+        }
+
+        // A Translucent fragment's sets: 3 the per-draw DrawData, 4 and 5 forward lighting's, and
+        // 6 a level layer's terrain tiles, so only a sphere-terrain fragment declares 6, and
+        // nothing lies past it.
+        if (domainValue == MaterialDomain::Translucent)
+        {
+            for (const u32 set : fragmentSets)
+            {
+                if (set > TranslucentSphereTerrainDescriptorSet ||
+                    (set == TranslucentSphereTerrainDescriptorSet && !sphereTerrain))
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: '{}': a Translucent fragment declares set {}; it "
+                        "declares sets 3 to 5 (the per-draw data and forward lighting), and set {} "
+                        "only under 'sphereTerrain' (the terrain's tiles)",
+                        vmatPath.string(), set, TranslucentSphereTerrainDescriptorSet));
                 }
             }
         }

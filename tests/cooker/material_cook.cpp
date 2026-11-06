@@ -14,6 +14,7 @@
 //
 // Blob layout: CookedMaterialHeader → CookedMaterialField[3] → param block (24 bytes).
 
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include "support/TempPath.h"
@@ -814,6 +815,55 @@ TEST_CASE("Cooker: a sphere-terrain material must name the core terrain vertex s
     REQUIRE_FALSE(instanced.has_value());
     CHECK(instanced.error().find("'sphereTerrain' is exclusive with 'instancedSets'") !=
           string::npos);
+}
+
+TEST_CASE("Cooker: a Translucent sphere-terrain material cooks against the translucent terrain "
+          "stage, in the full-resolution layer alone")
+{
+    // A level layer drawn in the translucent pass names the core translucent terrain stage, whose
+    // terrain set follows the forward-lighting sets; its fragment reads the tiles at set 6.
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const std::array<path, 1> references{path(VENG_CORE_PACK_JSON)};
+    const auto Cook = [&](const char* pack, const char* archive)
+    {
+        return cooker.CookPack(FixtureDir / pack, Veng::TestSupport::TempDir() / archive,
+                               references, nullptr, nullptr, nullptr, nullptr, {},
+                               path(VENG_CORE_SHADER_DIR));
+    };
+
+    const VoidResult cooked = Cook("material_translucent_sphere_terrain_pack.json",
+                                   "veng_cooker_translucent_terrain.vengpack");
+    REQUIRE_MESSAGE(cooked.has_value(), (cooked.has_value() ? string{} : cooked.error()));
+    const Result<ArchiveReader> reader = ArchiveReader::Open(
+        Veng::TestSupport::TempDir() / "veng_cooker_translucent_terrain.vengpack");
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x8E59753AC02EBBB9ULL});
+    REQUIRE(entry.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.SphereTerrain == 1u);
+
+    // The terrain path records in the full-resolution scene pass.
+    const VoidResult half = Cook("material_translucent_sphere_terrain_half_pack.json",
+                                 "veng_cooker_translucent_terrain_half.vengpack");
+    REQUIRE_FALSE(half.has_value());
+    CHECK(half.error().find("is exclusive with 'resolution: half'") != string::npos);
+
+    // The Surface terrain stage reads the terrain set where a translucent pipeline binds the IBL.
+    const VoidResult surfaceStage =
+        Cook("material_translucent_sphere_terrain_surface_vertex_pack.json",
+             "veng_cooker_translucent_terrain_surface_vertex.vengpack");
+    REQUIRE_FALSE(surfaceStage.has_value());
+    CHECK(surfaceStage.error().find("in the Translucent domain") != string::npos);
+
+    // Set 6 is the terrain's tiles, so a Translucent fragment declaring it without the key is
+    // refused.
+    const VoidResult undeclared = Cook("material_translucent_terrain_set_undeclared_pack.json",
+                                       "veng_cooker_translucent_terrain_undeclared.vengpack");
+    REQUIRE_FALSE(undeclared.has_value());
+    CHECK(undeclared.error().find("a Translucent fragment declares set 6") != string::npos);
 }
 
 TEST_CASE("Cooker: a Surface fragment may declare the shadow set; set 4 is refused outside sphere "

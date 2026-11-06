@@ -10,16 +10,21 @@ namespace Veng
 {
     class MaterialInstance;
 
-    /// @brief An opaque surface a sphere terrain draws over its own at a constant height: a water
-    ///        level, a lava level, a flat datum.
+    /// @brief A surface a sphere terrain draws over its own at a constant height: a water level, a
+    ///        lava level, a flat datum.
     ///
     /// The layer is drawn over the same tile selection as the terrain, at the terrain's placement,
     /// morph and scale, with its height in place of the height channel, so it stands exactly where
     /// the terrain would at that height at every distance. A tile draws it only where the tile's
     /// height range dips below it, so a layer costs nothing over higher ground.
+    ///
+    /// A Surface material draws it opaque, into the g-buffer and the shadow views; a Translucent
+    /// one draws it in the translucent pass over the lit scene, casting nothing, so what lies
+    /// beneath it can show through (`Veng/sphere_terrain_translucent.slang`).
     struct SphereTerrainLevelLayer
     {
-        /// @brief The Surface material the layer is drawn with; it must declare "sphereTerrain".
+        /// @brief The Surface or Translucent material the layer is drawn with; it must declare
+        ///        "sphereTerrain".
         AssetHandle<MaterialInstance> Material;
         /// @brief The layer's height above the sphere's radius, in metres.
         f32 Height = 0.0f;
@@ -38,8 +43,9 @@ namespace Veng
     /// re-bases the two, since they rest in the frame that does not move.
     ///
     /// Its tiles draw into the g-buffer and, at a scale of one, into the shadow views, through a
-    /// Surface material declaring "sphereTerrain" (`Veng/sphere_terrain.slang`); a terrain drawn
-    /// with another material is reported once and draws nothing. A view whose layer mask omits the
+    /// Surface material declaring "sphereTerrain" (`Veng/sphere_terrain.slang`), and a level layer
+    /// may draw in the translucent pass instead (SphereTerrainLevelLayer); a terrain drawn with
+    /// another material is reported once and draws nothing. A view whose layer mask omits the
     /// terrain's Layer neither draws it nor selects, marks or requests its tiles. It is not pickable, not drawn by
     /// the depth-and-normal path or under the g-buffer shading override, and not occlusion-tested.
     struct SphereTerrain
@@ -92,7 +98,7 @@ namespace Veng
 
 VE_REFLECT(::Veng::SphereTerrainLevelLayer, 0xDF994550C064BA0AULL)
 VE_FIELD(Material, .DisplayName = "Material",
-         .Tooltip = "A Surface material declaring sphereTerrain")
+         .Tooltip = "A Surface or Translucent material declaring sphereTerrain")
 VE_FIELD(Height, .DisplayName = "Height", .Tooltip = "Metres above the sphere's radius")
 VE_REFLECT_END();
 
@@ -107,5 +113,5 @@ VE_FIELD(TargetPixelsPerQuad, .DisplayName = "Target pixels per quad",
 VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Uniform scale about the eye",
          .Display = {.Min = 0.0})
 VE_ARRAY_FIELD(LevelLayers, .DisplayName = "Level layers",
-               .Tooltip = "Opaque surfaces drawn at a constant height over the terrain")
+               .Tooltip = "Surfaces drawn at a constant height over the terrain")
 VE_REFLECT_END();

@@ -230,6 +230,7 @@ namespace Veng::Renderer
         m_FrameOrigin = origin.Position;
         const dvec3 cameraScene = dvec3(camera.GetPosition());
         const dvec3 eyeStable = origin.Position + cameraScene;
+        m_EyeStable = eyeStable;
         const mat4 projection = camera.Projection();
         const f64 pixelsPerRadian = 0.5 * info.HeightPixels * std::abs(projection[1][1]);
         const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
@@ -328,25 +329,39 @@ namespace Veng::Renderer
                 .Scale = terrain.Scale,
                 .CastsShadows = terrain.CastsShadows,
             };
-            const auto Resolve = [&](const AssetHandle<MaterialInstance>& handle,
-                                     const string& what) -> const MaterialInstance*
+            const auto Resolve = [&](Surface& surface, const AssetHandle<MaterialInstance>& handle,
+                                     const bool levelLayer, const string& what)
             {
                 if (!handle.IsLoaded())
                 {
-                    return nullptr;
+                    return;
                 }
                 const MaterialInstance* material = handle.Get();
                 const Material& parent = *material->GetParent().Get();
-                if (parent.GetDomain() != MaterialDomain::Surface || !parent.IsSphereTerrain())
+                const SphereTerrainMaterialVerdict verdict = CheckSphereTerrainMaterial(
+                    parent.GetDomain(), parent.IsSphereTerrain(), levelLayer);
+                switch (verdict)
                 {
-                    Report(entity, fmt::format("{} material '{}' does not declare "
-                                               "\"sphereTerrain\", so it is not drawn",
+                case SphereTerrainMaterialVerdict::Opaque:
+                case SphereTerrainMaterialVerdict::Translucent:
+                    surface.Material = material;
+                    surface.Translucent = verdict == SphereTerrainMaterialVerdict::Translucent;
+                    return;
+                case SphereTerrainMaterialVerdict::TranslucentGround:
+                    Report(entity, fmt::format("{} material '{}' is Translucent, which only a "
+                                               "level layer may be, so it is not drawn",
                                                what, parent.GetName()));
-                    return nullptr;
+                    return;
+                case SphereTerrainMaterialVerdict::NotTerrain:
+                case SphereTerrainMaterialVerdict::WrongDomain:
+                    Report(entity, fmt::format("{} material '{}' is not a Surface or Translucent "
+                                               "material declaring \"sphereTerrain\", so it is "
+                                               "not drawn",
+                                               what, parent.GetName()));
+                    return;
                 }
-                return material;
             };
-            entry.Surfaces[0].Material = Resolve(terrain.Material, "its");
+            Resolve(entry.Surfaces[0], terrain.Material, false, "its");
             result.Stats.SkippedTerrains = entry.Surfaces[0].Material == nullptr ? 1u : 0u;
             if (terrain.LevelLayers.size() > MaxSphereTerrainLevelLayers)
             {
@@ -360,8 +375,8 @@ namespace Veng::Renderer
             {
                 Surface& surface = entry.Surfaces[1 + layer];
                 surface.Height = terrain.LevelLayers[layer].Height;
-                surface.Material = Resolve(terrain.LevelLayers[layer].Material,
-                                           fmt::format("its layer {}", layer));
+                Resolve(surface, terrain.LevelLayers[layer].Material, true,
+                        fmt::format("its layer {}", layer));
             }
 
             // The cascades fit to the casters near the eye, not to a terrain reaching the horizon.
@@ -396,12 +411,13 @@ namespace Veng::Renderer
                            static_cast<f64>(m_Totals.WaitingSplits));
     }
 
-    void SphereTerrainSystem::ClaimDrawSlots(GpuDrawData* drawData, DrawBudget& budget)
+    u32 SphereTerrainSystem::ClaimDrawSlots(GpuDrawData* drawData, DrawBudget& budget,
+                                            vector<TranslucentDraw>& translucent)
     {
         // A frame that did not select (the lean depth-and-normal path) draws no terrain.
         if (!m_Claimable)
         {
-            return;
+            return 0;
         }
         m_Claimable = false;
         u32 wanted = 0;
@@ -412,11 +428,12 @@ namespace Veng::Renderer
                 wanted += surface.Material != nullptr ? 1u : 0u;
             }
         }
+        bool exhausted = false;
         for (Terrain& terrain : m_Terrains)
         {
             for (Surface& surface : terrain.Surfaces)
             {
-                if (surface.Material == nullptr)
+                if (surface.Material == nullptr || exhausted)
                 {
                     continue;
                 }
@@ -424,7 +441,8 @@ namespace Veng::Renderer
                 if (!budget.TryClaimSlot(slot))
                 {
                     budget.RecordDropped(DrawPhase::SphereTerrain, wanted);
-                    return;
+                    exhausted = true;
+                    continue;
                 }
                 wanted--;
                 const mat4 identity(1.0f);
@@ -441,6 +459,37 @@ namespace Veng::Renderer
                 surface.Seated = true;
             }
         }
+
+        u32 appended = 0;
+        for (u32 index = 0; index < m_Terrains.size(); index++)
+        {
+            const Terrain& terrain = m_Terrains[index];
+            // The centre's distance, not its view z: an eye on the ground looking up has the centre
+            // behind it, and a layer surrounding the eye still stands farther than what is on it.
+            const f32 distance = static_cast<f32>(glm::length(terrain.Center - m_EyeStable));
+            for (u32 surface = 1; surface < SphereTerrainSurfaceCount; surface++)
+            {
+                const Surface& layer = terrain.Surfaces[surface];
+                if (!layer.Seated || !layer.Translucent)
+                {
+                    continue;
+                }
+                translucent.push_back(TranslucentDraw{
+                    .Material = layer.Material,
+                    .SourceMesh = nullptr,
+                    .IndexCount = SphereTerrainGridIndexCount,
+                    .FirstIndex = 0,
+                    .CandidateId = layer.DrawSlot,
+                    .ViewDepth = -distance,
+                    .SortPriority = layer.Material->GetParent()->GetSortPriority(),
+                    .Terrain = this,
+                    .TerrainIndex = index,
+                    .TerrainSurface = surface,
+                });
+                appended++;
+            }
+        }
+        return appended;
     }
 
     void SphereTerrainSystem::PrepareFrame(const u32 frameIndex, const CameraView& camera,
@@ -469,6 +518,7 @@ namespace Veng::Renderer
         for (Terrain& terrain : m_Terrains)
         {
             terrain.Lists.clear();
+            terrain.TranslucentLists = {};
             terrain.Set = nullptr;
             Memory& memory = *terrain.Mem;
             const bool anySurface = std::ranges::any_of(terrain.Surfaces, [](const Surface& surface)
@@ -497,6 +547,7 @@ namespace Veng::Renderer
             for (u32 layer = 0; layer < terrain.LayerCount; layer++)
             {
                 input.LayerHeights[layer] = terrain.Surfaces[1 + layer].Height;
+                input.TranslucentLayers[layer] = terrain.Surfaces[1 + layer].Translucent;
             }
             input.Main = {.Planes = BodyPlanes(frustum, 4, toBody, cameraScene), .Horizon = true};
             for (usize v = 0; v < shadowFrusta.size(); v++)
@@ -558,6 +609,25 @@ namespace Veng::Renderer
                     (view == 0 ? stats.MainViewTiles : stats.ShadowViewTiles) += count;
                     stats.Triangles += static_cast<u64>(count) * SphereTerrainTileTriangles;
                 }
+            }
+            for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
+            {
+                const vector<u32>& list = frame.TranslucentLists[surface];
+                const bool drawnSurface = terrain.Surfaces[surface].Material != nullptr;
+                terrain.TranslucentLists[surface] = {static_cast<u32>(lists.size()),
+                                                     drawnSurface ? static_cast<u32>(list.size())
+                                                                  : 0u};
+                if (!drawnSurface)
+                {
+                    continue;
+                }
+                for (const u32 index : list)
+                {
+                    lists.push_back(base + index);
+                }
+                const u32 count = static_cast<u32>(list.size());
+                stats.MainViewTiles += count;
+                stats.Triangles += static_cast<u64>(count) * SphereTerrainTileTriangles;
             }
             stats.CulledByFrustum = frame.CulledByFrustum;
             stats.CulledByHorizon = frame.CulledByHorizon;
@@ -650,7 +720,7 @@ namespace Veng::Renderer
             {
                 const Surface& drawn = terrain.Surfaces[surface];
                 const uvec2 list = terrain.Lists[0][surface];
-                if (!drawn.Seated || list.y == 0)
+                if (!drawn.Seated || drawn.Translucent || list.y == 0)
                 {
                     continue;
                 }
@@ -672,6 +742,30 @@ namespace Veng::Renderer
                 cmd.DrawIndexed(SphereTerrainGridIndexCount, list.y, 0, 0, list.x);
             }
         }
+    }
+
+    void SphereTerrainSystem::RecordTranslucent(CommandBuffer& cmd, const TranslucentDraw& draw,
+                                                const SurfacePush& push) const
+    {
+        if (!m_Prepared || draw.TerrainIndex >= m_Terrains.size() ||
+            draw.TerrainSurface >= SphereTerrainSurfaceCount)
+        {
+            return;
+        }
+        const Terrain& terrain = m_Terrains[draw.TerrainIndex];
+        const uvec2 list = terrain.TranslucentLists[draw.TerrainSurface];
+        if (terrain.Set == nullptr || list.y == 0)
+        {
+            return;
+        }
+        cmd.BindDescriptorSets({terrain.Set}, TranslucentSphereTerrainSet);
+        SurfacePush terrainPush = push;
+        terrainPush.InstanceBuffer = draw.TerrainSurface;
+        terrainPush.InstanceDraw = draw.CandidateId;
+        terrainPush.InstanceBase = 0;
+        cmd.PushConstants(terrainPush);
+        cmd.BindIndexBuffer(m_GridIndices, IndexType::U16);
+        cmd.DrawIndexed(SphereTerrainGridIndexCount, list.y, 0, 0, list.x);
     }
 
     bool SphereTerrainSystem::HasShadowDraws(const u32 shadowView) const

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x4B581AD3ECB0B996",
+      "type": "Shader",
+      "source": "shaders/translucent_terrain_layer.frag.shader.json"
+    },
+    {
+      "id": "0x6C535D1D8C80C759",
+      "type": "Material",
+      "source": "materials/translucent_terrain_set_undeclared.vmat.json"
+    }
+  ]
+}

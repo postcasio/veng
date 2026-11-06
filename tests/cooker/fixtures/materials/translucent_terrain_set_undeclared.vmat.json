@@ -1,0 +1,9 @@
+{
+  "domain": "Translucent",
+  "cull": "None",
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x4B581AD3ECB0B996"
+  },
+  "fields": []
+}

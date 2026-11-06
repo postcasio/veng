@@ -1699,7 +1699,8 @@ specular term, or divides it out, rather than letting the blend dim both alike.
   cannot carry the immutable comparison sampler, and only an identically-defined layout accepts the
   renderer's set — then binds the renderer's sets there, with the frame-slot dynamic offsets the
   lighting pass uses. Sets 4 and 5 are therefore reserved to that include in the Translucent domain;
-  a translucent material that does not include it binds nothing extra. The pass declares the shadow
+  a translucent material that does not include it binds nothing extra. Set 6 is a sphere terrain's,
+  for a translucent level layer alone (see "A translucent level layer"). The pass declares the shadow
   atlases sampled, as the lighting pass does. The sprite pass binds the two sets too (see "Flipbook
   sprites") and gathers in its vertex stage, and a compute pass may gather per element with the same
   functions, so both layouts — the shadow system's and `BakedSkyCube::CreateConsumerSetLayout`'s —
@@ -4354,7 +4355,8 @@ a budget near 550, about a 700-tile pool.
   view and surface has a list of record indices; a draw's `firstInstance` is its list's start, so
   `SV_VulkanInstanceID` names the entry. **Set 4** is the terrain's own layout
   (`CreateSphereTerrainSetLayout`): channel `n`'s array at binding `n` (an absent channel binds the
-  height's), the records at 8, the lists at 9, written once per source per frame slot.
+  height's), the records at 8, the lists at 9, written once per source per frame slot. A translucent
+  level layer reads the same set at 6 (below); `VE_SPHERE_TERRAIN_SET` names it in the shaders.
 - **Placement** (`SphereTerrainPlace`): `Σ ŵ_i C_i + n·(R (1 − |m|²)/(1 + |m|) + h)` with
   `1 − |m|² = Σ_{i<j} ŵ_iŵ_j|d_i − d_j|²` — every term an eye-relative corner or a quantity no larger
   than the tile, so nothing the size of the radius is subtracted in f32: the device places a level-22
@@ -4402,7 +4404,42 @@ a budget near 550, about a 700-tile pool.
 - **Level layers** (`SphereTerrain::LevelLayers`, at most `MaxSphereTerrainLevelLayers`): each a
   second terrain material drawn over the same selection at a constant height in place of the height
   channel, with the terrain's placement, morph, scale and helpers, only on tiles whose working range
-  dips below it; one more draw per view, casting like the terrain.
+  dips below it; one more draw per view, an opaque layer casting like the terrain.
+- **A translucent level layer.** A layer whose material is Translucent and declares
+  `"sphereTerrain"` draws in the full-resolution translucent pass instead of the g-buffer, so a surface
+  at a constant height — a water surface, a sheet of ice — can show what lies beneath it. The ground
+  itself is always a Surface material (`CheckSphereTerrainMaterial`, pure, pinned by
+  `tests/unit/sphere_terrain_translucent.cpp`; a translucent ground is reported once and not drawn).
+  - **Lists.** `BuildSphereTerrainFrame` puts the layer's main-view tiles in
+    `SphereTerrainFrame::TranslucentLists` and nowhere else: the g-buffer list is empty and it casts
+    into no shadow view, as no translucent submesh does (`tests/unit/sphere_terrain_cull.cpp`).
+  - **Sorting.** `ClaimDrawSlots` seats it on a `DrawData` slot like any surface and appends a
+    `TranslucentDraw` carrying the terrain (`TranslucentDraw::Terrain`) to the full-resolution plan,
+    which is re-sorted: by its material's `sortPriority`, then at its sphere centre's distance from
+    the eye (not the centre's view z, which an eye on the ground looking up would put behind it). So
+    within a priority it draws behind every translucent nearer than the centre, and a surface sharing
+    that sort point (a shell sorted at the same centre) is ordered against it by priority.
+  - **Sets.** Its pipeline is the translucent pass's, built against the material's `DrawData` set,
+    the renderer's IBL (4) and shadow (5) layouts and the terrain's layout at
+    `TranslucentSphereTerrainSet` (6), with no vertex input; it binds all four whatever the fragment
+    declares, so forward lighting and `LightVisibility` are always available. The material loader
+    lays such a material out as set 3, two empty sets and the terrain's own (`BuildPipelineLayout`),
+    since the renderer's forward-lighting layouts are not the loader's. Seven sets in all, within
+    `CommandBuffer::MaxBoundDescriptorSets`.
+  - **Its contract** is `Veng/sphere_terrain_translucent.slang`, which moves the terrain set to 6 and
+    re-exports `Veng/forward_lighting.slang` and `Veng/sphere_terrain.slang`; its vertex stage is
+    `translucent_terrain.vert` (`TranslucentSphereTerrainVertexShaderId`), the same
+    `SphereTerrainVertexStage` as the opaque one. The scene colour and depth copies are read as by any
+    translucent material, behind `"readsSceneColor"` / `"readsSceneDepth"`.
+  - **Depth.** It depth-tests against the opaque depth with writes off. A terrain drawn at a scale
+    about the eye writes its true depth (`TerrainTrueDeviceDepth` through `GBufferDepthOutput`), so
+    the opaque depth there is the true one, and a layer at a scale other than one tests against it
+    by returning `TranslucentDepthOutput` with its own true depth; at scale one the rasterized depth
+    is already true and the layer may return a bare colour.
+  - **Both sides.** The grid is wound counter-clockwise seen from outside; a layer meant to be seen
+    from below authors `"cullMode": "none"`.
+  - **Not here:** the half-resolution and post-resolve layers (cook errors beside `"sphereTerrain"`).
+    A layer with no tile in view still holds its sorted draw, and records nothing.
 - **Shadows.** Each shadow pass draws each view's lists through a depth-only pipeline of its own
   (`shadow_depth_terrain.vert`, the same `SphereTerrainEvaluate`, both faces, the cascades with
   depth clamp). A terrain material may read the shadow maps through `Veng/light_visibility.slang`

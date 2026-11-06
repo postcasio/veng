@@ -56,6 +56,26 @@ namespace Veng::Renderer
         }
     }
 
+    SphereTerrainMaterialVerdict CheckSphereTerrainMaterial(const MaterialDomain domain,
+                                                            const bool sphereTerrain,
+                                                            const bool levelLayer)
+    {
+        if (domain != MaterialDomain::Surface && domain != MaterialDomain::Translucent)
+        {
+            return SphereTerrainMaterialVerdict::WrongDomain;
+        }
+        if (!sphereTerrain)
+        {
+            return SphereTerrainMaterialVerdict::NotTerrain;
+        }
+        if (domain == MaterialDomain::Surface)
+        {
+            return SphereTerrainMaterialVerdict::Opaque;
+        }
+        return levelLayer ? SphereTerrainMaterialVerdict::Translucent
+                          : SphereTerrainMaterialVerdict::TranslucentGround;
+    }
+
     SphereTerrainFrame BuildSphereTerrainFrame(const SphereTerrainFrameInput& input)
     {
         SphereTerrainFrame frame;
@@ -87,11 +107,13 @@ namespace Veng::Renderer
                 ComputeSphereTerrainTileBox(tile.Key, input.Radius, low, high);
             const std::array<dvec3, 8> corners = SphereTerrainBoxCorners(box);
 
-            std::array<bool, 1 + MaxSphereTerrainLevelLayers> surfaces{};
+            std::array<bool, SphereTerrainSurfaceCount> surfaces{};
+            std::array<bool, SphereTerrainSurfaceCount> translucent{};
             surfaces[0] = true;
             for (u32 layer = 0; layer < layerCount; layer++)
             {
                 surfaces[1 + layer] = tile.MinHeight < input.LayerHeights[layer];
+                translucent[1 + layer] = input.TranslucentLayers[layer];
             }
 
             const u32 recordIndex = static_cast<u32>(frame.Records.size());
@@ -110,14 +132,19 @@ namespace Veng::Renderer
                     frame.CulledByHorizon += view == 0 ? 1u : 0u;
                     continue;
                 }
+                bool listed = false;
                 for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
                 {
-                    if (surfaces[surface])
+                    if (!surfaces[surface] || (translucent[surface] && view > 0))
                     {
-                        frame.Lists[view][surface].push_back(recordIndex);
+                        continue;
                     }
+                    (translucent[surface] ? frame.TranslucentLists[surface]
+                                          : frame.Lists[view][surface])
+                        .push_back(recordIndex);
+                    listed = true;
                 }
-                drawn = true;
+                drawn = drawn || listed;
             }
             if (!drawn)
             {

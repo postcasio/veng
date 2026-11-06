@@ -730,7 +730,13 @@ Its one pipeline is the terrain pipeline, built at load with no instance-rate bi
 reflected set 4 replaced by the terrain's own layout (`WithSphereTerrainSet`, which refuses a
 reflected set-4 binding the terrain's does not carry), so one set the renderer writes per frame binds
 under every terrain material. A terrain drawn with an undeclared material is reported once and draws
-nothing. See [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Sphere terrain".
+nothing. **A Translucent material may declare it too**, to draw a terrain's level layer in the
+translucent pass: it names the core `translucent_terrain.vert` (`TranslucentSphereTerrainVertexShaderId`)
+instead, its fragment includes `Veng/sphere_terrain_translucent.slang`, it is refused beside
+`"resolution": "half"` or `"placement": "postResolve"`, and its layout is set 3 (the `DrawData`), two
+empty sets the translucent pass fills with forward lighting's, and the terrain's own layout at set 6 —
+a reflected set-6 binding the terrain's does not carry, or any set past 6, fails the load. See
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Sphere terrain".
 
 **A Sky material may declare itself a field**, `"fieldTargets": N` (1 to `MaxSkyFieldTargets`, 4;
 `Material::GetSkyFieldTargets`, 0 for a picture sky), its fragment writing N float4 targets from

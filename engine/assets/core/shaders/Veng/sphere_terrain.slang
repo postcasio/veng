@@ -1,8 +1,10 @@
-// The sphere terrain material contract: what a Surface material declaring "sphereTerrain" reads.
-// Its vertex stage is the engine's surface_terrain.vert, which places each vertex of the shared
-// grid precisely about the eye, morphs it toward its parent, and writes SphereTerrainFragmentInput:
-// the ordinary surface interpolants (Surface), plus the tile's texel coordinates, the morph factor
-// and the record. The fragment's fsMain takes SphereTerrainFragmentInput.
+// The sphere terrain material contract: what a material declaring "sphereTerrain" reads. Its vertex
+// stage is the engine's surface_terrain.vert (a Surface material) or translucent_terrain.vert (a
+// Translucent level layer, see Veng/sphere_terrain_translucent.slang), which both run
+// SphereTerrainVertexStage below: it places each vertex of the shared grid precisely about the eye,
+// morphs it toward its parent, and writes SphereTerrainFragmentInput: the ordinary surface
+// interpolants (Surface), plus the tile's texel coordinates, the morph factor and the record. The
+// fragment's fsMain takes SphereTerrainFragmentInput.
 //
 // - TerrainChannel(input, channel, sampler) samples a payload channel blended with the parent's by
 //   the geometry's own morph, so at a coarse-fine edge the fine side shades as its parent, which is
@@ -37,6 +39,47 @@ struct SphereTerrainFragmentInput
     // The record index (x) and the surface drawn (y): 0 the terrain, 1 + l level layer l.
     nointerpolation uint2 v_TerrainTile : TEXCOORD9;
 };
+
+// The terrain vertex stages' body. It reads no vertex attributes: the index names a vertex of the
+// shared grid, the instance index names an entry of the view's tile list (the draw's firstInstance is
+// the list's start), and the entry names the tile's record. The push block's InstanceDraw is the
+// surface's DrawData record (its material) and InstanceBuffer the surface drawn (0 the terrain, 1 + l
+// its level layer l).
+//
+// The vertex is placed about the eye at true size, then scaled about the eye by the record's scale
+// for the rasterized position alone: the motion vector and the true depth the fragment can write are
+// the unscaled geometry's, so a scale about the eye, which moves nothing on screen, changes nothing
+// but the rasterized depth.
+SphereTerrainFragmentInput SphereTerrainVertexStage(uint vertexIndex, uint listIndex)
+{
+    const uint surface = g_PC.InstanceBuffer;
+    const SphereTerrainVertex v = SphereTerrainEvaluate(vertexIndex, listIndex, surface);
+    const SphereTerrainRecord r = g_TerrainRecords[v.Record];
+    const DrawData draw = LoadDrawData(g_PC.InstanceDraw);
+    const ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
+    const float scale = r.ChordsB.w;
+
+    const float3 camera = view.CameraPosition.xyz;
+    const float3 rotated = mul((float3x3)view.View, v.Position * scale);
+
+    SphereTerrainFragmentInput output;
+    output.Surface.sv_position = mul(view.Proj, float4(rotated, 1.0));
+    output.Surface.v_CurClip = mul(view.CurViewProj, float4(camera + v.Position, 1.0));
+    output.Surface.v_PrevClip = mul(view.PrevViewProj, float4(camera + v.PrevPosition, 1.0));
+    output.Surface.v_UV = SphereTerrainGridUV(v.St * float(SphereTerrainGridQuads));
+    output.Surface.v_WorldNormal = v.Vertical;
+    const float3 tangent = r.TangentU.xyz - v.Vertical * dot(v.Vertical, r.TangentU.xyz);
+    output.Surface.v_WorldTangent = float4(normalize(tangent), 1.0);
+    output.Surface.v_MaterialOffset = draw.MaterialOffset;
+    output.Surface.v_CandidateId = g_PC.InstanceDraw;
+    output.Surface.v_Instance = uint2(InstanceNone, 0u);
+    const float3 offset = SphereTerrainTileOffset(r.Tile, v.St);
+    output.Surface.v_ObjectPosition = r.ChordsB.z * offset + v.Height * (r.Tile.CenterHigh.xyz + offset);
+    output.v_TerrainParentUV = SphereTerrainGridUV(v.ParentGrid);
+    output.v_TerrainMorph = v.Morph;
+    output.v_TerrainTile = uint2(v.Record, surface);
+    return output;
+}
 
 // The fragment's tile record.
 SphereTerrainRecord TerrainRecord(SphereTerrainFragmentInput input)

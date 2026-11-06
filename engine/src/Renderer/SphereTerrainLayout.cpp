@@ -36,6 +36,12 @@ namespace Veng::Renderer
         }
     }
 
+    bool IsSphereTerrainBinding(const u32 binding, const DescriptorType type)
+    {
+        return std::ranges::any_of(TerrainBindings(), [&](const DescriptorBinding& own)
+                                   { return own.Binding == binding && own.Type == type; });
+    }
+
     Ref<DescriptorSetLayout> CreateSphereTerrainSetLayout(Context& context)
     {
         return DescriptorSetLayout::Create(
@@ -53,13 +59,9 @@ namespace Veng::Renderer
                 string("a sphere-terrain material's stages declare no set 4: its vertex stage is "
                        "not the core terrain stage"));
         }
-        const vector<DescriptorBinding> terrain = TerrainBindings();
         for (const DescriptorBinding& binding : sets[index]->GetBindings())
         {
-            const bool carried = std::ranges::any_of(
-                terrain, [&](const DescriptorBinding& own)
-                { return own.Binding == binding.Binding && own.Type == binding.Type; });
-            if (!carried)
+            if (!IsSphereTerrainBinding(binding.Binding, binding.Type))
             {
                 return std::unexpected(fmt::format(
                     "a sphere-terrain material declares set 4 binding {}, which the terrain's set "

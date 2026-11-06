@@ -1,8 +1,8 @@
 // Sphere terrain's per-view cull, device-free (BuildSphereTerrainFrame): the horizon cull never
 // drops a tile with a point the eye can see; the lists a view draws do not depend on the scale
 // about the eye, while a scaled terrain casts into no shadow view; a level layer draws a tile
-// only where the ground dips below it; and a record carries its tile's hold, and the tile overlay
-// only when the frame asks for it.
+// only where the ground dips below it; a translucent layer's tiles are in the translucent list
+// alone; and a record carries its tile's hold, and the tile overlay only when the frame asks for it.
 
 #include <algorithm>
 #include <cmath>
@@ -74,14 +74,19 @@ namespace
     }
 
     // The tiles a view's list draws, by key.
-    vector<u64> ListKeys(const SphereTerrainFrame& frame, const usize view)
+    vector<u64> Keys(const SphereTerrainFrame& frame, const vector<u32>& list)
     {
         vector<u64> keys;
-        for (const u32 index : frame.Lists[view][0])
+        for (const u32 index : list)
         {
             keys.push_back(RecordKey(frame.Records[index]).Value);
         }
         return keys;
+    }
+
+    vector<u64> ListKeys(const SphereTerrainFrame& frame, const usize view)
+    {
+        return Keys(frame, frame.Lists[view][0]);
     }
 
     SphereTerrainDrawView OpenView()
@@ -256,6 +261,46 @@ TEST_CASE("sphere terrain cull: a level layer draws only where the ground dips b
     // A layer below every tile's ground draws nowhere.
     CHECK(frame.Lists[0][2].empty());
     CHECK(frame.Records[0].Heights.x == 10.0f);
+}
+
+TEST_CASE("sphere terrain cull: a translucent layer's tiles are in the translucent list alone")
+{
+    // Two layers at one height, one opaque and one translucent, over ground dipping below both: the
+    // two draw the same tiles, the opaque one into the g-buffer and the shadow view, the translucent
+    // one into the translucent pass and no shadow view.
+    const FlatPool pool;
+    const dvec3 eye = Up() * (Radius + 50.0);
+    const vector<SphereTerrainDrawnTile> drawn = Select(pool, eye);
+    const dvec3 north = glm::normalize(glm::cross(Up(), dvec3(0.0, 0.0, 1.0)));
+    const std::array<SphereTerrainDrawView, 1> shadows = {ViewAlong(-Up(), north, 6)};
+    SphereTerrainFrameInput input{
+        .Drawn = drawn,
+        .Radius = Radius,
+        .MinHeight = MinHeight,
+        .MaxHeight = MaxHeight,
+        .Eye = eye,
+        .CenterFromEye = -eye,
+        .PrevCenterFromCamera = -eye,
+        .LayerHeights = {10.0f, 10.0f},
+        .LayerCount = 2,
+        .TranslucentLayers = {false, true},
+        .Main = ViewAlong(north, Up(), 4),
+        .Shadows = shadows,
+    };
+    input.Main.Horizon = true;
+    const SphereTerrainFrame frame = BuildSphereTerrainFrame(input);
+    REQUIRE(frame.Lists.size() == 2);
+
+    const vector<u64> opaque = Keys(frame, frame.Lists[0][1]);
+    CHECK_FALSE(opaque.empty());
+    CHECK(Keys(frame, frame.TranslucentLists[2]) == opaque);
+    CHECK(frame.Lists[0][2].empty());
+    CHECK_FALSE(frame.Lists[1][1].empty());
+    CHECK(frame.Lists[1][2].empty());
+    // The ground and the opaque layer have no translucent list.
+    CHECK(frame.TranslucentLists[0].empty());
+    CHECK(frame.TranslucentLists[1].empty());
+    CHECK(ListKeys(frame, 0) == opaque);
 }
 
 TEST_CASE("sphere terrain cull: a record carries its hold, and the tile overlay only when asked")

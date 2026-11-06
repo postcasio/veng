@@ -92,6 +92,12 @@ namespace Veng::Renderer
     /// an immutable comparison sampler reflection cannot express), and its draws bind the renderer's
     /// IBL and shadow sets there, so the fragment runs the deferred pass's light loop.
     ///
+    /// A draw carrying a sphere terrain (TranslucentDraw::Terrain) is a terrain's level layer: its
+    /// material declares "sphereTerrain", so its pipeline draws the terrain's grid through
+    /// translucent_terrain.vert with no vertex input, binds the forward-lighting sets whatever its
+    /// fragment declares and the terrain set at TranslucentSphereTerrainSet after them, and the
+    /// terrain system records the draw itself.
+    ///
     /// The pass also owns the bloom mask, a second color attachment it clears at pass begin and a
     /// declaring material writes as SV_Target1 — the glow strength a surface asks for apart from
     /// how bright it is, which the bloom pyramid's level 0 folds in. The attachment is bound for
@@ -184,6 +190,11 @@ namespace Veng::Renderer
         /// @brief Builds a forward-lit material's layout: its own DrawData set, then the renderer's
         /// IBL and shadow set layouts, with the material's push ranges.
         Ref<PipelineLayout> ForwardLitLayoutFor(const Material& parent) const;
+
+        /// @brief Builds a translucent sphere-terrain material's layout: its own DrawData set, the
+        /// renderer's IBL and shadow set layouts, then the terrain set at
+        /// TranslucentSphereTerrainSet, with the material's push ranges.
+        Ref<PipelineLayout> TerrainLayoutFor(const Material& parent) const;
 
         /// @brief Records the back-to-front translucent draws into the target.
         void Record(const ScenePassContext& ctx) const;

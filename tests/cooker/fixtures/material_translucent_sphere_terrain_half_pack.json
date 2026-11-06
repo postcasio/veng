@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x4B581AD3ECB0B996",
+      "type": "Shader",
+      "source": "shaders/translucent_terrain_layer.frag.shader.json"
+    },
+    {
+      "id": "0x09BAED089617A9F3",
+      "type": "Material",
+      "source": "materials/translucent_sphere_terrain_half.vmat.json"
+    }
+  ]
+}

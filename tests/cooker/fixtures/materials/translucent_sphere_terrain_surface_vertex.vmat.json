@@ -1,0 +1,10 @@
+{
+  "domain": "Translucent",
+  "cull": "None",
+  "sphereTerrain": true,
+  "shaders": {
+    "vertex": "0x7D963B7185626B36",
+    "fragment": "0x4B581AD3ECB0B996"
+  },
+  "fields": []
+}

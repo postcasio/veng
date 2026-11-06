@@ -18,6 +18,7 @@ namespace Veng::Renderer
 {
     class Buffer;
     class DescriptorSet;
+    class SphereTerrainSystem;
 
     // One per-candidate draw the geometry pass records, in candidate-slot order.
     // The candidate id (== the slot) reaches the surface vertex stage via the
@@ -128,6 +129,13 @@ namespace Veng::Renderer
         vec4 ScreenRect{0.0f, 0.0f, 1.0f, 1.0f};
         // Whether the material opted into the reduced-resolution layer.
         bool HalfResolution = false;
+        // A sphere terrain's translucent level layer, drawn by its system rather than from a mesh
+        // (SourceMesh null, CandidateId its DrawData slot); null for a mesh draw.
+        const SphereTerrainSystem* Terrain = nullptr;
+        // The terrain's index among the system's terrains this frame.
+        u32 TerrainIndex = 0;
+        // The surface drawn: 1 + l for level layer l.
+        u32 TerrainSurface = 0;
     };
 
     // The per-frame forward translucent submission plan SceneRenderer fills before each graph

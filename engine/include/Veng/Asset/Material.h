@@ -29,9 +29,16 @@ namespace Veng
 
     /// @brief The core pack's sphere-terrain vertex stage (surface_terrain.vert).
     ///
-    /// A material declaring "sphereTerrain" names it as its vertex shader, and no other material
-    /// may; the cook enforces both.
+    /// A Surface material declaring "sphereTerrain" names it as its vertex shader, and no other
+    /// material may; the cook enforces both.
     inline constexpr AssetId SphereTerrainVertexShaderId{0x7D963B7185626B36ULL};
+
+    /// @brief The core pack's translucent sphere-terrain vertex stage (translucent_terrain.vert).
+    ///
+    /// A Translucent material declaring "sphereTerrain" — a level layer drawn in the translucent
+    /// pass — names it as its vertex shader, and no other material may; the cook enforces both. It
+    /// reads the terrain set at 6, past the forward-lighting sets 4 and 5.
+    inline constexpr AssetId TranslucentSphereTerrainVertexShaderId{0x5F1D9CD1FCD81A8FULL};
 
     /// @brief The descriptor set a Surface fragment reads the shadow system at.
     ///
@@ -275,9 +282,11 @@ namespace Veng
 
         /// @brief Whether the material shades sphere terrain.
         ///
-        /// Its vertex stage is the core sphere-terrain stage and its pipeline the terrain
-        /// pipeline: no instance-rate binding, and the terrain's set 4 in its layout. Surface
-        /// domain only, exclusive with InstancedSets (cook-enforced).
+        /// Its vertex stage is a core sphere-terrain stage and its pipeline the terrain pipeline:
+        /// no instance-rate binding, and the terrain's set in its layout — set 4 for a Surface
+        /// material, set 6 (past forward lighting's 4 and 5) for a Translucent level layer. Surface
+        /// or Translucent domain; exclusive with InstancedSets, and a Translucent one draws only in
+        /// the full-resolution scene layer (cook-enforced).
         bool SphereTerrain = false;
 
         /// @brief How many float4 targets a sky field material's fragment writes, or 0 for a
@@ -420,7 +429,8 @@ namespace Veng
         ///
         /// A material declares it at cook time ("sphereTerrain": true). Its pipeline is the terrain
         /// pipeline and it draws on nothing else; a terrain drawn with a material that does not
-        /// declare it is reported and draws nothing.
+        /// declare it is reported and draws nothing. A Translucent one draws a level layer in the
+        /// translucent pass; a terrain's own surface is always a Surface material.
         [[nodiscard]] bool IsSphereTerrain() const { return m_SphereTerrain; }
 
         /// @brief Returns how many float4 targets a sky field material writes, or 0 for a picture
