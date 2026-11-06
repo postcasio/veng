@@ -4437,7 +4437,7 @@ a budget near 550, about a 700-tile pool.
     by returning `TranslucentDepthOutput` with its own true depth; at scale one the rasterized depth
     is already true and the layer may return a bare colour.
   - **Both sides.** The grid is wound counter-clockwise seen from outside; a layer meant to be seen
-    from below authors `"cullMode": "none"`.
+    from below authors `"cull": "None"`.
   - **Not here:** the half-resolution and post-resolve layers (cook errors beside `"sphereTerrain"`).
     A layer with no tile in view still holds its sorted draw, and records nothing.
 - **Shadows.** Each shadow pass draws each view's lists through a depth-only pipeline of its own

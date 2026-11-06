@@ -17,12 +17,14 @@
 //   holds at its true depth. A layer drawn at a scale other than one therefore returns
 //   TranslucentDepthOutput with TerrainTrueDeviceDepth, so it tests at its own true depth too; at
 //   scale one the rasterized depth already is.
-// - A layer seen from below as well as above authors "cullMode": "none"; the grid is wound
+// - A layer seen from below as well as above authors "cull": "None"; the grid is wound
 //   counter-clockwise seen from outside the sphere.
 #pragma once
 
-#if defined(VE_SPHERE_TERRAIN_SET) && VE_SPHERE_TERRAIN_SET != 6
+#ifdef VE_SPHERE_TERRAIN_SET
+#if VE_SPHERE_TERRAIN_SET != 6
 #error "Veng/sphere_terrain_translucent.slang must be included before Veng/sphere_terrain.slang"
+#endif
 #endif
 #define VE_SPHERE_TERRAIN_SET 6
 
