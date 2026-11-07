@@ -7,9 +7,9 @@
 //
 // A record's first mask describes the opaque depth range of its tile, so it serves a pixel at that
 // depth — the deferred pass. Its second, the forward mask, describes the tile's frustum from the
-// camera out to the tile's farthest opaque surface (unbounded where the tile shows none), grown by
-// a pixel on every side, so it serves a surface drawn in front of the opaque depth — a forward-lit
-// translucent fragment, found by projecting its world position (ForwardTileLightMask).
+// camera out to the tile's farthest opaque surface (unbounded where any of its pixels shows none),
+// grown by a pixel on every side, so it serves a surface drawn in front of the opaque depth — a
+// forward-lit translucent fragment, found by projecting its world position (ForwardTileLightMask).
 //
 // The includer declares the view block (view_constants.slang), the light buffer
 // (Veng/light_buffer.slang) and the set-0 storage-buffer array g_Buffers before including this.

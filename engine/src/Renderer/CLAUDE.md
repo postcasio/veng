@@ -790,7 +790,8 @@ graphics pass, is `AccessKind::StorageBufferReadGraphics`, a vertex- and fragmen
 **A record's first mask describes the opaque depth range**, so it serves the deferred pass. **Its
 second, the forward mask, serves what is drawn in front of it**: the lights whose sphere reaches the
 tile's frustum anywhere from the camera to the plane through its farthest opaque surface (with no far
-plane where the tile shows only sky). The frustum's side planes are pushed a pixel out, so a fragment
+plane where any of the tile's pixels shows sky, since a fragment over one is drawn at any depth).
+The frustum's side planes are pushed a pixel out, so a fragment
 projected through another jitter — the post-resolve layer's unjittered projection — still lands in a
 tile whose frustum holds it. A forward-lit translucent fragment (`EvaluateForwardLighting`) finds its
 tile by projecting its world position (`ForwardTileLightMask`), since its layer may render at another

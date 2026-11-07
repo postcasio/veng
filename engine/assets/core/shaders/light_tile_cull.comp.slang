@@ -22,8 +22,8 @@
 // The forward mask tests each light's sphere against the tile's four side planes, through the
 // camera, grown by a pixel on every side so a fragment projected through a slightly different
 // jitter still finds a tile whose frustum holds it, and against the plane through the tile's
-// farthest opaque surface, behind which a depth-tested fragment is never drawn. A tile showing no
-// geometry has no far plane.
+// farthest opaque surface, behind which a depth-tested fragment is never drawn. A tile with any
+// pixel showing no geometry has no far plane: a fragment over that pixel is drawn at any depth.
 //
 // The cull reads the depth target through the bindless set-0 textures, and the view's lights and
 // mask placement through the view block; it writes the mask buffer through its own set 3.
@@ -52,6 +52,7 @@ static const float BoundEpsilon = 1e-5;
 
 groupshared uint s_NearDepthBits;
 groupshared uint s_FarDepthBits;
+groupshared uint s_ShowsSky;
 groupshared float3 s_BoxMin;
 groupshared float3 s_BoxMax;
 groupshared uint s_Mask[LightMaskWords];
@@ -116,6 +117,7 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
     {
         s_NearDepthBits = 0u;
         s_FarDepthBits = 0xFFFFFFFFu;
+        s_ShowsSky = 0u;
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -129,6 +131,10 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
         {
             InterlockedMax(s_NearDepthBits, asuint(depth));
             InterlockedMin(s_FarDepthBits, asuint(depth));
+        }
+        else
+        {
+            s_ShowsSky = 1u;
         }
     }
     GroupMemoryBarrierWithGroupSync();
@@ -154,7 +160,7 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
         }
         // View space looks down -Z; the far plane is the farthest of the far slice's corners.
         s_FarViewZ = -3.4e38;
-        if (hasGeometry)
+        if (hasGeometry && s_ShowsSky == 0u)
         {
             float farDepth = asfloat(s_FarDepthBits);
             float farZ = 3.4e38;
