@@ -48,6 +48,10 @@ namespace
 {
     constexpr uvec2 Extent{64, 64};
 
+    // A row in the black margin above the ribbon that the ribbon's own coverage never reaches
+    // (it first lights row 18) and that a dim ribbon's bloom still lights well past the noise.
+    constexpr u32 BloomMarginRow = 10;
+
     vec3 RgbAt(const std::vector<u8>& rgba16f, const u32 x, const u32 y)
     {
         const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
@@ -294,7 +298,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const auto halo = [&]()
     {
         RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/true);
-        return RgbAt(render.Render(Context, *scene), Extent.x / 2, 4).x;
+        return RgbAt(render.Render(Context, *scene), Extent.x / 2, BloomMarginRow).x;
     };
 
     const f32 dark = halo();
@@ -316,7 +320,7 @@ TEST_CASE_FIXTURE(
     constexpr f32 HalfScale = 0.5f;
     const u32 mid = Extent.x / 2;
 
-    const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, HalfScale), mid, 4).x;
+    const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, HalfScale), mid, BloomMarginRow).x;
     AddRibbon(*scene, vec3(0.5f), /*additive=*/true);
     const std::vector<u8> pixels = render.Render(Context, *scene, 1.0f, HalfScale);
 
@@ -329,7 +333,7 @@ TEST_CASE_FIXTURE(
     CHECK(RgbAt(pixels, mid, mid).x > 0.45f);
     // The mask arrived: below the threshold, only the mask can light the margin.
     CHECK(dark < 1e-3f);
-    CHECK(RgbAt(pixels, mid, 4).x > dark + 1e-3f);
+    CHECK(RgbAt(pixels, mid, BloomMarginRow).x > dark + 1e-3f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -373,10 +377,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         const Unique<Scene> scene = Scene::Create(Types);
         RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/true);
-        const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, 4).x;
+        const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, BloomMarginRow).x;
         // Luminance 0.5, below the threshold: the bright pass alone passes none of it.
         AddPath(*scene, vec3(0.5f), /*additive=*/true, RibbonPlacement::PostResolve);
-        const f32 lit = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, 4).x;
+        const f32 lit = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, BloomMarginRow).x;
         CHECK(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
         CHECK(dark < 1e-3f);
         CHECK(lit > dark + 1e-3f);
