@@ -17,7 +17,15 @@
 #   lacks;
 # - warnings never errors (-Wno-error / /WX-), and no clang-tidy (SKIP_LINTING);
 # - no fast math and no floating-point contraction (-ffp-contract=off, /fp:precise), so an arm64
-#   host and an x64 host evaluate the same expressions the same way.
+#   host and an x64 host evaluate the same expressions the same way;
+# - -O2 (/O2) in every configuration, so a Debug consumer does not evaluate shader code
+#   unoptimized. MSVC rejects /O2 beside the /RTC runtime checks, so the target drops them.
+#
+# What the optimisation level cannot move is pinned by the two flags above: no contraction, no
+# fast math. It can still move a result where the optimiser rewrites a library call (merging a
+# sin and a cos of one angle into one sincos call is the case to watch), so the evidence is the
+# host-module parity tests passing in both a Debug and a Release build, not a claim that
+# optimisation never changes a bit.
 #
 # The host and the GPU agree to rounding, not to the bit. Measured on the reference fixture
 # (gradient noise and a 16-octave fractal sum, |p| <= 256, Slang 2026.18.3, MoltenVK with fast
@@ -105,9 +113,12 @@ function(veng_add_host_shader_module TARGET_NAME)
             POSITION_INDEPENDENT_CODE ON
             SKIP_LINTING ON
             DISABLE_PRECOMPILE_HEADERS ON)
+    # Target options follow the configuration's own flags, so this -O2 / /O2 is the one that wins.
     if (MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE /WX- /fp:precise)
+        set_target_properties(${TARGET_NAME} PROPERTIES MSVC_RUNTIME_CHECKS "")
+        target_compile_options(${TARGET_NAME} PRIVATE /WX- /O2 /fp:precise)
     else ()
-        target_compile_options(${TARGET_NAME} PRIVATE -Wno-error -fno-fast-math -ffp-contract=off)
+        target_compile_options(${TARGET_NAME} PRIVATE
+                -Wno-error -O2 -fno-fast-math -ffp-contract=off)
     endif ()
 endfunction()

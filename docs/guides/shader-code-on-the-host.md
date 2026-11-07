@@ -112,6 +112,46 @@ and field names are mangled: the wrapper converts member by member, so nothing i
 padding has to agree. A struct is copied in and out on every call, which for a block of a few
 hundred bytes costs nothing beside the function it feeds.
 
+## Prepared parameters: convert a struct once, call many times
+
+A consumer evaluating a field at thousands of points with one parameter block pays that
+member-by-member conversion at every point, all of it identical. So every struct an export takes
+as an `in` parameter also gets a **prepared** form in the header, `Prepared<T>`, and every export
+taking one gets an overload taking the handle:
+
+```cpp
+// HeightFields.h, generated (beside the declarations above)
+template <> class Prepared<FieldParams>
+{
+public:
+    [[nodiscard]] static Prepared Prepare(const FieldParams& value);
+    // copyable and movable; the held value is opaque
+};
+
+[[nodiscard]] glm::vec4 HeightF32(const Prepared<FieldParams>& params, glm::vec3 p);
+void BandsAt(const Prepared<FieldParams>& params, glm::vec3 p, std::array<float, 48>& weights);
+```
+
+```cpp
+const auto params = HeightFields::Prepared<HeightFields::FieldParams>::Prepare(fieldParams);
+for (const glm::vec3& p : points)
+{
+    heights.push_back(HeightFields::HeightF32(params, p).x);
+}
+```
+
+`Prepare` converts the value to the module's own form once, on the heap, and the prepared overload
+passes that held value straight to the export. The result is bit-identical to the unprepared call
+with the same struct: both run the same conversion and the same function. The call reads the
+held value and never writes it (Slang copies an `in` parameter before writing it), so one handle
+may be shared across threads. A handle is a snapshot: change the struct and prepare it again.
+
+Use it when the same struct feeds many calls, such as a batch of points, a grid, or a tile. A
+one-off call gains nothing over the plain overload, which converts into a local and allocates
+nothing. Where an export takes several struct `in` parameters, its prepared overload takes every
+one of them prepared. The name `Prepared` is reserved: the compile refuses a struct or an export
+spelled that way.
+
 `vengc compile-host` refuses anything else with an error naming the function, the parameter and,
 inside a struct, the field (`field 'Params.Visible' has type 'bool'`). It also refuses a struct with
 no fields, two structs that would share a C++ name, and an overloaded export taking a matrix, array
@@ -151,6 +191,19 @@ A host module is a **pure function of its arguments**:
 - **The targets agree to rounding, not to the bit.** The Metal compiler runs with fast math and
   contracts multiply-adds; the host library is built with neither, so an arm64 host and an x64 host
   evaluate the same expressions the same way, and the transcendental implementations differ.
+
+## The module is always built optimised
+
+The library compiles at `-O2` (`/O2` on MSVC, with the runtime checks `/O2` cannot sit beside
+removed from that target alone) in every configuration, so a Debug build of the consumer does not
+evaluate shader code unoptimized. The rest of the consumer keeps its own configuration.
+
+The flags that decide a result stay pinned in every configuration: no floating-point contraction
+and no fast math. The optimiser may still rewrite a library call, such as merging a `sin` and a
+`cos` of one angle into a single `sincos`, so the evidence that optimisation moved nothing is the
+engine's host-module tests passing in both a Debug and a Release build, not a guarantee that it
+never can. A consumer with a tighter claim than "agrees to rounding" tests it in both
+configurations too.
 
 ## How closely they agree
 

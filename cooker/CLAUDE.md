@@ -922,16 +922,23 @@ is `Cook/HostShaderModule.h` (`HostShaderCompiler`, in the veng-free core).
   emitted signature takes it, and converts member by member through a structured binding, a matrix
   transposed (glm's `m[c][r]` is Slang's `m[r][c]`). Nothing crosses a C linkage, so no struct
   layout is punned.
+- **Prepared parameters.** Each struct an export takes as an `in` parameter also gets an opaque
+  `Prepared<T>` handle in the header, whose `Storage` is defined only in the bridge as the prelude
+  type the first export taking `T` deduces (a `static_assert` holds every other export taking `T`
+  to the same type), and each export taking one gets an overload taking its handle. That overload
+  passes the held value through a `const_cast`, which is sound because Slang copies an `in`
+  parameter it writes before writing it. The plain overload converts into a local, so it allocates
+  nothing.
 - **Refusals, each naming its subject:** a global shader parameter (a host module is pure), an
   entry point, an exported signature with a type other than `float`/`double`/`int`/`uint` scalars
   and 2- to 4-vectors, `float`/`double` matrices, fixed-size arrays and structs of those (a
   struct's offending field is named by path), an array return (Slang lowers it to an out pointer),
-  an empty struct, two structs sharing a C++ name, an overloaded export taking an aggregate (its
-  address does not deduce), and an export without `__extern_cpp` (its emitted name is mangled —
+  an empty struct, two structs sharing a C++ name, a struct or export named `Prepared` (the handle's
+  name), an overloaded export taking an aggregate (its address does not deduce), and an export without `__extern_cpp` (its emitted name is mangled —
   found by looking for the unmangled definition in the emitted text).
 - **The generated unit's build.** C++20 (the prelude includes `<stdfloat>` from C++23 on, which
-  Apple's libc++ lacks), warnings not errors, `SKIP_LINTING`, hidden visibility, and no fast math
-  or FP contraction. The helper warns at configure time when the installed Slang is not
+  Apple's libc++ lacks), warnings not errors, `SKIP_LINTING`, hidden visibility, no fast math or FP
+  contraction, and `-O2` (`/O2` with the MSVC runtime checks dropped) in every configuration. The helper warns at configure time when the installed Slang is not
   `VENG_HOST_SHADER_SLANG_VERSION`, the version the bound was measured with.
 
 ## Cook modules — a game's own importers

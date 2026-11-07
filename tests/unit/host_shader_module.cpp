@@ -2,11 +2,14 @@
 // veng_add_host_shader_module), checked on the CPU alone: properties of the function itself, in
 // both of the instantiations the exports file declares. Agreement with the GPU is
 // tests/gpu/host_shader_agreement.cpp. The aggregate cases (tests/shaders/host/aggregates_host.slang)
-// hold exports taking and returning structs, arrays and matrices to references computed here.
+// hold exports taking and returning structs, arrays and matrices to references computed here, and a
+// prepared struct to the converted one it stands for.
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <memory>
 
 #include <doctest/doctest.h>
 
@@ -191,4 +194,52 @@ TEST_CASE("host shader module: out arrays and inout structs are written back, st
     const HostAggregates::Span made = HostAggregates::MakeSpan(4.0f, -1.0f);
     CHECK(made.Low == -1.0f);
     CHECK(made.High == 4.0f);
+}
+
+TEST_CASE("host shader module: a prepared struct passes bit-identically to a converted one")
+{
+    // Fractional values, so a conversion that dropped or reordered a bit would show.
+    HostAggregates::Block block = TestBlock();
+    for (u32 i = 0; i < 4; ++i)
+    {
+        block.Values[i] = block.Values[i] * 0.3141592f + vec4(0.1f, 0.2f, 0.3f, 0.7f);
+    }
+    block.Basis = block.Basis * 0.7071068f;
+    block.Range = {.Low = -3.3f, .High = 3.7f};
+    const auto prepared = HostAggregates::Prepared<HostAggregates::Block>::Prepare(block);
+    const auto bitEqual = [](const auto& a, const auto& b)
+    { return std::memcmp(&a, &b, sizeof(a)) == 0; };
+
+    const std::array<f32, 4> weights{0.25f, -1.5f, 3.125f, 0.4f};
+    CHECK(bitEqual(HostAggregates::SumBlock(prepared, weights),
+                   HostAggregates::SumBlock(block, weights)));
+    const vec2 v(1.3f, -0.6f);
+    CHECK(bitEqual(HostAggregates::ApplyBasis(prepared, v), HostAggregates::ApplyBasis(block, v)));
+
+    std::array<f32, 4> sums{};
+    std::array<f32, 4> preparedSums{};
+    HostAggregates::Span range{.Low = 0.0f, .High = 0.0f};
+    HostAggregates::Span preparedRange = range;
+    HostAggregates::Summarise(block, sums, range);
+    HostAggregates::Summarise(prepared, preparedSums, preparedRange);
+    CHECK(bitEqual(sums, preparedSums));
+    CHECK(bitEqual(range, preparedRange));
+}
+
+TEST_CASE("host shader module: a call writing its copy of a prepared struct leaves it unchanged")
+{
+    const HostAggregates::Block block = TestBlock();
+    const auto prepared = HostAggregates::Prepared<HostAggregates::Block>::Prepare(block);
+    const vec4 first = HostAggregates::DrainBlock(prepared, 2.0f);
+    CHECK(first == block.Values[0] * 2.0f);
+    // The export zeroes its copy's Count and scales its first value; neither reaches the handle.
+    CHECK(HostAggregates::DrainBlock(prepared, 2.0f) == first);
+    CHECK(HostAggregates::SumBlock(prepared, {1.0f, 1.0f, 1.0f, 1.0f}) ==
+          HostAggregates::SumBlock(block, {1.0f, 1.0f, 1.0f, 1.0f}));
+
+    // A copy holds its own value, which outlives the handle it was copied from.
+    auto copy = std::make_unique<HostAggregates::Prepared<HostAggregates::Block>>(prepared);
+    const HostAggregates::Prepared<HostAggregates::Block> held = *copy;
+    copy.reset();
+    CHECK(HostAggregates::DrainBlock(held, 2.0f) == first);
 }

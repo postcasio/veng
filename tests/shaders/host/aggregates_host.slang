@@ -69,3 +69,11 @@ export __extern_cpp float TotalWidth(Span spans[3])
     }
     return total;
 }
+
+/// @brief The block's first value scaled, reached by writing the block's own copy.
+export __extern_cpp float4 DrainBlock(Block block, float scale)
+{
+    block.Values[0] *= scale;
+    block.Count = 0;
+    return block.Values[0] + float4(float(block.Count));
+}

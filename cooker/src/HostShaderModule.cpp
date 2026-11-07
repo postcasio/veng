@@ -451,7 +451,45 @@ namespace Veng::Cook
             return fmt::format("{}({})", GlmCpp(type, structs), args);
         }
 
-        string HeaderSignature(const HostFunction& function, const vector<HostStruct>& structs)
+        /// @brief Whether a parameter is a struct read by the call, which may be passed prepared.
+        bool IsPreparable(const HostParameter& parameter)
+        {
+            return parameter.Direction == HostDirection::In &&
+                   parameter.Type.Kind == HostKind::Struct;
+        }
+
+        /// @brief Whether an export takes a struct `in` parameter, and so has a prepared overload.
+        bool TakesPreparable(const HostFunction& function)
+        {
+            return std::ranges::any_of(function.Parameters, IsPreparable);
+        }
+
+        /// @brief The structs some export takes as an `in` parameter, in struct-table order.
+        vector<u32> PreparableStructs(const vector<HostStruct>& structs,
+                                      const vector<HostFunction>& functions)
+        {
+            vector<u32> preparable;
+            for (u32 s = 0; s < structs.size(); ++s)
+            {
+                const bool taken = std::ranges::any_of(
+                    functions,
+                    [s](const HostFunction& function)
+                    {
+                        return std::ranges::any_of(
+                            function.Parameters, [s](const HostParameter& parameter)
+                            { return IsPreparable(parameter) && parameter.Type.Struct == s; });
+                    });
+                if (taken)
+                {
+                    preparable.push_back(s);
+                }
+            }
+            return preparable;
+        }
+
+        // With `prepared`, each struct `in` parameter is taken as its `Prepared<T>` handle.
+        string HeaderSignature(const HostFunction& function, const vector<HostStruct>& structs,
+                               const bool prepared = false)
         {
             string params;
             for (const HostParameter& parameter : function.Parameters)
@@ -465,6 +503,12 @@ namespace Veng::Cook
                 if (parameter.Direction == HostDirection::In && !byValue)
                 {
                     params += "const ";
+                }
+                if (prepared && IsPreparable(parameter))
+                {
+                    params += fmt::format("Prepared<{}>& {}", structs[parameter.Type.Struct].Name,
+                                          parameter.Name);
+                    continue;
                 }
                 params += GlmCpp(parameter.Type, structs);
                 params += byValue ? " " : "& ";
@@ -510,6 +554,7 @@ namespace Veng::Cook
                                      "\n"
                                      "#include <array>\n"
                                      "#include <cstdint>\n"
+                                     "#include <memory>\n"
                                      "\n"
                                      "#include <glm/glm.hpp>\n"
                                      "\n"
@@ -534,6 +579,65 @@ namespace Veng::Cook
                 }
                 out += "    };\n\n";
             }
+            const vector<u32> preparable = PreparableStructs(structs, functions);
+            if (!preparable.empty())
+            {
+                out += "    /// @brief A struct parameter converted once to the module's own form, "
+                       "for many calls.\n"
+                       "    ///\n"
+                       "    /// Specialised for each struct an export takes as an `in` parameter. "
+                       "Each export taking\n"
+                       "    /// one has an overload taking its handle, which passes the held value "
+                       "without converting\n"
+                       "    /// it again; the call reads it and never writes it, so one handle may "
+                       "be passed from\n"
+                       "    /// several threads at once.\n"
+                       "    /// @tparam T The struct, as declared in this header.\n"
+                       "    template <class T> class Prepared;\n\n";
+            }
+            for (const u32 s : preparable)
+            {
+                const string& type = structs[s].Name;
+                out += fmt::format(
+                    "    /// @brief `{0}` converted once to the module's own form.\n"
+                    "    template <> class Prepared<{0}>\n"
+                    "    {{\n"
+                    "    public:\n"
+                    "        /// @brief The module's own form of the value, defined in the "
+                    "generated source alone.\n"
+                    "        struct Storage;\n"
+                    "\n"
+                    "        /// @brief Converts a value to the module's own form.\n"
+                    "        /// @param value The value every call taking the handle reads.\n"
+                    "        /// @return The handle holding the converted value.\n"
+                    "        [[nodiscard]] static Prepared Prepare(const ::{1}::{0}& value);\n"
+                    "\n"
+                    "        /// @brief Copies the held value.\n"
+                    "        Prepared(const Prepared& other);\n"
+                    "        /// @brief Takes the held value, leaving `other` fit only to be "
+                    "assigned or destroyed.\n"
+                    "        Prepared(Prepared&& other) noexcept;\n"
+                    "        /// @brief Replaces the held value with a copy of `other`'s.\n"
+                    "        Prepared& operator=(const Prepared& other);\n"
+                    "        /// @brief Takes `other`'s held value, leaving `other` fit only to "
+                    "be assigned or destroyed.\n"
+                    "        Prepared& operator=(Prepared&& other) noexcept;\n"
+                    "        /// @brief Releases the held value.\n"
+                    "        ~Prepared();\n"
+                    "\n"
+                    "        /// @brief The held value, opaque outside the generated source.\n"
+                    "        [[nodiscard]] const Storage& GetStorage() const noexcept {{ return "
+                    "*m_Storage; }}\n"
+                    "\n"
+                    "    private:\n"
+                    "        /// @brief Adopts converted storage.\n"
+                    "        explicit Prepared(std::unique_ptr<Storage> storage);\n"
+                    "\n"
+                    "        /// @brief The converted value; null only once moved from.\n"
+                    "        std::unique_ptr<Storage> m_Storage;\n"
+                    "    }};\n\n",
+                    type, name);
+            }
             for (usize i = 0; i < functions.size(); ++i)
             {
                 const HostFunction& function = functions[i];
@@ -542,6 +646,15 @@ namespace Veng::Cook
                                    i == 0 ? "" : "\n", SlangSignature(function, structs),
                                    function.Return ? "[[nodiscard]] " : "",
                                    HeaderSignature(function, structs));
+                if (TakesPreparable(function))
+                {
+                    out += fmt::format("\n    /// @brief The host build of `{}`, its struct `in` "
+                                       "parameters passed prepared.\n"
+                                       "    {}{};\n",
+                                       SlangSignature(function, structs),
+                                       function.Return ? "[[nodiscard]] " : "",
+                                       HeaderSignature(function, structs, true));
+                }
             }
             out += "}\n";
             return out;
@@ -657,107 +770,199 @@ namespace Veng::Cook
             return out;
         }
 
+        string BuildWrapper(const HostFunction& function, bool prepared,
+                            const string& preludeNamespace, const string& moduleNamespace,
+                            const string& bridgeNamespace, const vector<HostStruct>& structs);
+
         string BuildBridge(const string& name, const string& preludeNamespace,
                            const string& moduleNamespace, const string& bridgeNamespace,
                            const vector<HostStruct>& structs, const vector<HostFunction>& functions)
         {
             string out = BuildConversions(bridgeNamespace, name, structs);
             out += fmt::format("namespace {}\n{{\n", name);
+            // Each prepared struct holds the prelude type the first export taking it deduces, and
+            // every other export taking it must deduce the same one, or a held value could not be
+            // passed to it.
+            for (const u32 s : PreparableStructs(structs, functions))
+            {
+                const string& type = structs[s].Name;
+                string storage;
+                string asserts;
+                for (const HostFunction& function : functions)
+                {
+                    for (usize index = 0; index < function.Parameters.size(); ++index)
+                    {
+                        const HostType& parameterType = function.Parameters[index].Type;
+                        if (parameterType.Kind != HostKind::Struct || parameterType.Struct != s)
+                        {
+                            continue;
+                        }
+                        const string deduced =
+                            fmt::format("{0}::ParamValue<{0}::Param<decltype(&{1}::{2}), {3}>>",
+                                        bridgeNamespace, moduleNamespace, function.Name, index);
+                        if (storage.empty())
+                        {
+                            storage = deduced;
+                            continue;
+                        }
+                        asserts += fmt::format(
+                            "    static_assert(std::is_same_v<{0}, {1}>, \"'{2}' takes '{3}' as a "
+                            "type other exports do not, so it cannot be passed prepared\");\n",
+                            storage, deduced, function.Name, type);
+                    }
+                }
+                out += fmt::format(
+                    "    struct Prepared<{0}>::Storage\n"
+                    "    {{\n"
+                    "        {1} Value{{}};\n"
+                    "    }};\n"
+                    "{2}"
+                    "\n"
+                    "    Prepared<{0}> Prepared<{0}>::Prepare(const ::{4}::{0}& value)\n"
+                    "    {{\n"
+                    "        auto storage = std::make_unique<Storage>();\n"
+                    "        {3}::ToPrelude(value, storage->Value);\n"
+                    "        return Prepared(std::move(storage));\n"
+                    "    }}\n"
+                    "    Prepared<{0}>::Prepared(std::unique_ptr<Storage> storage) : "
+                    "m_Storage(std::move(storage)) {{}}\n"
+                    "    Prepared<{0}>::Prepared(const Prepared& other)\n"
+                    "        : m_Storage(other.m_Storage ? "
+                    "std::make_unique<Storage>(*other.m_Storage) "
+                    ": nullptr) {{}}\n"
+                    "    Prepared<{0}>::Prepared(Prepared&& other) noexcept = default;\n"
+                    "    Prepared<{0}>& Prepared<{0}>::operator=(const Prepared& other)\n"
+                    "    {{\n"
+                    "        if (this != &other) {{ *this = Prepared(other); }}\n"
+                    "        return *this;\n"
+                    "    }}\n"
+                    "    Prepared<{0}>& Prepared<{0}>::operator=(Prepared&& other) noexcept = "
+                    "default;\n"
+                    "    Prepared<{0}>::~Prepared() = default;\n\n",
+                    type, storage, asserts, bridgeNamespace, name);
+            }
             for (const HostFunction& function : functions)
             {
-                // The module's code sees the prelude's types through a using-directive inside its
-                // own namespace; the wrapper opens them for its body alone.
-                string body = fmt::format("        using namespace {};\n", preludeNamespace);
-                const bool deduces =
-                    std::ranges::any_of(function.Parameters, [](const HostParameter& parameter)
-                                        { return !IsSimple(parameter.Type); });
-                if (deduces)
+                out += BuildWrapper(function, false, preludeNamespace, moduleNamespace,
+                                    bridgeNamespace, structs);
+                if (TakesPreparable(function))
                 {
-                    body += fmt::format("        using HostCall = decltype(&{}::{});\n",
-                                        moduleNamespace, function.Name);
+                    out += BuildWrapper(function, true, preludeNamespace, moduleNamespace,
+                                        bridgeNamespace, structs);
                 }
-                string args;
-                string writeBack;
-                for (usize index = 0; index < function.Parameters.size(); ++index)
-                {
-                    const HostParameter& parameter = function.Parameters[index];
-                    if (!args.empty())
-                    {
-                        args += ", ";
-                    }
-                    const string local = "hostArg_" + parameter.Name;
-                    if (!IsSimple(parameter.Type))
-                    {
-                        const string param =
-                            fmt::format("{}::Param<HostCall, {}>", bridgeNamespace, index);
-                        body += fmt::format("        {}::ParamValue<{}> {}{{}};\n", bridgeNamespace,
-                                            param, local);
-                        if (parameter.Direction != HostDirection::Out)
-                        {
-                            body += fmt::format("        {}::ToPrelude({}, {});\n", bridgeNamespace,
-                                                parameter.Name, local);
-                        }
-                        args += fmt::format("{}::Pass<{}>({})", bridgeNamespace, param, local);
-                        if (parameter.Direction != HostDirection::In)
-                        {
-                            writeBack += fmt::format("        {}::FromPrelude({}, {});\n",
-                                                     bridgeNamespace, local, parameter.Name);
-                        }
-                        continue;
-                    }
-                    if (parameter.Direction == HostDirection::In)
-                    {
-                        args += ToPrelude(parameter.Type, parameter.Name);
-                        continue;
-                    }
-                    if (parameter.Type.Kind == HostKind::Scalar)
-                    {
-                        // The prelude's scalar is the glm scalar, so it is written in place.
-                        args += "&" + parameter.Name;
-                        continue;
-                    }
-                    if (parameter.Direction == HostDirection::InOut)
-                    {
-                        body += fmt::format("        {} {} = {};\n", PreludeCpp(parameter.Type),
-                                            local, ToPrelude(parameter.Type, parameter.Name));
-                    }
-                    else
-                    {
-                        body +=
-                            fmt::format("        {} {}{{}};\n", PreludeCpp(parameter.Type), local);
-                    }
-                    args += "&" + local;
-                    writeBack += fmt::format("        {} = {};\n", parameter.Name,
-                                             ToGlm(parameter.Type, local, structs));
-                }
-                const string call = fmt::format("{}::{}({})", moduleNamespace, function.Name, args);
-                if (function.Return && IsSimple(*function.Return))
-                {
-                    body += fmt::format("        const {} hostResult = {};\n",
-                                        PreludeCpp(*function.Return), call);
-                    body += writeBack;
-                    body += fmt::format("        return {};\n",
-                                        ToGlm(*function.Return, "hostResult", structs));
-                }
-                else if (function.Return)
-                {
-                    body += fmt::format("        const auto hostResult = {};\n", call);
-                    body += writeBack;
-                    body += fmt::format("        {} result{{}};\n"
-                                        "        {}::FromPrelude(hostResult, result);\n"
-                                        "        return result;\n",
-                                        GlmCpp(*function.Return, structs), bridgeNamespace);
-                }
-                else
-                {
-                    body += fmt::format("        {};\n", call);
-                    body += writeBack;
-                }
-                out += fmt::format("    {}\n    {{\n{}    }}\n\n",
-                                   HeaderSignature(function, structs), body);
             }
             out += "}\n";
             return out;
+        }
+
+        // One wrapper: converts its arguments to the prelude's types, calls the export and converts
+        // what it writes back. With `prepared`, each struct `in` parameter is a handle whose held
+        // value is passed as it stands. Slang copies an `in` parameter it writes before writing it,
+        // so the call never writes through the pointer it is handed, and the handle's constness
+        // may be cast away to pass it.
+        string BuildWrapper(const HostFunction& function, const bool prepared,
+                            const string& preludeNamespace, const string& moduleNamespace,
+                            const string& bridgeNamespace, const vector<HostStruct>& structs)
+        {
+            // The module's code sees the prelude's types through a using-directive inside its
+            // own namespace; the wrapper opens them for its body alone.
+            string body = fmt::format("        using namespace {};\n", preludeNamespace);
+            const bool deduces =
+                std::ranges::any_of(function.Parameters, [](const HostParameter& parameter)
+                                    { return !IsSimple(parameter.Type); });
+            if (deduces)
+            {
+                body += fmt::format("        using HostCall = decltype(&{}::{});\n",
+                                    moduleNamespace, function.Name);
+            }
+            string args;
+            string writeBack;
+            for (usize index = 0; index < function.Parameters.size(); ++index)
+            {
+                const HostParameter& parameter = function.Parameters[index];
+                if (!args.empty())
+                {
+                    args += ", ";
+                }
+                const string local = "hostArg_" + parameter.Name;
+                if (prepared && IsPreparable(parameter))
+                {
+                    const string param =
+                        fmt::format("{}::Param<HostCall, {}>", bridgeNamespace, index);
+                    body += fmt::format("        auto& {} = const_cast<{}::ParamValue<{}>&>({}."
+                                        "GetStorage().Value);\n",
+                                        local, bridgeNamespace, param, parameter.Name);
+                    args += fmt::format("{}::Pass<{}>({})", bridgeNamespace, param, local);
+                    continue;
+                }
+                if (!IsSimple(parameter.Type))
+                {
+                    const string param =
+                        fmt::format("{}::Param<HostCall, {}>", bridgeNamespace, index);
+                    body += fmt::format("        {}::ParamValue<{}> {}{{}};\n", bridgeNamespace,
+                                        param, local);
+                    if (parameter.Direction != HostDirection::Out)
+                    {
+                        body += fmt::format("        {}::ToPrelude({}, {});\n", bridgeNamespace,
+                                            parameter.Name, local);
+                    }
+                    args += fmt::format("{}::Pass<{}>({})", bridgeNamespace, param, local);
+                    if (parameter.Direction != HostDirection::In)
+                    {
+                        writeBack += fmt::format("        {}::FromPrelude({}, {});\n",
+                                                 bridgeNamespace, local, parameter.Name);
+                    }
+                    continue;
+                }
+                if (parameter.Direction == HostDirection::In)
+                {
+                    args += ToPrelude(parameter.Type, parameter.Name);
+                    continue;
+                }
+                if (parameter.Type.Kind == HostKind::Scalar)
+                {
+                    // The prelude's scalar is the glm scalar, so it is written in place.
+                    args += "&" + parameter.Name;
+                    continue;
+                }
+                if (parameter.Direction == HostDirection::InOut)
+                {
+                    body += fmt::format("        {} {} = {};\n", PreludeCpp(parameter.Type), local,
+                                        ToPrelude(parameter.Type, parameter.Name));
+                }
+                else
+                {
+                    body += fmt::format("        {} {}{{}};\n", PreludeCpp(parameter.Type), local);
+                }
+                args += "&" + local;
+                writeBack += fmt::format("        {} = {};\n", parameter.Name,
+                                         ToGlm(parameter.Type, local, structs));
+            }
+            const string call = fmt::format("{}::{}({})", moduleNamespace, function.Name, args);
+            if (function.Return && IsSimple(*function.Return))
+            {
+                body += fmt::format("        const {} hostResult = {};\n",
+                                    PreludeCpp(*function.Return), call);
+                body += writeBack;
+                body += fmt::format("        return {};\n",
+                                    ToGlm(*function.Return, "hostResult", structs));
+            }
+            else if (function.Return)
+            {
+                body += fmt::format("        const auto hostResult = {};\n", call);
+                body += writeBack;
+                body += fmt::format("        {} result{{}};\n"
+                                    "        {}::FromPrelude(hostResult, result);\n"
+                                    "        return result;\n",
+                                    GlmCpp(*function.Return, structs), bridgeNamespace);
+            }
+            else
+            {
+                body += fmt::format("        {};\n", call);
+                body += writeBack;
+            }
+            return fmt::format("    {}\n    {{\n{}    }}\n\n",
+                               HeaderSignature(function, structs, prepared), body);
         }
 
         // Whether the emitted C++ defines `name` under its own name, which `__extern_cpp` keeps.
@@ -974,6 +1179,28 @@ namespace Veng::Cook
                     where, function.Name));
             }
         }
+        // The header names the prepared-parameter handle `Prepared`.
+        const auto reserved = [](const string& name) { return name == "Prepared"; };
+        for (const HostStruct& host : structs)
+        {
+            if (reserved(host.Name))
+            {
+                return std::unexpected(fmt::format(
+                    "{}: struct 'Prepared' would hide the header's prepared-parameter handle; give "
+                    "it another name",
+                    where));
+            }
+        }
+        for (const HostFunction& function : functions)
+        {
+            if (reserved(function.Name))
+            {
+                return std::unexpected(fmt::format(
+                    "{}: function 'Prepared' would hide the header's prepared-parameter handle; "
+                    "give it another name",
+                    where));
+            }
+        }
         if (functions.empty())
         {
             return std::unexpected(
@@ -1015,7 +1242,8 @@ namespace Veng::Cook
                                     "#include \"{}.h\"\n\n"
                                     "#include <cstddef>\n"
                                     "#include <tuple>\n"
-                                    "#include <type_traits>\n\n",
+                                    "#include <type_traits>\n"
+                                    "#include <utility>\n\n",
                                     info.Module.filename().string(), info.Name);
         output.Source += emitted;
         output.Source += fmt::format("\n}} // namespace {}\n\n", moduleNamespace);

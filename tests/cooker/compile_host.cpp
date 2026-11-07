@@ -69,6 +69,18 @@ TEST_CASE("compile-host mirrors a struct in the header and passes aggregates by 
     CHECK(compiled->Header.find("float High{};") != string::npos);
     CHECK(compiled->Header.find("Span Widen(const Span& span, const std::array<glm::vec4, 4>& "
                                 "values, std::array<float, 4>& sums)") != string::npos);
+    // A struct `in` parameter also has a prepared form and an overload taking it.
+    CHECK(compiled->Header.find("template <> class Prepared<Span>") != string::npos);
+    CHECK(compiled->Header.find("Span Widen(const Prepared<Span>& span, const "
+                                "std::array<glm::vec4, 4>& values, std::array<float, 4>& sums)") !=
+          string::npos);
+}
+
+TEST_CASE("compile-host refuses a struct named as the prepared-parameter handle")
+{
+    const Result<HostShaderModuleOutput> compiled = CompileFixture("reserved_name.slang");
+    REQUIRE_FALSE(compiled);
+    CHECK(compiled.error().find("'Prepared'") != string::npos);
 }
 
 TEST_CASE("compile-host's depfile names an included file")
