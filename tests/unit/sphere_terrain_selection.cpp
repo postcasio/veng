@@ -1,11 +1,12 @@
 // Sphere terrain selection, device-free, over a pool that holds every tile of a flat sphere: the
-// level range halves exactly per level and holds the neighbour invariant's inequality at any field
-// of view; the drawn set covers the sphere once, is 2:1 balanced (also when a tile's children are
-// withheld), deepens monotonically toward the ground and holds still inside the hysteresis band;
-// and every edge between drawn tiles of adjacent levels has the coarse side unmorphed and the fine
-// side fully morphed. Under a tile budget the ground under the eye keeps its full depth, beyond the
-// near radius only tiles in the view refine, and either way the set still covers once, balances,
-// and keeps the invariant wherever its coarse side was not held.
+// level range halves exactly per level, holds the neighbour invariant's inequality at any field of
+// view, and is set by the target alone on a sharp view; the drawn set covers the sphere once, is
+// 2:1 balanced (also when a tile's children are withheld), deepens monotonically toward the ground
+// and, above the horizon, holds still inside the hysteresis band; and every edge between drawn
+// tiles of adjacent levels has the coarse side unmorphed and the fine side fully morphed, on a
+// view the target governs and on one the floor does. Under a tile budget the ground under the eye
+// keeps its full depth, beyond the near radius only tiles in the view refine, and either way the
+// set still covers once, balances, and keeps the invariant wherever its coarse side was not held.
 
 #include <algorithm>
 #include <cmath>
@@ -54,12 +55,13 @@ namespace
     };
 
     SphereTerrainSelectionInput FlatInput(const FlatPool& pool, const dvec3& eye,
-                                          const std::unordered_set<u64>* previous)
+                                          const std::unordered_set<u64>* previous,
+                                          const f64 pixelsPerRadian = PixelsPerRadian)
     {
         return {
             .Radius = Radius,
             .Eye = eye,
-            .PixelsPerRadian = PixelsPerRadian,
+            .PixelsPerRadian = pixelsPerRadian,
             .Tiles = &pool,
             .PreviousSplits = previous,
         };
@@ -67,12 +69,13 @@ namespace
 
     // Runs the selection until its splits stop changing, as a still eye's frames would.
     SphereTerrainSelectionResult Settle(const FlatPool& pool, const dvec3& eye,
-                                        std::unordered_set<u64>& splits)
+                                        std::unordered_set<u64>& splits,
+                                        const f64 pixelsPerRadian = PixelsPerRadian)
     {
         SphereTerrainSelectionResult result;
         for (u32 frame = 0; frame < 4; frame++)
         {
-            result = SelectSphereTerrain(FlatInput(pool, eye, &splits));
+            result = SelectSphereTerrain(FlatInput(pool, eye, &splits, pixelsPerRadian));
             if (result.Splits == splits)
             {
                 break;
@@ -232,6 +235,12 @@ TEST_CASE("sphere terrain selection: a level's range halves exactly and holds th
     }
     CHECK(notHalved == 0u);
     CHECK(violations == 0u);
+
+    // The floor yields to the target on a sharp view, and stands alone on a coarse one.
+    const auto range = [&settings](const f64 k, const f32 target)
+    { return SphereTerrainLevelRange(Radius, k, target, settings.PlanarRangeFloor, 10); };
+    CHECK(range(1000.0, 4.0f) == 2.0 * range(1000.0, 8.0f));
+    CHECK(range(100.0, 4.0f) == range(100.0, 8.0f));
 }
 
 TEST_CASE("sphere terrain selection: the drawn set covers the sphere once and is balanced")
@@ -320,13 +329,20 @@ TEST_CASE("sphere terrain selection: the drawn levels deepen toward the ground a
     std::unordered_set<u64> settled;
     const vector<SphereTerrainDrawnTile> reference =
         Settle(pool, Above(splitAltitude), settled).Drawn;
-    const auto keys = [](const vector<SphereTerrainDrawnTile>& drawn)
+    // What the lower eye can see: the horizon prune is not hysteretic, so a tile past it may
+    // split as the eye rises, but nothing above it may.
+    const dvec3 lower = Above(splitAltitude);
+    const auto keys = [&lower](const vector<SphereTerrainDrawnTile>& drawn)
     {
         vector<u64> values;
         values.reserve(drawn.size());
         for (const SphereTerrainDrawnTile& tile : drawn)
         {
-            values.push_back(tile.Key.Value);
+            if (!IsBoxBelowHorizon(ComputeSphereTerrainTileBox(tile.Key, Radius, 0.0f, 0.0f), lower,
+                                   Radius))
+            {
+                values.push_back(tile.Key.Value);
+            }
         }
         std::ranges::sort(values);
         return values;
@@ -346,18 +362,28 @@ TEST_CASE("sphere terrain selection: the drawn levels deepen toward the ground a
 
 TEST_CASE("sphere terrain selection: adjacent levels meet with the coarse side unmorphed")
 {
+    // At 1000 px/rad the target sets each range; at 200 the floor does.
     const FlatPool pool;
-    for (const f64 altitude : {2.0e7, 1.0e4, 2.0})
+    Adjacency total;
+    u32 unseen = 0;
+    for (const f64 pixelsPerRadian : {PixelsPerRadian, 200.0})
     {
-        std::unordered_set<u64> splits;
-        const dvec3 eye = Above(altitude);
-        const SphereTerrainSelectionResult result = Settle(pool, eye, splits);
-        const Adjacency adjacency = Inspect(result.Drawn, eye);
-        CHECK(adjacency.Unbalanced == 0u);
-        CHECK(adjacency.CoarseMorphed == 0u);
-        CHECK(adjacency.FineUnmorphed == 0u);
-        CHECK(adjacency.Visible > 0u);
+        for (const f64 altitude : {4.0e6, 1.0e4, 2.0})
+        {
+            std::unordered_set<u64> splits;
+            const dvec3 eye = Above(altitude);
+            const Adjacency adjacency =
+                Inspect(Settle(pool, eye, splits, pixelsPerRadian).Drawn, eye);
+            total.Unbalanced += adjacency.Unbalanced;
+            total.CoarseMorphed += adjacency.CoarseMorphed;
+            total.FineUnmorphed += adjacency.FineUnmorphed;
+            unseen += adjacency.Visible == 0u ? 1u : 0u;
+        }
     }
+    CHECK(total.Unbalanced == 0u);
+    CHECK(total.CoarseMorphed == 0u);
+    CHECK(total.FineUnmorphed == 0u);
+    CHECK(unseen == 0u);
 }
 
 namespace

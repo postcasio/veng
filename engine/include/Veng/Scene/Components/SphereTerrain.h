@@ -74,6 +74,13 @@ namespace Veng
         /// @brief Whether the terrain casts into the shadow views.
         bool CastsShadows = true;
         /// @brief The pixels one grid quad's edge may span on screen before its tile splits.
+        ///
+        /// It sets how far each level reaches, so a drawn quad spans between about half this and
+        /// this at its tile's nearest point. A level's range is never less than its selection
+        /// floor (SphereTerrainSelectionSettings::PlanarRangeFloor), which takes over only on a
+        /// view coarse enough in pixels per radian — a wide field of view on a short image — that
+        /// the target would bring a level nearer than its neighbours' morphs allow; quads there
+        /// span fewer pixels than the target.
         f32 TargetPixelsPerQuad = 8.0f;
         /// @brief A uniform scale about the eye applied to the drawn terrain; one draws at true
         ///        size.

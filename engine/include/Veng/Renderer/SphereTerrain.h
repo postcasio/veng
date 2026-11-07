@@ -320,7 +320,15 @@ namespace Veng::Renderer
         f32 MorphStartRatio = 0.85f;
         /// @brief The floor on a level's range, in tile diameters, which holds the neighbour
         ///        invariant at any field of view.
-        f32 PlanarRangeFloor = 3.0f;
+        ///
+        /// A coarse tile's edge vertex lies within its finer neighbour's parent, which split
+        /// nearer than `(1 + h)·D_L`, so it is at most `(1 + h)·D_L + Ď_L` from the eye; the
+        /// coarse side stays unmorphed while that is inside its morph start `2a(1 − h)·D_L`, so
+        /// `c ≥ 1 / (2a(1 − h) − (1 + h))`, 1.77 at the shipped hysteresis and morph start. Two
+        /// leaves an eighth of a diameter for the bound's height. The floor governs only where
+        /// the pixel term `s_L·K/τ` falls below it — a view under `2√2·GridQuads·τ` pixels per
+        /// radian — so elsewhere the target alone sets how far each level reaches.
+        f32 PlanarRangeFloor = 2.0f;
         /// @brief How far past a drawn tile's split distance its children are prefetched, as a
         ///        multiple of it.
         f32 PrefetchRangeScale = 1.3f;

@@ -4349,10 +4349,18 @@ measured bounds and the selection); the second the drawing.
   wants it), and a neighbour whose children are not resident has them requested and holds the split
   until they land. A tile that wanted to split and was held — by residency, budget, frustum or
   balance — is drawn with `SphereTerrainDrawnTile::Held` set. Morph ranges are
-  `E_L = 2(1 − h)·D_L` and `S_L = a·E_L`; with `h = 0.05`, `a = 0.85`, `c = 3`, every coarse–fine
+  `E_L = 2(1 − h)·D_L` and `S_L = a·E_L`; with `h = 0.05`, `a = 0.85`, `c = 2`, every coarse–fine
   edge in view whose coarse side was not held has the coarse side unmorphed and the fine side fully
   morphed (`tests/unit/sphere_terrain_selection.cpp`); against a held coarse side the fine side is
   partly morphed, and its edge stands off by at most its MorphError, which the skirts cover.
+  **The floor protects that invariant and nothing else.** A coarse edge vertex lies in the fine
+  side's parent, which split nearer than `(1 + h)·D_L`, so it is within `(1 + h)·D_L + Ď_L` of the
+  eye, and stays unmorphed while that is under `S_L = 2a(1 − h)·D_L`: `c ≥ 1/(2a(1 − h) − (1 + h))`
+  = 1.77, and `c = 2` leaves an eighth of a diameter for the bound's height. (The fine side's
+  edge is fully morphed whatever `c` is, since the coarse box is past `(1 − h)·D_L = E_{L+1}`, and
+  balance is by construction.) The floor governs only below `K = 2√2·32·τ` (724 px/rad at
+  `τ = 8`); at any sharper view `TargetPixelsPerQuad` alone sets how far each level reaches, and an
+  unheld tile's quads span about `τ` pixels at its nearest distance and about half that at twice it.
 - **A view selects only the terrains on its layers.** A terrain sits on a render layer
   (`SphereTerrain::Layer`, `RenderLayer::Default` unless set), and a renderer selects it only when the
   view's mask names that layer (`SceneView::VisibleLayers`, carried in `SphereTerrainSelectInfo`). A
