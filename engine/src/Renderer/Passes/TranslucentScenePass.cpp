@@ -113,9 +113,21 @@ namespace Veng::Renderer
         {
             builder.UnboundColor();
         }
-        if (m_ReactiveId.IsValid())
+        if (m_ReactiveId.IsValid() && m_Kind == TranslucentPassKind::First)
         {
-            // Cleared ahead of the scene's composited layers; a declaring material adds to it.
+            // The first translucent pass records every frame, so it owns the reactive mask's clear
+            // as it owns the bloom mask's: every later writer — a further translucent pass, the
+            // ribbons, sprites and particles — loads it, in a frame drawing no translucent too.
+            builder.Color({
+                .Resource = m_ReactiveId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+            });
+        }
+        else if (m_ReactiveId.IsValid())
+        {
+            // A declaring material adds to the mask the first pass cleared.
             builder.Color(
                 {.Resource = m_ReactiveId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }

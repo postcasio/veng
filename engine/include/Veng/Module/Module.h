@@ -673,10 +673,13 @@ extern "C"
 /// Version 170 has a capture name the cube face it renders: SceneView grows CaptureFaceIndex, after
 /// CaptureFace. A module builds views, so a stale one lays SceneView out short and reads every
 /// field after it at a shifted offset.
+/// Version 171 lets a capture opt into particles and puts particle effects on a render layer:
+/// CaptureSurface grows Particles and ParticleEffectInstance grows Layer, both mid-struct. A module
+/// spawns both, so a stale one lays each out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 170u
+#define VENG_MODULE_ABI_VERSION 171u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

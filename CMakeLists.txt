@@ -2019,6 +2019,9 @@ if (VENG_BUILD_TESTS)
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.
             tests/gpu/bloom_bright_pass.cpp
+            # post_kernels.cpp drives the exposure histogram and the streak row filter directly: a
+            # known image's bins, and the scanned row against its sequential recurrences.
+            tests/gpu/post_kernels.cpp
             tests/gpu/volume_texture_3d.cpp
             # storage_image_range.cpp drives a normalised sixteen-bit storage image: a compute
             # shader declaring the Rgba16 image format writes both ends of the range and the datum,

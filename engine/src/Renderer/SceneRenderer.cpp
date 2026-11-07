@@ -58,6 +58,7 @@
 #include "DofChain.h"
 #include "Passes/DofCompositeScenePass.h"
 #include "Passes/RibbonScenePass.h"
+#include "Passes/SceneLayersScenePass.h"
 #include "Passes/SpriteScenePass.h"
 #include "Passes/ParticleScenePass.h"
 #include "ParticleGather.h"
@@ -910,6 +911,74 @@ namespace Veng::Renderer
             }
         };
 
+        // Ribbons and trails composite over the translucent surfaces, flipbook sprites over those,
+        // and particles over sprites, all in one render pass while the scene carries any.
+        const auto DeclareSceneLayers = [&](const ResourceId litId, const ResourceId depthTargetId)
+        {
+            vector<Unique<SceneLayer>> layers;
+            if (m_Internal->RibbonActive)
+            {
+                layers.push_back(CreateUnique<RibbonScenePass>(
+                    m_Context, m_Assets,
+                    RibbonScenePassInfo{
+                        .Plan = &m_Internal->RibbonPlan,
+                        .Target = litId,
+                        .Depth = depthTargetId,
+                        .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
+            }
+            if (m_Internal->SpriteActive)
+            {
+                layers.push_back(CreateUnique<SpriteScenePass>(
+                    m_Context, m_Assets,
+                    SpriteScenePassInfo{
+                        .Plan = &m_Internal->SpritePlan,
+                        .Target = litId,
+                        .Depth = depthTargetId,
+                        .Mask = m_BloomMaskId,
+                        .Reactive = m_ReactiveMaskId,
+                        .SceneDepthCopy = m_RefractionDepthId,
+                        .Forward = forwardSets,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .ReactiveFormat = ReactiveMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
+            }
+            if (m_Particles != nullptr)
+            {
+                m_Internal->ParticleWired = true;
+                layers.push_back(
+                    CreateUnique<ParticleScenePass>(m_Context, m_Assets,
+                                                    ParticleScenePassInfo{
+                                                        .Simulation = m_Particles.get(),
+                                                        .Target = litId,
+                                                        .Depth = depthTargetId,
+                                                        .Mask = m_BloomMaskId,
+                                                        .Reactive = m_ReactiveMaskId,
+                                                        .SceneDepthCopy = m_RefractionDepthId,
+                                                        .Forward = forwardSets,
+                                                        .TargetFormat = HdrFormat,
+                                                        .MaskFormat = BloomMaskFormat,
+                                                        .ReactiveFormat = ReactiveMaskFormat,
+                                                    }));
+            }
+            if (!layers.empty())
+            {
+                m_Passes.push_back(CreateUnique<SceneLayersScenePass>(
+                    SceneLayerTargets{.Target = litId,
+                                      .Depth = depthTargetId,
+                                      .Mask = m_BloomMaskId,
+                                      .Reactive = m_ReactiveMaskId},
+                    std::move(layers)));
+            }
+        };
+
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
         // graph-derived buffer barrier.
@@ -1039,68 +1108,10 @@ namespace Veng::Renderer
             // with Refraction on the lit scene color, first so a translucent fragment can sample
             // the scene behind it.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            // The reactive mask is cleared ahead of every layer that writes it: the translucent
-            // surfaces, then the ribbons, sprites and particles over them.
-            if (m_ReactiveMaskId.IsValid())
-            {
-                m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
-            }
+            // The first translucent pass clears the bloom and reactive masks, and records every
+            // frame, so every later writer loads them.
             DeclareTranslucents(lightingTargetId, depthId, renderExtent);
-            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
-            // those, into the same target and bloom mask, while the scene carries any.
-            if (m_Internal->RibbonActive)
-            {
-                m_Passes.push_back(CreateUnique<RibbonScenePass>(
-                    m_Context, m_Assets,
-                    RibbonScenePassInfo{
-                        .Plan = &m_Internal->RibbonPlan,
-                        .Target = lightingTargetId,
-                        .Depth = depthId,
-                        .Mask = m_BloomMaskId,
-                        .Reactive = m_ReactiveMaskId,
-                        .TargetFormat = HdrFormat,
-                        .MaskFormat = BloomMaskFormat,
-                        .ReactiveFormat = ReactiveMaskFormat,
-                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
-                    }));
-            }
-            if (m_Internal->SpriteActive)
-            {
-                m_Passes.push_back(CreateUnique<SpriteScenePass>(
-                    m_Context, m_Assets,
-                    SpriteScenePassInfo{
-                        .Plan = &m_Internal->SpritePlan,
-                        .Target = lightingTargetId,
-                        .Depth = depthId,
-                        .Mask = m_BloomMaskId,
-                        .Reactive = m_ReactiveMaskId,
-                        .SceneDepthCopy = m_RefractionDepthId,
-                        .Forward = forwardSets,
-                        .TargetFormat = HdrFormat,
-                        .MaskFormat = BloomMaskFormat,
-                        .ReactiveFormat = ReactiveMaskFormat,
-                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
-                    }));
-            }
-            // Particles composite over sprites, into the same target and bloom mask.
-            if (m_Particles != nullptr)
-            {
-                m_Internal->ParticleWired = true;
-                m_Passes.push_back(
-                    CreateUnique<ParticleScenePass>(m_Context, m_Assets,
-                                                    ParticleScenePassInfo{
-                                                        .Simulation = m_Particles.get(),
-                                                        .Target = lightingTargetId,
-                                                        .Depth = depthId,
-                                                        .Mask = m_BloomMaskId,
-                                                        .Reactive = m_ReactiveMaskId,
-                                                        .SceneDepthCopy = m_RefractionDepthId,
-                                                        .Forward = forwardSets,
-                                                        .TargetFormat = HdrFormat,
-                                                        .MaskFormat = BloomMaskFormat,
-                                                        .ReactiveFormat = ReactiveMaskFormat,
-                                                    }));
-            }
+            DeclareSceneLayers(lightingTargetId, depthId);
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -1507,68 +1518,10 @@ namespace Veng::Renderer
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
             DeclareSceneGrab(lightingTargetId, lightingTargetHandle, depthId, renderExtent);
-            // The reactive mask is cleared ahead of every layer that writes it: the translucent
-            // surfaces, then the ribbons, sprites and particles over them.
-            if (m_ReactiveMaskId.IsValid())
-            {
-                m_Passes.push_back(CreateUnique<ReactiveMaskClearScenePass>(m_ReactiveMaskId));
-            }
+            // The first translucent pass clears the bloom and reactive masks, and records every
+            // frame, so every later writer loads them.
             DeclareTranslucents(lightingTargetId, depthId, renderExtent);
-            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
-            // those, into the same target and bloom mask, while the scene carries any.
-            if (m_Internal->RibbonActive)
-            {
-                m_Passes.push_back(CreateUnique<RibbonScenePass>(
-                    m_Context, m_Assets,
-                    RibbonScenePassInfo{
-                        .Plan = &m_Internal->RibbonPlan,
-                        .Target = lightingTargetId,
-                        .Depth = depthId,
-                        .Mask = m_BloomMaskId,
-                        .Reactive = m_ReactiveMaskId,
-                        .TargetFormat = HdrFormat,
-                        .MaskFormat = BloomMaskFormat,
-                        .ReactiveFormat = ReactiveMaskFormat,
-                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
-                    }));
-            }
-            if (m_Internal->SpriteActive)
-            {
-                m_Passes.push_back(CreateUnique<SpriteScenePass>(
-                    m_Context, m_Assets,
-                    SpriteScenePassInfo{
-                        .Plan = &m_Internal->SpritePlan,
-                        .Target = lightingTargetId,
-                        .Depth = depthId,
-                        .Mask = m_BloomMaskId,
-                        .Reactive = m_ReactiveMaskId,
-                        .SceneDepthCopy = m_RefractionDepthId,
-                        .Forward = forwardSets,
-                        .TargetFormat = HdrFormat,
-                        .MaskFormat = BloomMaskFormat,
-                        .ReactiveFormat = ReactiveMaskFormat,
-                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
-                    }));
-            }
-            // Particles composite over sprites, into the same target and bloom mask.
-            if (m_Particles != nullptr)
-            {
-                m_Internal->ParticleWired = true;
-                m_Passes.push_back(
-                    CreateUnique<ParticleScenePass>(m_Context, m_Assets,
-                                                    ParticleScenePassInfo{
-                                                        .Simulation = m_Particles.get(),
-                                                        .Target = lightingTargetId,
-                                                        .Depth = depthId,
-                                                        .Mask = m_BloomMaskId,
-                                                        .Reactive = m_ReactiveMaskId,
-                                                        .SceneDepthCopy = m_RefractionDepthId,
-                                                        .Forward = forwardSets,
-                                                        .TargetFormat = HdrFormat,
-                                                        .MaskFormat = BloomMaskFormat,
-                                                        .ReactiveFormat = ReactiveMaskFormat,
-                                                    }));
-            }
+            DeclareSceneLayers(lightingTargetId, depthId);
             if (m_Settings.Mode == DebugView::Bloom)
             {
                 m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
@@ -3736,7 +3689,8 @@ namespace Veng::Renderer
         {
             m_Internal->ParticleTable.Gather(resolvedView.World,
                                              dvec3(resolvedView.Camera.GetPosition()),
-                                             m_Settings.ParticleCapacity, m_Internal->ParticlePlan);
+                                             m_Settings.ParticleCapacity, m_Internal->ParticlePlan,
+                                             resolvedView.VisibleLayers, resolvedView.Exclude);
         }
         else
         {

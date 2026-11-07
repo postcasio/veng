@@ -670,3 +670,59 @@ TEST_CASE("The gather waits on an effect whose flipbook is still loading, and dr
     CHECK(plan.EmittersDropped == 0);
     CHECK(plan.Emitters.empty());
 }
+
+TEST_CASE("A view whose mask leaves out an instance's layer, or excludes it, draws none of it")
+{
+    ParticleEmitterDesc rate = Streak();
+    rate.RatePerSecond = 30.0f;
+    ParticleScene fixture;
+    const Entity entity = Play(*fixture.World, MakeEffect({rate}));
+    auto& instance = fixture.World->Get<ParticleEffectInstance>(entity);
+    instance.Layer = RenderLayer::ViewAnchored;
+    instance.Time = 0.5f;
+    const u32 withoutLayer = AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored);
+
+    const auto hidden = [&](const u32 mask, const Entity exclude)
+    {
+        ParticleGather gather;
+        ParticleFramePlan plan;
+        gather.Gather(*fixture.World, dvec3(0.0), DefaultParticleCapacity, plan, mask, exclude);
+        REQUIRE(plan.InstanceCount == 1);
+        return (plan.Instances[0].Generation & ParticleInstanceHidden) != 0;
+    };
+    CHECK_FALSE(hidden(AllRenderLayers, Entity::Null));
+    CHECK(hidden(withoutLayer, Entity::Null));
+    CHECK(hidden(AllRenderLayers, entity));
+}
+
+TEST_CASE("Hiding an instance from a view keeps its slot and issues no backlog when it shows")
+{
+    ParticleEmitterDesc rate = Streak();
+    rate.RatePerSecond = 30.0f;
+    ParticleScene fixture;
+    const Entity entity = Play(*fixture.World, MakeEffect({rate}));
+    auto& instance = fixture.World->Get<ParticleEffectInstance>(entity);
+    const u32 withoutDefault = AllRenderLayers & ~RenderLayerBit(RenderLayer::Default);
+
+    ParticleGather gather;
+    ParticleFramePlan plan;
+    std::multiset<u32> issued;
+    const auto frame = [&](const f32 time, const u32 mask)
+    {
+        instance.Time = time;
+        gather.Gather(*fixture.World, dvec3(0.0), DefaultParticleCapacity, plan, mask);
+        Collect(plan, issued);
+        return plan.Instances[0].Generation;
+    };
+    const u32 first = frame(0.5f, AllRenderLayers);
+    const u32 masked = frame(1.0f, withoutDefault);
+    const u32 shown = frame(1.5f, AllRenderLayers);
+
+    // The hidden frame spawned its share, so the frame showing it again issues only its own window.
+    CHECK(std::abs(static_cast<f32>(plan.SpawnTotal) - 15.0f) <= 1.0f);
+    CHECK(std::set<u32>(issued.begin(), issued.end()).size() == issued.size());
+    CHECK(std::abs(static_cast<f32>(issued.size()) - 45.0f) <= 1.0f);
+    CHECK((masked & ParticleInstanceHidden) != 0);
+    CHECK((first & 0xFFFFu) == (masked & 0xFFFFu));
+    CHECK((shown & 0xFFFFu) == (first & 0xFFFFu));
+}

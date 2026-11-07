@@ -5,6 +5,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/ParticleEffect.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 
 #include "Passes/SpriteScenePass.h"
 
@@ -291,11 +292,19 @@ namespace Veng::Renderer
         /// Each tracked instance whose emitters fit the emitter table issues the indices that
         /// spawned since the last frame and can still be alive, as ranges; trimmed past
         /// @p capacity and MaxParticleSpawnRanges and counted as dropped, never deferred.
-        /// @param scene     The scene drawn.
-        /// @param eye       The camera's position in render space.
-        /// @param capacity  The renderer's particle capacity.
-        /// @param plan      The plan to fill; cleared first.
-        void Gather(const Scene& scene, const dvec3& eye, u32 capacity, ParticleFramePlan& plan);
+        ///
+        /// An instance on a layer @p visibleLayers omits, or on @p exclude, is tracked and issued
+        /// exactly as a drawn one but marked ParticleInstanceHidden: its particles spawn and live
+        /// in the pool undrawn, so a view mask hiding it neither resets its emission nor leaves a
+        /// backlog to issue when it shows again.
+        /// @param scene          The scene drawn.
+        /// @param eye            The camera's position in render space.
+        /// @param capacity       The renderer's particle capacity.
+        /// @param plan           The plan to fill; cleared first.
+        /// @param visibleLayers  The view's render-layer mask.
+        /// @param exclude        An entity the view does not draw, or Entity::Null.
+        void Gather(const Scene& scene, const dvec3& eye, u32 capacity, ParticleFramePlan& plan,
+                    u32 visibleLayers = AllRenderLayers, Entity exclude = Entity::Null);
 
         /// @brief Forgets every instance and cursor.
         void Reset();

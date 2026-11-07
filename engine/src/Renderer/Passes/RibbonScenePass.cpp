@@ -710,7 +710,7 @@ namespace Veng::Renderer
 
     RibbonScenePass::~RibbonScenePass() = default;
 
-    void RibbonScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    void RibbonScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         const bool postResolve = m_Placement == RibbonPlacement::PostResolve;
         RenderGraph::PassBuilder builder =
@@ -739,11 +739,7 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
             });
         }
-        if (postResolve)
-        {
-            builder.Sample(m_DepthId);
-        }
-        else
+        if (!postResolve)
         {
             builder.Depth({
                 .Resource = m_DepthId,
@@ -751,10 +747,25 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
             });
         }
+        DeclareInputs(builder, io);
         // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
         // storing its targets around no draws.
-        builder.SkipWhen([this] { return m_Plan == nullptr || m_Plan->IsEmpty(); });
+        builder.SkipWhen([this] { return !IsDrawing(); });
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+    }
+
+    void RibbonScenePass::DeclareInputs(RenderGraph::PassBuilder& builder,
+                                        const PassIO& /*io*/) const
+    {
+        if (m_Placement == RibbonPlacement::PostResolve)
+        {
+            builder.Sample(m_DepthId);
+        }
+    }
+
+    bool RibbonScenePass::IsDrawing() const
+    {
+        return m_Plan != nullptr && !m_Plan->IsEmpty();
     }
 
     u32 RibbonScenePass::Upload() const

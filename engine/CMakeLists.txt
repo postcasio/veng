@@ -308,6 +308,7 @@ add_library(veng SHARED
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/PickingScenePass.cpp
         src/Renderer/Passes/RibbonScenePass.cpp
+        src/Renderer/Passes/SceneLayersScenePass.cpp
         src/Renderer/Passes/SpriteScenePass.cpp
         src/Renderer/Passes/ParticleScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp

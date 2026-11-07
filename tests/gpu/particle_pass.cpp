@@ -342,13 +342,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const Entity entity = Play(*scene, effect, vec3(0.0f), 0.1f);
         render.Render(Context, *scene);
         CHECK(render.Renderer->DidRecordPassLastFrame("Particle Update"));
-        CHECK(render.Renderer->DidRecordPassLastFrame("Scene Particles"));
+        CHECK(render.Renderer->DidRecordPassLastFrame("Scene Layers"));
         SetTime(*scene, entity, 1.0f);
         render.Render(Context, *scene);
         render.Render(Context, *scene);
         CHECK(render.Renderer->GetParticleStats().Live == 0);
         CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Particle Update"));
-        CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Particles"));
+        CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Layers"));
     }
 
     // An early retire: the instance leaves mid-life and its particles die at the next update.
@@ -485,4 +485,59 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Get<Light>(sun).Direction = right;
     render.Render(Context, *scene);
     CHECK(glm::length(render.At(vec3(0.0f)) - baseline) < 1e-3f);
+}
+
+// With no translucent surface drawn, the first translucent pass still records and clears the
+// reactive mask, so where a particle stood last frame reads nothing once it has moved away.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "particle pass: a frame with particles and no translucent starts its reactive mask "
+    "clear")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<Flipbook> flipbook = WhiteFlipbook(Context);
+
+    ParticleView render{
+        .Renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Bloom = false,
+                         .AntiAliasing = AntiAliasingMode::TAA,
+                         .Shadows = false,
+                         .AO = false,
+                         .ParticleCapacity = Capacity},
+        }),
+    };
+    render.Camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    render.Camera.SetView(vec3(0.0f, 0.0f, -5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    ParticleEmitterDesc emitter = Billboard(flipbook, ParticleBlend::Alpha);
+    emitter.Size = vec2(0.6f);
+    const vec3 left(-1.0f, 0.0f, 0.0f);
+    const vec3 right(1.0f, 0.0f, 0.0f);
+    const Entity entity = Play(*scene, Effect({emitter}), left, 0.1f);
+
+    const auto MaskAt = [&](const std::vector<u8>& texels, const vec3 world)
+    {
+        const vec4 clip = render.Camera.ViewProjection() * vec4(world, 1.0f);
+        const vec2 ndc = vec2(clip) / clip.w;
+        const uvec2 pixel =
+            glm::clamp(uvec2((ndc * 0.5f + 0.5f) * vec2(Extent)), uvec2(0u), Extent - 1u);
+        return texels[static_cast<usize>(pixel.y) * Extent.x + pixel.x];
+    };
+
+    render.Render(Context, *scene);
+    const Ref<ImageView> mask = render.Renderer->GetReactiveMaskView();
+    REQUIRE(mask != nullptr);
+    CHECK(MaskAt(mask->GetImage()->Download(), left) > 128);
+    scene->Get<ParticleEffectInstance>(entity).Anchor = dvec3(right);
+    render.Render(Context, *scene);
+    CHECK(render.Renderer->DidRecordPassLastFrame("Scene Translucent"));
+    const std::vector<u8> texels = mask->GetImage()->Download();
+    CHECK(MaskAt(texels, right) > 128);
+    CHECK(MaskAt(texels, left) == 0);
 }

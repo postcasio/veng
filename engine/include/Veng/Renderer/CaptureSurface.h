@@ -218,6 +218,17 @@ namespace Veng::Renderer
         /// this is read once when the runtime materializes on the first Drive and is not live-tunable.
         bool Shadows = false;
 
+        /// @brief Whether the faces draw particle effects (ParticleEffectInstance).
+        ///
+        /// Off by default: a capture's renderer then holds no particle pool, so it allocates no
+        /// particle buffers and runs no spawn, update, sort or particle draw for any face. A capture
+        /// is usually a coarse environment term, where a particle's contribution is lost under the
+        /// map's resolution and a reflection's contrast, while a pool simulated per capture costs as
+        /// much as the camera view's own. A capture that must show an effect — a mirror, a camera
+        /// feed — turns this on. A topology change in the face renderer, read once when the runtime
+        /// materializes on the first Drive and not live-tunable.
+        bool Particles = false;
+
         /// @brief Render layers the capture's faces draw (see RenderLayer).
         ///
         /// DefaultEnvironmentCaptureLayers (the default) draws every layer but RenderLayer::ViewAnchored,
@@ -569,6 +580,7 @@ VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(Alignment, .DisplayName = "Alignment")
 VE_FIELD(Shadows, .DisplayName = "Shadows")
+VE_FIELD(Particles, .DisplayName = "Particles")
 VE_FIELD(VisibleLayers, .DisplayName = "Visible Layers")
 VE_FIELD(Near, .DisplayName = "Near", .Display = {.Min = 0.000001})
 VE_FIELD(Far, .DisplayName = "Far",

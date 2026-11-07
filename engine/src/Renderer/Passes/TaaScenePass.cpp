@@ -81,16 +81,4 @@ namespace Veng::Renderer
                     cmd.DrawFullscreenTriangle();
                 });
     }
-
-    void ReactiveMaskClearScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
-    {
-        graph.AddPass("Reactive Mask Clear")
-            .Color({
-                .Resource = m_ReactiveId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{},
-            })
-            .Execute([](PassContext& /*inner*/) {});
-    }
 }

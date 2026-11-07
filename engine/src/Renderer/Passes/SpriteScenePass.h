@@ -8,6 +8,7 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "SceneLayersScenePass.h"
 #include "TranslucentScenePass.h"
 
 namespace Veng
@@ -200,7 +201,7 @@ namespace Veng::Renderer
     /// light in the vertex stage through the renderer's IBL and shadow sets, bound at 4 and 5 as
     /// the forward-lit translucent pass binds them. When the frame wires a bloom mask, an unlit
     /// sprite writes it by its luminance and a six-way one by its emission's.
-    class SpriteScenePass final : public ScenePass
+    class SpriteScenePass final : public SceneLayer
     {
     public:
         /// @brief Constructs the pass and its pipelines.
@@ -212,16 +213,22 @@ namespace Veng::Renderer
         /// @brief Releases the pipelines and the record ring.
         ~SpriteScenePass() override;
 
-        /// @brief Contributes the sprite pass into the graph.
+        /// @brief Contributes the sprite pass, as a pass of its own, into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
+
+        /// @brief Declares the opaque-depth copy and the shadow atlases read.
+        void DeclareInputs(RenderGraph::PassBuilder& builder, const PassIO& io) const override;
+
+        /// @brief Returns whether the plan holds a sprite this frame.
+        [[nodiscard]] bool IsDrawing() const override;
+
+        /// @brief Records the sprite draws.
+        void Record(const ScenePassContext& ctx) const override;
 
     private:
         /// @brief Copies this frame's records and ramps into their ring regions; returns the record
         ///        count copied.
         u32 Upload() const;
-
-        /// @brief Records the sprite draws.
-        void Record(const ScenePassContext& ctx) const;
 
         /// @brief Renderer context for bindless and frame-slot access.
         Context& m_Context;

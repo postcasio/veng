@@ -5,6 +5,7 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "SceneLayersScenePass.h"
 #include "TranslucentScenePass.h"
 
 namespace Veng
@@ -55,7 +56,7 @@ namespace Veng::Renderer
     /// particles composite over sprites, and ahead of TAA, bloom and tonemap. When the frame wires
     /// a bloom mask, an unlit billboard or a streak writes it by its luminance and a six-way one by
     /// its emission's.
-    class ParticleScenePass final : public ScenePass
+    class ParticleScenePass final : public SceneLayer
     {
     public:
         /// @brief Constructs the pass and its pipelines.
@@ -68,13 +69,22 @@ namespace Veng::Renderer
         /// @brief Releases the pipelines.
         ~ParticleScenePass() override;
 
-        /// @brief Contributes the chain and the draw into the graph.
+        /// @brief Contributes the chain and the draw, as a pass of its own, into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
-    private:
-        /// @brief Records the two indirect draws.
-        void Record(const ScenePassContext& ctx) const;
+        /// @brief Declares the simulation chain the draw reads.
+        void DeclareAhead(RenderGraph& graph, const PassIO& io) override;
 
+        /// @brief Declares the opaque-depth copy and the chain's draw buffers read.
+        void DeclareInputs(RenderGraph::PassBuilder& builder, const PassIO& io) const override;
+
+        /// @brief Returns whether the chain draws this frame.
+        [[nodiscard]] bool IsDrawing() const override;
+
+        /// @brief Records the two indirect draws.
+        void Record(const ScenePassContext& ctx) const override;
+
+    private:
         /// @brief Renderer context.
         Context& m_Context;
         /// @brief The battery.

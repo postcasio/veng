@@ -220,13 +220,14 @@ namespace Veng::Renderer
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
         ///        faces, and the capture samples pre-tonemap HDR, so bloom/AO are dropped.
         ///
-        /// Shadows are the one battery the authoring surface can ask back, because an enclosed
-        /// interior renders flooded without them (see CaptureSurface::Shadows). Both shadow flags
-        /// move together: an interior wants the enclosure's own occlusion, whichever kind of light
-        /// is casting it.
-        SceneRendererSettings CaptureSettings(bool shadows)
+        /// Shadows and particles are the batteries the authoring surface can ask back (see
+        /// CaptureSurface::Shadows and CaptureSurface::Particles). Both shadow flags move together:
+        /// an interior wants the enclosure's own occlusion, whichever kind of light is casting it.
+        SceneRendererSettings CaptureSettings(const bool shadows, const bool particles)
         {
             SceneRendererSettings settings;
+            // No capacity holds no pool, so the renderer allocates and simulates nothing.
+            settings.ParticleCapacity = particles ? settings.ParticleCapacity : 0;
             settings.Bloom = false;
             settings.Shadows = shadows;
             settings.PunctualShadows = shadows;
@@ -370,7 +371,7 @@ namespace Veng::Renderer
             .Context = context,
             .Assets = assets,
             .FaceResolution = Resolution,
-            .Settings = CaptureSettings(Shadows),
+            .Settings = CaptureSettings(Shadows, Particles),
             // The distance map is opt-in: an empty DepthTextureSlot builds none, so the depth
             // atlas, the distance map, and their pipelines and slots do not exist.
             .CaptureDistance = Output == CaptureOutput::Material && !DepthTextureSlot.empty(),

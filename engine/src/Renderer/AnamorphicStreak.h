@@ -30,7 +30,7 @@ namespace Veng::Renderer
     /// A prefilter takes the scene colour's bright pass — each tap conditioned and the average
     /// soft-kneed exactly as the bloom's level 0 is (`bright_tap.slang`) — into image 0, at a quarter
     /// of the frame's width and half its height (StreakExtent). A row filter then spreads each row of
-    /// it along itself into image 1, one invocation per row sweeping forward and back, so every
+    /// it along itself into image 1, one workgroup per row scanning forward and back, so every
     /// source falls off exactly as `ratio^distance` per channel (StreakFilterRow). The tonemap adds
     /// image 1 beside the bloom. The images and their sets are held off bindless but for image 1's
     /// slot, which the tonemap samples. Built with the bloom and released with it; both passes skip

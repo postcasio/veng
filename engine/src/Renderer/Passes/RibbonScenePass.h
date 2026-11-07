@@ -6,6 +6,8 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Scene/Components.h>
 
+#include "SceneLayersScenePass.h"
+
 namespace Veng
 {
     class AssetManager;
@@ -207,7 +209,7 @@ namespace Veng::Renderer
     /// floored at about a pixel wide in the target's pixels. The alpha set draws first,
     /// straight-alpha over; the additive set follows. Both write the bloom mask by the contributed
     /// colour's luminance when the frame wires one.
-    class RibbonScenePass final : public ScenePass
+    class RibbonScenePass final : public SceneLayer
     {
     public:
         /// @brief Constructs the pass and its pipelines.
@@ -219,8 +221,18 @@ namespace Veng::Renderer
         /// @brief Releases the pipelines and the record ring.
         ~RibbonScenePass() override;
 
-        /// @brief Contributes the ribbon pass into the graph.
+        /// @brief Contributes the ribbon pass, as a pass of its own, into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
+
+        /// @brief Declares the depth the post-resolve placement samples; the scene placement
+        ///        reads nothing besides its attachments.
+        void DeclareInputs(RenderGraph::PassBuilder& builder, const PassIO& io) const override;
+
+        /// @brief Returns whether the plan holds a record this frame.
+        [[nodiscard]] bool IsDrawing() const override;
+
+        /// @brief Records the ribbon draws.
+        void Record(const ScenePassContext& ctx) const override;
 
     private:
         /// @brief Copies this frame's band records into its ring region; returns the count copied.
@@ -230,9 +242,6 @@ namespace Veng::Renderer
         ///        the segment count copied.
         /// @param budget  The records the band upload left of the frame's budget.
         u32 UploadTubes(u32 budget) const;
-
-        /// @brief Records the ribbon draws.
-        void Record(const ScenePassContext& ctx) const;
 
         /// @brief Renderer context for bindless and frame-slot access.
         Context& m_Context;

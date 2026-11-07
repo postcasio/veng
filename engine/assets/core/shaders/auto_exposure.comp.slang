@@ -3,10 +3,10 @@
 // resolution) valid region, takes its Rec.709 luminance, and bins it: texels darker than the
 // metering floor fall into bin 0 (the "black bin", excluded from the average), the rest scatter
 // across bins 1..255 spanning [MinLogLum, MaxLogLum] in log2 space. A per-workgroup groupshared
-// histogram is atomically merged into the frame's global region. The renderer reads the histogram
-// one frame later, averages bins 1..255 (ignoring the black bin) and eases the tonemap exposure
-// toward that value — so a predominantly-black scene with sparse highlights meters on its lit
-// content instead of collapsing to the floor. A texel whose surface carries
+// histogram's non-empty bins are atomically merged into the frame's global region. The renderer
+// reads the histogram one frame later, averages bins 1..255 (ignoring the black bin) and eases the
+// tonemap exposure toward that value — so a predominantly-black scene with sparse highlights
+// meters on its lit content instead of collapsing to the floor. A texel whose surface carries
 // SurfaceFlagExcludedFromMetering in the g-buffer is not counted at all. This pass only measures;
 // it applies nothing.
 #include "Veng/surface_flags.slang"
@@ -79,6 +79,11 @@ void csMain(uint3 gid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 
     GroupMemoryBarrierWithGroupSync();
 
-    // Merge this workgroup's bins into the frame's global ring region.
-    InterlockedAdd(g_Histogram[g_PC.HistogramBase + groupIndex], s_Hist[groupIndex]);
+    // Merge this workgroup's bins into the frame's global ring region. A group touches few of
+    // the 256 bins, so an empty bin costs no global atomic.
+    const uint count = s_Hist[groupIndex];
+    if (count != 0u)
+    {
+        InterlockedAdd(g_Histogram[g_PC.HistogramBase + groupIndex], count);
+    }
 }

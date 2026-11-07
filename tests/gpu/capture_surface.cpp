@@ -2310,3 +2310,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         glm::degrees(std::acos(glm::clamp(glm::dot(blockDir, trueDir), -1.0f, 1.0f)));
     CHECK(lowError <= bareError + 12.0f);
 }
+
+// A capture's face renderer holds no particle pool unless the surface asks for particles, so a
+// default capture allocates no particle buffers and runs none of the chain.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: a capture's renderer has no particle pool unless asked")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    CaptureSurface capture;
+    CHECK(capture.GetCaptureInfo(Context, assets).Settings.ParticleCapacity == 0);
+    capture.Particles = true;
+    CHECK(capture.GetCaptureInfo(Context, assets).Settings.ParticleCapacity > 0);
+}

@@ -125,9 +125,32 @@ namespace Veng::Renderer
 
     ParticleScenePass::~ParticleScenePass() = default;
 
-    void ParticleScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    void ParticleScenePass::DeclareAhead(RenderGraph& graph, const PassIO& io)
     {
         m_Simulation->Declare(graph, io, m_Forward);
+    }
+
+    void ParticleScenePass::DeclareInputs(RenderGraph::PassBuilder& builder,
+                                          const PassIO& /*io*/) const
+    {
+        if (m_SceneDepthCopyId.IsValid())
+        {
+            builder.Sample(m_SceneDepthCopyId);
+        }
+        builder.StorageBufferRead(m_Simulation->GetDrawsId())
+            .StorageBufferRead(m_Simulation->GetAlphaKeysId())
+            .StorageBufferRead(m_Simulation->GetAdditiveId())
+            .IndirectRead(m_Simulation->GetArgsId());
+    }
+
+    bool ParticleScenePass::IsDrawing() const
+    {
+        return m_Simulation->IsDrawing();
+    }
+
+    void ParticleScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    {
+        DeclareAhead(graph, io);
 
         RenderGraph::PassBuilder builder = graph.AddPass("Scene Particles");
         builder.Color({.Resource = m_TargetId, .Load = LoadOp::Load, .Store = StoreOp::Store});
@@ -143,15 +166,8 @@ namespace Veng::Renderer
                 {.Resource = m_ReactiveId, .Load = LoadOp::Load, .Store = StoreOp::Store});
         }
         builder.Depth({.Resource = m_DepthId, .Load = LoadOp::Load, .Store = StoreOp::Store});
-        if (m_SceneDepthCopyId.IsValid())
-        {
-            builder.Sample(m_SceneDepthCopyId);
-        }
-        builder.StorageBufferRead(m_Simulation->GetDrawsId())
-            .StorageBufferRead(m_Simulation->GetAlphaKeysId())
-            .StorageBufferRead(m_Simulation->GetAdditiveId())
-            .IndirectRead(m_Simulation->GetArgsId());
-        builder.SkipWhen([this] { return !m_Simulation->IsDrawing(); });
+        DeclareInputs(builder, io);
+        builder.SkipWhen([this] { return !IsDrawing(); });
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
 

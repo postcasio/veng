@@ -267,8 +267,8 @@ namespace Veng::Renderer
                     .Padding = uvec2(0),
                     .Ratio = vec4(ratio, 0.0f),
                 });
-                // One invocation per row.
-                cmd.Dispatch((extent.y + 63) / 64, 1, 1);
+                // One workgroup per row, which scans the row across its invocations.
+                cmd.Dispatch(extent.y, 1, 1);
             });
     }
 }

@@ -140,6 +140,11 @@ namespace Veng
         /// @brief Seconds of playback, advanced by ParticleEffectSystem. Authoring it starts the
         ///        playback that far in, showing exactly what a playback run from 0 would show then.
         f32 Time = 0.0f;
+        /// @brief The render layer it is drawn on; a view whose layer mask omits it does not draw it.
+        ///
+        /// A view that leaves it out still simulates the instance, so the effect plays on unseen
+        /// and shows where it would have been once a view draws it again.
+        RenderLayer Layer = RenderLayer::Default;
         /// @brief Where the effect is anchored, in the stable frame; set by LatchParticleEffect.
         ///        Runtime-only.
         dvec3 Anchor{0.0};
@@ -497,6 +502,7 @@ VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Multiplies every length; tim
          .Display = {.Min = 0.0, .Step = 0.05})
 VE_FIELD(Emitting, .DisplayName = "Emitting")
 VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Ribbon, 0xA8DF9582C85E18F2ULL)

@@ -132,26 +132,4 @@ namespace Veng::Renderer
         /// @brief Current render extent.
         uvec2 m_Extent;
     };
-
-    /// @brief Clears the reactive mask ahead of the passes that write it.
-    ///
-    /// A reactive translucent material, and the ribbon, sprite and particle passes, add their
-    /// coverage into the mask and any of them may be unwired or skip a frame, so the clear is a pass
-    /// of its own, wired with every temporal resolve ahead of the translucent passes.
-    class ReactiveMaskClearScenePass final : public ScenePass
-    {
-    public:
-        /// @brief Constructs the pass.
-        /// @param reactiveId  The reactive mask it clears.
-        explicit ReactiveMaskClearScenePass(const ResourceId reactiveId) : m_ReactiveId(reactiveId)
-        {
-        }
-
-        /// @brief Contributes the clear into the graph.
-        void Declare(RenderGraph& graph, const PassIO& io) override;
-
-    private:
-        /// @brief The reactive mask.
-        ResourceId m_ReactiveId;
-    };
 }

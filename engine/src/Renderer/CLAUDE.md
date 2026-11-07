@@ -63,8 +63,8 @@ pass, callback or GPU scope; its image transitions fall to the next pass using e
 (decided against live state, so nothing is lost), and its baked buffer barriers still record. A
 skippable pass must load and store every attachment it declares (asserted at `Compile`), since a
 skipped clear or discard would change what the next pass reads. The debug-draw pass with nothing
-queued, and the sprite, ribbon and half-resolution composite passes idling inside their
-deactivation windows, are the users: on a tile-based GPU an empty render pass still loads and stores
+queued, and the scene layers pass (ribbons, sprites, particles) and the half-resolution composite
+idling inside their deactivation windows, are the users: on a tile-based GPU an empty render pass still loads and stores
 its targets.
 
 **A producer nothing reads some frames skips with `SkipWhenUnread`**, which may clear or discard:
@@ -413,8 +413,9 @@ mask, and the resolve trusts history less there.** They write no motion of their
 they play or move, so history reprojected under them is other content; a growing, animating
 explosion blended into it smears, and a thin, fast feature — a tracer, a field of drifting motes —
 is dropped from it. Under every temporal mode `TaaResolve` owns a render-allocation
-`ReactiveMaskFormat` (R8) image beside the lit target, a `ReactiveMaskClearScenePass` clears it
-ahead of the scene's translucent passes, and each writer adds its coverage — or its luminance where
+`ReactiveMaskFormat` (R8) image beside the lit target, the first translucent pass clears it at
+begin as it clears the bloom mask — that pass records every frame, a frame drawing no translucent
+included, so it is the clear's owner in every topology — and each writer adds its coverage — or its luminance where
 an additive draw carries light with little coverage — into it as one more attachment: the sprite,
 particle and ribbon passes through their `*Reactive` fragment entries (`SpriteReactiveCoverage`, and
 the ribbon and tube stages' own), and a Translucent material declaring `"reactive": true` at its
@@ -1171,7 +1172,8 @@ system that placed it supplies the distance it does stand at.
 The passes, in both compositing arms (`DeclareTranslucents` in `Rebuild`):
 
 1. **The first full-resolution `TranslucentScenePass`** (`TranslucentPassKind::First`) — the draws
-   behind the first run, and those clear of it. It records every frame and clears the bloom mask.
+   behind the first run, and those clear of it. It records every frame and clears the bloom mask
+   and the reactive mask.
 2. **A depth reduce**, once, while the layer is wired: a half-res D32 target as the farthest
    (reverse-Z minimum) of each texel's 2×2 full-res opaque depths, so the layer's draws
    depth-test conservatively — a fragment survives wherever any of its four full-res pixels would
@@ -1196,7 +1198,21 @@ N − 1). The layer target is one image cleared per segment, and the full-res pa
 pipeline cache, so a material drawn in several segments builds once. A frame whose half-res draws
 all lie behind every full-res draw they overlap records the passes it did before — reduce, layer,
 composite, then a full-res pass — plus the first full-res pass, which records even when it has no
-draws because it clears the bloom mask.
+draws because it clears the bloom and reactive masks. An empty half-resolution segment needs no
+continuation of its own: a segment only advances past a run that holds draws, so the full-resolution
+pass after an empty segment is empty too and skips, and the full-resolution work stays in the pass
+before it.
+
+**Ribbons, sprites and particles share one render pass, "Scene Layers"** (`SceneLayersScenePass`,
+`Passes/SceneLayersScenePass.h`), recorded after the translucent passes in that order. Each is a
+`SceneLayer` — a `ScenePass` that can also declare what its draw reads into a shared pass and record
+into it — and the three load and store the same lit target, bloom and reactive masks and read-only
+depth and sample none of each other's output, so one pass spares the frame a full-resolution round
+trip of every attachment per layer. Work a draw depends on (the particle simulation's compute chain)
+is declared ahead of the pass, and the pass skips a frame no layer draws in. The layers stay a pass
+apart from the last translucent pass: those pipelines bind the translucent passes' attachment
+layout, with an unbound bloom-mask location when bloom is off and the g-buffer's flags beside it
+under metering exclusion, which the layers' pipelines and fragment entries do not share.
 
 **The layer renders through a second view-constants region.** The one block field a half-res
 fragment must read differently is `ExtentParams`, which carries the half extents so an
@@ -1307,8 +1323,8 @@ material importer refuses an output compiled anywhere but its own index.
 
 **A `FlipbookSprite` component draws a flipbook as a camera-facing HDR quad** (the component and the
 `Flipbook` asset are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md) and
-[../Asset/CLAUDE.md](../Asset/CLAUDE.md)). `SpriteScenePass` (`Passes/SpriteScenePass.h`) is wired
-**after the full-resolution translucent pass and the ribbon pass that follows it**, in both
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md)). `SpriteScenePass` (`Passes/SpriteScenePass.h`) records
+**after the translucent passes and the ribbons**, in the shared "Scene Layers" pass, in both
 compositing arms, into the same lit target and bloom mask — so sprites composite over translucent
 surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
 
@@ -1428,13 +1444,14 @@ into a wall. `tests/gpu/sprite_shading.cpp` evaluates the core's functions in on
 anchor, simulated and drawn on the GPU** (the component, `ParticleEffectSystem` and the pool's
 `EffectDesc::Particles` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md); the asset in
 [../Asset/CLAUDE.md](../Asset/CLAUDE.md)). The battery is `ParticleSimulation`
-(`ParticleSimulation.{h,cpp}`), drawn by `ParticleScenePass` (`Passes/ParticleScenePass.h`), wired
-**immediately after the sprite pass** in both compositing arms, into the same lit target and bloom
+(`ParticleSimulation.{h,cpp}`), drawn by `ParticleScenePass` (`Passes/ParticleScenePass.h`), recorded
+**immediately after the sprites** in the shared "Scene Layers" pass in both compositing arms, into the same lit target and bloom
 mask — so alpha particles composite over sprites, and resolve, bloom and tonemap with the scene.
 
 - **One pool per renderer, of fixed capacity.** `SceneRendererSettings::ParticleCapacity` (default
   `DefaultParticleCapacity`, 65,536; a power of two, rounded down by the settings clamp; 0 disables
-  particles, for a capture or a portrait). The pool's buffers are device-local and imported into the
+  particles, for a portrait; a `CaptureSurface` sets it unless the surface asks for particles,
+  `CaptureSurface::Particles`). The pool's buffers are device-local and imported into the
   graph, so every barrier between the chain's passes is derived from their declared uses: the
   particles (48-byte `GpuParticle`), the dead list, two halves of live list, the additive list, the
   alpha sort keys (`max(N, 1024)` `uvec2`s), the 112-byte draw records, the counters and the
@@ -1458,7 +1475,11 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
 - **The gather is device-free** (`ParticleGather.{h,cpp}`, run each `Execute` after the sprite
   gather). Its instance table is keyed by `(entity, playback)`: a new key claims a slot and bumps
   its generation, a vanished key frees the slot and bumps it again, so its particles die at the next
-  update by generation mismatch; the table resets on a new scene. **Spawns come from cursors, not a
+  update by generation mismatch; the table resets on a new scene. **An instance draws on its
+  `ParticleEffectInstance::Layer`**: one on a layer the view's mask leaves out, or the view's
+  excluded entity, is tracked, issued and simulated as any other but marked
+  `ParticleInstanceHidden`, so a view hiding it neither resets its emission nor leaves a backlog to
+  issue when it shows again, and its soft emitters ask for no depth copy. **Spawns come from cursors, not a
   queue**: each slot keeps, per emitter, the burst and rate indices it has issued, and issues
   `[max(cursor, first possibly alive), spawned by now)` per stream (`ParticleSpawnedBy`,
   `ParticleFirstPossiblyAlive`), so each renderer issues every index exactly once whatever its
@@ -1502,8 +1523,9 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   record — closed-form position and velocity, the curves read from the emitter's tables, the
   flipbook frame, and for a six-way flipbook the scene's light gathered once with
   `EvaluateSpriteLighting` — then push to the additive list or the alpha keys), **Particle Sort**,
-  **Particle Finalize** (the two draws' vertex counts, and the stats region) and **Scene
-  Particles** (two `DrawIndirect` calls: alpha, then additive). The update binds the IBL and shadow
+  **Particle Finalize** (the two draws' vertex counts, and the stats region) — all declared ahead of
+  the "Scene Layers" pass — and the draw inside it (two `DrawIndirect` calls: alpha, then
+  additive). The update binds the IBL and shadow
   sets at 4 and 5 with the frame-slot dynamic offsets and declares the shadow atlases
   `SampleCompute`.
 - **Idle gating, decided on the CPU.** A frame that spawns marks the GPU as possibly holding live
@@ -1551,8 +1573,8 @@ along its lit axis.
 **`Ribbon`, `Trail` and `RibbonPath` components draw as camera-facing HDR bands** (the components,
 `RibbonSystem` and `SpawnTransientBeam` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Ribbons and
 trails").
-`RibbonScenePass` (`Passes/RibbonScenePass.h`) is wired **after the full-resolution translucent pass
-and immediately ahead of the sprite pass**, in both compositing arms, into the same lit target and
+`RibbonScenePass` (`Passes/RibbonScenePass.h`) records **after the translucent passes and
+immediately ahead of the sprites**, first in the shared "Scene Layers" pass, in both compositing arms, into the same lit target and
 bloom mask. **Why ahead of sprites:** a beam or a trail is a long element that sprite effects stand
 on — a flash at a muzzle, a burst at an impact, a puff at a trail's head — so an alpha sprite
 composites over a ribbon rather than under it; additive content is order-free either way. Neither
@@ -1841,13 +1863,16 @@ anamorphic lens, added in the tonemap beside the bloom: `hdr += streak × Streak
   frame's width and half its height (`StreakExtent`): each destination texel averages the 4×2 block
   it covers through two bilinear taps, each tap conditioned and the average soft-kneed by the same
   `bright_tap.slang` the bloom's level 0 uses, at the same threshold and ceiling, so a source streaks
-  where it blooms. `Streak Filter` then spreads each row along itself, one invocation per row: a
+  where it blooms. `Streak Filter` then spreads each row along itself, one workgroup per row: a
   forward and a backward recursive sweep give every texel `Σ_d r^|d| · source[x − d]` normalised to
   keep the light (`StreakFilterRow` is the CPU twin), so each source falls off exactly
   exponentially, symmetric and monotone, with no reach limit and no comb ripple. Both sweeps run as
   running averages (the sum times `1 − r`), which bounds the forward one, stored between them in the
   half-float destination, by the row's brightest texel. Past the row's ends is zero, so light leaves
-  at the frame's edges.
+  at the frame's edges. A sweep is the first-order recurrence `y = r·y + (1 − r)·x`, whose affine
+  steps compose associatively, so each invocation reduces a contiguous run of the row to one map, a
+  workgroup scan hands each run the value entering it, and each run replays from there — the
+  row's dependent chain is a run long rather than a row long.
 - **Each channel has its own ratio** (`StreakChannelRatio`): green falls to 1/e over `StreakLength`
   of the frame's width, red and blue over `1 − StreakChromaticSpread` of that (never under a tenth),
   so a positive spread keeps red and blue nearer the source — a violet core shading toward green
@@ -3810,8 +3835,8 @@ scene, it moves no spatial version, so the broadphase treats a **changed** exclu
 rebuild trigger. `Entity::Null` (the default) excludes nothing and gathers exactly what it gathered
 before, so no other view is affected.
 
-**A capture's batteries are lean, and shadows are the one an interior probe asks back.** Bloom, AO
-and TAA are dropped unconditionally — the capture samples pre-tonemap HDR, so the post chain
+**A capture's batteries are lean, and shadows and particles are the ones a capture asks back.**
+Bloom, AO and TAA are dropped unconditionally — the capture samples pre-tonemap HDR, so the post chain
 never reaches its output, and the rest is cost multiplied across the faces. Shadows are dropped by
 default for the same reason, but they are the one battery with a case where the omission is
 *visible*: an **enclosed interior** captured without them is lit by the directional source as though
@@ -3823,6 +3848,10 @@ is **one depth-only pass per driven frame, not six** — a capture renders one f
 shadow pass rides that single face render. Both flags move together: an interior wants its
 enclosure's occlusion whichever kind of light casts it. They are topology changes in the face
 renderer, so the field is read when the runtime materializes and is not live-tunable.
+**Particles are dropped by default too** — the face renderer gets no particle capacity, so it holds
+no pool and runs no spawn, update, sort or draw — since a pool simulated per capture costs as much as
+the camera view's while its particles are lost under the map's resolution. `CaptureSurface::Particles`
+(default off, read at materialization) asks them back for a capture that must show an effect.
 
 **A capture also draws a subset of the render layers, and defaults to the environment set.** Beyond
 the one nominated entity, a capture filters by `RenderLayer` (`Veng/Scene/RenderLayer.h`): every

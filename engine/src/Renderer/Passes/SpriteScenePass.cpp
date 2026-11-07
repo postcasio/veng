@@ -418,6 +418,15 @@ namespace Veng::Renderer
             .Load = LoadOp::Load,
             .Store = StoreOp::Store,
         });
+        DeclareInputs(builder, io);
+        // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
+        // storing its targets around no draws.
+        builder.SkipWhen([this] { return !IsDrawing(); });
+        builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+    }
+
+    void SpriteScenePass::DeclareInputs(RenderGraph::PassBuilder& builder, const PassIO& io) const
+    {
         // A soft sprite's fragment reads the opaque-depth copy, and a six-way sprite's vertex
         // stage the shadow atlases.
         if (m_SceneDepthCopyId.IsValid())
@@ -432,10 +441,11 @@ namespace Veng::Renderer
         {
             builder.Sample(io.PunctualShadowMap, AccessKind::SampleVertexFragment);
         }
-        // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
-        // storing its targets around no draws.
-        builder.SkipWhen([this] { return m_Plan == nullptr || m_Plan->IsEmpty(); });
-        builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+    }
+
+    bool SpriteScenePass::IsDrawing() const
+    {
+        return m_Plan != nullptr && !m_Plan->IsEmpty();
     }
 
     u32 SpriteScenePass::Upload() const

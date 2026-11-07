@@ -214,7 +214,8 @@ namespace Veng::Renderer
     }
 
     void ParticleGather::Gather(const Scene& scene, const dvec3& eye, const u32 capacity,
-                                ParticleFramePlan& plan)
+                                ParticleFramePlan& plan, const u32 visibleLayers,
+                                const Entity exclude)
     {
         plan = ParticleFramePlan{};
         if (scene.GetInstanceSerial() != m_SceneSerial)
@@ -239,6 +240,8 @@ namespace Veng::Renderer
             u32 Slot = 0;
             const ParticleEffectInstance* Instance = nullptr;
             const ParticleFeed* Feed = nullptr;
+            // Simulated but not drawn in this view.
+            bool Masked = false;
         };
         vector<Tracked> tracked;
         for (const auto [entity, instance] : scene.View<ParticleEffectInstance>())
@@ -291,9 +294,11 @@ namespace Veng::Renderer
             }
             slot.Seen = true;
             slot.Cursors.resize(instance.Effect.Get()->GetEmitters().size());
-            tracked.push_back({.Slot = slotIndex,
-                               .Instance = &instance,
-                               .Feed = scene.TryGet<ParticleFeed>(entity)});
+            tracked.push_back(
+                {.Slot = slotIndex,
+                 .Instance = &instance,
+                 .Feed = scene.TryGet<ParticleFeed>(entity),
+                 .Masked = entity == exclude || !RenderLayerInMask(visibleLayers, instance.Layer)});
         }
 
         for (Slot& slot : m_Slots)
@@ -322,7 +327,7 @@ namespace Veng::Renderer
         u64 alive = 0;
         u64 alphaAlive = 0;
 
-        for (const auto& [slotIndex, instance, feed] : tracked)
+        for (const auto& [slotIndex, instance, feed, masked] : tracked)
         {
             Slot& slot = m_Slots[slotIndex];
             const ParticleEffect& effect = *instance->Effect.Get();
@@ -403,8 +408,8 @@ namespace Veng::Renderer
                                       instance->Orientation.z, instance->Orientation.w);
             record.InheritVelocity = instance->InheritVelocity;
             record.Seed = instance->Seed;
-            record.Generation =
-                static_cast<u32>(slot.Generation) | (drawn ? 0u : ParticleInstanceHidden);
+            record.Generation = static_cast<u32>(slot.Generation) |
+                                (drawn && !masked ? 0u : ParticleInstanceHidden);
             record.EmitterBase = drawn ? base : 0u;
             record.EmitterCount = drawn ? emitterCount : 0u;
             record.Scale = instance->Scale;
@@ -541,7 +546,7 @@ namespace Veng::Renderer
                 {
                     alphaAlive += live;
                 }
-                if (soft)
+                if (soft && !masked)
                 {
                     plan.ReadsSceneDepth = true;
                 }

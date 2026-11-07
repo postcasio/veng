@@ -344,7 +344,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Entity scenePath = AddPath(*scene, color, /*additive=*/false, RibbonPlacement::Scene);
     (void)render.Render(Context, *scene);
-    CHECK(render.Renderer->DidRecordPassLastFrame("Scene Ribbons"));
+    CHECK(render.Renderer->DidRecordPassLastFrame("Scene Layers"));
     CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
 
     scene->DestroyEntity(scenePath);
@@ -353,7 +353,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         const vec3 center = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, mid);
         CHECK(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
-        CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Ribbons"));
+        CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Layers"));
         CHECK(center.x == doctest::Approx(color.x).epsilon(0.03));
         CHECK(center.y == doctest::Approx(color.y).epsilon(0.03));
         CHECK(center.z == doctest::Approx(color.z).epsilon(0.03));
