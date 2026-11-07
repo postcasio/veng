@@ -3,8 +3,9 @@
 // about the eye, while a scaled terrain casts into no shadow view; a level layer draws a tile
 // only where the ground dips below it; a translucent layer's tiles are in the translucent list
 // alone; a record carries its tile's hold, and the tile overlay only when the frame asks for it;
-// a near distance splits the main view's tiles between the two materials; and a tile's box rises to
-// the layers it draws and no further.
+// a near distance splits the main view's tiles between the two materials, and a far footprint takes
+// the tiles every pixel of which spans more than it, the near material winning; a view's smallest
+// pixel angle is its corner pixel's; and a tile's box rises to the layers it draws and no further.
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +17,8 @@
 #include <Veng/Math/CubeSphere.h>
 #include <Veng/Math/Frustum.h>
 #include <Veng/Scene/Camera.h>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <Renderer/SphereTerrainDraw.h>
 #include <Renderer/SphereTerrainResidency.h>
@@ -431,6 +434,128 @@ TEST_CASE("sphere terrain cull: a near distance splits the main view's tiles bet
     // A surface without a distance, and the translucent pass, take no near list.
     CHECK(split.NearLists[1].empty());
     CHECK(split.NearTranslucentLists[0].empty());
+}
+
+TEST_CASE("sphere terrain cull: a far footprint takes the tiles whose every pixel spans more")
+{
+    const FlatPool pool;
+    const dvec3 eye = Up() * (Radius + 50.0);
+    const vector<SphereTerrainDrawnTile> drawn = Select(pool, eye);
+    std::unordered_map<u64, const SphereTerrainDrawnTile*> byKey;
+    for (const SphereTerrainDrawnTile& tile : drawn)
+    {
+        byKey[tile.Key.Value] = &tile;
+    }
+    constexpr f64 PixelAngle = 1.0e-3;
+    const auto Build = [&](const f32 scale, const f32 nearDistance, const f32 farFootprint)
+    {
+        SphereTerrainFrameInput input{
+            .Drawn = drawn,
+            .Radius = Radius,
+            .MinHeight = MinHeight,
+            .MaxHeight = MaxHeight,
+            .Eye = eye,
+            .CenterFromEye = -eye,
+            .PrevCenterFromCamera = -eye,
+            .Scale = scale,
+            .MinPixelAngle = PixelAngle,
+            .Main = OpenView(),
+        };
+        input.NearDistances[0] = nearDistance;
+        input.FarFootprints[0] = farFootprint;
+        return BuildSphereTerrainFrame(input);
+    };
+    constexpr f32 Near = 1000.0f;
+    constexpr f32 Far = 4.0f;
+    const SphereTerrainFrame whole = Build(1.0f, 0.0f, 0.0f);
+    const SphereTerrainFrame split = Build(1.0f, Near, Far);
+    CHECK(whole.FarLists[0].empty());
+
+    // The near, standard and far lists partition what the unsplit view draws.
+    const vector<u64> standard = ListKeys(split, 0);
+    const vector<u64> near = Keys(split, split.NearLists[0]);
+    const vector<u64> far = Keys(split, split.FarLists[0]);
+    vector<u64> every = standard;
+    every.insert(every.end(), near.begin(), near.end());
+    every.insert(every.end(), far.begin(), far.end());
+    std::ranges::sort(every);
+    vector<u64> all = ListKeys(whole, 0);
+    std::ranges::sort(all);
+    CHECK(every == all);
+    CHECK(std::ranges::adjacent_find(every) == every.end());
+
+    // A far tile's nearest point spans more than the footprint a pixel; a standard one's does not.
+    const auto Footprint = [&](const u64 key)
+    {
+        const SphereTerrainDrawnTile& tile = *byKey.at(key);
+        const SphereTerrainTileBox box =
+            ComputeSphereTerrainTileBox(tile.Key, Radius, tile.MinHeight, tile.MaxHeight);
+        return SphereTerrainBoxDistance(box, eye) * PixelAngle;
+    };
+    u32 farFine = 0;
+    u32 standardCoarse = 0;
+    for (const u64 key : far)
+    {
+        farFine += Footprint(key) <= Far ? 1u : 0u;
+    }
+    for (const u64 key : standard)
+    {
+        standardCoarse += Footprint(key) > Far ? 1u : 0u;
+    }
+    CHECK_FALSE(near.empty());
+    CHECK_FALSE(standard.empty());
+    CHECK_FALSE(far.empty());
+    CHECK(farFine == 0u);
+    CHECK(standardCoarse == 0u);
+
+    // A terrain drawn at a scale about the eye measures the footprint in drawn units.
+    const SphereTerrainFrame scaled = Build(0.5f, Near * 0.5f, Far * 0.5f);
+    CHECK(Keys(scaled, scaled.FarLists[0]) == far);
+    CHECK(Keys(scaled, scaled.NearLists[0]) == near);
+
+    // Where a tile qualifies for both, the near material wins: a footprint below every tile's but
+    // one the eye stands within leaves the near list as it is and takes every other tile.
+    const SphereTerrainFrame both = Build(1.0f, Near, 1.0e-9f);
+    CHECK(std::ranges::any_of(near, [&](const u64 key) { return Footprint(key) > 1.0e-9; }));
+    CHECK(Keys(both, both.NearLists[0]) == near);
+    u32 standardSpanning = 0;
+    for (const u64 key : ListKeys(both, 0))
+    {
+        standardSpanning += Footprint(key) > 0.0 ? 1u : 0u;
+    }
+    CHECK(standardSpanning == 0u);
+    // A surface without a footprint, and the translucent pass, take no far list.
+    CHECK(split.FarLists[1].empty());
+    CHECK(split.FarTranslucentLists[0].empty());
+}
+
+TEST_CASE("sphere terrain cull: a view's smallest pixel angle is its corner pixel's")
+{
+    constexpr f32 Width = 1920.0f;
+    constexpr f32 Height = 1080.0f;
+    const mat4 projection =
+        glm::perspectiveRH_ZO(glm::radians(60.0f), Width / Height, 0.1f, 1000.0f);
+    const f64 angle = SphereTerrainMinPixelAngle(projection, Height);
+    // The rays through a pixel's edges, in pixels from the centre at the focal length's depth.
+    const f64 focal = 0.5 * Height * static_cast<f64>(projection[1][1]);
+    const auto Between = [focal](const glm::dvec2 a, const glm::dvec2 b)
+    {
+        return std::acos(
+            glm::dot(glm::normalize(dvec3(a, focal)), glm::normalize(dvec3(b, focal))));
+    };
+    const glm::dvec2 corner{0.5 * Width, 0.5 * Height};
+    const glm::dvec2 diagonal = glm::normalize(corner);
+    // The corner pixel along the radius is the least, and the formula names it.
+    const f64 cornerRadial = Between(corner - diagonal, corner);
+    CHECK(angle == doctest::Approx(cornerRadial).epsilon(1.0e-3));
+    // Every other pixel spans more: the centre's, an edge's, and the corner's across the radius.
+    CHECK(Between({0.0, 0.0}, {1.0, 0.0}) > angle);
+    CHECK(Between({0.5 * Width - 1.0, 0.0}, {0.5 * Width, 0.0}) > angle);
+    const glm::dvec2 across{-diagonal.y, diagonal.x};
+    CHECK(Between(corner, corner + across) > angle);
+    // An orthographic view has none.
+    CHECK(SphereTerrainMinPixelAngle(glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f),
+                                     Height) == 0.0);
 }
 
 TEST_CASE("sphere terrain cull: a drawn layer raises a tile's box and an undrawn one leaves it")

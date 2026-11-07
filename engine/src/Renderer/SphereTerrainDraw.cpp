@@ -88,6 +88,20 @@ namespace Veng::Renderer
                           : SphereTerrainMaterialVerdict::TranslucentGround;
     }
 
+    f64 SphereTerrainMinPixelAngle(const mat4& projection, const f32 heightPixels)
+    {
+        // A perspective projection's w is the view's depth; anything else has no pixel angle.
+        if (projection[2][3] == 0.0f || projection[0][0] == 0.0f || projection[1][1] == 0.0f ||
+            heightPixels <= 0.0f)
+        {
+            return 0.0;
+        }
+        const f64 tanX = 1.0 / std::abs(static_cast<f64>(projection[0][0]));
+        const f64 tanY = 1.0 / std::abs(static_cast<f64>(projection[1][1]));
+        const f64 pixelsPerRadian = 0.5 * static_cast<f64>(heightPixels) / tanY;
+        return 1.0 / (pixelsPerRadian * (1.0 + (tanX * tanX) + (tanY * tanY)));
+    }
+
     vec2 SphereTerrainCullHeights(const SphereTerrainDrawnTile& tile,
                                   const std::span<const f32> layerHeights)
     {
@@ -126,6 +140,8 @@ namespace Veng::Renderer
             frame.TranslucentLists[surface].clear();
             frame.NearLists[surface].clear();
             frame.NearTranslucentLists[surface].clear();
+            frame.FarLists[surface].clear();
+            frame.FarTranslucentLists[surface].clear();
         }
         frame.CulledByFrustum = 0;
         frame.CulledByHorizon = 0;
@@ -181,10 +197,16 @@ namespace Veng::Renderer
                     frame.CulledByHorizon += view == 0 ? 1u : 0u;
                     continue;
                 }
-                // The farthest corner in drawn units bounds every fragment's distance from above.
+                // In drawn units, the farthest corner bounds every fragment's distance from above
+                // and the nearest point from below; the latter, over the smallest angle a pixel
+                // subtends, bounds every fragment's footprint from below.
                 const f64 farthest =
                     view == 0 ? static_cast<f64>(input.Scale) * FarthestCorner(corners, input.Eye)
                               : 0.0;
+                const f64 footprint = view == 0 ? static_cast<f64>(input.Scale) *
+                                                      SphereTerrainBoxDistance(box, input.Eye) *
+                                                      input.MinPixelAngle
+                                                : 0.0;
                 bool listed = false;
                 for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
                 {
@@ -195,15 +217,21 @@ namespace Veng::Renderer
                     const f32 nearDistance = input.NearDistances[surface];
                     const bool near = view == 0 && nearDistance > 0.0f &&
                                       farthest <= static_cast<f64>(nearDistance);
+                    const f32 farFootprint = input.FarFootprints[surface];
+                    const bool far = view == 0 && !near && farFootprint > 0.0f &&
+                                     footprint > static_cast<f64>(farFootprint);
                     if (translucent[surface])
                     {
-                        (near ? frame.NearTranslucentLists[surface]
-                              : frame.TranslucentLists[surface])
+                        (near  ? frame.NearTranslucentLists[surface]
+                         : far ? frame.FarTranslucentLists[surface]
+                               : frame.TranslucentLists[surface])
                             .push_back(recordIndex);
                     }
                     else
                     {
-                        (near ? frame.NearLists[surface] : frame.Lists[view][surface])
+                        (near  ? frame.NearLists[surface]
+                         : far ? frame.FarLists[surface]
+                               : frame.Lists[view][surface])
                             .push_back(recordIndex);
                     }
                     listed = true;

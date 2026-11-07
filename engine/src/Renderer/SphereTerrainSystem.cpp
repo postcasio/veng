@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <fmt/format.h>
 
@@ -239,6 +240,7 @@ namespace Veng::Renderer
         m_EyeStable = eyeStable;
         const mat4 projection = camera.Projection();
         const f64 pixelsPerRadian = 0.5 * info.HeightPixels * std::abs(projection[1][1]);
+        m_MinPixelAngle = SphereTerrainMinPixelAngle(projection, info.HeightPixels);
         const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
 
         for (auto [entity, terrain] : scene.View<SphereTerrain>())
@@ -391,14 +393,16 @@ namespace Veng::Renderer
                     return;
                 }
             };
-            // A near material draws in its surface's pass, so it must take the same verdict.
-            const auto ResolveNear =
-                [&](Surface& surface, const AssetHandle<MaterialInstance>& handle,
-                    const f32 distance, const bool levelLayer, const string& what)
+            // A near or far material draws in its surface's pass, so it must take the same
+            // verdict.
+            const auto ResolveAlternate = [&](const Surface& surface,
+                                              const AssetHandle<MaterialInstance>& handle,
+                                              const f32 threshold, const bool levelLayer,
+                                              const string& what) -> const MaterialInstance*
             {
-                if (surface.Material == nullptr || distance <= 0.0f || !handle.IsLoaded())
+                if (surface.Material == nullptr || threshold <= 0.0f || !handle.IsLoaded())
                 {
-                    return;
+                    return nullptr;
                 }
                 const MaterialInstance* material = handle.Get();
                 const Material& parent = *material->GetParent().Get();
@@ -409,17 +413,29 @@ namespace Veng::Renderer
                                         : SphereTerrainMaterialVerdict::Opaque;
                 if (verdict != wanted)
                 {
-                    Report(entity, fmt::format("{} near material '{}' does not draw in the pass "
-                                               "its material does, so it is not drawn",
+                    Report(entity, fmt::format("{} material '{}' does not draw in the pass its "
+                                               "surface's material does, so it is not drawn",
                                                what, parent.GetName()));
-                    return;
+                    return nullptr;
                 }
-                surface.NearMaterial = material;
-                surface.NearDistance = distance;
+                return material;
+            };
+            const auto ResolveVariants = [&](Surface& surface, const auto& authored,
+                                             const bool levelLayer, const string& what)
+            {
+                surface.NearMaterial =
+                    ResolveAlternate(surface, authored.NearMaterial, authored.NearDistance,
+                                     levelLayer, fmt::format("{} near", what));
+                surface.NearDistance =
+                    surface.NearMaterial != nullptr ? authored.NearDistance : 0.0f;
+                surface.FarMaterial =
+                    ResolveAlternate(surface, authored.FarMaterial, authored.FarFootprint,
+                                     levelLayer, fmt::format("{} far", what));
+                surface.FarFootprint =
+                    surface.FarMaterial != nullptr ? authored.FarFootprint : 0.0f;
             };
             Resolve(entry.Surfaces[0], terrain.Material, false, "its");
-            ResolveNear(entry.Surfaces[0], terrain.NearMaterial, terrain.NearDistance, false,
-                        "its");
+            ResolveVariants(entry.Surfaces[0], terrain, false, "its");
             stats.SkippedTerrains = entry.Surfaces[0].Material == nullptr ? 1u : 0u;
             if (terrain.LevelLayers.size() > MaxSphereTerrainLevelLayers)
             {
@@ -435,8 +451,7 @@ namespace Veng::Renderer
                 surface.Height = terrain.LevelLayers[layer].Height;
                 const SphereTerrainLevelLayer& authored = terrain.LevelLayers[layer];
                 Resolve(surface, authored.Material, true, fmt::format("its layer {}", layer));
-                ResolveNear(surface, authored.NearMaterial, authored.NearDistance, true,
-                            fmt::format("its layer {}", layer));
+                ResolveVariants(surface, authored, true, fmt::format("its layer {}", layer));
             }
 
             // The cascades fit to the casters near the eye, not to a terrain reaching the horizon.
@@ -493,6 +508,7 @@ namespace Veng::Renderer
             {
                 wanted += surface.Material != nullptr ? 1u : 0u;
                 wanted += surface.NearMaterial != nullptr ? 1u : 0u;
+                wanted += surface.FarMaterial != nullptr ? 1u : 0u;
             }
         }
         bool exhausted = false;
@@ -530,9 +546,12 @@ namespace Veng::Renderer
                     continue;
                 }
                 surface.Seated = Claim(terrain, *surface.Material, surface.DrawSlot);
-                // The near tiles draw with the surface's own material when theirs is unseated.
+                // The near and far tiles draw with the surface's own material when theirs is
+                // unseated.
                 surface.NearSeated = surface.Seated && surface.NearMaterial != nullptr &&
                                      Claim(terrain, *surface.NearMaterial, surface.NearDrawSlot);
+                surface.FarSeated = surface.Seated && surface.FarMaterial != nullptr &&
+                                    Claim(terrain, *surface.FarMaterial, surface.FarDrawSlot);
             }
         }
 
@@ -563,25 +582,44 @@ namespace Veng::Renderer
                     .TerrainSurface = surface,
                 });
                 appended++;
-                if (!layer.NearSeated)
+                if (layer.NearSeated)
                 {
-                    continue;
+                    // Just nearer than the surface's own draw, whose tiles every near tile stands
+                    // in front of.
+                    translucent.push_back(TranslucentDraw{
+                        .Material = layer.NearMaterial,
+                        .SourceMesh = nullptr,
+                        .IndexCount = SphereTerrainGridIndexCount,
+                        .FirstIndex = 0,
+                        .CandidateId = layer.NearDrawSlot,
+                        .ViewDepth = std::nextafter(-distance, 0.0f),
+                        .SortPriority = layer.Material->GetParent()->GetSortPriority(),
+                        .Terrain = this,
+                        .TerrainIndex = index,
+                        .TerrainSurface = surface,
+                        .TerrainNear = true,
+                    });
+                    appended++;
                 }
-                // Just nearer than the far tiles' draw, which every near tile stands in front of.
-                translucent.push_back(TranslucentDraw{
-                    .Material = layer.NearMaterial,
-                    .SourceMesh = nullptr,
-                    .IndexCount = SphereTerrainGridIndexCount,
-                    .FirstIndex = 0,
-                    .CandidateId = layer.NearDrawSlot,
-                    .ViewDepth = std::nextafter(-distance, 0.0f),
-                    .SortPriority = layer.Material->GetParent()->GetSortPriority(),
-                    .Terrain = this,
-                    .TerrainIndex = index,
-                    .TerrainSurface = surface,
-                    .TerrainNear = true,
-                });
-                appended++;
+                if (layer.FarSeated)
+                {
+                    // Just farther than the surface's own draw, whose tiles reach nearer than
+                    // every far tile's nearest point.
+                    translucent.push_back(TranslucentDraw{
+                        .Material = layer.FarMaterial,
+                        .SourceMesh = nullptr,
+                        .IndexCount = SphereTerrainGridIndexCount,
+                        .FirstIndex = 0,
+                        .CandidateId = layer.FarDrawSlot,
+                        .ViewDepth = std::nextafter(-distance, -std::numeric_limits<f32>::max()),
+                        .SortPriority = layer.Material->GetParent()->GetSortPriority(),
+                        .Terrain = this,
+                        .TerrainIndex = index,
+                        .TerrainSurface = surface,
+                        .TerrainFar = true,
+                    });
+                    appended++;
+                }
             }
         }
         return appended;
@@ -613,6 +651,8 @@ namespace Veng::Renderer
             terrain.TranslucentLists = {};
             terrain.NearLists = {};
             terrain.NearTranslucentLists = {};
+            terrain.FarLists = {};
+            terrain.FarTranslucentLists = {};
             terrain.Set = nullptr;
             Memory& memory = *terrain.Mem;
             const bool anySurface = std::ranges::any_of(terrain.Surfaces, [](const Surface& surface)
@@ -649,7 +689,9 @@ namespace Veng::Renderer
             {
                 const Surface& drawn = terrain.Surfaces[surface];
                 input.NearDistances[surface] = drawn.NearSeated ? drawn.NearDistance : 0.0f;
+                input.FarFootprints[surface] = drawn.FarSeated ? drawn.FarFootprint : 0.0f;
             }
+            input.MinPixelAngle = m_MinPixelAngle;
             input.Main = {.Planes = BodyPlanes(frustum, 4, toBody, cameraScene), .Horizon = true};
             memory.ShadowViews.resize(shadowViews.size());
             for (usize v = 0; v < shadowViews.size(); v++)
@@ -729,6 +771,9 @@ namespace Veng::Renderer
                 terrain.NearLists[surface] = AppendMain(frame.NearLists[surface], drawnSurface);
                 terrain.NearTranslucentLists[surface] =
                     AppendMain(frame.NearTranslucentLists[surface], drawnSurface);
+                terrain.FarLists[surface] = AppendMain(frame.FarLists[surface], drawnSurface);
+                terrain.FarTranslucentLists[surface] =
+                    AppendMain(frame.FarTranslucentLists[surface], drawnSurface);
             }
             stats.CulledByFrustum = frame.CulledByFrustum;
             stats.CulledByHorizon = frame.CulledByHorizon;
@@ -875,6 +920,10 @@ namespace Veng::Renderer
                 {
                     Draw(*drawn.NearMaterial, drawn.NearDrawSlot, terrain.NearLists[surface]);
                 }
+                if (drawn.FarSeated)
+                {
+                    Draw(*drawn.FarMaterial, drawn.FarDrawSlot, terrain.FarLists[surface]);
+                }
             }
         }
     }
@@ -888,8 +937,9 @@ namespace Veng::Renderer
             return;
         }
         const Terrain& terrain = m_Terrains[draw.TerrainIndex];
-        const uvec2 list = draw.TerrainNear ? terrain.NearTranslucentLists[draw.TerrainSurface]
-                                            : terrain.TranslucentLists[draw.TerrainSurface];
+        const uvec2 list = draw.TerrainNear  ? terrain.NearTranslucentLists[draw.TerrainSurface]
+                           : draw.TerrainFar ? terrain.FarTranslucentLists[draw.TerrainSurface]
+                                             : terrain.TranslucentLists[draw.TerrainSurface];
         if (terrain.Set == nullptr || list.y == 0)
         {
             return;

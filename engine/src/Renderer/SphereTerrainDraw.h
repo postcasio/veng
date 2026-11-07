@@ -93,6 +93,16 @@ namespace Veng::Renderer
         /// A tile qualifies when its bound's farthest corner, times Scale, lies within it. Its
         /// g-buffer or translucent main-view entry then goes to the near lists instead.
         std::array<f32, SphereTerrainSurfaceCount> NearDistances{};
+        /// @brief Per surface, the drawn metres a pixel spans past which a main-view tile draws
+        ///        with the surface's far material; zero draws none with it.
+        ///
+        /// A tile qualifies when the distance to its bound's nearest point, times Scale, times
+        /// MinPixelAngle exceeds it, and it does not qualify for the near material. Its g-buffer
+        /// or translucent main-view entry then goes to the far lists instead.
+        std::array<f32, SphereTerrainSurfaceCount> FarFootprints{};
+        /// @brief The smallest angle one of the main view's pixels subtends anywhere on its image,
+        ///        in radians (SphereTerrainMinPixelAngle).
+        f64 MinPixelAngle = 0.0;
         /// @brief The main view.
         SphereTerrainDrawView Main;
         /// @brief The shadow views, in the frame's shadow-view order.
@@ -136,6 +146,12 @@ namespace Veng::Renderer
         /// @brief Per surface, the main view's translucent records drawn with the near material,
         ///        which TranslucentLists then leaves out.
         std::array<vector<u32>, SphereTerrainSurfaceCount> NearTranslucentLists;
+        /// @brief Per surface, the main view's g-buffer records drawn with the far material,
+        ///        which Lists[0] then leaves out.
+        std::array<vector<u32>, SphereTerrainSurfaceCount> FarLists;
+        /// @brief Per surface, the main view's translucent records drawn with the far material,
+        ///        which TranslucentLists then leaves out.
+        std::array<vector<u32>, SphereTerrainSurfaceCount> FarTranslucentLists;
         /// @brief Drawn tiles the main view's frustum culled.
         u32 CulledByFrustum = 0;
         /// @brief Drawn tiles the main view culled below the horizon.
@@ -152,10 +168,22 @@ namespace Veng::Renderer
     /// no shadow view. A level layer draws a tile only where the tile's working range dips below
     /// the layer's height. A translucent layer's main-view tiles go to the translucent lists alone,
     /// and it draws into no shadow view. A main-view tile whose bound lies wholly within a
-    /// surface's near distance is listed in that surface's near list in place of its own; the
-    /// shadow views take no near list.
+    /// surface's near distance is listed in that surface's near list in place of its own; failing
+    /// that, one whose bound's nearest point spans more than the surface's far footprint per pixel
+    /// is listed in its far list. The shadow views take neither.
     [[nodiscard]] VE_API SphereTerrainFrame
     BuildSphereTerrainFrame(const SphereTerrainFrameInput& input);
+
+    /// @brief The smallest angle one pixel of a perspective view subtends anywhere on its image,
+    ///        in radians: a corner pixel's, across the image's radius.
+    ///
+    /// For a view `K` pixels per radian at its centre (half its height over `tan(fovY / 2)`), a
+    /// pixel `ρ` pixels from the centre spans `K / (K² + ρ²)` radians along the radius and
+    /// `1 / √(K² + ρ²)` across it, so the least is at the corner, where `ρ² = K² (tan²(fovX / 2) +
+    /// tan²(fovY / 2))`. Zero for a projection that is not a perspective one.
+    /// @param projection   The view's projection.
+    /// @param heightPixels The view's rendered height in pixels.
+    [[nodiscard]] VE_API f64 SphereTerrainMinPixelAngle(const mat4& projection, f32 heightPixels);
 
     /// @brief The cull half of BuildSphereTerrainFrame: fills a kept frame's lists and its record
     ///        tiles, leaving Records empty.

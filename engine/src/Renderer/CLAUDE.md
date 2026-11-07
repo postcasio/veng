@@ -4478,10 +4478,22 @@ a budget near 550, about a 700-tile pool.
   near material instead — the Euclidean distance bounds the forward depth from above, so the test
   is conservative. `BuildSphereTerrainFrame` puts such a tile in `SphereTerrainFrame::NearLists` (or
   `NearTranslucentLists` for a translucent layer) and not in its surface's own list, so no tile
-  draws twice and each surface issues at most two instanced draws per view, each on a `DrawData`
-  slot of its own (a translucent layer's near draw sorts just nearer than its far one). The near
+  draws twice and each surface issues at most three instanced draws per view (the far material's
+  below), each on a `DrawData` slot of its own (a translucent layer's near draw sorts just nearer
+  than its own one). The near
   material must draw in the same pass as its surface's (reported and ignored otherwise); the
   shadow views take no near list (`tests/unit/sphere_terrain_cull.cpp`).
+- **The far material** is shading level of detail: past a footprint where a material's finest
+  detail contributes nothing, a cheaper material giving the same result can draw. So the terrain
+  and each level layer may also name a `FarMaterial` and a `FarFootprint` (drawn metres a pixel
+  spans, after the scale about the eye; 0 disables it): a main-view tile not taken by the near
+  material whose cull box's nearest point (`SphereTerrainBoxDistance`, scaled about the eye) spans
+  more than the footprint in the view's smallest pixel angle draws with the far material instead,
+  listed in `SphereTerrainFrame::FarLists` (or `FarTranslucentLists`, sorting just farther than the
+  surface's own draw). The smallest pixel angle (`SphereTerrainMinPixelAngle`) is the corner pixel's
+  along the image's radius, `1 / (K (1 + tan²(fovX/2) + tan²(fovY/2)))`, so every pixel of a far tile
+  spans at least the footprint, and a surface seen obliquely more. The near material wins where both
+  apply; the same pass rule holds, and the shadow views take no far list.
 - **Level layers** (`SphereTerrain::LevelLayers`, at most `MaxSphereTerrainLevelLayers`): each a
   second terrain material drawn over the same selection at a constant height in place of the height
   channel, with the terrain's placement, morph, scale and helpers, only on tiles whose working range

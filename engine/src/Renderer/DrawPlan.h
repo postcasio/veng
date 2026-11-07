@@ -138,6 +138,8 @@ namespace Veng::Renderer
         u32 TerrainSurface = 0;
         // Whether the draw is the surface's near material, drawing its near tiles.
         bool TerrainNear = false;
+        // Whether the draw is the surface's far material, drawing its far tiles.
+        bool TerrainFar = false;
     };
 
     // The per-frame forward translucent submission plan SceneRenderer fills before each graph

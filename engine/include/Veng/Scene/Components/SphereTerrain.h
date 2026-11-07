@@ -37,6 +37,14 @@ namespace Veng
         /// @brief The drawn distance from the eye within which a tile draws the layer with
         ///        NearMaterial; zero draws every tile with Material.
         f32 NearDistance = 0.0f;
+        /// @brief The material the layer's distant tiles draw with in place of Material, or null
+        ///        for none (see SphereTerrain::FarMaterial).
+        ///
+        /// It must draw in the same pass as Material, as NearMaterial must.
+        AssetHandle<MaterialInstance> FarMaterial;
+        /// @brief The drawn metres one pixel spans past which a tile draws the layer with
+        ///        FarMaterial; zero draws none with it.
+        f32 FarFootprint = 0.0f;
     };
 
     /// @brief A sphere's terrain, drawn from a shared Renderer::SphereTerrainSource.
@@ -111,6 +119,24 @@ namespace Veng
         /// within this distance. The Euclidean distance bounds a point's forward depth from above,
         /// so every fragment of a qualifying tile stands nearer than it.
         f32 NearDistance = 0.0f;
+        /// @brief The Surface material the terrain's distant tiles draw with in place of Material,
+        ///        or null for none; it must declare "sphereTerrain".
+        ///
+        /// Shading level of detail: a material's finest detail stops contributing once a pixel
+        /// spans more ground than that detail resolves, and from there a cheaper material giving
+        /// the same result can draw instead. A tile on which every pixel spans more than
+        /// FarFootprint draws with it. The near material takes precedence where both would
+        /// apply, each tile draws with exactly one material, and the shadow views are unaffected.
+        AssetHandle<MaterialInstance> FarMaterial;
+        /// @brief The metres one pixel spans, after the scale about the eye, past which a tile
+        ///        draws with FarMaterial; zero draws none with it.
+        ///
+        /// A tile qualifies when its bound's nearest point, at its distance scaled about the eye
+        /// by Scale, spans more than this in the smallest angle any of the view's pixels subtends
+        /// (a corner pixel's, across the image's radius). A pixel spans at least that much of any
+        /// surface seen at that distance, and more of one seen obliquely, so every fragment of a
+        /// qualifying tile spans more than FarFootprint.
+        f32 FarFootprint = 0.0f;
         /// @brief The level layers drawn over the terrain; past MaxSphereTerrainLevelLayers the
         ///        rest are ignored.
         vector<SphereTerrainLevelLayer> LevelLayers;
@@ -139,6 +165,11 @@ VE_FIELD(NearMaterial, .DisplayName = "Near material",
 VE_FIELD(NearDistance, .DisplayName = "Near distance",
          .Tooltip = "Drawn metres from the eye within which tiles take the near material",
          .Display = {.Min = 0.0})
+VE_FIELD(FarMaterial, .DisplayName = "Far material",
+         .Tooltip = "Drawn in place of Material by tiles past the far footprint")
+VE_FIELD(FarFootprint, .DisplayName = "Far footprint",
+         .Tooltip = "Drawn metres a pixel spans past which tiles take the far material",
+         .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::SphereTerrain, 0xB41B55C78CFC7E4FULL)
@@ -155,6 +186,11 @@ VE_FIELD(NearMaterial, .DisplayName = "Near material",
          .Tooltip = "A Surface material drawn by tiles within the near distance")
 VE_FIELD(NearDistance, .DisplayName = "Near distance",
          .Tooltip = "Drawn metres from the eye within which tiles take the near material",
+         .Display = {.Min = 0.0})
+VE_FIELD(FarMaterial, .DisplayName = "Far material",
+         .Tooltip = "A Surface material drawn by tiles past the far footprint")
+VE_FIELD(FarFootprint, .DisplayName = "Far footprint",
+         .Tooltip = "Drawn metres a pixel spans past which tiles take the far material",
          .Display = {.Min = 0.0})
 VE_ARRAY_FIELD(LevelLayers, .DisplayName = "Level layers",
                .Tooltip = "Surfaces drawn at a constant height over the terrain")

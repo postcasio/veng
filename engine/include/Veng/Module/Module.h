@@ -676,10 +676,13 @@ extern "C"
 /// Version 171 lets a capture opt into particles and puts particle effects on a render layer:
 /// CaptureSurface grows Particles and ParticleEffectInstance grows Layer, both mid-struct. A module
 /// spawns both, so a stale one lays each out short.
+/// Version 172 gives a sphere terrain a far material: SphereTerrain and SphereTerrainLevelLayer grow
+/// FarMaterial and FarFootprint after NearDistance, mid-struct in SphereTerrain. A module spawns
+/// terrains, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 171u
+#define VENG_MODULE_ABI_VERSION 172u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

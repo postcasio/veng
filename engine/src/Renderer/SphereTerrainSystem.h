@@ -232,6 +232,14 @@ namespace Veng::Renderer
             u32 NearDrawSlot = 0;
             /// @brief Whether ClaimDrawSlots seated the near material.
             bool NearSeated = false;
+            /// @brief The resident material its far tiles draw with, or null for none.
+            const MaterialInstance* FarMaterial = nullptr;
+            /// @brief The drawn metres a pixel spans past which a tile draws with FarMaterial.
+            f32 FarFootprint = 0.0f;
+            /// @brief The far material's DrawData slot, region-relative; valid when FarSeated.
+            u32 FarDrawSlot = 0;
+            /// @brief Whether ClaimDrawSlots seated the far material.
+            bool FarSeated = false;
         };
 
         /// @brief One selected terrain this frame.
@@ -263,6 +271,10 @@ namespace Veng::Renderer
             std::array<uvec2, SphereTerrainSurfaceCount> NearLists{};
             /// @brief Per surface, its translucent near list's first entry and count.
             std::array<uvec2, SphereTerrainSurfaceCount> NearTranslucentLists{};
+            /// @brief Per surface, its main-view far list's first entry and count.
+            std::array<uvec2, SphereTerrainSurfaceCount> FarLists{};
+            /// @brief Per surface, its translucent far list's first entry and count.
+            std::array<uvec2, SphereTerrainSurfaceCount> FarTranslucentLists{};
             /// @brief The frame slot's set-4 descriptor set it binds.
             const DescriptorSet* Set = nullptr;
             /// @brief What its frame was culled from, kept for its records' write.
@@ -328,6 +340,8 @@ namespace Veng::Renderer
         vec3 m_CameraPosition{0.0f};
         /// @brief Where the selected scene's origin stands in the stable frame.
         dvec3 m_FrameOrigin{0.0};
+        /// @brief The smallest angle one of the selected view's pixels subtends, in radians.
+        f64 m_MinPixelAngle = 0.0;
         /// @brief The selected view's eye in the stable frame.
         dvec3 m_EyeStable{0.0};
         /// @brief The shadow views the frame prepared lists for.
