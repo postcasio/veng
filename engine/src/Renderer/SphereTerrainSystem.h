@@ -97,7 +97,9 @@ namespace Veng::Renderer
         /// A translucent layer's draw sorts with the frame's other translucent draws by its
         /// material's priority, then at its sphere's centre distance from the eye, so within a
         /// priority it draws behind every translucent nearer than the centre. Its slot is one of
-        /// the slots claimed here, not one of the appended draws'.
+        /// the slots claimed here, not one of the appended draws'. A layer with a near material
+        /// appends a second draw for its near tiles, sorted just nearer than the first, so the
+        /// near tiles draw over the far ones.
         /// @param drawData     The frame's DrawData region (already offset by the frame base).
         /// @param budget       The frame's draw budget.
         /// @param translucent  The frame's full-resolution translucent draws, appended to unsorted.
@@ -198,6 +200,14 @@ namespace Veng::Renderer
             bool Seated = false;
             /// @brief Whether it draws in the translucent pass rather than the g-buffer.
             bool Translucent = false;
+            /// @brief The resident material its near tiles draw with, or null for none.
+            const MaterialInstance* NearMaterial = nullptr;
+            /// @brief The drawn distance within which a tile draws with NearMaterial.
+            f32 NearDistance = 0.0f;
+            /// @brief The near material's DrawData slot, region-relative; valid when NearSeated.
+            u32 NearDrawSlot = 0;
+            /// @brief Whether ClaimDrawSlots seated the near material.
+            bool NearSeated = false;
         };
 
         /// @brief One selected terrain this frame.
@@ -225,6 +235,10 @@ namespace Veng::Renderer
             vector<std::array<uvec2, SphereTerrainSurfaceCount>> Lists;
             /// @brief Per surface, its translucent list's first entry and count in the list buffer.
             std::array<uvec2, SphereTerrainSurfaceCount> TranslucentLists{};
+            /// @brief Per surface, its main-view near list's first entry and count.
+            std::array<uvec2, SphereTerrainSurfaceCount> NearLists{};
+            /// @brief Per surface, its translucent near list's first entry and count.
+            std::array<uvec2, SphereTerrainSurfaceCount> NearTranslucentLists{};
             /// @brief The frame slot's set-4 descriptor set it binds.
             const DescriptorSet* Set = nullptr;
         };

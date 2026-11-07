@@ -4401,6 +4401,18 @@ a budget near 550, about a 700-tile pool.
   `TerrainTileHeld` and `TerrainTileOverlay` (below). Each drawn surface
   takes one `DrawBudget` slot (`DrawPhase::SphereTerrain`) for its material and an identity frame;
   the push block's `InstanceDraw` names it and `InstanceBuffer` the surface drawn.
+- **The near material.** A material whose fragment writes its own depth (`GBufferDepthOutput`)
+  disables early depth rejection for everything it draws, and the ground filling the screen is
+  where that costs most. So the terrain and each level layer may name a `NearMaterial` and a
+  `NearDistance` (drawn metres, after the scale about the eye; 0 disables it): a main-view tile
+  whose cull box's farthest corner, scaled about the eye, lies within the distance draws with the
+  near material instead — the Euclidean distance bounds the forward depth from above, so the test
+  is conservative. `BuildSphereTerrainFrame` puts such a tile in `SphereTerrainFrame::NearLists` (or
+  `NearTranslucentLists` for a translucent layer) and not in its surface's own list, so no tile
+  draws twice and each surface issues at most two instanced draws per view, each on a `DrawData`
+  slot of its own (a translucent layer's near draw sorts just nearer than its far one). The near
+  material must draw in the same pass as its surface's (reported and ignored otherwise); the
+  shadow views take no near list (`tests/unit/sphere_terrain_cull.cpp`).
 - **Level layers** (`SphereTerrain::LevelLayers`, at most `MaxSphereTerrainLevelLayers`): each a
   second terrain material drawn over the same selection at a constant height in place of the height
   channel, with the terrain's placement, morph, scale and helpers, only on tiles whose working range

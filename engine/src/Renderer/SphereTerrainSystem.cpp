@@ -361,7 +361,35 @@ namespace Veng::Renderer
                     return;
                 }
             };
+            // A near material draws in its surface's pass, so it must take the same verdict.
+            const auto ResolveNear =
+                [&](Surface& surface, const AssetHandle<MaterialInstance>& handle,
+                    const f32 distance, const bool levelLayer, const string& what)
+            {
+                if (surface.Material == nullptr || distance <= 0.0f || !handle.IsLoaded())
+                {
+                    return;
+                }
+                const MaterialInstance* material = handle.Get();
+                const Material& parent = *material->GetParent().Get();
+                const SphereTerrainMaterialVerdict verdict = CheckSphereTerrainMaterial(
+                    parent.GetDomain(), parent.IsSphereTerrain(), levelLayer);
+                const SphereTerrainMaterialVerdict wanted =
+                    surface.Translucent ? SphereTerrainMaterialVerdict::Translucent
+                                        : SphereTerrainMaterialVerdict::Opaque;
+                if (verdict != wanted)
+                {
+                    Report(entity, fmt::format("{} near material '{}' does not draw in the pass "
+                                               "its material does, so it is not drawn",
+                                               what, parent.GetName()));
+                    return;
+                }
+                surface.NearMaterial = material;
+                surface.NearDistance = distance;
+            };
             Resolve(entry.Surfaces[0], terrain.Material, false, "its");
+            ResolveNear(entry.Surfaces[0], terrain.NearMaterial, terrain.NearDistance, false,
+                        "its");
             result.Stats.SkippedTerrains = entry.Surfaces[0].Material == nullptr ? 1u : 0u;
             if (terrain.LevelLayers.size() > MaxSphereTerrainLevelLayers)
             {
@@ -375,8 +403,10 @@ namespace Veng::Renderer
             {
                 Surface& surface = entry.Surfaces[1 + layer];
                 surface.Height = terrain.LevelLayers[layer].Height;
-                Resolve(surface, terrain.LevelLayers[layer].Material, true,
-                        fmt::format("its layer {}", layer));
+                const SphereTerrainLevelLayer& authored = terrain.LevelLayers[layer];
+                Resolve(surface, authored.Material, true, fmt::format("its layer {}", layer));
+                ResolveNear(surface, authored.NearMaterial, authored.NearDistance, true,
+                            fmt::format("its layer {}", layer));
             }
 
             // The cascades fit to the casters near the eye, not to a terrain reaching the horizon.
@@ -426,37 +456,47 @@ namespace Veng::Renderer
             for (const Surface& surface : terrain.Surfaces)
             {
                 wanted += surface.Material != nullptr ? 1u : 0u;
+                wanted += surface.NearMaterial != nullptr ? 1u : 0u;
             }
         }
         bool exhausted = false;
+        const auto Claim = [&](const Terrain& terrain, const MaterialInstance& material, u32& slot)
+        {
+            if (exhausted)
+            {
+                return false;
+            }
+            if (!budget.TryClaimSlot(slot))
+            {
+                budget.RecordDropped(DrawPhase::SphereTerrain, wanted);
+                exhausted = true;
+                return false;
+            }
+            wanted--;
+            const mat4 identity(1.0f);
+            drawData[slot] = GpuDrawData{
+                .World = identity,
+                .NormalColumn0 = vec4(1.0f, 0.0f, 0.0f, 0.0f),
+                .NormalColumn1 = vec4(0.0f, 1.0f, 0.0f, 0.0f),
+                .NormalColumn2 = vec4(0.0f, 0.0f, 1.0f, 0.0f),
+                .MaterialOffset = material.GetMaterialSelector(),
+                .EntityIndex = terrain.Owner.Index,
+                .PrevWorld = identity,
+            };
+            return true;
+        };
         for (Terrain& terrain : m_Terrains)
         {
             for (Surface& surface : terrain.Surfaces)
             {
-                if (surface.Material == nullptr || exhausted)
+                if (surface.Material == nullptr)
                 {
                     continue;
                 }
-                u32 slot = 0;
-                if (!budget.TryClaimSlot(slot))
-                {
-                    budget.RecordDropped(DrawPhase::SphereTerrain, wanted);
-                    exhausted = true;
-                    continue;
-                }
-                wanted--;
-                const mat4 identity(1.0f);
-                drawData[slot] = GpuDrawData{
-                    .World = identity,
-                    .NormalColumn0 = vec4(1.0f, 0.0f, 0.0f, 0.0f),
-                    .NormalColumn1 = vec4(0.0f, 1.0f, 0.0f, 0.0f),
-                    .NormalColumn2 = vec4(0.0f, 0.0f, 1.0f, 0.0f),
-                    .MaterialOffset = surface.Material->GetMaterialSelector(),
-                    .EntityIndex = terrain.Owner.Index,
-                    .PrevWorld = identity,
-                };
-                surface.DrawSlot = slot;
-                surface.Seated = true;
+                surface.Seated = Claim(terrain, *surface.Material, surface.DrawSlot);
+                // The near tiles draw with the surface's own material when theirs is unseated.
+                surface.NearSeated = surface.Seated && surface.NearMaterial != nullptr &&
+                                     Claim(terrain, *surface.NearMaterial, surface.NearDrawSlot);
             }
         }
 
@@ -485,6 +525,25 @@ namespace Veng::Renderer
                     .Terrain = this,
                     .TerrainIndex = index,
                     .TerrainSurface = surface,
+                });
+                appended++;
+                if (!layer.NearSeated)
+                {
+                    continue;
+                }
+                // Just nearer than the far tiles' draw, which every near tile stands in front of.
+                translucent.push_back(TranslucentDraw{
+                    .Material = layer.NearMaterial,
+                    .SourceMesh = nullptr,
+                    .IndexCount = SphereTerrainGridIndexCount,
+                    .FirstIndex = 0,
+                    .CandidateId = layer.NearDrawSlot,
+                    .ViewDepth = std::nextafter(-distance, 0.0f),
+                    .SortPriority = layer.Material->GetParent()->GetSortPriority(),
+                    .Terrain = this,
+                    .TerrainIndex = index,
+                    .TerrainSurface = surface,
+                    .TerrainNear = true,
                 });
                 appended++;
             }
@@ -519,6 +578,8 @@ namespace Veng::Renderer
         {
             terrain.Lists.clear();
             terrain.TranslucentLists = {};
+            terrain.NearLists = {};
+            terrain.NearTranslucentLists = {};
             terrain.Set = nullptr;
             Memory& memory = *terrain.Mem;
             const bool anySurface = std::ranges::any_of(terrain.Surfaces, [](const Surface& surface)
@@ -548,6 +609,11 @@ namespace Veng::Renderer
             {
                 input.LayerHeights[layer] = terrain.Surfaces[1 + layer].Height;
                 input.TranslucentLayers[layer] = terrain.Surfaces[1 + layer].Translucent;
+            }
+            for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
+            {
+                const Surface& drawn = terrain.Surfaces[surface];
+                input.NearDistances[surface] = drawn.NearSeated ? drawn.NearDistance : 0.0f;
             }
             input.Main = {.Planes = BodyPlanes(frustum, 4, toBody, cameraScene), .Horizon = true};
             for (usize v = 0; v < shadowFrusta.size(); v++)
@@ -610,24 +676,30 @@ namespace Veng::Renderer
                     stats.Triangles += static_cast<u64>(count) * SphereTerrainTileTriangles;
                 }
             }
-            for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
+            const auto AppendMain = [&](const vector<u32>& list, const bool drawnSurface)
             {
-                const vector<u32>& list = frame.TranslucentLists[surface];
-                const bool drawnSurface = terrain.Surfaces[surface].Material != nullptr;
-                terrain.TranslucentLists[surface] = {static_cast<u32>(lists.size()),
-                                                     drawnSurface ? static_cast<u32>(list.size())
-                                                                  : 0u};
+                const uvec2 range{static_cast<u32>(lists.size()),
+                                  drawnSurface ? static_cast<u32>(list.size()) : 0u};
                 if (!drawnSurface)
                 {
-                    continue;
+                    return range;
                 }
                 for (const u32 index : list)
                 {
                     lists.push_back(base + index);
                 }
-                const u32 count = static_cast<u32>(list.size());
-                stats.MainViewTiles += count;
-                stats.Triangles += static_cast<u64>(count) * SphereTerrainTileTriangles;
+                stats.MainViewTiles += range.y;
+                stats.Triangles += static_cast<u64>(range.y) * SphereTerrainTileTriangles;
+                return range;
+            };
+            for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
+            {
+                const bool drawnSurface = terrain.Surfaces[surface].Material != nullptr;
+                terrain.TranslucentLists[surface] =
+                    AppendMain(frame.TranslucentLists[surface], drawnSurface);
+                terrain.NearLists[surface] = AppendMain(frame.NearLists[surface], drawnSurface);
+                terrain.NearTranslucentLists[surface] =
+                    AppendMain(frame.NearTranslucentLists[surface], drawnSurface);
             }
             stats.CulledByFrustum = frame.CulledByFrustum;
             stats.CulledByHorizon = frame.CulledByHorizon;
@@ -719,27 +791,39 @@ namespace Veng::Renderer
             for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
             {
                 const Surface& drawn = terrain.Surfaces[surface];
-                const uvec2 list = terrain.Lists[0][surface];
-                if (!drawn.Seated || drawn.Translucent || list.y == 0)
+                if (!drawn.Seated || drawn.Translucent)
                 {
                     continue;
                 }
-                const bool readsShadowMaps =
-                    shadowReaders.BindPipeline(cmd, *drawn.Material, SurfacePipelineKind::Static);
-                registry.Bind(cmd);
-                cmd.BindDescriptorSets({drawDataSet.get(), terrain.Set},
-                                       BindlessRegistry::FirstUserSet);
-                if (readsShadowMaps)
+                const auto Draw =
+                    [&](const MaterialInstance& material, const u32 drawSlot, const uvec2 list)
                 {
-                    shadowReaders.BindShadowSet(cmd);
+                    if (list.y == 0)
+                    {
+                        return;
+                    }
+                    const bool readsShadowMaps =
+                        shadowReaders.BindPipeline(cmd, material, SurfacePipelineKind::Static);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets({drawDataSet.get(), terrain.Set},
+                                           BindlessRegistry::FirstUserSet);
+                    if (readsShadowMaps)
+                    {
+                        shadowReaders.BindShadowSet(cmd);
+                    }
+                    SurfacePush terrainPush = push;
+                    terrainPush.InstanceBuffer = surface;
+                    terrainPush.InstanceDraw = drawSlot;
+                    terrainPush.InstanceBase = 0;
+                    cmd.PushConstants(terrainPush);
+                    cmd.BindIndexBuffer(m_GridIndices, IndexType::U16);
+                    cmd.DrawIndexed(SphereTerrainGridIndexCount, list.y, 0, 0, list.x);
+                };
+                Draw(*drawn.Material, drawn.DrawSlot, terrain.Lists[0][surface]);
+                if (drawn.NearSeated)
+                {
+                    Draw(*drawn.NearMaterial, drawn.NearDrawSlot, terrain.NearLists[surface]);
                 }
-                SurfacePush terrainPush = push;
-                terrainPush.InstanceBuffer = surface;
-                terrainPush.InstanceDraw = drawn.DrawSlot;
-                terrainPush.InstanceBase = 0;
-                cmd.PushConstants(terrainPush);
-                cmd.BindIndexBuffer(m_GridIndices, IndexType::U16);
-                cmd.DrawIndexed(SphereTerrainGridIndexCount, list.y, 0, 0, list.x);
             }
         }
     }
@@ -753,7 +837,8 @@ namespace Veng::Renderer
             return;
         }
         const Terrain& terrain = m_Terrains[draw.TerrainIndex];
-        const uvec2 list = terrain.TranslucentLists[draw.TerrainSurface];
+        const uvec2 list = draw.TerrainNear ? terrain.NearTranslucentLists[draw.TerrainSurface]
+                                            : terrain.TranslucentLists[draw.TerrainSurface];
         if (terrain.Set == nullptr || list.y == 0)
         {
             return;

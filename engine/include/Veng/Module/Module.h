@@ -668,10 +668,12 @@ extern "C"
 /// cubes and requests their bakes, so a stale one lays the cube out short.
 /// Version 168 selects sphere terrain by distance alone: SphereTerrainSelectionSettings loses
 /// TargetHeightErrorPixels, so a stale module lays the settings out long.
+/// Version 169 gives a sphere terrain a near material: SphereTerrain and SphereTerrainLevelLayer
+/// grow NearMaterial and NearDistance. A module spawns terrains, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 168u
+#define VENG_MODULE_ABI_VERSION 169u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

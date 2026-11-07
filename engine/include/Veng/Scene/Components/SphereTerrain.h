@@ -28,6 +28,15 @@ namespace Veng
         AssetHandle<MaterialInstance> Material;
         /// @brief The layer's height above the sphere's radius, in metres.
         f32 Height = 0.0f;
+        /// @brief The material the layer's nearby tiles draw with in place of Material, or null
+        ///        for none (see SphereTerrain::NearMaterial).
+        ///
+        /// It must draw in the same pass as Material: a Surface material beside a Surface one, a
+        /// Translucent beside a Translucent; otherwise it is reported once and not drawn.
+        AssetHandle<MaterialInstance> NearMaterial;
+        /// @brief The drawn distance from the eye within which a tile draws the layer with
+        ///        NearMaterial; zero draws every tile with Material.
+        f32 NearDistance = 0.0f;
     };
 
     /// @brief A sphere's terrain, drawn from a shared Renderer::SphereTerrainSource.
@@ -77,6 +86,24 @@ namespace Veng
         /// scaled fragment at its scaled position unless the material writes a depth of its own
         /// (`TerrainTrueDeviceDepth`).
         f32 Scale = 1.0f;
+        /// @brief The Surface material the terrain's nearby tiles draw with in place of Material,
+        ///        or null for none; it must declare "sphereTerrain".
+        ///
+        /// A material whose fragment writes its own depth (`GBufferDepthOutput`, as a terrain at a
+        /// scale about the eye does to stand at its true depth) disables early depth rejection
+        /// for every fragment it draws, and the ground filling the screen is where that costs
+        /// most. A consumer whose material needs the written depth only far away names a second
+        /// material that writes none: a tile whose bound lies wholly within NearDistance of the
+        /// eye draws with it, so the tiles covering the screen keep early rejection. Each tile
+        /// draws with exactly one of the two, and the shadow views are unaffected.
+        AssetHandle<MaterialInstance> NearMaterial;
+        /// @brief The drawn distance from the eye within which a tile draws with NearMaterial, in
+        ///        metres after the scale about the eye; zero draws every tile with Material.
+        ///
+        /// A tile qualifies when its bound's farthest corner, scaled about the eye by Scale, lies
+        /// within this distance. The Euclidean distance bounds a point's forward depth from above,
+        /// so every fragment of a qualifying tile stands nearer than it.
+        f32 NearDistance = 0.0f;
         /// @brief The level layers drawn over the terrain; past MaxSphereTerrainLevelLayers the
         ///        rest are ignored.
         vector<SphereTerrainLevelLayer> LevelLayers;
@@ -100,6 +127,11 @@ VE_REFLECT(::Veng::SphereTerrainLevelLayer, 0xDF994550C064BA0AULL)
 VE_FIELD(Material, .DisplayName = "Material",
          .Tooltip = "A Surface or Translucent material declaring sphereTerrain")
 VE_FIELD(Height, .DisplayName = "Height", .Tooltip = "Metres above the sphere's radius")
+VE_FIELD(NearMaterial, .DisplayName = "Near material",
+         .Tooltip = "Drawn in place of Material by tiles within the near distance")
+VE_FIELD(NearDistance, .DisplayName = "Near distance",
+         .Tooltip = "Drawn metres from the eye within which tiles take the near material",
+         .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::SphereTerrain, 0xB41B55C78CFC7E4FULL)
@@ -111,6 +143,11 @@ VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(TargetPixelsPerQuad, .DisplayName = "Target pixels per quad",
          .Tooltip = "Pixels a grid quad may span before its tile splits", .Display = {.Min = 1.0})
 VE_FIELD(Scale, .DisplayName = "Scale", .Tooltip = "Uniform scale about the eye",
+         .Display = {.Min = 0.0})
+VE_FIELD(NearMaterial, .DisplayName = "Near material",
+         .Tooltip = "A Surface material drawn by tiles within the near distance")
+VE_FIELD(NearDistance, .DisplayName = "Near distance",
+         .Tooltip = "Drawn metres from the eye within which tiles take the near material",
          .Display = {.Min = 0.0})
 VE_ARRAY_FIELD(LevelLayers, .DisplayName = "Level layers",
                .Tooltip = "Surfaces drawn at a constant height over the terrain")

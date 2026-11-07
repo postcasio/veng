@@ -28,6 +28,16 @@ namespace Veng::Renderer
             return false;
         }
 
+        f64 FarthestCorner(const std::array<dvec3, 8>& corners, const dvec3& eye)
+        {
+            f64 farthest = 0.0;
+            for (const dvec3& corner : corners)
+            {
+                farthest = std::max(farthest, glm::length(corner - eye));
+            }
+            return farthest;
+        }
+
         vec4 Point(const dvec3& p)
         {
             return {vec3(p), 0.0f};
@@ -132,6 +142,10 @@ namespace Veng::Renderer
                     frame.CulledByHorizon += view == 0 ? 1u : 0u;
                     continue;
                 }
+                // The farthest corner in drawn units bounds every fragment's distance from above.
+                const f64 farthest =
+                    view == 0 ? static_cast<f64>(input.Scale) * FarthestCorner(corners, input.Eye)
+                              : 0.0;
                 bool listed = false;
                 for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
                 {
@@ -139,9 +153,20 @@ namespace Veng::Renderer
                     {
                         continue;
                     }
-                    (translucent[surface] ? frame.TranslucentLists[surface]
-                                          : frame.Lists[view][surface])
-                        .push_back(recordIndex);
+                    const f32 nearDistance = input.NearDistances[surface];
+                    const bool near = view == 0 && nearDistance > 0.0f &&
+                                      farthest <= static_cast<f64>(nearDistance);
+                    if (translucent[surface])
+                    {
+                        (near ? frame.NearTranslucentLists[surface]
+                              : frame.TranslucentLists[surface])
+                            .push_back(recordIndex);
+                    }
+                    else
+                    {
+                        (near ? frame.NearLists[surface] : frame.Lists[view][surface])
+                            .push_back(recordIndex);
+                    }
                     listed = true;
                 }
                 drawn = drawn || listed;

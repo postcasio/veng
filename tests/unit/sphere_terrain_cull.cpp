@@ -2,10 +2,12 @@
 // drops a tile with a point the eye can see; the lists a view draws do not depend on the scale
 // about the eye, while a scaled terrain casts into no shadow view; a level layer draws a tile
 // only where the ground dips below it; a translucent layer's tiles are in the translucent list
-// alone; and a record carries its tile's hold, and the tile overlay only when the frame asks for it.
+// alone; a record carries its tile's hold, and the tile overlay only when the frame asks for it;
+// and a near distance splits the main view's tiles between the two materials.
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <doctest/doctest.h>
@@ -351,4 +353,81 @@ TEST_CASE("sphere terrain cull: a record carries its hold, and the tile overlay 
     CHECK(onOverlay == drawn.size());
     CHECK(heldMismatch == 0u);
     CHECK(otherFlagsDiffer == 0u);
+}
+
+TEST_CASE("sphere terrain cull: a near distance splits the main view's tiles between two lists")
+{
+    const FlatPool pool;
+    const dvec3 eye = Up() * (Radius + 50.0);
+    const vector<SphereTerrainDrawnTile> drawn = Select(pool, eye);
+    std::unordered_map<u64, const SphereTerrainDrawnTile*> byKey;
+    for (const SphereTerrainDrawnTile& tile : drawn)
+    {
+        byKey[tile.Key.Value] = &tile;
+    }
+    const auto Build = [&](const f32 scale, const f32 nearDistance)
+    {
+        SphereTerrainFrameInput input{
+            .Drawn = drawn,
+            .Radius = Radius,
+            .MinHeight = MinHeight,
+            .MaxHeight = MaxHeight,
+            .Eye = eye,
+            .CenterFromEye = -eye,
+            .PrevCenterFromCamera = -eye,
+            .Scale = scale,
+            .Main = OpenView(),
+        };
+        input.NearDistances[0] = nearDistance;
+        return BuildSphereTerrainFrame(input);
+    };
+    constexpr f32 Near = 2000.0f;
+    const SphereTerrainFrame whole = Build(1.0f, 0.0f);
+    const SphereTerrainFrame split = Build(1.0f, Near);
+    CHECK(whole.NearLists[0].empty());
+
+    // Every tile drawn once: the two lists partition what the unsplit view draws.
+    vector<u64> both = ListKeys(split, 0);
+    const vector<u64> near = Keys(split, split.NearLists[0]);
+    both.insert(both.end(), near.begin(), near.end());
+    std::ranges::sort(both);
+    vector<u64> all = ListKeys(whole, 0);
+    std::ranges::sort(all);
+    CHECK(both == all);
+    CHECK(std::ranges::adjacent_find(both) == both.end());
+
+    // A near tile's whole bound lies inside the distance; a far one reaches past it.
+    const auto Farthest = [&](const u64 key)
+    {
+        const SphereTerrainDrawnTile& tile = *byKey.at(key);
+        const SphereTerrainTileBox box =
+            ComputeSphereTerrainTileBox(tile.Key, Radius, tile.MinHeight, tile.MaxHeight);
+        f64 farthest = 0.0;
+        for (const dvec3& corner : SphereTerrainBoxCorners(box))
+        {
+            farthest = std::max(farthest, glm::length(corner - eye));
+        }
+        return farthest;
+    };
+    u32 nearOutside = 0;
+    u32 farInside = 0;
+    for (const u64 key : near)
+    {
+        nearOutside += Farthest(key) > Near ? 1u : 0u;
+    }
+    for (const u64 key : ListKeys(split, 0))
+    {
+        farInside += Farthest(key) <= Near ? 1u : 0u;
+    }
+    CHECK_FALSE(near.empty());
+    CHECK_FALSE(ListKeys(split, 0).empty());
+    CHECK(nearOutside == 0u);
+    CHECK(farInside == 0u);
+
+    // A terrain drawn at a scale about the eye measures the distance in drawn units.
+    const SphereTerrainFrame scaled = Build(0.5f, Near * 0.5f);
+    CHECK(Keys(scaled, scaled.NearLists[0]) == near);
+    // A surface without a distance, and the translucent pass, take no near list.
+    CHECK(split.NearLists[1].empty());
+    CHECK(split.NearTranslucentLists[0].empty());
 }

@@ -86,6 +86,12 @@ namespace Veng::Renderer
         /// @brief Per level layer, whether it draws in the translucent pass: its main-view tiles go
         ///        to SphereTerrainFrame::TranslucentLists, and it casts into no shadow view.
         std::array<bool, MaxSphereTerrainLevelLayers> TranslucentLayers{};
+        /// @brief Per surface, the drawn distance within which a main-view tile draws with the
+        ///        surface's near material; zero draws none with it.
+        ///
+        /// A tile qualifies when its bound's farthest corner, times Scale, lies within it. Its
+        /// g-buffer or translucent main-view entry then goes to the near lists instead.
+        std::array<f32, SphereTerrainSurfaceCount> NearDistances{};
         /// @brief The main view.
         SphereTerrainDrawView Main;
         /// @brief The shadow views, in the frame's shadow-view order.
@@ -110,6 +116,12 @@ namespace Veng::Renderer
         /// @brief Per surface, the records the main view draws in the translucent pass; empty but
         ///        for a translucent layer.
         std::array<vector<u32>, SphereTerrainSurfaceCount> TranslucentLists;
+        /// @brief Per surface, the main view's g-buffer records drawn with the near material,
+        ///        which Lists[0] then leaves out.
+        std::array<vector<u32>, SphereTerrainSurfaceCount> NearLists;
+        /// @brief Per surface, the main view's translucent records drawn with the near material,
+        ///        which TranslucentLists then leaves out.
+        std::array<vector<u32>, SphereTerrainSurfaceCount> NearTranslucentLists;
         /// @brief Drawn tiles the main view's frustum culled.
         u32 CulledByFrustum = 0;
         /// @brief Drawn tiles the main view culled below the horizon.
@@ -125,7 +137,9 @@ namespace Veng::Renderer
     /// do not depend on the scale; a terrain at a scale other than one, or not casting, draws into
     /// no shadow view. A level layer draws a tile only where the tile's working range dips below
     /// the layer's height. A translucent layer's main-view tiles go to the translucent lists alone,
-    /// and it draws into no shadow view.
+    /// and it draws into no shadow view. A main-view tile whose bound lies wholly within a
+    /// surface's near distance is listed in that surface's near list in place of its own; the
+    /// shadow views take no near list.
     [[nodiscard]] VE_API SphereTerrainFrame
     BuildSphereTerrainFrame(const SphereTerrainFrameInput& input);
 }

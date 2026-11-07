@@ -136,6 +136,8 @@ namespace Veng::Renderer
         u32 TerrainIndex = 0;
         // The surface drawn: 1 + l for level layer l.
         u32 TerrainSurface = 0;
+        // Whether the draw is the surface's near material, drawing its near tiles.
+        bool TerrainNear = false;
     };
 
     // The per-frame forward translucent submission plan SceneRenderer fills before each graph
