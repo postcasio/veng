@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <Veng/Veng.h>
@@ -8,26 +9,10 @@
 #include <Veng/Renderer/SphereTerrain.h>
 
 #include "SphereTerrainResidency.h"
+#include "SphereTerrainTileFacts.h"
 
 namespace Veng::Renderer
 {
-    /// @brief A tile's bound: a box in the tile's own frame (its centre's tangent plane and
-    ///        normal), over its corners, edge midpoints and centre at both ends of its working
-    ///        height range, grown by the sphere's sagitta between those samples.
-    ///
-    /// Oriented to the tile, so its diameter is the tile's own whatever face the tile is on.
-    struct SphereTerrainTileBox
-    {
-        /// @brief The frame's origin, on the sphere below the tile's centre, body-fixed metres.
-        dvec3 Origin{0.0};
-        /// @brief The frame's axes: across the tile along u, across it along v, and outward.
-        std::array<dvec3, 3> Axes{};
-        /// @brief The box's lower corner in the frame.
-        dvec3 Min{0.0};
-        /// @brief The box's upper corner in the frame.
-        dvec3 Max{0.0};
-    };
-
     /// @brief A level's largest vertex spacing, in metres: an upper bound on any tile's longest
     ///        edge arc at the level over the grid's quads, halving exactly per level.
     [[nodiscard]] VE_API f64 SphereTerrainLevelSpacing(f64 radius, u32 level);
@@ -71,6 +56,10 @@ namespace Veng::Renderer
     /// hidden corners hide the box; the test is conservative.
     [[nodiscard]] VE_API bool IsBoxBelowHorizon(const SphereTerrainTileBox& box, const dvec3& eye,
                                                 f64 occluderRadius);
+
+    /// @brief Whether a box whose eight corners are given is hidden by the occluder sphere.
+    [[nodiscard]] VE_API bool IsBoxBelowHorizon(const std::array<dvec3, 8>& corners,
+                                                const dvec3& eye, f64 occluderRadius);
 
     /// @brief What a renderer's selection of one sphere terrain reads.
     struct SphereTerrainSelectionInput
@@ -156,16 +145,77 @@ namespace Veng::Renderer
         SphereTerrainSelectionStats Stats;
     };
 
-    /// @brief Selects a sphere terrain's tiles for one view: split by screen-space error with
-    ///        hysteresis, waiting on residency, 2:1 balanced, with morph ranges per drawn tile.
+    /// @brief A visited tile's working bound and placement, which the selection keeps to emit the
+    ///        drawn set after balance.
+    struct SphereTerrainSelectionNode
+    {
+        /// @brief The working range's bottom: the union of the tile's range and its parent's.
+        f32 WorkingMin = 0.0f;
+        /// @brief The working range's top.
+        f32 WorkingMax = 0.0f;
+        /// @brief The tile's own range's bottom.
+        f32 OwnMin = 0.0f;
+        /// @brief The tile's own range's top.
+        f32 OwnMax = 0.0f;
+        /// @brief The tile's MorphError, measured or bounded.
+        f32 MorphError = 0.0f;
+        /// @brief Its pool layer.
+        u32 Layer = 0;
+    };
+
+    /// @brief A tile wanting to split, waiting its turn for the budget, or one whose children
+    ///        are worth prefetching.
+    struct SphereTerrainSplitCandidate
+    {
+        /// @brief The distance it ranks at.
+        f64 Order = 0.0;
+        /// @brief The tile.
+        CubeSphereTileKey Key;
+        /// @brief How far its error exceeds the threshold.
+        f32 Urgency = 0.0f;
+        /// @brief Whether its bound meets the view frustum.
+        bool InFrustum = true;
+
+        /// @brief The ranking: nearer first, ties on the key.
+        [[nodiscard]] bool operator>(const SphereTerrainSplitCandidate& other) const
+        {
+            return Order != other.Order ? Order > other.Order : Key.Value > other.Key.Value;
+        }
+    };
+
+    /// @brief The working containers one selection fills, kept by the caller across frames so a
+    ///        selection clears them rather than allocating them afresh.
+    struct SphereTerrainSelectionScratch
+    {
+        /// @brief The visited tiles.
+        std::unordered_map<u64, SphereTerrainSelectionNode> Nodes;
+        /// @brief The tiles held whole.
+        std::unordered_set<u64> Held;
+        /// @brief The tiles whose children were requested.
+        std::unordered_set<u64> Requested;
+        /// @brief The split queue, a min-heap on SphereTerrainSplitCandidate's ranking.
+        vector<SphereTerrainSplitCandidate> Splits;
+        /// @brief The prefetch candidates.
+        vector<SphereTerrainSplitCandidate> Prefetches;
+    };
+
+    /// @brief Selects a sphere terrain's tiles for one view: split by distance with hysteresis,
+    ///        waiting on residency, 2:1 balanced, with morph ranges per drawn tile.
     ///
     /// Device-free and pure. A drawn tile at level L splits when its bound is nearer than
-    /// `(1 − h)·D_L` and merges past `(1 + h)·D_L`; it also splits when its MorphError, projected at
-    /// its bound's distance, exceeds the height-error target. A split happens only when all four
+    /// `(1 − h)·D_L` and merges past `(1 + h)·D_L`, by distance alone. A split happens only when all four
     /// children are resident; otherwise the tile is drawn and its children requested (the parent
     /// fallback). Subtrees are pruned below the horizon, past their level's range, and — beyond
     /// the omnidirectional radius — outside the view frustum, so a turn of the head finds the
     /// near tiles resident. Splits are taken nearest first under the input's tile budget.
     [[nodiscard]] VE_API SphereTerrainSelectionResult
     SelectSphereTerrain(const SphereTerrainSelectionInput& input);
+
+    /// @brief SelectSphereTerrain into a result and working containers the caller keeps.
+    ///
+    /// Both are cleared first and keep their capacity. @p result's Splits must not be the input's
+    /// PreviousSplits.
+    VE_API void SelectSphereTerrain(const SphereTerrainSelectionInput& input,
+                                    SphereTerrainSelectionScratch& scratch,
+                                    SphereTerrainSelectionResult& result);
 }

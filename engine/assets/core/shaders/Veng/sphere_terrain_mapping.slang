@@ -106,6 +106,33 @@ float SphereTerrainTileFraction(float s, float x0, float dtheta)
     return result;
 }
 
+// The fraction from the tile's arc terms (S(dtheta), C(dtheta) - x0 S(dtheta)), computed once per
+// tile on the host (CubeSphere::TileArcF32): the same quotient, exactly 0 at s = 0 and 1 at s = 1.
+float SphereTerrainTileFractionArc(float s, float x0, float dtheta, float2 arc)
+{
+    if (s == 0.0 || s == 1.0)
+    {
+        return s;
+    }
+    precise float a = s * dtheta;
+    precise float sinA = SphereTerrainSin(a);
+    precise float result = (sinA * arc.y) / (arc.x * SphereTerrainShifted(SphereTerrainCos(a), sinA, x0));
+    return result;
+}
+
+// The direction offset from corner weights w_i = b_i |Q_i| / sum b_j |Q_j| already computed for the
+// tile parameters: delta = sum w_i (d_i - d_c), then as SphereTerrainTileOffset.
+float3 SphereTerrainTileOffset(SphereTerrainTileConstants tile, float4 weights)
+{
+    precise float3 delta = weights.x * tile.Corners[0].xyz + weights.y * tile.Corners[1].xyz +
+                           weights.z * tile.Corners[2].xyz + weights.w * tile.Corners[3].xyz;
+    float3 center = tile.CenterHigh.xyz;
+    precise float shortfall = 2.0 * dot(center, delta) + dot(delta, delta);
+    precise float m = sqrt(1.0 + shortfall);
+    precise float3 offset = (delta - center * (shortfall / (1.0 + m))) / m;
+    return offset;
+}
+
 // A direction relative to the tile's centre at tile parameters st (0 and 1 the tile's edges):
 // with bilinear weights of the warped fractions, w_i = b_i |Q_i| / sum b_j |Q_j| and
 // delta = sum w_i (d_i - d_c), the chord point is m = d_c + delta and its direction's offset is

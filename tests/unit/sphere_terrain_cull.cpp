@@ -3,7 +3,8 @@
 // about the eye, while a scaled terrain casts into no shadow view; a level layer draws a tile
 // only where the ground dips below it; a translucent layer's tiles are in the translucent list
 // alone; a record carries its tile's hold, and the tile overlay only when the frame asks for it;
-// and a near distance splits the main view's tiles between the two materials.
+// a near distance splits the main view's tiles between the two materials; and a tile's box rises to
+// the layers it draws and no further.
 
 #include <algorithm>
 #include <cmath>
@@ -430,4 +431,19 @@ TEST_CASE("sphere terrain cull: a near distance splits the main view's tiles bet
     // A surface without a distance, and the translucent pass, take no near list.
     CHECK(split.NearLists[1].empty());
     CHECK(split.NearTranslucentLists[0].empty());
+}
+
+TEST_CASE("sphere terrain cull: a drawn layer raises a tile's box and an undrawn one leaves it")
+{
+    const SphereTerrainDrawnTile tile{.MinHeight = 20.0f, .MaxHeight = 60.0f};
+    CHECK(SphereTerrainCullHeights(tile, std::span<const f32>{}) == vec2(20.0f, 60.0f));
+    // Above the ground's lowest point the layer is drawn on the tile, and the box reaches it.
+    const std::array<f32, 1> above = {100.0f};
+    CHECK(SphereTerrainCullHeights(tile, above) == vec2(20.0f, 100.0f));
+    // Inside the ground's range it is drawn, and the box already holds it.
+    const std::array<f32, 1> inside = {40.0f};
+    CHECK(SphereTerrainCullHeights(tile, inside) == vec2(20.0f, 60.0f));
+    // Below every height the tile holds it is not drawn, and the box does not reach down to it.
+    const std::array<f32, 1> below = {-500.0f};
+    CHECK(SphereTerrainCullHeights(tile, below) == vec2(20.0f, 60.0f));
 }

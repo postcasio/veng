@@ -8,7 +8,9 @@
 //
 // - TerrainChannel(input, channel, sampler) samples a payload channel blended with the parent's by
 //   the geometry's own morph, so at a coarse-fine edge the fine side shades as its parent, which is
-//   the coarse neighbour: the shading has no seam where the geometry has none.
+//   the coarse neighbour: the shading has no seam where the geometry has none. TerrainChannelAt
+//   does the same at caller-given coordinates, for a channel held at a divisor of the resolution.
+//   Neither samples the parent where the fragment does not morph.
 // - TerrainTexelSize gives a tile texel's size in metres, for detail added by footprint above the
 //   tile's band; TerrainDirectionOffset and TerrainCenterHigh / TerrainCenterLow a fragment's
 //   body-fixed direction to full precision.
@@ -73,7 +75,7 @@ SphereTerrainFragmentInput SphereTerrainVertexStage(uint vertexIndex, uint listI
     output.Surface.v_MaterialOffset = draw.MaterialOffset;
     output.Surface.v_CandidateId = g_PC.InstanceDraw;
     output.Surface.v_Instance = uint2(InstanceNone, 0u);
-    const float3 offset = SphereTerrainTileOffset(r.Tile, v.St);
+    const float3 offset = SphereTerrainTileOffset(r.Tile, v.Weights);
     output.Surface.v_ObjectPosition = r.ChordsB.z * offset + v.Height * (r.Tile.CenterHigh.xyz + offset);
     output.v_TerrainParentUV = SphereTerrainGridUV(v.ParentGrid);
     output.v_TerrainMorph = v.Morph;
@@ -112,14 +114,30 @@ float4 TerrainSampleChannel(uint channel, SamplerState samplerState, float2 uv, 
     }
 }
 
-// A payload channel at the fragment: the tile's sample blended with the parent's by the morph.
-float4 TerrainChannel(SphereTerrainFragmentInput input, uint channel, SamplerState samplerState)
+// A payload channel at caller-given coordinates on the tile's layer (uv) and its parent's
+// (parentUv), blended by the fragment's morph. For a channel held at a divisor of the tile's
+// resolution, whose coordinates differ from the full-resolution v_UV and v_TerrainParentUV. The
+// parent is sampled only where the fragment morphs, which is coherent across a tile's interior
+// (zero short of its morph start), so most fragments take one sample.
+float4 TerrainChannelAt(SphereTerrainFragmentInput input, uint channel, SamplerState samplerState,
+                        float2 uv, float2 parentUv)
 {
     const SphereTerrainRecord r = TerrainRecord(input);
-    const float4 own = TerrainSampleChannel(channel, samplerState, input.Surface.v_UV, r.Layers.x);
-    const float4 parent =
-        TerrainSampleChannel(channel, samplerState, input.v_TerrainParentUV, r.Layers.y);
+    const float4 own = TerrainSampleChannel(channel, samplerState, uv, r.Layers.x);
+    if (input.v_TerrainMorph <= 0.0)
+    {
+        return own;
+    }
+    const float4 parent = TerrainSampleChannel(channel, samplerState, parentUv, r.Layers.y);
     return lerp(own, parent, input.v_TerrainMorph);
+}
+
+// A payload channel at the fragment: the tile's sample blended with the parent's by the morph,
+// the parent sampled only where the fragment morphs (see TerrainChannelAt).
+float4 TerrainChannel(SphereTerrainFragmentInput input, uint channel, SamplerState samplerState)
+{
+    return TerrainChannelAt(input, channel, samplerState, input.Surface.v_UV,
+                            input.v_TerrainParentUV);
 }
 
 // The morph factor at the fragment.

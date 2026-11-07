@@ -1286,3 +1286,64 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
     // The tiles are still selected and generated: only the drawing is refused.
     CHECK(stats.DrawnTiles > 0u);
 }
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "sphere terrain: a capture's cube cycle selects once, so its faces request "
+                  "nothing the first face did not")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+    Context.GetGeneratedTextures().SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+    const Ref<SphereTerrainSource> source = MakeSource(Context, assets, 99, 512);
+
+    RegisterBuiltinTypes(Types);
+    const Unique<Scene> world = Scene::Create(Types);
+    Scene& scene = *world;
+    const dvec3 eye = glm::normalize(dvec3(0.5, 0.7, -0.3)) * (Radius + 1.0e4);
+    scene.Add<FloatingOrigin>(scene.CreateEntity()).Position = eye;
+    scene.Add<SphereTerrain>(scene.CreateEntity()).Source = source;
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Format::RGBA16Sfloat,
+        .Extent = {32, 32},
+        .Settings = SceneRendererSettings{.Mode = DebugView::Albedo, .Occlusion = false},
+    });
+    // The six faces a capture renders, one a frame, as SceneCapture orders them.
+    const std::array<vec3, 6> forward = {vec3(1, 0, 0),  vec3(-1, 0, 0), vec3(0, 1, 0),
+                                         vec3(0, -1, 0), vec3(0, 0, 1),  vec3(0, 0, -1)};
+    const std::array<vec3, 6> up = {vec3(0, -1, 0), vec3(0, -1, 0), vec3(0, 0, 1),
+                                    vec3(0, 0, -1), vec3(0, -1, 0), vec3(0, -1, 0)};
+    u32 firstFaceRequests = 0;
+    u32 laterFaceRequests = 0;
+    u32 drawnMismatch = 0;
+    for (u32 cycle = 0; cycle < 6; cycle++)
+    {
+        u32 cycleDrawn = 0;
+        for (u32 face = 0; face < 6; face++)
+        {
+            CameraView camera;
+            camera.SetPerspective(glm::radians(90.0f), 1.0f, 0.1f, 1000.0f);
+            camera.SetView(vec3(0.0f), forward[face], up[face]);
+            CommandBuffer& cmd = Context.BeginFrame();
+            renderer->Execute(cmd, Renderer::SceneView{.World = scene,
+                                                       .Camera = camera,
+                                                       .Delta = 0.0f,
+                                                       .VisibleLayers = CaptureView{}.VisibleLayers,
+                                                       .CaptureFace = true,
+                                                       .CaptureFaceIndex = face});
+            Context.EndFrame();
+            const SphereTerrainSelectionStats stats = renderer->GetSphereTerrainStats();
+            (face == 0 ? firstFaceRequests : laterFaceRequests) += stats.Requests;
+            if (face == 0)
+            {
+                cycleDrawn = stats.DrawnTiles;
+            }
+            drawnMismatch += stats.DrawnTiles != cycleDrawn ? 1u : 0u;
+        }
+    }
+    CHECK(firstFaceRequests > 0u);
+    CHECK(laterFaceRequests == 0u);
+    CHECK(drawnMismatch == 0u);
+}

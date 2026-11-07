@@ -101,6 +101,13 @@ namespace Veng::Renderer
     [[nodiscard]] VE_API SphereTerrainTileConstants
     PackSphereTerrainTileConstants(CubeSphereTileKey key, f64 radius);
 
+    /// @brief Packs a tile's GPU constants from its geometry, computed once by the caller.
+    /// @param key       The tile.
+    /// @param geometry  GetCubeSphereTileGeometry(key).
+    /// @param radius    The sphere's radius in metres.
+    [[nodiscard]] VE_API SphereTerrainTileConstants PackSphereTerrainTileConstants(
+        CubeSphereTileKey key, const CubeSphereTileGeometry& geometry, f64 radius);
+
     /// @brief Everything a generator needs to fill one tile.
     ///
     /// Handed to SphereTerrainGenerator::RecordTile from a generated-texture tick. The channel views
@@ -183,8 +190,8 @@ namespace Veng::Renderer
         /// @brief Writes the per-tile words the drawing stages read for a tile.
         ///
         /// For shading that needs per-tile constants the engine does not carry — a precision
-        /// anchor, a lattice offset reduced on the host. Called on the render thread the first
-        /// frame a tile is drawn or is a drawn tile's parent, and cached while it stays so; the
+        /// anchor, a lattice offset reduced on the host. Called on the render thread once each
+        /// time the pool takes a tile in, and cached while it holds the tile; the
         /// fragment reads the words through `TerrainTileData` and `TerrainParentTileData`
         /// (`Veng/sphere_terrain.slang`). The words must be a function of the key alone. Writes
         /// nothing by default, which leaves them zero.
@@ -421,6 +428,11 @@ namespace Veng::Renderer
         /// @brief A process-unique serial, which keys the source's generated-texture jobs and a
         ///        renderer's per-source selection memory.
         [[nodiscard]] u64 GetSerial() const;
+
+        /// @brief A count that moves whenever the pool's arrays are reallocated, so the views
+        ///        GetChannelArrayView returns change; a binding written from them is current while
+        ///        it holds.
+        [[nodiscard]] u64 GetViewGeneration() const;
 
         /// @brief The debug name.
         [[nodiscard]] const string& GetName() const;

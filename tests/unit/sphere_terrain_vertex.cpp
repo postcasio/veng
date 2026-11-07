@@ -391,3 +391,36 @@ TEST_CASE("sphere terrain vertex: drawn edges agree within the skirts that cover
     CHECK(uncovered == 0u);
     CHECK(worstGap > 0.0);
 }
+
+TEST_CASE("sphere terrain vertex: the record's arc terms give exact corner weights at the edges")
+{
+    const dvec3 up = glm::normalize(dvec3(0.83, 0.31, -0.47));
+    const dvec3 eye = up * (Radius + 10.0);
+    u32 inexact = 0;
+    for (const u32 level : {0u, 7u, 16u, 24u})
+    {
+        const SphereTerrainDrawnTile tile{.Key = TileAt(up, level)};
+        const SphereTerrainDrawRecord record = Records({&tile, 1}, eye)[0];
+        const vec4 warp = record.Tile.Warp;
+        for (const f32 s : {0.0f, 1.0f})
+        {
+            inexact +=
+                CubeSphere::TileFractionF32(s, warp.x, warp.y, {record.Arc.x, record.Arc.y}) == s
+                    ? 0u
+                    : 1u;
+            inexact +=
+                CubeSphere::TileFractionF32(s, warp.z, warp.w, {record.Arc.z, record.Arc.w}) == s
+                    ? 0u
+                    : 1u;
+        }
+        // Corner i = sx + 2 sy takes the whole weight at its own parameters.
+        for (u32 corner = 0; corner < 4; corner++)
+        {
+            const vec2 st(static_cast<f32>(corner & 1u), static_cast<f32>(corner >> 1));
+            vec4 expected(0.0f);
+            expected[static_cast<i32>(corner)] = 1.0f;
+            inexact += SphereTerrainCornerWeights(record, st) == expected ? 0u : 1u;
+        }
+    }
+    CHECK(inexact == 0u);
+}

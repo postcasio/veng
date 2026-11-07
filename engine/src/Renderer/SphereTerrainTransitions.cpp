@@ -22,6 +22,31 @@ namespace Veng::Renderer
                                     const std::span<const SphereTerrainDrawnTile> selected,
                                     const f32 delta, const SphereTerrainTileOracle& tiles)
     {
+        SphereTerrainTransitionFrame frame;
+        AdvanceSphereTerrainTransitions(state, selected, delta, tiles, frame);
+        return frame;
+    }
+
+    void AdvanceSphereTerrainTransitions(SphereTerrainTransitionState& state,
+                                         const std::span<const SphereTerrainDrawnTile> selected,
+                                         const f32 delta, const SphereTerrainTileOracle& tiles,
+                                         SphereTerrainTransitionFrame& frame)
+    {
+        SphereTerrainTransitionState::Scratch& work = state.Work;
+        frame.Drawn.clear();
+        frame.Floors.clear();
+        frame.Departing.clear();
+        frame.ArrivingTiles = 0;
+        work.Chosen.clear();
+        // A group's vector keeps its capacity while its key stays; the map is cleared of the rest.
+        for (auto& [key, members] : work.Groups)
+        {
+            members.clear();
+        }
+        work.Departures.clear();
+        work.Arrivals.clear();
+        work.Withheld.clear();
+        work.Departing.clear();
         state.Clock += delta;
         const f64 now = state.Clock;
         const f64 arrival = SphereTerrainArrivalSeconds;
@@ -43,15 +68,14 @@ namespace Veng::Renderer
                        : std::clamp((now - it->second) / departure, 0.0, 1.0);
         };
 
-        std::unordered_set<u64> chosen;
-        chosen.reserve(selected.size());
+        std::unordered_set<u64>& chosen = work.Chosen;
         for (const SphereTerrainDrawnTile& tile : selected)
         {
             chosen.insert(tile.Key.Value);
         }
 
         // Each tile drawn last frame and dropped now, under the selected tile that replaces it.
-        std::unordered_map<u64, vector<u64>> groups;
+        std::unordered_map<u64, vector<u64>>& groups = work.Groups;
         for (const auto& [key, tile] : state.Drawn)
         {
             if (chosen.contains(key))
@@ -69,13 +93,15 @@ namespace Veng::Renderer
             }
         }
 
-        SphereTerrainTransitionFrame frame;
-        frame.Drawn.reserve(selected.size());
-        std::unordered_map<u64, f64> departures;
-        std::unordered_set<u64> withheld;
-        vector<SphereTerrainDrawnTile> departing;
+        std::unordered_map<u64, f64>& departures = work.Departures;
+        std::unordered_set<u64>& withheld = work.Withheld;
+        vector<SphereTerrainDrawnTile>& departing = work.Departing;
         for (const auto& [replacing, members] : groups)
         {
+            if (members.empty())
+            {
+                continue;
+            }
             bool running = false;
             bool resident = true;
             for (const u64 key : members)
@@ -113,7 +139,7 @@ namespace Veng::Renderer
             }
         }
 
-        std::unordered_map<u64, f64> arrivals;
+        std::unordered_map<u64, f64>& arrivals = work.Arrivals;
         for (const SphereTerrainDrawnTile& tile : selected)
         {
             const u64 key = tile.Key.Value;
@@ -160,13 +186,14 @@ namespace Veng::Renderer
         }
         frame.Drawn.insert(frame.Drawn.end(), departing.begin(), departing.end());
 
-        state.Arrivals = std::move(arrivals);
-        state.Departures = std::move(departures);
+        state.Arrivals.swap(arrivals);
+        state.Departures.swap(departures);
         state.Drawn.clear();
         for (const SphereTerrainDrawnTile& tile : frame.Drawn)
         {
             state.Drawn.emplace(tile.Key.Value, tile);
         }
-        return frame;
+        // Drop the groups that held nothing this frame, so the map tracks what is departing.
+        std::erase_if(groups, [](const auto& entry) { return entry.second.empty(); });
     }
 }

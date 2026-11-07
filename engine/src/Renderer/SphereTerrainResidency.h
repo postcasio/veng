@@ -1,9 +1,14 @@
 #pragma once
 
+#include <map>
+#include <set>
+#include <span>
 #include <unordered_map>
 
 #include <Veng/Veng.h>
 #include <Veng/Math/CubeSphere.h>
+
+#include "SphereTerrainTileFacts.h"
 
 namespace Veng::Renderer
 {
@@ -49,6 +54,11 @@ namespace Veng::Renderer
         u64 LastWanted = 0;
         /// @brief Its measured bound.
         SphereTerrainTileBound Bound;
+        /// @brief Whether Facts holds the tile's facts: always for a tile the residency core
+        ///        holds, which computes them when the tile is requested.
+        bool HasFacts = false;
+        /// @brief What its drawing reads that depends on its key alone.
+        SphereTerrainTileFacts Facts;
     };
 
     /// @brief What the pool holds, as a selection reads it.
@@ -67,8 +77,13 @@ namespace Veng::Renderer
     /// Holds which tiles occupy which layers and enforces the rules: requests only under a
     /// resident parent (so the held set is closed under parent), eviction of the least recently
     /// wanted tile that is not pinned, has no held child and was wanted neither this frame nor the
-    /// last, and never more tiles than layers. It knows nothing of images or jobs, so the policy is
-    /// unit-tested against an instant generator.
+    /// last (ties broken on the least key), and never more tiles than layers. It knows nothing of
+    /// images or jobs, so the policy is unit-tested against an instant generator.
+    ///
+    /// Counts and eviction cost no scan: the pending tiles are counted as they come and go, and
+    /// every resident tile that is neither pinned nor a parent of a held tile sits in a bucket of
+    /// the frame it was last wanted, ordered by key, so an eviction takes the oldest bucket's least
+    /// key. A tile moves between buckets as its wants, children and state change.
     class VE_API SphereTerrainResidency final : public SphereTerrainTileOracle
     {
     public:
@@ -112,7 +127,8 @@ namespace Veng::Renderer
         /// @brief Creates an empty pool.
         /// @param capacity     The number of layers.
         /// @param pinnedLevel  The deepest level of the pinned top.
-        SphereTerrainResidency(u32 capacity, u32 pinnedLevel);
+        /// @param radius       The sphere's radius in metres, which the tiles' facts are for.
+        SphereTerrainResidency(u32 capacity, u32 pinnedLevel, f64 radius = 1.0);
 
         /// @brief Advances the frame wants are stamped with.
         void BeginFrame(u64 frame);
@@ -141,6 +157,10 @@ namespace Veng::Renderer
         /// @return False when the tile is not held at that generation.
         bool SetBound(CubeSphereTileKey key, u32 generation, const SphereTerrainTileBound& bound);
 
+        /// @brief Records a held tile's generator words in its facts.
+        /// @return False when the tile is not held.
+        bool SetTileWords(CubeSphereTileKey key, std::span<const u32> words);
+
         /// @brief Drops a held tile and frees its layer.
         /// @pre The tile holds no child.
         /// @return False when the tile is not held.
@@ -164,8 +184,8 @@ namespace Veng::Renderer
         /// @brief The resident tiles.
         [[nodiscard]] u32 GetResidentCount() const;
 
-        /// @brief The pending tiles.
-        [[nodiscard]] u32 GetPendingCount() const;
+        /// @brief The pending tiles, counted as they are requested and complete.
+        [[nodiscard]] u32 GetPendingCount() const { return m_PendingCount; }
 
         /// @brief The resident pinned tiles.
         [[nodiscard]] u32 GetPinnedResidentCount() const;
@@ -192,6 +212,22 @@ namespace Veng::Renderer
         /// @brief Drops a tile and returns its layer to the free list.
         void Drop(CubeSphereTileKey key);
 
+        /// @brief Whether a tile belongs in the eviction buckets: resident, not pinned, and no
+        ///        parent of a held tile.
+        [[nodiscard]] static bool IsBucketed(const SphereTerrainTileRecord& record);
+
+        /// @brief Takes a tile out of its eviction bucket, when it is in one.
+        void Unbucket(const SphereTerrainTileRecord& record);
+
+        /// @brief Puts a tile into the bucket of its last want, when it belongs in one.
+        void Bucket(const SphereTerrainTileRecord& record);
+
+        /// @brief Sets when a held tile was last wanted, moving it between buckets.
+        void SetLastWanted(SphereTerrainTileRecord& record, u64 frame);
+
+        /// @brief Changes a held tile's child count, moving it into or out of the buckets.
+        void AddChildren(SphereTerrainTileRecord& record, i32 delta);
+
         /// @brief The number of layers.
         u32 m_Capacity = 0;
         /// @brief The deepest pinned level.
@@ -208,5 +244,11 @@ namespace Veng::Renderer
         std::unordered_map<u64, SphereTerrainTileRecord> m_Tiles;
         /// @brief The free layers, taken from the back.
         vector<u32> m_FreeLayers;
+        /// @brief The radius the tiles' facts are computed for.
+        f64 m_Radius = 1.0;
+        /// @brief The pending tiles.
+        u32 m_PendingCount = 0;
+        /// @brief Per frame last wanted, the bucketed tiles wanted then, by key.
+        std::map<u64, std::set<u64>> m_Buckets;
     };
 }

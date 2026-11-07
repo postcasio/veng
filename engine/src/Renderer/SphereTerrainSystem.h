@@ -12,6 +12,7 @@
 
 #include "DrawPlan.h"
 #include "SphereTerrainDraw.h"
+#include "SphereTerrainSelection.h"
 #include "SphereTerrainTransitions.h"
 
 namespace Veng
@@ -54,6 +55,15 @@ namespace Veng::Renderer
         /// @brief The view's render-layer mask (SceneView::VisibleLayers); a terrain whose Layer it
         ///        omits is neither selected nor drawn.
         u32 VisibleLayers = AllRenderLayers;
+        /// @brief The cube face the view renders (SceneView::CaptureFaceIndex), or nullopt for a
+        ///        flat view.
+        ///
+        /// A capture renders one face a frame, round-robin, so a selection per face would see a
+        /// new frustum every frame and churn its splits, morphs and requests. A cube view instead
+        /// selects once per cube cycle, at face 0 (or its first face), with no frustum, and every
+        /// face draws that one selection, culled to its own frustum; the six faces never compete
+        /// for tiles. Its memory is apart from a flat view's.
+        optional<u32> CubeFace;
     };
 
     /// @brief One renderer's sphere terrains: select each one's tiles for the view, mark and
@@ -67,10 +77,12 @@ namespace Veng::Renderer
     /// view and writes the frame slot's records, lists and terrain descriptor sets; the passes
     /// then record one instanced draw of the shared grid per view and surface.
     ///
-    /// The selection memory (last frame's splits, the pose, the arrivals and departures, the generator's
-    /// cached words) is keyed by the source, not the entity, so a source handed to another entity
-    /// or scene keeps its hysteresis and draws what it drew the frame before. A source no Select
-    /// has seen for a while is forgotten.
+    /// The selection memory (last frame's splits, the pose, the arrivals and departures, and the
+    /// containers each frame refills) is keyed by the source and by whether the view is a cube
+    /// face, not by the entity, so a source handed to another entity or scene keeps its hysteresis
+    /// and draws what it drew the frame before. A source no Select has seen for a while is
+    /// forgotten. A tile's fixed facts and generator words are the pool's (SphereTerrainTileFacts),
+    /// computed once while it holds the tile.
     class SphereTerrainSystem
     {
     public:
@@ -164,17 +176,29 @@ namespace Veng::Renderer
     private:
         SphereTerrainSystem(Context& context, AssetManager& assets);
 
-        /// @brief What one source's selection remembers between frames.
+        /// @brief What one source's selection remembers between frames, and the containers each
+        ///        frame refills.
         struct Memory
         {
             /// @brief The tiles split last frame.
             std::unordered_set<u64> Splits;
+            /// @brief The selection's working containers.
+            SphereTerrainSelectionScratch Scratch;
+            /// @brief The last selection.
+            SphereTerrainSelectionResult Result;
             /// @brief The tiles drawn last frame and the arrivals and departures under way.
             SphereTerrainTransitionState Transitions;
-            /// @brief This frame's arrival and departure floors, per tile.
-            std::unordered_map<u64, f32> Floors;
-            /// @brief The generator's words per tile, for the tiles drawn or parenting a drawn one.
-            std::unordered_map<u64, std::array<u32, MaxSphereTerrainTileWords>> TileData;
+            /// @brief The last selection with its transitions applied: the tiles drawn and their
+            ///        floors.
+            SphereTerrainTransitionFrame Transition;
+            /// @brief The last selection's statistics, transitions applied.
+            SphereTerrainSelectionStats Stats;
+            /// @brief The frame's records and lists.
+            SphereTerrainFrame Frame;
+            /// @brief The frame's shadow views in the body-fixed frame.
+            vector<SphereTerrainDrawView> ShadowViews;
+            /// @brief Whether a cube view's cycle holds a selection the faces after it draw.
+            bool CubeSelected = false;
             /// @brief Last frame's centre in the stable frame.
             dvec3 PrevCenter{0.0};
             /// @brief Last frame's orientation.
@@ -241,6 +265,25 @@ namespace Veng::Renderer
             std::array<uvec2, SphereTerrainSurfaceCount> NearTranslucentLists{};
             /// @brief The frame slot's set-4 descriptor set it binds.
             const DescriptorSet* Set = nullptr;
+            /// @brief What its frame was culled from, kept for its records' write.
+            SphereTerrainFrameInput Input;
+            /// @brief Its first record in the frame slot's record buffer.
+            u32 RecordBase = 0;
+        };
+
+        /// @brief One source's set-4 set in a frame slot, and what it was written with.
+        struct SlotSet
+        {
+            /// @brief The set.
+            Ref<DescriptorSet> Set;
+            /// @brief The record buffer it names.
+            const Buffer* Records = nullptr;
+            /// @brief The list buffer it names.
+            const Buffer* Lists = nullptr;
+            /// @brief The source's view generation its channel bindings were written at.
+            u64 ViewGeneration = ~0ull;
+            /// @brief The last prepare that bound it.
+            u64 LastPrepared = 0;
         };
 
         /// @brief One frame in flight's copies.
@@ -251,7 +294,7 @@ namespace Veng::Renderer
             /// @brief The lists.
             Ref<Buffer> Lists;
             /// @brief Per source serial, the set-4 set bound this slot.
-            std::unordered_map<u64, Ref<DescriptorSet>> Sets;
+            std::unordered_map<u64, SlotSet> Sets;
         };
 
         /// @brief Builds the depth-only terrain pipeline, with or without depth clamp.
@@ -290,14 +333,21 @@ namespace Veng::Renderer
         /// @brief The shadow views the frame prepared lists for.
         u32 m_ShadowViewCount = 0;
 
-        /// @brief Per source serial, its selection memory.
+        /// @brief Per source serial and view kind (MemoryKey), its selection memory.
         std::unordered_map<u64, Memory> m_Memory;
-        /// @brief Per entity value, its last selection and statistics.
-        std::unordered_map<u64,
-                           std::pair<vector<SphereTerrainDrawnTile>, SphereTerrainSelectionStats>>
+        /// @brief Per entity value, its last selection (in its memory) and statistics.
+        std::unordered_map<
+            u64, std::pair<const vector<SphereTerrainDrawnTile>*, SphereTerrainSelectionStats>>
             m_Selections;
-        /// @brief This frame's selected terrains.
+        /// @brief This frame's selected terrains; elements past the frame's count are dropped, the
+        ///        rest reused so their lists keep their capacity.
         vector<Terrain> m_Terrains;
+        /// @brief How many of m_Terrains this frame selected.
+        usize m_TerrainCount = 0;
+        /// @brief The frame's list entries, refilled each prepare.
+        vector<u32> m_ListEntries;
+        /// @brief Counts the prepares, which stamp the slot sets bound.
+        u64 m_PrepareSerial = 0;
         /// @brief The shadow-casting tiles' bound within the shadow distance.
         AABB m_CasterBounds = AABB::Empty();
         /// @brief Entities already reported for an undrawable material.

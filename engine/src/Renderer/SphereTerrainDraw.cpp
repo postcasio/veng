@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 
+#include <Veng/Assert.h>
 #include <Veng/Math/CubeSphere.h>
 
 #include "SphereTerrainSelection.h"
@@ -54,7 +55,8 @@ namespace Veng::Renderer
         // edge by at most the finer tile's MorphError, so a tile covers its own and its finer
         // neighbours' — the next level's largest — plus the parent grid's chord sagitta, the f32
         // rounding of a position at the tile's distance, and two tiles' rounding of one texel.
-        f32 SkirtDepth(const SphereTerrainDrawnTile& tile, const std::array<f32, 26>& levelError,
+        f32 SkirtDepth(const SphereTerrainDrawnTile& tile,
+                       const std::array<f32, CubeSphere::MaxLevel + 2>& levelError,
                        const f64 farthest, const f64 radius, const f64 edge, const f32 agreement)
         {
             const u32 level = tile.Key.GetLevel();
@@ -86,35 +88,72 @@ namespace Veng::Renderer
                           : SphereTerrainMaterialVerdict::TranslucentGround;
     }
 
-    SphereTerrainFrame BuildSphereTerrainFrame(const SphereTerrainFrameInput& input)
+    vec2 SphereTerrainCullHeights(const SphereTerrainDrawnTile& tile,
+                                  const std::span<const f32> layerHeights)
     {
-        SphereTerrainFrame frame;
+        f32 high = tile.MaxHeight;
+        for (const f32 layer : layerHeights)
+        {
+            if (tile.MinHeight < layer)
+            {
+                high = std::max(high, layer);
+            }
+        }
+        return {tile.MinHeight, high};
+    }
+
+    void CullSphereTerrainFrame(const SphereTerrainFrameInput& input, SphereTerrainFrame& frame)
+    {
         const bool shadows = input.CastsShadows && input.Scale == 1.0f;
         const u32 viewCount = 1 + (shadows ? static_cast<u32>(input.Shadows.size()) : 0u);
-        frame.Lists.resize(1 + input.Shadows.size());
         const u32 layerCount = std::min(input.LayerCount, MaxSphereTerrainLevelLayers);
+        const std::span<const f32> layerHeights{input.LayerHeights.data(), layerCount};
 
-        std::array<f32, 26> levelError{};
+        frame.Records.clear();
+        frame.RecordTiles.clear();
+        frame.RecordFacts.clear();
+        frame.LocalFacts.clear();
+        frame.Lists.resize(1 + input.Shadows.size());
+        for (std::array<vector<u32>, SphereTerrainSurfaceCount>& view : frame.Lists)
+        {
+            for (vector<u32>& list : view)
+            {
+                list.clear();
+            }
+        }
+        for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
+        {
+            frame.TranslucentLists[surface].clear();
+            frame.NearLists[surface].clear();
+            frame.NearTranslucentLists[surface].clear();
+        }
+        frame.CulledByFrustum = 0;
+        frame.CulledByHorizon = 0;
+        frame.LevelError = {};
         for (const SphereTerrainDrawnTile& tile : input.Drawn)
         {
-            f32& error = levelError[tile.Key.GetLevel()];
+            f32& error = frame.LevelError[tile.Key.GetLevel()];
             error = std::max(error, tile.MorphError);
         }
-        const f32 agreement = static_cast<f32>(
-            std::ldexp(std::max(std::abs(input.MinHeight), std::abs(input.MaxHeight)), -21));
         const f64 occluder = input.Radius + input.MinHeight;
 
-        for (const SphereTerrainDrawnTile& tile : input.Drawn)
+        for (u32 index = 0; index < input.Drawn.size(); index++)
         {
-            f32 low = tile.MinHeight;
-            f32 high = tile.MaxHeight;
-            for (u32 layer = 0; layer < layerCount; layer++)
+            const SphereTerrainDrawnTile& tile = input.Drawn[index];
+            const SphereTerrainTileRecord* held =
+                input.Tiles != nullptr ? input.Tiles->Find(tile.Key) : nullptr;
+            const SphereTerrainTileFacts* facts =
+                held != nullptr && held->HasFacts ? &held->Facts : nullptr;
+            const bool local = facts == nullptr;
+            if (local)
             {
-                low = std::min(low, input.LayerHeights[layer]);
-                high = std::max(high, input.LayerHeights[layer]);
+                facts = &frame.LocalFacts.emplace_back(
+                    MakeSphereTerrainTileFacts(tile.Key, input.Radius));
             }
+
+            const vec2 heights = SphereTerrainCullHeights(tile, layerHeights);
             const SphereTerrainTileBox box =
-                ComputeSphereTerrainTileBox(tile.Key, input.Radius, low, high);
+                ComputeSphereTerrainTileBox(facts->Frame, input.Radius, heights.x, heights.y);
             const std::array<dvec3, 8> corners = SphereTerrainBoxCorners(box);
 
             std::array<bool, SphereTerrainSurfaceCount> surfaces{};
@@ -126,7 +165,7 @@ namespace Veng::Renderer
                 translucent[1 + layer] = input.TranslucentLayers[layer];
             }
 
-            const u32 recordIndex = static_cast<u32>(frame.Records.size());
+            const u32 recordIndex = static_cast<u32>(frame.RecordTiles.size());
             bool drawn = false;
             for (u32 view = 0; view < viewCount; view++)
             {
@@ -137,7 +176,7 @@ namespace Veng::Renderer
                     frame.CulledByFrustum += view == 0 ? 1u : 0u;
                     continue;
                 }
-                if (cull.Horizon && IsBoxBelowHorizon(box, input.Eye, occluder))
+                if (cull.Horizon && IsBoxBelowHorizon(corners, input.Eye, occluder))
                 {
                     frame.CulledByHorizon += view == 0 ? 1u : 0u;
                     continue;
@@ -171,14 +210,43 @@ namespace Veng::Renderer
                 }
                 drawn = drawn || listed;
             }
-            if (!drawn)
+            if (drawn)
             {
-                continue;
+                frame.RecordTiles.push_back(index);
+                // A local fact may still move as more are computed, so it is pointed at below.
+                frame.RecordFacts.push_back(local ? nullptr : facts);
             }
+            else if (local)
+            {
+                frame.LocalFacts.pop_back();
+            }
+        }
+        usize next = 0;
+        for (const SphereTerrainTileFacts*& facts : frame.RecordFacts)
+        {
+            facts = facts != nullptr ? facts : &frame.LocalFacts[next++];
+        }
+    }
 
-            const CubeSphereTileGeometry geometry = GetCubeSphereTileGeometry(tile.Key);
-            SphereTerrainDrawRecord& record = frame.Records.emplace_back();
-            record.Tile = PackSphereTerrainTileConstants(tile.Key, input.Radius);
+    void WriteSphereTerrainRecords(const SphereTerrainFrameInput& input,
+                                   const SphereTerrainFrame& frame,
+                                   const std::span<SphereTerrainDrawRecord> out)
+    {
+        VE_ASSERT(out.size() == frame.RecordTiles.size(),
+                  "sphere terrain: {} records written for {} culled", out.size(),
+                  frame.RecordTiles.size());
+        const f32 agreement = static_cast<f32>(
+            std::ldexp(std::max(std::abs(input.MinHeight), std::abs(input.MaxHeight)), -21));
+        constexpr std::array<u32, MaxSphereTerrainTileWords> NoWords{};
+        constexpr f32 Never = std::numeric_limits<f32>::max();
+
+        for (usize r = 0; r < out.size(); r++)
+        {
+            const SphereTerrainDrawnTile& tile = input.Drawn[frame.RecordTiles[r]];
+            const SphereTerrainTileFacts& facts = *frame.RecordFacts[r];
+            const CubeSphereTileGeometry& geometry = facts.Geometry;
+            SphereTerrainDrawRecord& record = out[r];
+            record.Tile = facts.Constants;
             for (u32 i = 0; i < 4; i++)
             {
                 const dvec3 offset = input.Radius * geometry.Corners[i];
@@ -187,38 +255,28 @@ namespace Veng::Renderer
                 record.PrevCorners[i] =
                     Point(input.PrevCenterFromCamera + (input.PrevOrientation * offset));
             }
-            const auto Chord = [&](const u32 a, const u32 b)
-            {
-                const dvec3 d = geometry.Corners[a] - geometry.Corners[b];
-                return static_cast<f32>(glm::dot(d, d));
-            };
-            record.ChordsA = {Chord(0, 1), Chord(0, 2), Chord(0, 3), Chord(1, 2)};
-            record.ChordsB = {Chord(1, 3), Chord(2, 3), static_cast<f32>(input.Radius),
+            record.ChordsA = facts.ChordsA;
+            record.ChordsB = {facts.ChordsB.x, facts.ChordsB.y, static_cast<f32>(input.Radius),
                               input.Scale};
-            record.TangentU = Point(input.Orientation *
-                                    glm::normalize((geometry.Corners[1] - geometry.Corners[0]) +
-                                                   (geometry.Corners[3] - geometry.Corners[2])));
+            record.TangentU = Point(input.Orientation * facts.TangentU);
 
             const bool hasParent =
                 tile.Key.GetLevel() > 0 && tile.ParentLayer != SphereTerrainNoLayer;
-            const f32 floor = [&]
+            f32 floor = 0.0f;
+            if (input.ArrivalFloors != nullptr)
             {
-                if (input.ArrivalFloors == nullptr)
-                {
-                    return 0.0f;
-                }
                 const auto it = input.ArrivalFloors->find(tile.Key.Value);
-                return it != input.ArrivalFloors->end() ? it->second : 0.0f;
-            }();
-            const f64 edge = input.Radius * std::sqrt(static_cast<f64>(Chord(0, 1)));
+                floor = it != input.ArrivalFloors->end() ? it->second : 0.0f;
+            }
+            const f64 edge = facts.Edge;
             const f64 farthest =
                 glm::length(input.CenterFromEye +
                             (input.Orientation * (input.Radius * geometry.Center))) +
                 (2.0 * edge) + std::abs(input.MaxHeight);
-            constexpr f32 Never = std::numeric_limits<f32>::max();
-            record.Morph = {hasParent ? tile.MorphStart : Never, hasParent ? tile.MorphEnd : Never,
-                            hasParent ? floor : 0.0f,
-                            SkirtDepth(tile, levelError, farthest, input.Radius, edge, agreement)};
+            record.Morph = {
+                hasParent ? tile.MorphStart : Never, hasParent ? tile.MorphEnd : Never,
+                hasParent ? floor : 0.0f,
+                SkirtDepth(tile, frame.LevelError, farthest, input.Radius, edge, agreement)};
             record.Heights = {input.LayerHeights[0], input.LayerHeights[1],
                               static_cast<f32>(edge / SphereTerrainTileCells), 0.0f};
             const u32 flags = (hasParent ? SphereTerrainRecordHasParent : 0u) |
@@ -226,15 +284,22 @@ namespace Veng::Renderer
                               (input.TileOverlay ? SphereTerrainRecordTileOverlay : 0u);
             record.Layers = {tile.Layer, hasParent ? tile.ParentLayer : tile.Layer,
                              hasParent ? tile.Key.GetQuadrant() : 0u, flags};
-            if (input.TileData)
-            {
-                input.TileData(tile.Key, record.Data);
-                if (hasParent)
-                {
-                    input.TileData(tile.Key.GetParent(), record.ParentData);
-                }
-            }
+            record.Arc = facts.Arc;
+            record.Data = facts.Words;
+            const SphereTerrainTileRecord* parent = hasParent && input.Tiles != nullptr
+                                                        ? input.Tiles->Find(tile.Key.GetParent())
+                                                        : nullptr;
+            record.ParentData =
+                parent != nullptr && parent->HasFacts ? parent->Facts.Words : NoWords;
         }
+    }
+
+    SphereTerrainFrame BuildSphereTerrainFrame(const SphereTerrainFrameInput& input)
+    {
+        SphereTerrainFrame frame;
+        CullSphereTerrainFrame(input, frame);
+        frame.Records.resize(frame.RecordTiles.size());
+        WriteSphereTerrainRecords(input, frame, frame.Records);
         return frame;
     }
 }

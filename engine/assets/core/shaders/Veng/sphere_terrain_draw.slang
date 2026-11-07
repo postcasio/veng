@@ -15,7 +15,7 @@
 
 #include "sphere_terrain_mapping.slang"
 
-// One drawn tile; mirrors Veng::Renderer::SphereTerrainDrawRecord (672 bytes, std430).
+// One drawn tile; mirrors Veng::Renderer::SphereTerrainDrawRecord (688 bytes, std430).
 struct SphereTerrainRecord
 {
     // The tile's body-fixed placement (centre direction, corner offsets and norms, warp terms).
@@ -39,6 +39,8 @@ struct SphereTerrainRecord
     // The tile's layer, its parent's layer, its quadrant in the parent, and the SphereTerrainRecord*
     // flags.
     uint4 Layers;
+    // The arc terms of the tile's fraction along u (xy) and v (zw): S(dtheta), C(dtheta) - x0 S(dtheta).
+    float4 Arc;
     // The generator's words for the tile, and for its parent.
     uint Data[32];
     uint ParentData[32];
@@ -85,6 +87,21 @@ float4 SphereTerrainCornerWeights(SphereTerrainTileConstants tile, float2 st)
     return weights;
 }
 
+// The corner weights at tile parameters st from the record's arc terms, so no sine or cosine of the
+// tile's span is evaluated per vertex. The tile's edges take fractions of exactly 0 and 1, so
+// neighbouring tiles' edge vertices coincide.
+float4 SphereTerrainCornerWeights(SphereTerrainRecord r, float2 st)
+{
+    precise float au = SphereTerrainTileFractionArc(st.x, r.Tile.Warp.x, r.Tile.Warp.y, r.Arc.xy);
+    precise float av = SphereTerrainTileFractionArc(st.y, r.Tile.Warp.z, r.Tile.Warp.w, r.Arc.zw);
+    precise float4 beta = float4((1.0 - au) * (1.0 - av), au * (1.0 - av), (1.0 - au) * av, au * av) *
+                          float4(r.Tile.Corners[0].w, r.Tile.Corners[1].w, r.Tile.Corners[2].w,
+                                 r.Tile.Corners[3].w);
+    precise float total = beta.x + beta.y + beta.z + beta.w;
+    precise float4 weights = beta / total;
+    return weights;
+}
+
 // The sagitta-and-height lift above the chord point: R (1 - |m|^2) / (1 + |m|) + h, with
 // 1 - |m|^2 = sum_{i<j} w_i w_j |d_i - d_j|^2 taken from the record's exact chords.
 float SphereTerrainLift(SphereTerrainRecord r, float4 w, float height)
@@ -105,9 +122,8 @@ struct SphereTerrainPlacement
 // Places a vertex of the tile at tile parameters st and a height above the radius:
 // sum w_i C_i + n (R (1 - |m|^2) / (1 + |m|) + h). Every term is an eye-relative corner or a
 // quantity no larger than the tile, so nothing the size of the radius is subtracted in f32.
-SphereTerrainPlacement SphereTerrainPlace(SphereTerrainRecord r, float2 st, float height)
+SphereTerrainPlacement SphereTerrainPlace(SphereTerrainRecord r, float4 w, float height)
 {
-    const float4 w = SphereTerrainCornerWeights(r.Tile, st);
     precise float lift = SphereTerrainLift(r, w, height);
     precise float3 vertical = normalize(w.x * r.Verticals[0].xyz + w.y * r.Verticals[1].xyz +
                                         w.z * r.Verticals[2].xyz + w.w * r.Verticals[3].xyz);
@@ -119,15 +135,26 @@ SphereTerrainPlacement SphereTerrainPlace(SphereTerrainRecord r, float2 st, floa
     return placement;
 }
 
+// Places a vertex at tile parameters st, computing their corner weights.
+SphereTerrainPlacement SphereTerrainPlace(SphereTerrainRecord r, float2 st, float height)
+{
+    return SphereTerrainPlace(r, SphereTerrainCornerWeights(r, st), height);
+}
+
 // The same vertex as the tile stood last frame, relative to this frame's camera in last frame's
 // scene space; the vertical is this frame's, which differs by the sphere's turn in a frame.
-float3 SphereTerrainPlacePrevious(SphereTerrainRecord r, float2 st, float height, float3 vertical)
+float3 SphereTerrainPlacePrevious(SphereTerrainRecord r, float4 w, float height, float3 vertical)
 {
-    const float4 w = SphereTerrainCornerWeights(r.Tile, st);
     precise float lift = SphereTerrainLift(r, w, height);
     precise float3 chord = w.x * r.PrevCorners[0].xyz + w.y * r.PrevCorners[1].xyz +
                            w.z * r.PrevCorners[2].xyz + w.w * r.PrevCorners[3].xyz;
     return chord + vertical * lift;
+}
+
+// The previous place at tile parameters st, computing their corner weights.
+float3 SphereTerrainPlacePrevious(SphereTerrainRecord r, float2 st, float height, float3 vertical)
+{
+    return SphereTerrainPlacePrevious(r, SphereTerrainCornerWeights(r, st), height, vertical);
 }
 
 // The morph factor max(saturate((d - S) / (E - S)), floor).
@@ -214,6 +241,8 @@ struct SphereTerrainVertex
     float3 Vertical;
     // The tile parameters of the morphed vertex.
     float2 St;
+    // The corner weights at St.
+    float4 Weights;
     // The morphed vertex's grid coordinate on the parent's grid.
     float2 ParentGrid;
     // The height above the radius the vertex stands at.
@@ -227,7 +256,8 @@ struct SphereTerrainVertex
 // Evaluates a terrain vertex: placed unmorphed to measure its eye distance, morphed by CDLOD's rule
 // (odd grid coordinates slide toward the even one below, and the height blends from the tile's own
 // grid to its parent's), placed again, and hung by the skirt depth when it is a skirt vertex. A
-// level layer (surface > 0) stands at the layer's constant height and reads no height.
+// level layer (surface > 0) stands at the layer's constant height and reads no height. A vertex
+// with no morph, most of every tile, reads no further height and is placed once.
 SphereTerrainVertex SphereTerrainEvaluate(uint vertexIndex, uint listIndex, uint surface)
 {
     SphereTerrainVertex v;
@@ -241,25 +271,33 @@ SphereTerrainVertex SphereTerrainEvaluate(uint vertexIndex, uint listIndex, uint
     const bool layered = surface > 0u;
     const float layerHeight = surface == 1u ? r.Heights.x : r.Heights.y;
     const float gridHeight = layered ? layerHeight : SphereTerrainGridVertexHeight(layer, grid);
-    const SphereTerrainPlacement unmorphed = SphereTerrainPlace(r, float2(grid) / quads, gridHeight);
-    const float k = SphereTerrainMorphFactor(length(unmorphed.Position), r.Morph);
+    v.St = float2(grid) / quads;
+    v.Weights = SphereTerrainCornerWeights(r, v.St);
+    SphereTerrainPlacement placed = SphereTerrainPlace(r, v.Weights, gridHeight);
+    const float k = SphereTerrainMorphFactor(length(placed.Position), r.Morph);
 
-    const int2 odd = grid & int2(1);
-    const float2 slid = float2(grid) - float2(odd) * k;
-    v.ParentGrid = SphereTerrainParentGrid(slid, r.Layers.z);
-    float height = layerHeight;
-    if (!layered)
+    v.ParentGrid = SphereTerrainParentGrid(float2(grid), r.Layers.z);
+    float height = gridHeight;
+    // Coherent across a tile's interior: the morph is zero short of the morph start.
+    if (k > 0.0)
     {
-        const float own = lerp(gridHeight, SphereTerrainGridVertexHeight(layer, grid - odd), k);
-        const float parent = SphereTerrainGridHeight(r.Layers.y, v.ParentGrid);
-        height = lerp(own, parent, k);
+        const int2 odd = grid & int2(1);
+        const float2 slid = float2(grid) - float2(odd) * k;
+        v.ParentGrid = SphereTerrainParentGrid(slid, r.Layers.z);
+        if (!layered)
+        {
+            const float own = lerp(gridHeight, SphereTerrainGridVertexHeight(layer, grid - odd), k);
+            const float parent = SphereTerrainGridHeight(r.Layers.y, v.ParentGrid);
+            height = lerp(own, parent, k);
+        }
+        v.St = slid / quads;
+        v.Weights = SphereTerrainCornerWeights(r, v.St);
+        placed = SphereTerrainPlace(r, v.Weights, height);
     }
 
-    v.St = slid / quads;
-    const SphereTerrainPlacement placed = SphereTerrainPlace(r, v.St, height);
     v.Vertical = placed.Vertical;
     v.Position = placed.Position;
-    v.PrevPosition = SphereTerrainPlacePrevious(r, v.St, height, placed.Vertical);
+    v.PrevPosition = SphereTerrainPlacePrevious(r, v.Weights, height, placed.Vertical);
     if (decoded.z != 0)
     {
         v.Position -= placed.Vertical * r.Morph.w;

@@ -8,6 +8,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Renderer/SphereTerrain.h>
 
+#include "SphereTerrainResidency.h"
 #include "SphereTerrainVertex.h"
 
 namespace Veng::Renderer
@@ -100,15 +101,28 @@ namespace Veng::Renderer
         const std::unordered_map<u64, f32>* ArrivalFloors = nullptr;
         /// @brief Whether every record carries SphereTerrainRecordTileOverlay.
         bool TileOverlay = false;
-        /// @brief Fills a tile's generator words; null leaves them zero.
-        function<void(CubeSphereTileKey, std::span<u32>)> TileData;
+        /// @brief What the pool holds, whose records carry each tile's facts (and its generator
+        ///        words); null, or a tile without facts, computes them and leaves the words zero.
+        const SphereTerrainTileOracle* Tiles = nullptr;
     };
 
     /// @brief One terrain's records and per-view lists for a frame.
+    ///
+    /// Kept across frames by its caller, so a frame clears its containers rather than allocating
+    /// them afresh.
     struct SphereTerrainFrame
     {
-        /// @brief One record per tile some view draws.
+        /// @brief One record per tile some view draws; filled by BuildSphereTerrainFrame alone, a
+        ///        renderer writing them straight into its upload buffer (WriteSphereTerrainRecords).
         vector<SphereTerrainDrawRecord> Records;
+        /// @brief Per record, the index of its tile in SphereTerrainFrameInput::Drawn.
+        vector<u32> RecordTiles;
+        /// @brief Per record, its tile's facts, borrowed from the pool or from LocalFacts.
+        vector<const SphereTerrainTileFacts*> RecordFacts;
+        /// @brief Facts computed for tiles the pool carries none for.
+        vector<SphereTerrainTileFacts> LocalFacts;
+        /// @brief Per level, the largest MorphError among the tiles drawn.
+        std::array<f32, CubeSphere::MaxLevel + 2> LevelError{};
         /// @brief Per view (0 the main view's g-buffer, 1 + n shadow view n), per surface (0 the
         ///        terrain, 1 + l level layer l), the records it draws, as indices into Records. A
         ///        translucent layer's lists here are empty.
@@ -131,7 +145,7 @@ namespace Veng::Renderer
     /// @brief Culls a terrain's drawn tiles per view and builds the records its draws read.
     ///
     /// Device-free and pure. A tile is culled by a view when its bound (the selection's box over
-    /// its working height range, widened to its level layers) lies wholly outside one of the
+    /// its working height range, raised to the level layers it draws) lies wholly outside one of the
     /// view's planes, or — for a view culling by horizon — when all eight corners are hidden by
     /// the sphere of `Radius + MinHeight`. Culling is in unscaled metres, so the main view's lists
     /// do not depend on the scale; a terrain at a scale other than one, or not casting, draws into
@@ -142,4 +156,26 @@ namespace Veng::Renderer
     /// shadow views take no near list.
     [[nodiscard]] VE_API SphereTerrainFrame
     BuildSphereTerrainFrame(const SphereTerrainFrameInput& input);
+
+    /// @brief The cull half of BuildSphereTerrainFrame: fills a kept frame's lists and its record
+    ///        tiles, leaving Records empty.
+    VE_API void CullSphereTerrainFrame(const SphereTerrainFrameInput& input,
+                                       SphereTerrainFrame& frame);
+
+    /// @brief The record half of BuildSphereTerrainFrame: writes each of a culled frame's records.
+    /// @param input  The input the frame was culled from.
+    /// @param frame  The culled frame.
+    /// @param out    One record per entry of frame.RecordTiles: an upload buffer's mapping.
+    VE_API void WriteSphereTerrainRecords(const SphereTerrainFrameInput& input,
+                                          const SphereTerrainFrame& frame,
+                                          std::span<SphereTerrainDrawRecord> out);
+
+    /// @brief The height range a tile's cull box spans: its working range, raised to the height
+    ///        of each level layer it draws (a layer above its lowest ground).
+    ///
+    /// A layer standing below every height the tile holds is not drawn on it, so does not widen
+    /// it.
+    /// @return The bottom (x) and top (y) of the range.
+    [[nodiscard]] VE_API vec2 SphereTerrainCullHeights(const SphereTerrainDrawnTile& tile,
+                                                       std::span<const f32> layerHeights);
 }

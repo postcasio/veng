@@ -4,7 +4,6 @@
 #include <cmath>
 #include <functional>
 #include <numbers>
-#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -27,41 +26,18 @@ namespace Veng::Renderer
             f32 Max = 0.0f;
         };
 
-        // A visited tile's working bound and placement, kept to emit the drawn set after balance.
-        struct Node
-        {
-            HeightRange Working;
-            HeightRange Own;
-            f32 MorphError = 0.0f;
-            u32 Layer = 0;
-        };
-
-        // A tile wanting to split, waiting its turn for the budget.
-        struct Candidate
-        {
-            f64 Order = 0.0;
-            CubeSphereTileKey Key;
-            f32 Urgency = 0.0f;
-            bool InFrustum = true;
-
-            [[nodiscard]] bool operator>(const Candidate& other) const
-            {
-                return Order != other.Order ? Order > other.Order : Key.Value > other.Key.Value;
-            }
-        };
-
-        using CandidateQueue =
-            std::priority_queue<Candidate, vector<Candidate>, std::greater<Candidate>>;
+        using Node = SphereTerrainSelectionNode;
+        using Candidate = SphereTerrainSplitCandidate;
 
         struct Walker
         {
             const SphereTerrainSelectionInput& In;
             SphereTerrainSelectionResult& Out;
-            std::unordered_map<u64, Node> Nodes;
-            std::unordered_set<u64> Held;
-            std::unordered_set<u64> Requested;
-            CandidateQueue Splits;
-            vector<Candidate> Prefetches;
+            std::unordered_map<u64, Node>& Nodes;
+            std::unordered_set<u64>& Held;
+            std::unordered_set<u64>& Requested;
+            vector<Candidate>& Splits;
+            vector<Candidate>& Prefetches;
             f64 RangeAtZero = 0.0;
             f64 Occluder = 0.0;
             u64 Used = 0;
@@ -74,13 +50,12 @@ namespace Veng::Renderer
                 return range;
             }
 
-            [[nodiscard]] bool IsInFrustum(const SphereTerrainTileBox& box) const
+            [[nodiscard]] bool IsInFrustum(const std::array<dvec3, 8>& corners) const
             {
                 if (In.Frustum == nullptr)
                 {
                     return true;
                 }
-                const std::array<dvec3, 8> corners = SphereTerrainBoxCorners(box);
                 for (const glm::dvec4& plane : *In.Frustum)
                 {
                     bool anyInside = false;
@@ -162,24 +137,31 @@ namespace Veng::Renderer
                     working.Max = std::max(working.Max, parentOwn->Max);
                 }
                 working = Clamp(working);
-                Nodes[key.Value] = {.Working = working,
-                                    .Own = own,
+                Nodes[key.Value] = {.WorkingMin = working.Min,
+                                    .WorkingMax = working.Max,
+                                    .OwnMin = own.Min,
+                                    .OwnMax = own.Max,
                                     .MorphError = morphError,
                                     .Layer = record->Layer};
 
+                // A tile the pool holds carries its frame; another oracle's is computed here.
                 const SphereTerrainTileBox box =
-                    ComputeSphereTerrainTileBox(key, In.Radius, working.Min, working.Max);
+                    record->HasFacts
+                        ? ComputeSphereTerrainTileBox(record->Facts.Frame, In.Radius, working.Min,
+                                                      working.Max)
+                        : ComputeSphereTerrainTileBox(key, In.Radius, working.Min, working.Max);
+                const std::array<dvec3, 8> corners = SphereTerrainBoxCorners(box);
                 const f64 distance = SphereTerrainBoxDistance(box, In.Eye);
                 const f64 range = std::ldexp(RangeAtZero, -static_cast<i32>(level));
                 const bool wasSplit =
                     In.PreviousSplits != nullptr && In.PreviousSplits->contains(key.Value);
-                const bool below = IsBoxBelowHorizon(box, In.Eye, Occluder);
+                const bool below = IsBoxBelowHorizon(corners, In.Eye, Occluder);
                 const bool canDeepen = level < In.MaxLevel && !below;
 
                 const bool distanceWants =
                     wasSplit ? distance <= (1.0 + h) * range : distance < (1.0 - h) * range;
                 const bool nearEye = distance <= settings.OmnidirectionalRadius;
-                const bool inFrustum = IsInFrustum(box);
+                const bool inFrustum = IsInFrustum(corners);
                 const f64 order = distance * (wasSplit ? 1.0 - h : 1.0 + h);
                 if (canDeepen && distanceWants)
                 {
@@ -190,10 +172,11 @@ namespace Veng::Renderer
                         return;
                     }
                     const f64 urgency = (1.0 - h) * range / std::max(distance, 1e-3);
-                    Splits.push({.Order = order,
-                                 .Key = key,
-                                 .Urgency = static_cast<f32>(urgency),
-                                 .InFrustum = inFrustum});
+                    Splits.push_back({.Order = order,
+                                      .Key = key,
+                                      .Urgency = static_cast<f32>(urgency),
+                                      .InFrustum = inFrustum});
+                    std::ranges::push_heap(Splits, std::greater{});
                     return;
                 }
 
@@ -296,7 +279,8 @@ namespace Veng::Renderer
                 {
                     Out.Stats.SplitForBalance++;
                 }
-                const HeightRange own = Nodes.at(key.Value).Own;
+                const Node& node = Nodes.at(key.Value);
+                const HeightRange own{.Min = node.OwnMin, .Max = node.OwnMax};
                 for (u32 child = 0; child < 4; child++)
                 {
                     Visit(key.GetChild(child), own);
@@ -310,8 +294,9 @@ namespace Veng::Renderer
             {
                 while (!Splits.empty())
                 {
-                    const Candidate candidate = Splits.top();
-                    Splits.pop();
+                    std::ranges::pop_heap(Splits, std::greater{});
+                    const Candidate candidate = Splits.back();
+                    Splits.pop_back();
                     if (!TrySplit(candidate.Key, candidate.Urgency, candidate.InFrustum, false))
                     {
                         Held.insert(candidate.Key.Value);
@@ -373,8 +358,8 @@ namespace Veng::Renderer
                     .Key = key,
                     .Layer = node->second.Layer,
                     .ParentLayer = parentLayer,
-                    .MinHeight = node->second.Working.Min,
-                    .MaxHeight = node->second.Working.Max,
+                    .MinHeight = node->second.WorkingMin,
+                    .MaxHeight = node->second.WorkingMax,
                     .MorphStart = static_cast<f32>(In.Settings.MorphStartRatio * morphEnd),
                     .MorphEnd = static_cast<f32>(morphEnd),
                     .MorphError = node->second.MorphError,
@@ -409,50 +394,9 @@ namespace Veng::Renderer
     SphereTerrainTileBox ComputeSphereTerrainTileBox(const CubeSphereTileKey key, const f64 radius,
                                                      const f32 minHeight, const f32 maxHeight)
     {
-        const CubeSphereTileGeometry geometry = GetCubeSphereTileGeometry(key);
-        const std::array<dvec3, 4>& c = geometry.Corners;
-        const std::array<dvec3, 9> samples = {
-            c[0],
-            c[1],
-            c[2],
-            c[3],
-            glm::normalize(c[0] + c[1]),
-            glm::normalize(c[2] + c[3]),
-            glm::normalize(c[0] + c[2]),
-            glm::normalize(c[1] + c[3]),
-            geometry.Center,
-        };
-
-        SphereTerrainTileBox box;
-        const dvec3 up = geometry.Center;
-        dvec3 across = (c[1] + c[3]) - (c[0] + c[2]);
-        across = glm::normalize(across - (glm::dot(across, up) * up));
-        box.Axes = {across, glm::cross(up, across), up};
-        box.Origin = up * radius;
-
-        const f64 low = radius + minHeight;
-        const f64 high = radius + maxHeight;
-        box.Min = dvec3(std::numeric_limits<f64>::max());
-        box.Max = dvec3(std::numeric_limits<f64>::lowest());
-        for (const dvec3& direction : samples)
-        {
-            for (const f64 r : {low, high})
-            {
-                const dvec3 offset = (direction * r) - box.Origin;
-                const dvec3 local = {glm::dot(offset, box.Axes[0]), glm::dot(offset, box.Axes[1]),
-                                     glm::dot(offset, box.Axes[2])};
-                box.Min = glm::min(box.Min, local);
-                box.Max = glm::max(box.Max, local);
-            }
-        }
-
-        // Between samples the sphere bulges past the chords joining them by at most the sagitta of
-        // the widest gap: half a sample spacing along the diagonal.
-        const f64 halfGap = std::numbers::sqrt2 * geometry.ThetaSpan / 8.0;
-        const f64 sagitta = std::max(high, low) * 2.0 * std::sin(halfGap) * std::sin(halfGap);
-        box.Min -= dvec3(sagitta);
-        box.Max += dvec3(sagitta);
-        return box;
+        return ComputeSphereTerrainTileBox(
+            MakeSphereTerrainTileFrame(GetCubeSphereTileGeometry(key)), radius, minHeight,
+            maxHeight);
     }
 
     f64 SphereTerrainBoxDistance(const SphereTerrainTileBox& box, const dvec3& point)
@@ -502,17 +446,49 @@ namespace Veng::Renderer
     bool IsBoxBelowHorizon(const SphereTerrainTileBox& box, const dvec3& eye,
                            const f64 occluderRadius)
     {
-        return std::ranges::all_of(SphereTerrainBoxCorners(box), [&](const dvec3& corner)
+        return IsBoxBelowHorizon(SphereTerrainBoxCorners(box), eye, occluderRadius);
+    }
+
+    bool IsBoxBelowHorizon(const std::array<dvec3, 8>& corners, const dvec3& eye,
+                           const f64 occluderRadius)
+    {
+        return std::ranges::all_of(corners, [&](const dvec3& corner)
                                    { return IsHiddenBySphere(eye, corner, occluderRadius); });
     }
 
     SphereTerrainSelectionResult SelectSphereTerrain(const SphereTerrainSelectionInput& input)
     {
-        VE_ASSERT(input.Tiles != nullptr, "sphere terrain selection needs the pool's tiles");
+        SphereTerrainSelectionScratch scratch;
         SphereTerrainSelectionResult result;
+        SelectSphereTerrain(input, scratch, result);
+        return result;
+    }
+
+    void SelectSphereTerrain(const SphereTerrainSelectionInput& input,
+                             SphereTerrainSelectionScratch& scratch,
+                             SphereTerrainSelectionResult& result)
+    {
+        VE_ASSERT(input.Tiles != nullptr, "sphere terrain selection needs the pool's tiles");
+        VE_ASSERT(input.PreviousSplits != &result.Splits,
+                  "sphere terrain selection's result must not be its previous splits");
+        result.Drawn.clear();
+        result.Wanted.clear();
+        result.Requests.clear();
+        result.Splits.clear();
+        result.Stats = {};
+        scratch.Nodes.clear();
+        scratch.Held.clear();
+        scratch.Requested.clear();
+        scratch.Splits.clear();
+        scratch.Prefetches.clear();
         Walker walker{
             .In = input,
             .Out = result,
+            .Nodes = scratch.Nodes,
+            .Held = scratch.Held,
+            .Requested = scratch.Requested,
+            .Splits = scratch.Splits,
+            .Prefetches = scratch.Prefetches,
             .RangeAtZero = SphereTerrainLevelRange(input.Radius, input.PixelsPerRadian,
                                                    input.TargetPixelsPerQuad,
                                                    input.Settings.PlanarRangeFloor, 0),
@@ -557,6 +533,5 @@ namespace Veng::Renderer
                 return a.Urgency > b.Urgency;
             });
         result.Stats.Requests = static_cast<u32>(result.Requests.size());
-        return result;
     }
 }

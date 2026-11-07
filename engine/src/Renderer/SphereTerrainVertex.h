@@ -70,12 +70,15 @@ namespace Veng::Renderer
         /// @brief The tile's layer, its parent's layer, its quadrant in the parent, and the
         ///        SphereTerrainRecord* flags.
         uvec4 Layers{0u};
+        /// @brief The arc terms of the tile's fraction along u (xy) and v (zw)
+        ///        (CubeSphere::TileArcF32), so a vertex evaluates no sine or cosine of the span.
+        vec4 Arc{0.0f};
         /// @brief The generator's words for the tile.
         std::array<u32, MaxSphereTerrainTileWords> Data{};
         /// @brief The generator's words for the tile's parent.
         std::array<u32, MaxSphereTerrainTileWords> ParentData{};
     };
-    static_assert(sizeof(SphereTerrainDrawRecord) == 672,
+    static_assert(sizeof(SphereTerrainDrawRecord) == 688,
                   "SphereTerrainDrawRecord must match the shader's std430 layout");
 
     /// @brief A grid vertex: its coordinate on the grid, and whether it is a skirt vertex hung
@@ -136,6 +139,17 @@ namespace Veng::Renderer
     /// @brief The morph factor at a vertex: `max(saturate((d − S) / (E − S)), floor)`.
     [[nodiscard]] VE_API f32 SphereTerrainMorphFactor(f32 distance, f32 start, f32 end, f32 floor);
 
+    /// @brief The corner weights `ŵ_i` at tile parameters.
+    [[nodiscard]] VE_API vec4 SphereTerrainCornerWeights(const SphereTerrainTileConstants& tile,
+                                                         vec2 st);
+
+    /// @brief The corner weights `ŵ_i` at tile parameters, from the record's arc terms.
+    ///
+    /// A parameter of exactly 0 or 1 takes a fraction of exactly 0 or 1, so neighbouring tiles'
+    /// edge vertices coincide.
+    [[nodiscard]] VE_API vec4 SphereTerrainCornerWeights(const SphereTerrainDrawRecord& record,
+                                                         vec2 st);
+
     /// @brief A placed vertex.
     struct SphereTerrainPlacement
     {
@@ -160,6 +174,11 @@ namespace Veng::Renderer
     [[nodiscard]] VE_API SphereTerrainPlacement
     PlaceSphereTerrainVertex(const SphereTerrainDrawRecord& record, vec2 st, f32 height);
 
+    /// @brief PlaceSphereTerrainVertex at corner weights already computed for its tile
+    ///        parameters (SphereTerrainCornerWeights of the record).
+    [[nodiscard]] VE_API SphereTerrainPlacement PlaceSphereTerrainVertex(
+        const SphereTerrainDrawRecord& record, const vec4& weights, f32 height);
+
     /// @brief One evaluated vertex: the f32 twin of the terrain stages' `SphereTerrainEvaluate`.
     struct SphereTerrainEvaluated
     {
@@ -175,6 +194,9 @@ namespace Veng::Renderer
     ///        measure its eye distance, morphed (odd coordinates slid toward the even one below,
     ///        the height blended from the tile's own grid to its parent's), placed again, and hung
     ///        by the skirt depth when it is a skirt vertex.
+    ///
+    /// An unmorphed vertex stands where it was first placed, so it reads no other height and is
+    /// not placed twice.
     /// @tparam OwnHeight     `f32(ivec2)`: the tile's height at one of its grid vertices.
     /// @tparam ParentHeight  `f32(ivec2)`: the parent's height at one of its grid vertices.
     template <typename OwnHeight, typename ParentHeight>
@@ -185,17 +207,24 @@ namespace Veng::Renderer
     {
         const f32 quads = static_cast<f32>(SphereTerrainGridQuads);
         const f32 gridHeight = own(vertex.Grid);
+        const vec2 st = vec2(vertex.Grid) / quads;
+        const vec4 weights = SphereTerrainCornerWeights(record, st);
         const SphereTerrainPlacement unmorphed =
-            PlaceSphereTerrainVertex(record, vec2(vertex.Grid) / quads, gridHeight);
+            PlaceSphereTerrainVertex(record, weights, gridHeight);
         const f32 k = SphereTerrainMorphFactor(glm::length(unmorphed.Position), record.Morph.x,
                                                record.Morph.y, record.Morph.z);
-        const ivec2 odd = vertex.Grid & ivec2(1);
-        const vec2 slid = MorphSphereTerrainGrid(vertex.Grid, k);
-        const vec2 parentGrid = SphereTerrainParentGrid(slid, record.Layers.z);
-        const f32 ownHeight = glm::mix(gridHeight, own(vertex.Grid - odd), k);
-        const f32 height = glm::mix(ownHeight, SphereTerrainGridHeight(parentGrid, parent), k);
-        SphereTerrainEvaluated result{.Morph = k, .St = slid / quads};
-        result.Placement = PlaceSphereTerrainVertex(record, result.St, height);
+        SphereTerrainEvaluated result{.Placement = unmorphed, .Morph = k, .St = st};
+        if (k > 0.0f)
+        {
+            const ivec2 odd = vertex.Grid & ivec2(1);
+            const vec2 slid = MorphSphereTerrainGrid(vertex.Grid, k);
+            const vec2 parentGrid = SphereTerrainParentGrid(slid, record.Layers.z);
+            const f32 ownHeight = glm::mix(gridHeight, own(vertex.Grid - odd), k);
+            const f32 height = glm::mix(ownHeight, SphereTerrainGridHeight(parentGrid, parent), k);
+            result.St = slid / quads;
+            result.Placement = PlaceSphereTerrainVertex(
+                record, SphereTerrainCornerWeights(record, result.St), height);
+        }
         if (vertex.Skirt)
         {
             result.Placement.Position -= result.Placement.Vertical * record.Morph.w;
@@ -203,7 +232,4 @@ namespace Veng::Renderer
         return result;
     }
 
-    /// @brief The corner weights `ŵ_i` at tile parameters.
-    [[nodiscard]] VE_API vec4 SphereTerrainCornerWeights(const SphereTerrainTileConstants& tile,
-                                                         vec2 st);
 }

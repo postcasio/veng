@@ -151,6 +151,13 @@ namespace Veng::Renderer
         /// lighting. SceneCapture sets it on every face it renders; an ordinary view leaves it false.
         bool CaptureFace = false;
 
+        /// @brief Which face of its capture's cube this view renders, 0 … 5, when CaptureFace.
+        ///
+        /// SceneCapture sets it with CaptureFace. A capture renders its faces in turn, one a
+        /// frame, so what a view selects can be decided once per cycle of the six: a sphere terrain
+        /// selects its tiles at face 0 and draws that selection from every face.
+        u32 CaptureFaceIndex = 0;
+
         /// @brief The level every mesh draws at this frame, or AutomaticLod to defer to the
         ///        renderer's SceneRendererSettings::ForcedLod.
         ///

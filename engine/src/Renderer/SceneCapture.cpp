@@ -441,6 +441,7 @@ namespace Veng::Renderer
                                            .Exclude = m_View.Exclude,
                                            .VisibleLayers = m_View.VisibleLayers,
                                            .CaptureFace = true,
+                                           .CaptureFaceIndex = face,
                                            .Alpha = m_View.Alpha});
         cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::SampleGraphics);
 

@@ -161,6 +161,23 @@ namespace Veng
             return (sinA * Shifted(CosF32(dtheta), sinD, x0)) /
                    (sinD * Shifted(CosF32(a), sinA, x0));
         }
+
+        vec2 TileArcF32(const f32 x0, const f32 dtheta)
+        {
+            const f32 sinD = SinF32(dtheta);
+            return {sinD, Shifted(CosF32(dtheta), sinD, x0)};
+        }
+
+        f32 TileFractionF32(const f32 s, const f32 x0, const f32 dtheta, const vec2 arc)
+        {
+            if (s == 0.0f || s == 1.0f)
+            {
+                return s;
+            }
+            const f32 a = s * dtheta;
+            const f32 sinA = SinF32(a);
+            return (sinA * arc.y) / (arc.x * Shifted(CosF32(a), sinA, x0));
+        }
     }
 
     CubeSphereTileKey CubeSphereTileKey::GetParent() const

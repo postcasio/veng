@@ -66,6 +66,12 @@ namespace Veng::Renderer
             return (static_cast<u64>(entity.Generation) << 32) | entity.Index;
         }
 
+        // A source's memory for a flat view and for a cube view's faces.
+        u64 MemoryKey(const u64 serial, const bool cube)
+        {
+            return (serial << 1) | (cube ? 1u : 0u);
+        }
+
         u64 GrownSize(const u64 needed, const u64 floor)
         {
             u64 size = floor;
@@ -219,7 +225,7 @@ namespace Veng::Renderer
         VE_PROFILE_SCOPE("Render/SphereTerrainSelect");
         VE_ASSERT(info.Camera != nullptr, "SphereTerrainSystem::Select needs the view's camera");
         m_Selections.clear();
-        m_Terrains.clear();
+        m_TerrainCount = 0;
         m_Totals = {};
         m_CasterBounds = AABB::Empty();
         m_Prepared = false;
@@ -269,58 +275,81 @@ namespace Veng::Renderer
                 input.LevelHeightBounds[level] = source.GetGenerator().GetLevelHeightBound(level);
             }
 
-            Memory& memory = m_Memory[source.GetSerial()];
+            const bool cube = info.CubeFace.has_value();
+            Memory& memory = m_Memory[MemoryKey(source.GetSerial(), cube)];
             memory.LastFrame = info.Frame;
             input.PreviousSplits = &memory.Splits;
 
-            SphereTerrainSelectionResult result = SelectSphereTerrain(input);
-            for (const CubeSphereTileKey key : result.Wanted)
+            // A cube view selects at its cycle's start, omnidirectionally, and its other faces
+            // draw that selection, re-marking what it wants so the pool keeps it until the next.
+            if (!cube || *info.CubeFace == 0 || !memory.CubeSelected)
             {
-                source.Want(key);
-            }
-            for (const SphereTerrainSelectionRequest& request : result.Requests)
-            {
-                source.Request(request.Key, SphereTerrainRequestPriority(
-                                                request.Kind == SphereTerrainRequestKind::Split,
-                                                request.InFrustum, request.Urgency));
-            }
-            memory.Splits = std::move(result.Splits);
+                if (cube)
+                {
+                    input.Frustum = nullptr;
+                }
+                SphereTerrainSelectionResult& result = memory.Result;
+                SelectSphereTerrain(input, memory.Scratch, result);
+                for (const CubeSphereTileKey key : result.Wanted)
+                {
+                    source.Want(key);
+                }
+                for (const SphereTerrainSelectionRequest& request : result.Requests)
+                {
+                    source.Request(request.Key, SphereTerrainRequestPriority(
+                                                    request.Kind == SphereTerrainRequestKind::Split,
+                                                    request.InFrustum, request.Urgency));
+                }
+                std::swap(memory.Splits, result.Splits);
 
-            // Arrivals morph a delayed split's children in from their parent's shape; departures
-            // keep a merge's finer tiles drawing while they morph into the coarser tile replacing
-            // them, which the pool must then keep.
-            SphereTerrainTransitionFrame transition = AdvanceSphereTerrainTransitions(
-                memory.Transitions, result.Drawn, info.Delta, source.GetResidency());
-            for (const CubeSphereTileKey key : transition.Departing)
-            {
-                source.Want(key);
+                // Arrivals morph a delayed split's children in from their parent's shape;
+                // departures keep a merge's finer tiles drawing while they morph into the coarser
+                // tile replacing them, which the pool must then keep.
+                SphereTerrainTransitionFrame& transition = memory.Transition;
+                AdvanceSphereTerrainTransitions(memory.Transitions, result.Drawn, info.Delta,
+                                                source.GetResidency(), transition);
+                for (const CubeSphereTileKey key : transition.Departing)
+                {
+                    source.Want(key);
+                }
+                memory.Stats = result.Stats;
+                memory.Stats.ArrivingTiles = transition.ArrivingTiles;
+                memory.Stats.DepartingTiles = static_cast<u32>(transition.Departing.size());
+                memory.Stats.DrawnTiles = static_cast<u32>(transition.Drawn.size());
+                memory.Stats.DrawnPerLevel = {};
+                for (const SphereTerrainDrawnTile& tile : transition.Drawn)
+                {
+                    memory.Stats.DrawnPerLevel[tile.Key.GetLevel()]++;
+                }
+                memory.CubeSelected = cube;
             }
-            memory.Floors = std::move(transition.Floors);
-            result.Drawn = std::move(transition.Drawn);
-            result.Stats.ArrivingTiles = transition.ArrivingTiles;
-            result.Stats.DepartingTiles = static_cast<u32>(transition.Departing.size());
-            result.Stats.DrawnTiles = static_cast<u32>(result.Drawn.size());
-            result.Stats.DrawnPerLevel = {};
-            for (const SphereTerrainDrawnTile& tile : result.Drawn)
+            else
             {
-                result.Stats.DrawnPerLevel[tile.Key.GetLevel()]++;
+                for (const CubeSphereTileKey key : memory.Result.Wanted)
+                {
+                    source.Want(key);
+                }
+                for (const SphereTerrainSelectionRequest& request : memory.Result.Requests)
+                {
+                    source.Want(request.Key);
+                }
+                for (const CubeSphereTileKey key : memory.Transition.Departing)
+                {
+                    source.Want(key);
+                }
+                memory.Stats.Requests = 0;
             }
-            // The generator's words are kept for the tiles drawn and the parents they read.
-            const auto& drawn = memory.Transitions.Drawn;
-            std::erase_if(memory.TileData,
-                          [&](const auto& entry)
-                          {
-                              const CubeSphereTileKey key =
-                                  CubeSphereTileKey::FromValue(entry.first);
-                              const bool parents =
-                                  key.GetLevel() < CubeSphere::MaxLevel &&
-                                  std::ranges::any_of(
-                                      std::array{0u, 1u, 2u, 3u}, [&](const u32 c)
-                                      { return drawn.contains(key.GetChild(c).Value); });
-                              return !drawn.contains(entry.first) && !parents;
-                          });
+            const vector<SphereTerrainDrawnTile>& drawn = memory.Transition.Drawn;
+            SphereTerrainSelectionStats stats = memory.Stats;
 
-            Terrain entry{
+            if (m_TerrainCount == m_Terrains.size())
+            {
+                m_Terrains.emplace_back();
+            }
+            Terrain& entry = m_Terrains[m_TerrainCount++];
+            // The lists keep their capacity across frames.
+            vector<std::array<uvec2, SphereTerrainSurfaceCount>> lists = std::move(entry.Lists);
+            entry = Terrain{
                 .Owner = entity,
                 .Source = terrain.Source,
                 .Mem = &memory,
@@ -329,6 +358,7 @@ namespace Veng::Renderer
                 .Scale = terrain.Scale,
                 .CastsShadows = terrain.CastsShadows,
             };
+            entry.Lists = std::move(lists);
             const auto Resolve = [&](Surface& surface, const AssetHandle<MaterialInstance>& handle,
                                      const bool levelLayer, const string& what)
             {
@@ -390,7 +420,7 @@ namespace Veng::Renderer
             Resolve(entry.Surfaces[0], terrain.Material, false, "its");
             ResolveNear(entry.Surfaces[0], terrain.NearMaterial, terrain.NearDistance, false,
                         "its");
-            result.Stats.SkippedTerrains = entry.Surfaces[0].Material == nullptr ? 1u : 0u;
+            stats.SkippedTerrains = entry.Surfaces[0].Material == nullptr ? 1u : 0u;
             if (terrain.LevelLayers.size() > MaxSphereTerrainLevelLayers)
             {
                 Report(entity,
@@ -413,10 +443,16 @@ namespace Veng::Renderer
             if (terrain.Scale == 1.0f && terrain.CastsShadows && info.ShadowDistance > 0.0f)
             {
                 const dvec3 centerScene = terrain.Center - origin.Position;
-                for (const SphereTerrainDrawnTile& tile : result.Drawn)
+                const SphereTerrainResidency& residency = source.GetResidency();
+                for (const SphereTerrainDrawnTile& tile : drawn)
                 {
-                    const SphereTerrainTileBox box = ComputeSphereTerrainTileBox(
-                        tile.Key, source.GetRadius(), tile.MinHeight, tile.MaxHeight);
+                    const SphereTerrainTileRecord* held = residency.Find(tile.Key);
+                    const SphereTerrainTileBox box =
+                        held != nullptr && held->HasFacts
+                            ? ComputeSphereTerrainTileBox(held->Facts.Frame, source.GetRadius(),
+                                                          tile.MinHeight, tile.MaxHeight)
+                            : ComputeSphereTerrainTileBox(tile.Key, source.GetRadius(),
+                                                          tile.MinHeight, tile.MaxHeight);
                     if (SphereTerrainBoxDistance(box, input.Eye) > info.ShadowDistance)
                     {
                         continue;
@@ -428,10 +464,10 @@ namespace Veng::Renderer
                 }
             }
 
-            Accumulate(m_Totals, result.Stats);
-            m_Selections[EntityValue(entity)] = {std::move(result.Drawn), result.Stats};
-            m_Terrains.push_back(std::move(entry));
+            Accumulate(m_Totals, stats);
+            m_Selections[EntityValue(entity)] = {&drawn, stats};
         }
+        m_Terrains.resize(m_TerrainCount);
 
         std::erase_if(m_Memory, [&](const auto& entry)
                       { return entry.second.LastFrame + MemoryFrames < info.Frame; });
@@ -557,6 +593,7 @@ namespace Veng::Renderer
         VE_PROFILE_SCOPE("Render/SphereTerrainPrepare");
         m_FrameIndex = frameIndex;
         m_Prepared = true;
+        m_PrepareSerial++;
         FrameSlot& slot = m_Slots[frameIndex];
         m_CameraPosition = camera.GetPosition();
         const dvec3 cameraScene = dvec3(m_CameraPosition);
@@ -564,16 +601,12 @@ namespace Veng::Renderer
         const std::span<const ShadowViewInfo> shadowViews =
             shadows != nullptr ? shadows->GetViews() : std::span<const ShadowViewInfo>{};
         m_ShadowViewCount = static_cast<u32>(shadowViews.size());
-        vector<Frustum> shadowFrusta;
-        shadowFrusta.reserve(shadowViews.size());
-        for (const ShadowViewInfo& view : shadowViews)
-        {
-            shadowFrusta.push_back(Frustum::FromViewProjection(view.CullViewProj));
-        }
 
-        vector<SphereTerrainDrawRecord> records;
-        vector<u32> lists;
-        vector<SphereTerrainDrawView> bodyShadows(shadowViews.size());
+        // Cull every terrain first, so the frame's record count sizes the buffer the records are
+        // then written into.
+        u32 recordCount = 0;
+        m_ListEntries.clear();
+        vector<u32>& lists = m_ListEntries;
         for (Terrain& terrain : m_Terrains)
         {
             terrain.Lists.clear();
@@ -593,8 +626,9 @@ namespace Veng::Renderer
             const SphereTerrainSource& source = *terrain.Source;
             const glm::dquat toBody = glm::inverse(terrain.Orientation);
 
-            SphereTerrainFrameInput input{
-                .Drawn = selection->second.first,
+            SphereTerrainFrameInput& input = terrain.Input;
+            input = SphereTerrainFrameInput{
+                .Drawn = *selection->second.first,
                 .Radius = source.GetRadius(),
                 .MinHeight = source.GetMinHeight(),
                 .MaxHeight = source.GetMaxHeight(),
@@ -602,8 +636,9 @@ namespace Veng::Renderer
                 .Scale = terrain.Scale,
                 .CastsShadows = terrain.CastsShadows,
                 .LayerCount = terrain.LayerCount,
-                .ArrivalFloors = &memory.Floors,
+                .ArrivalFloors = &memory.Transition.Floors,
                 .TileOverlay = tileOverlay,
+                .Tiles = &source.GetResidency(),
             };
             for (u32 layer = 0; layer < terrain.LayerCount; layer++)
             {
@@ -616,11 +651,14 @@ namespace Veng::Renderer
                 input.NearDistances[surface] = drawn.NearSeated ? drawn.NearDistance : 0.0f;
             }
             input.Main = {.Planes = BodyPlanes(frustum, 4, toBody, cameraScene), .Horizon = true};
-            for (usize v = 0; v < shadowFrusta.size(); v++)
+            memory.ShadowViews.resize(shadowViews.size());
+            for (usize v = 0; v < shadowViews.size(); v++)
             {
-                bodyShadows[v] = {.Planes = BodyPlanes(shadowFrusta[v], 6, toBody, cameraScene)};
+                memory.ShadowViews[v] = {
+                    .Planes = BodyPlanes(Frustum::FromViewProjection(shadowViews[v].CullViewProj),
+                                         6, toBody, cameraScene)};
             }
-            input.Shadows = bodyShadows;
+            input.Shadows = memory.ShadowViews;
 
             // The stable frame and the scene share axes, so the eye-relative corners need only the
             // camera's scene position and the origin the scene stands at.
@@ -632,28 +670,19 @@ namespace Veng::Renderer
                                          cameraScene;
             input.PrevOrientation =
                 memory.HasPrevious ? memory.PrevOrientation : terrain.Orientation;
-            SphereTerrainGenerator& generator = source.GetGenerator();
-            input.TileData =
-                [&memory, &generator](const CubeSphereTileKey key, const std::span<u32> words)
-            {
-                auto [it, inserted] = memory.TileData.try_emplace(key.Value);
-                if (inserted)
-                {
-                    generator.WriteTileDrawData(key, it->second);
-                }
-                std::ranges::copy(it->second, words.begin());
-            };
 
-            const SphereTerrainFrame frame = BuildSphereTerrainFrame(input);
+            SphereTerrainFrame& frame = memory.Frame;
+            CullSphereTerrainFrame(input, frame);
             memory.PrevCenter = terrain.Center;
             memory.PrevOrientation = terrain.Orientation;
             memory.PrevOrigin = origin;
             memory.HasPrevious = true;
 
-            const u32 base = static_cast<u32>(records.size());
-            records.insert(records.end(), frame.Records.begin(), frame.Records.end());
-            terrain.Lists.resize(frame.Lists.size());
+            const u32 base = recordCount;
+            terrain.RecordBase = base;
+            recordCount += static_cast<u32>(frame.RecordTiles.size());
             SphereTerrainSelectionStats& stats = selection->second.second;
+            terrain.Lists.resize(frame.Lists.size());
             for (usize view = 0; view < frame.Lists.size(); view++)
             {
                 for (u32 surface = 0; surface < SphereTerrainSurfaceCount; surface++)
@@ -713,11 +742,11 @@ namespace Veng::Renderer
         VE_PROFILE_COUNTER("Render/SphereTerrainMainViewTiles",
                            static_cast<f64>(m_Totals.MainViewTiles));
         VE_PROFILE_COUNTER("Render/SphereTerrainTriangles", static_cast<f64>(m_Totals.Triangles));
-        if (records.empty())
+        if (recordCount == 0)
         {
             return;
         }
-        const u64 recordBytes = records.size() * sizeof(SphereTerrainDrawRecord);
+        const u64 recordBytes = u64{recordCount} * sizeof(SphereTerrainDrawRecord);
         const u64 listBytes = lists.size() * sizeof(u32);
         if (slot.Records == nullptr || slot.Records->GetSize() < recordBytes)
         {
@@ -737,12 +766,22 @@ namespace Veng::Renderer
                                                        .HostMapped = true,
                                                    });
         }
-        std::memcpy(slot.Records->GetMappedData(), records.data(), recordBytes);
+        // The records are written straight into the slot's mapping, whose last frame has retired.
+        auto* const mapped = static_cast<SphereTerrainDrawRecord*>(slot.Records->GetMappedData());
+        for (const Terrain& terrain : m_Terrains)
+        {
+            if (terrain.Lists.empty())
+            {
+                continue;
+            }
+            const SphereTerrainFrame& frame = terrain.Mem->Frame;
+            WriteSphereTerrainRecords(terrain.Input, frame,
+                                      {mapped + terrain.RecordBase, frame.RecordTiles.size()});
+        }
         std::memcpy(slot.Lists->GetMappedData(), lists.data(), listBytes);
 
-        // One set per source per frame slot, rewritten each time its slot comes round: the slot's
-        // last frame has retired by then, and the pool's views move when its capacity does.
-        std::unordered_map<u64, Ref<DescriptorSet>> sets;
+        // One set per source per frame slot, written again only when what it names has changed:
+        // the slot's buffers when they grow, the pool's views when its capacity does.
         for (Terrain& terrain : m_Terrains)
         {
             if (terrain.Lists.empty())
@@ -750,27 +789,39 @@ namespace Veng::Renderer
                 continue;
             }
             const SphereTerrainSource& source = *terrain.Source;
-            const u64 serial = source.GetSerial();
-            Ref<DescriptorSet>& set = sets[serial];
-            if (set == nullptr)
+            SlotSet& bound = slot.Sets[source.GetSerial()];
+            if (bound.Set == nullptr)
             {
-                const auto kept = slot.Sets.find(serial);
-                set = kept != slot.Sets.end()
-                          ? kept->second
-                          : DescriptorSet::Create(
-                                m_Context, {.Name = "Sphere Terrain Set", .Layout = m_SetLayout});
+                bound.Set = DescriptorSet::Create(
+                    m_Context, {.Name = "Sphere Terrain Set", .Layout = m_SetLayout});
+            }
+            if (bound.ViewGeneration != source.GetViewGeneration())
+            {
                 for (u32 channel = 0; channel < MaxSphereTerrainChannels; channel++)
                 {
                     // An unused binding names the height channel, which every source carries.
-                    set->Write(channel, source.GetChannelArrayView(
-                                            channel < source.GetChannelCount() ? channel : 0));
+                    bound.Set->Write(channel,
+                                     source.GetChannelArrayView(
+                                         channel < source.GetChannelCount() ? channel : 0));
                 }
-                set->Write(SphereTerrainRecordsBinding, slot.Records);
-                set->Write(SphereTerrainListBinding, slot.Lists);
+                bound.ViewGeneration = source.GetViewGeneration();
             }
-            terrain.Set = set.get();
+            if (bound.Records != slot.Records.get())
+            {
+                bound.Set->Write(SphereTerrainRecordsBinding, slot.Records);
+                bound.Records = slot.Records.get();
+            }
+            if (bound.Lists != slot.Lists.get())
+            {
+                bound.Set->Write(SphereTerrainListBinding, slot.Lists);
+                bound.Lists = slot.Lists.get();
+            }
+            bound.LastPrepared = m_PrepareSerial;
+            terrain.Set = bound.Set.get();
         }
-        slot.Sets = std::move(sets);
+        // A source this slot did not bind for a while lets its set go.
+        std::erase_if(slot.Sets, [&](const auto& entry)
+                      { return entry.second.LastPrepared + MemoryFrames < m_PrepareSerial; });
     }
 
     void SphereTerrainSystem::RecordGBuffer(CommandBuffer& cmd, const SurfacePush& push,
@@ -909,7 +960,7 @@ namespace Veng::Renderer
     SphereTerrainSystem::FindSelection(const Entity entity) const
     {
         const auto it = m_Selections.find(EntityValue(entity));
-        return it != m_Selections.end() ? &it->second.first : nullptr;
+        return it != m_Selections.end() ? it->second.first : nullptr;
     }
 
     const SphereTerrainSelectionStats* SphereTerrainSystem::FindStats(const Entity entity) const

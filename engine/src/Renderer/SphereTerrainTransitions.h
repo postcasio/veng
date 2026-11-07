@@ -2,6 +2,7 @@
 
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <Veng/Veng.h>
 #include <Veng/Math/CubeSphere.h>
@@ -30,6 +31,27 @@ namespace Veng::Renderer
         std::unordered_map<u64, f64> Departures;
         /// @brief The seconds the source has been selected over.
         f64 Clock = 0.0;
+
+        /// @brief The working containers one advance fills, kept so a frame clears them rather
+        ///        than allocating them afresh.
+        struct Scratch
+        {
+            /// @brief The selected keys.
+            std::unordered_set<u64> Chosen;
+            /// @brief Per selected tile replacing finer ones, the finer tiles drawn last frame.
+            std::unordered_map<u64, vector<u64>> Groups;
+            /// @brief This frame's departures, before they replace Departures.
+            std::unordered_map<u64, f64> Departures;
+            /// @brief This frame's arrivals, before they replace Arrivals.
+            std::unordered_map<u64, f64> Arrivals;
+            /// @brief The selected tiles withheld while finer tiles depart under them.
+            std::unordered_set<u64> Withheld;
+            /// @brief The departing tiles drawn.
+            vector<SphereTerrainDrawnTile> Departing;
+        };
+
+        /// @brief The working containers.
+        Scratch Work;
     };
 
     /// @brief One frame's tiles to draw once arrivals and departures are applied.
@@ -68,4 +90,10 @@ namespace Veng::Renderer
     [[nodiscard]] VE_API SphereTerrainTransitionFrame AdvanceSphereTerrainTransitions(
         SphereTerrainTransitionState& state, std::span<const SphereTerrainDrawnTile> selected,
         f32 delta, const SphereTerrainTileOracle& tiles);
+
+    /// @brief AdvanceSphereTerrainTransitions into a frame the caller keeps, cleared first.
+    VE_API void AdvanceSphereTerrainTransitions(SphereTerrainTransitionState& state,
+                                                std::span<const SphereTerrainDrawnTile> selected,
+                                                f32 delta, const SphereTerrainTileOracle& tiles,
+                                                SphereTerrainTransitionFrame& frame);
 }

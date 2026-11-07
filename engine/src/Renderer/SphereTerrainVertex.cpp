@@ -139,10 +139,29 @@ namespace Veng::Renderer
         return beta / total;
     }
 
+    vec4 SphereTerrainCornerWeights(const SphereTerrainDrawRecord& record, const vec2 st)
+    {
+        const SphereTerrainTileConstants& tile = record.Tile;
+        const f32 au = CubeSphere::TileFractionF32(st.x, tile.Warp.x, tile.Warp.y,
+                                                   {record.Arc.x, record.Arc.y});
+        const f32 av = CubeSphere::TileFractionF32(st.y, tile.Warp.z, tile.Warp.w,
+                                                   {record.Arc.z, record.Arc.w});
+        const vec4 beta =
+            vec4((1.0f - au) * (1.0f - av), au * (1.0f - av), (1.0f - au) * av, au * av) *
+            vec4(tile.Corners[0].w, tile.Corners[1].w, tile.Corners[2].w, tile.Corners[3].w);
+        const f32 total = beta.x + beta.y + beta.z + beta.w;
+        return beta / total;
+    }
+
     SphereTerrainPlacement PlaceSphereTerrainVertex(const SphereTerrainDrawRecord& record,
                                                     const vec2 st, const f32 height)
     {
-        const vec4 w = SphereTerrainCornerWeights(record.Tile, st);
+        return PlaceSphereTerrainVertex(record, SphereTerrainCornerWeights(record, st), height);
+    }
+
+    SphereTerrainPlacement PlaceSphereTerrainVertex(const SphereTerrainDrawRecord& record,
+                                                    const vec4& w, const f32 height)
+    {
         const f32 shortfall = (w.x * w.y * record.ChordsA.x) + (w.x * w.z * record.ChordsA.y) +
                               (w.x * w.w * record.ChordsA.z) + (w.y * w.z * record.ChordsA.w) +
                               (w.y * w.w * record.ChordsB.x) + (w.z * w.w * record.ChordsB.y);

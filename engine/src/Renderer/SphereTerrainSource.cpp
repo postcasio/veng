@@ -81,7 +81,13 @@ namespace Veng::Renderer
     SphereTerrainTileConstants PackSphereTerrainTileConstants(const CubeSphereTileKey key,
                                                               const f64 radius)
     {
-        const CubeSphereTileGeometry geometry = GetCubeSphereTileGeometry(key);
+        return PackSphereTerrainTileConstants(key, GetCubeSphereTileGeometry(key), radius);
+    }
+
+    SphereTerrainTileConstants
+    PackSphereTerrainTileConstants(const CubeSphereTileKey key,
+                                   const CubeSphereTileGeometry& geometry, const f64 radius)
+    {
         const CubeSphereTileOffsetInputs inputs = GetCubeSphereTileOffsetInputs(geometry);
         const vec3 high = vec3(geometry.Center);
         const vec3 low = vec3(geometry.Center - dvec3(high));
@@ -139,7 +145,7 @@ namespace Veng::Renderer
 
         Impl(Context& context, const SphereTerrainSourceInfo& info)
             : Ctx(context), Info(info), Serial(s_NextSerial.fetch_add(1)),
-              Residency(info.MaxResidentTiles, info.PinnedLevel)
+              Residency(info.MaxResidentTiles, info.PinnedLevel, info.Radius)
         {
         }
 
@@ -163,6 +169,7 @@ namespace Veng::Renderer
         vector<GeneratedTextureKey> ToRelease;
         Context::FrameRetiredHandle Retired = 0;
         bool PinnedTopResident = false;
+        u64 ViewGeneration = 0;
         u64 Requests = 0;
         u64 Throttled = 0;
         u32 GeneratedThisFrame = 0;
@@ -189,6 +196,7 @@ namespace Veng::Renderer
 
         void CreatePool(const u32 capacity)
         {
+            ViewGeneration++;
             Images.clear();
             ArrayViews.clear();
             LayerViews.assign(Channels.size(), {});
@@ -344,9 +352,9 @@ namespace Veng::Renderer
             const SphereTerrainTileWork work{
                 .Key = key,
                 .Layer = record->Layer,
-                .Geometry = GetCubeSphereTileGeometry(key),
+                .Geometry = record->Facts.Geometry,
                 .Radius = Info.Radius,
-                .Constants = PackSphereTerrainTileConstants(key, Info.Radius),
+                .Constants = record->Facts.Constants,
                 .ChannelViews = channelViews,
                 .ParentLayer = parentLayer,
                 .ParentViews = parentViews,
@@ -484,6 +492,9 @@ namespace Veng::Renderer
             {
                 Forget(result.Evicted);
             }
+            std::array<u32, MaxSphereTerrainTileWords> words{};
+            Info.Generator->WriteTileDrawData(key, words);
+            Residency.SetTileWords(key, words);
             SubmitTile(key, result.Layer, result.Generation, priority);
             return true;
         }
@@ -759,6 +770,11 @@ namespace Veng::Renderer
     u64 SphereTerrainSource::GetSerial() const
     {
         return m_Impl->Serial;
+    }
+
+    u64 SphereTerrainSource::GetViewGeneration() const
+    {
+        return m_Impl->ViewGeneration;
     }
 
     const string& SphereTerrainSource::GetName() const

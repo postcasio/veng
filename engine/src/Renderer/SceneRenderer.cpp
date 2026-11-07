@@ -2943,6 +2943,7 @@ namespace Veng::Renderer
                 .Delta = view.Delta,
                 .ShadowDistance = m_Topology->ShadowActive ? m_Settings.MaxShadowDistance : 0.0f,
                 .VisibleLayers = view.VisibleLayers,
+                .CubeFace = view.CaptureFace ? optional<u32>(view.CaptureFaceIndex) : std::nullopt,
             });
         casterBounds = Union(casterBounds, m_SphereTerrain->GetCasterBounds());
 

@@ -3849,8 +3849,8 @@ entity exclusion rides — `SceneView::VisibleLayers` carried into `SceneBroadph
 `RenderLayer::CameraOnly`, which the camera views draw and every default capture mask leaves out, and
 `RenderLayer::CaptureOnly`, which every default capture mask draws and the camera views leave out.
 `CameraOnly` is for geometry too costly or too view-dependent to draw again from a capture's
-viewpoint — a streamed sphere terrain, whose capture faces would each select and request tiles from
-their own eye against the pool the camera view is filling. `CaptureOnly` is for the stand-in that
+viewpoint — a streamed sphere terrain, whose capture would select and request tiles from its own eye
+against the pool the camera view is filling. `CaptureOnly` is for the stand-in that
 replaces it in reflections and image-based lighting: since no camera view draws it, it need not hide
 under the geometry it replaces, and can stand exactly where that geometry is. Nothing sits on either
 layer until a consumer puts it there, so a scene using neither renders and captures as it would
@@ -4264,7 +4264,14 @@ measured bounds and the selection); the second the drawing.
   under a resident parent, so the held set is closed under parent; a tile is evictable when not
   pinned, holding no pending or resident child, and wanted neither this frame nor the last (two
   frames, so renderers marking in turn cannot evict each other's tiles); eviction takes the least
-  recently wanted. Full with nothing evictable, a request waits and is counted
+  recently wanted, ties on the least key, and a request wants its parent first, so never evicts it.
+  Neither costs a scan: the pending tiles are counted as they come and go, and every resident tile
+  neither pinned nor a parent sits in a bucket of the frame it was last wanted, ordered by key, so an
+  eviction pops the oldest bucket's least key (`tests/unit/sphere_terrain_residency.cpp`). When the
+  core takes a tile in it computes the tile's **facts** once (`SphereTerrainTileFacts`: geometry,
+  the box's height-free frame, packed constants, arc terms, chords, tangent, edge, and the
+  generator's `WriteTileDrawData` words), which the selection, the cull, the records and the tile's
+  own generation then read rather than recompute. Full with nothing evictable, a request waits and is counted
   (`RequestsDeferred`); so does one past `MaxPendingTiles`. A pending tile no renderer wants for two
   frames is cancelled. The pinned top (`0..PinnedLevel`, 126 tiles at 2) is requested level by
   level from creation, at `PinnedPriority`, and never evicted, so every parent chain ends resident.
@@ -4319,8 +4326,12 @@ measured bounds and the selection); the second the drawing.
   marks the wanted set (visited tiles, children of waiting splits, prefetched children within
   `PrefetchRangeScale` of the split distance) and issues the requests: splits in view first, then
   splits behind, by how far the parent's error exceeds the threshold, then prefetch. Its memory (last
-  frame's splits, for hysteresis) is keyed by the source's serial, so a source moved between
-  entities or scenes keeps it. `SceneRenderer::GetSphereTerrainSelection(entity)` returns the drawn
+  frame's splits, for hysteresis, and the containers each frame clears and refills) is keyed by the
+  source's serial and by whether the view is a cube face, so a source moved between entities or
+  scenes keeps it. **A capture selects once per cube cycle**: a view rendering a cube face
+  (`SceneView::CaptureFace`, `CaptureFaceIndex`) selects at face 0 with no frustum and every face
+  draws that selection, culled to its own frustum and re-marking what it wants, so the six faces never
+  compete for tiles and a capture's splits and morphs do not churn with the face it renders. `SceneRenderer::GetSphereTerrainSelection(entity)` returns the drawn
   tiles (key, layers, working range, morph range, MorphError, held); `GetSphereTerrainStats()` the
   counts per level, waiting splits, balance splits and holds; `SphereTerrainSource::FindDeepestResident(direction)` and
   `GetStats()` the pool's side. `Render/SphereTerrain*` counters sample them.
@@ -4344,14 +4355,17 @@ a budget near 550, about a 700-tile pool.
   the vertex and the stage decodes it (`SphereTerrainGridVertex`). Every quad is cut from its lowest
   corner to its highest, the diagonal whose collapse under the morph reproduces the parent's
   triangulation; 2,048 triangles a tile plus 256 of skirt, wound counter-clockwise from outside.
-- **Records and lists.** Each frame, each tile some view draws gets one 672-byte record
+- **Records and lists.** Each frame, each tile some view draws gets one 688-byte record
   (`SphereTerrainDrawRecord` / `SphereTerrainRecord`) in a host-mapped per-frame-slot buffer: its four
   corners eye-relative, `Center + Orientation·(R·d_i) − eye` formed in double; the corners' verticals;
   the six squared chords `|d_i − d_j|²`; the tile's `SphereTerrainTileConstants`; last frame's corners
   (from last frame's pose and origin, relative to this frame's camera), the tangent, the morph range,
-  arrival floor and skirt depth, the level layers' heights, the layers and quadrant, and the
-  generator's `MaxSphereTerrainTileWords` words for the tile and its parent
-  (`SphereTerrainGenerator::WriteTileDrawData`, cached per source while the tile stays drawn). Each
+  arrival floor and skirt depth, the level layers' heights, the layers and quadrant, the tile's arc
+  terms (`CubeSphere::TileArcF32`, so a vertex evaluates no sine or cosine of the span), and the
+  generator's `MaxSphereTerrainTileWords` words for the tile and its parent (from the pool's facts).
+  `CullSphereTerrainFrame` decides the lists, then `WriteSphereTerrainRecords` writes each record
+  straight into the frame slot's mapping; the set is written again only when the buffers or the
+  pool's views (`SphereTerrainSource::GetViewGeneration`) it names have changed. Each
   view and surface has a list of record indices; a draw's `firstInstance` is its list's start, so
   `SV_VulkanInstanceID` names the entry. **Set 4** is the terrain's own layout
   (`CreateSphereTerrainSetLayout`): channel `n`'s array at binding `n` (an absent channel binds the
@@ -4361,12 +4375,17 @@ a budget near 550, about a 700-tile pool.
   `1 − |m|² = Σ_{i<j} ŵ_iŵ_j|d_i − d_j|²` — every term an eye-relative corner or a quantity no larger
   than the tile, so nothing the size of the radius is subtracted in f32: the device places a level-22
   vertex 2 m under the eye on a 6.4×10⁶ m sphere to 0.3 µm, and a level-8 vertex from 10,000 km to
-  1×10⁻⁷ of its distance (`tests/gpu/sphere_terrain.cpp`).
+  1×10⁻⁷ of its distance (`tests/gpu/sphere_terrain.cpp`). The corner weights are computed once
+  per placement and handed to the weight-taking `SphereTerrainPlace`, `SphereTerrainPlacePrevious`
+  and `SphereTerrainTileOffset`; a parameter of exactly 0 or 1 takes a fraction of exactly 0 or 1,
+  so neighbouring tiles' edge vertices coincide.
 - **The morph** (CDLOD's, reimplemented from the published description): `k` from the vertex's
   unmorphed distance, `max(saturate((d − S)/(E − S)), floor)`; odd grid coordinates slide to the even
   one below by `k`, and the height blends from the tile's own grid to its parent's grid (linear over
   the parent's triangles) by `k`, so at `k = 1` a tile *is* its parent, vertex for vertex and
-  triangle for triangle. A tile appearing under one drawn last frame takes an **arrival floor**
+  triangle for triangle. A vertex whose `k` is 0 — most of every tile, coherently — reads no parent
+  or odd height and is placed once, and `TerrainChannel` samples no parent where the fragment does
+  not morph. A tile appearing under one drawn last frame takes an **arrival floor**
   falling from 1 to 0 over `SphereTerrainArrivalSeconds` (0.25 s) on the view's delta, so a split
   delayed past its distance morphs in rather than popping. A tile the selection replaces by a
   coarser one **departs**: it keeps drawing under a floor rising from 0 to 1 over
@@ -4383,8 +4402,9 @@ a budget near 550, about a 700-tile pool.
   partly morphed neighbour's edge can stand off) plus the parent grid's chord sagitta, two f32 steps
   at the tile's distance and two tiles' rounding of one texel, and at least
   `SphereTerrainMinSkirtMetres`. A skirt takes its edge vertex's shading.
-- **Culling** is per view, in unscaled metres, against the selection's box widened to the level
-  layers: the main view by its four side planes (so neither the near and far planes nor a scale
+- **Culling** is per view, in unscaled metres, against the selection's box raised to the level
+  layers the tile draws (`SphereTerrainCullHeights`; a layer below all its ground is not drawn on it
+  and does not widen it): the main view by its four side planes (so neither the near and far planes nor a scale
   move it) and the horizon, each shadow view by its six cull planes (`ShadowCasterViews`). The
   cascades fit to the shadow-casting tiles within `MaxShadowDistance` alone
   (`GetCasterBounds`, selected ahead of the cascade fit).
@@ -4396,7 +4416,7 @@ a budget near 550, about a 700-tile pool.
 - **The material** declares `"sphereTerrain"` (see [../Asset/CLAUDE.md](../Asset/CLAUDE.md)); its
   fragment takes `SphereTerrainFragmentInput` and reads `TerrainChannel` (the tile's sample blended
   with the parent's by the geometry's own morph, so the shading has no seam where the geometry has
-  none), `TerrainTexelSize`, `TerrainDirectionOffset` with `TerrainCenterHigh`/`Low`,
+  none; `TerrainChannelAt` at caller-given coordinates, for a channel held at a divisor), `TerrainTexelSize`, `TerrainDirectionOffset` with `TerrainCenterHigh`/`Low`,
   `TerrainTileData`/`TerrainParentTileData`, `TerrainMorph`, `TerrainSurface`, `TerrainTileLevel`,
   `TerrainTileHeld` and `TerrainTileOverlay` (below). Each drawn surface
   takes one `DrawBudget` slot (`DrawPhase::SphereTerrain`) for its material and an identity frame;

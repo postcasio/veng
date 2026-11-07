@@ -6,8 +6,9 @@
 
 namespace Veng::Renderer
 {
-    SphereTerrainResidency::SphereTerrainResidency(const u32 capacity, const u32 pinnedLevel)
-        : m_Capacity(capacity), m_PinnedLevel(pinnedLevel)
+    SphereTerrainResidency::SphereTerrainResidency(const u32 capacity, const u32 pinnedLevel,
+                                                   const f64 radius)
+        : m_Capacity(capacity), m_PinnedLevel(pinnedLevel), m_Radius(radius)
     {
         m_FreeLayers.reserve(capacity);
         for (u32 layer = capacity; layer > 0; layer--)
@@ -37,32 +38,67 @@ namespace Veng::Renderer
     {
         if (const auto it = m_Tiles.find(key.Value); it != m_Tiles.end())
         {
-            it->second.LastWanted = m_Frame;
+            SetLastWanted(it->second, m_Frame);
         }
+    }
+
+    bool SphereTerrainResidency::IsBucketed(const SphereTerrainTileRecord& record)
+    {
+        return record.State == SphereTerrainTileState::Resident && !record.Pinned &&
+               record.Children == 0;
+    }
+
+    void SphereTerrainResidency::Unbucket(const SphereTerrainTileRecord& record)
+    {
+        if (!IsBucketed(record))
+        {
+            return;
+        }
+        const auto bucket = m_Buckets.find(record.LastWanted);
+        VE_ASSERT(bucket != m_Buckets.end(), "sphere terrain: an evictable tile is in no bucket");
+        bucket->second.erase(record.Key.Value);
+        if (bucket->second.empty())
+        {
+            m_Buckets.erase(bucket);
+        }
+    }
+
+    void SphereTerrainResidency::Bucket(const SphereTerrainTileRecord& record)
+    {
+        if (IsBucketed(record))
+        {
+            m_Buckets[record.LastWanted].insert(record.Key.Value);
+        }
+    }
+
+    void SphereTerrainResidency::SetLastWanted(SphereTerrainTileRecord& record, const u64 frame)
+    {
+        if (record.LastWanted == frame)
+        {
+            return;
+        }
+        Unbucket(record);
+        record.LastWanted = frame;
+        Bucket(record);
+    }
+
+    void SphereTerrainResidency::AddChildren(SphereTerrainTileRecord& record, const i32 delta)
+    {
+        Unbucket(record);
+        record.Children = static_cast<u8>(static_cast<i32>(record.Children) + delta);
+        Bucket(record);
     }
 
     CubeSphereTileKey SphereTerrainResidency::FindEvictable() const
     {
         // Wanted this frame or the last is protected: renderers sharing a source mark in turn, so a
         // tile one marked last frame and another is about to mark this frame must survive between.
-        CubeSphereTileKey best;
-        u64 bestWanted = ~0ull;
-        for (const auto& [value, record] : m_Tiles)
+        // The oldest bucket holds the least recently wanted, so when it is protected, all are.
+        if (m_Buckets.empty() || m_Buckets.begin()->first + 1 >= m_Frame)
         {
-            if (record.State != SphereTerrainTileState::Resident || record.Pinned ||
-                record.Children != 0 || record.LastWanted + 1 >= m_Frame)
-            {
-                continue;
-            }
-            // Ties break on the key so the choice does not depend on the map's iteration order.
-            if (record.LastWanted < bestWanted ||
-                (record.LastWanted == bestWanted && value > best.Value))
-            {
-                best = record.Key;
-                bestWanted = record.LastWanted;
-            }
+            return {};
         }
-        return best;
+        return CubeSphereTileKey::FromValue(*m_Buckets.begin()->second.begin());
     }
 
     void SphereTerrainResidency::Drop(const CubeSphereTileKey key)
@@ -70,11 +106,16 @@ namespace Veng::Renderer
         const auto it = m_Tiles.find(key.Value);
         VE_ASSERT(it != m_Tiles.end(), "sphere terrain: dropping a tile the pool does not hold");
         VE_ASSERT(it->second.Children == 0, "sphere terrain: dropping a tile with a held child");
+        Unbucket(it->second);
+        if (it->second.State == SphereTerrainTileState::Pending)
+        {
+            m_PendingCount--;
+        }
         if (key.GetLevel() > 0)
         {
             if (const auto parent = m_Tiles.find(key.GetParent().Value); parent != m_Tiles.end())
             {
-                parent->second.Children--;
+                AddChildren(parent->second, -1);
             }
         }
         m_FreeLayers.push_back(it->second.Layer);
@@ -86,7 +127,7 @@ namespace Veng::Renderer
     {
         if (const auto it = m_Tiles.find(key.Value); it != m_Tiles.end())
         {
-            it->second.LastWanted = m_Frame;
+            SetLastWanted(it->second, m_Frame);
             return {.Outcome = RequestOutcome::AlreadyHeld,
                     .Layer = it->second.Layer,
                     .Generation = it->second.Generation};
@@ -97,6 +138,11 @@ namespace Veng::Renderer
         }
 
         RequestResult result{.Outcome = RequestOutcome::Accepted};
+        if (key.GetLevel() > 0)
+        {
+            // Wanting a child wants its parent, which must survive the eviction below.
+            SetLastWanted(m_Tiles.at(key.GetParent().Value), m_Frame);
+        }
         if (m_FreeLayers.empty())
         {
             const CubeSphereTileKey evict = FindEvictable();
@@ -114,7 +160,7 @@ namespace Veng::Renderer
         m_FreeLayers.pop_back();
         if (key.GetLevel() > 0)
         {
-            m_Tiles.at(key.GetParent().Value).Children++;
+            AddChildren(m_Tiles.at(key.GetParent().Value), 1);
         }
         const u32 generation = m_NextGeneration++;
         m_Tiles.emplace(key.Value, SphereTerrainTileRecord{
@@ -124,7 +170,10 @@ namespace Veng::Renderer
                                        .Pinned = key.GetLevel() <= m_PinnedLevel,
                                        .Generation = generation,
                                        .LastWanted = m_Frame,
+                                       .HasFacts = true,
+                                       .Facts = MakeSphereTerrainTileFacts(key, m_Radius),
                                    });
+        m_PendingCount++;
         result.Layer = layer;
         result.Generation = generation;
         return result;
@@ -139,6 +188,8 @@ namespace Veng::Renderer
             return false;
         }
         it->second.State = SphereTerrainTileState::Resident;
+        m_PendingCount--;
+        Bucket(it->second);
         return true;
     }
 
@@ -151,6 +202,20 @@ namespace Veng::Renderer
             return false;
         }
         it->second.Bound = bound;
+        return true;
+    }
+
+    bool SphereTerrainResidency::SetTileWords(const CubeSphereTileKey key,
+                                              const std::span<const u32> words)
+    {
+        const auto it = m_Tiles.find(key.Value);
+        if (it == m_Tiles.end())
+        {
+            return false;
+        }
+        std::array<u32, MaxSphereTerrainTileWords>& held = it->second.Facts.Words;
+        held = {};
+        std::ranges::copy(words.first(std::min(words.size(), held.size())), held.begin());
         return true;
     }
 
@@ -238,13 +303,6 @@ namespace Veng::Renderer
         return static_cast<u32>(std::ranges::count_if(
             m_Tiles, [](const auto& entry)
             { return entry.second.State == SphereTerrainTileState::Resident; }));
-    }
-
-    u32 SphereTerrainResidency::GetPendingCount() const
-    {
-        return static_cast<u32>(std::ranges::count_if(
-            m_Tiles, [](const auto& entry)
-            { return entry.second.State == SphereTerrainTileState::Pending; }));
     }
 
     u32 SphereTerrainResidency::GetPinnedResidentCount() const

@@ -131,6 +131,24 @@ namespace Veng
         /// @param dtheta  The tile's warp-angle span.
         [[nodiscard]] VE_API f32 TileFractionF32(f32 s, f32 x0, f32 dtheta);
 
+        /// @brief The per-tile terms of TileFractionF32: `(S(Δθ), C(Δθ) − x0·S(Δθ))`.
+        ///
+        /// They depend on the tile alone, so a caller evaluating many fractions across one tile
+        /// computes them once and hands them to the overload taking them.
+        /// @param x0      The tile's cube-plane start, `tan θ0`.
+        /// @param dtheta  The tile's warp-angle span.
+        [[nodiscard]] VE_API vec2 TileArcF32(f32 x0, f32 dtheta);
+
+        /// @brief TileFractionF32 from the tile's precomputed arc terms (TileArcF32).
+        ///
+        /// The same arithmetic, so the same result, with `s = 0` returning 0 and `s = 1` returning
+        /// 1 exactly, so neighbouring tiles' edge vertices coincide.
+        /// @param s       The tile parameter.
+        /// @param x0      The tile's cube-plane start, `tan θ0`.
+        /// @param dtheta  The tile's warp-angle span.
+        /// @param arc     TileArcF32(x0, dtheta).
+        [[nodiscard]] VE_API f32 TileFractionF32(f32 s, f32 x0, f32 dtheta, vec2 arc);
+
         /// @brief The polynomial sine TileFractionF32 evaluates, accurate to f32 on |x| ≤ 1.7.
         [[nodiscard]] VE_API f32 SinF32(f32 x);
 
