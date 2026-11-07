@@ -31,6 +31,7 @@ static const uint ParticleCounterAlpha = 12;
 static const uint ParticleCounterAdditive = 16;
 static const uint ParticleCounterSpawned = 20;
 static const uint ParticleCounterDropped = 24;
+static const uint ParticleCounterAlphaLive = 28;
 
 // Byte offsets of the argument buffer's records.
 static const uint ParticleArgsUpdate = 0;

@@ -89,3 +89,78 @@ LightMask ForwardTileLightMask(ViewConstants vc, float3 worldPos)
     }
     return LoadLightMask(vc, LightTileRecord(vc, uint2(pixel) / LightTileSize) + LightMaskWords);
 }
+
+// The most tiles ForwardSphereLightMask unions before it takes every light instead: past this,
+// reading the masks costs more than the lights they would skip.
+static const uint ForwardSphereMaxTiles = 64u;
+
+// The lights that can reach any part of the world-space sphere (centre, radius) drawn in front of
+// the opaque depth: the union of the forward masks of every tile the sphere's projection covers. A
+// light reaching any visible point of the sphere is in the mask of the tile that point projects to,
+// so it is kept however the sphere straddles tile edges; what the union leaves out reaches no
+// visible part of it. The projection is bounded by the view-space box around the sphere, through
+// the same projection the forward fragments use.
+// - With no masks this frame, every light.
+// - A sphere reaching the camera plane, or covering more than ForwardSphereMaxTiles tiles, takes
+//   every light.
+// - A sphere whose projection lies wholly outside the culled extent is not seen; it takes the
+//   directional lights alone (DirectionalLightsMask).
+LightMask ForwardSphereLightMask(ViewConstants vc, float3 centre, float radius)
+{
+    uint count = vc.LightState.y;
+    if (!HasLightTiles(vc))
+    {
+        return AllLightsMask(count);
+    }
+    float3 c = mul(vc.View, float4(centre - vc.CameraPosition.xyz, 0.0)).xyz;
+    float2 lo = float2(3.4e38);
+    float2 hi = float2(-3.4e38);
+    for (uint k = 0u; k < 8u; ++k)
+    {
+        float3 corner = c + radius * float3((k & 1u) != 0u ? 1.0 : -1.0,
+                                            (k & 2u) != 0u ? 1.0 : -1.0,
+                                            (k & 4u) != 0u ? 1.0 : -1.0);
+        float4 clip = mul(vc.Proj, float4(corner, 1.0));
+        if (!(clip.w > 0.0))
+        {
+            return AllLightsMask(count);
+        }
+        float2 ndc = clip.xy / clip.w;
+        lo = min(lo, ndc);
+        hi = max(hi, ndc);
+    }
+    uint2 extent = LightTileExtent(vc);
+    float2 pixelLo = (lo * 0.5 + 0.5) * float2(extent);
+    float2 pixelHi = (hi * 0.5 + 0.5) * float2(extent);
+    if (any(pixelHi < 0.0) || any(pixelLo >= float2(extent)))
+    {
+        return DirectionalLightsMask(vc);
+    }
+    uint2 first = uint2(max(pixelLo, float2(0.0))) / LightTileSize;
+    uint2 last = uint2(min(pixelHi, float2(extent) - 1.0)) / LightTileSize;
+    uint2 span = last - first + 1u;
+    if (span.x * span.y > ForwardSphereMaxTiles)
+    {
+        return AllLightsMask(count);
+    }
+
+    LightMask mask;
+    for (uint i = 0u; i < LightMaskWords; ++i)
+    {
+        mask.Words[i] = 0u;
+    }
+    uint words = min((count + 31u) / 32u, LightMaskWords);
+    for (uint y = first.y; y <= last.y; ++y)
+    {
+        for (uint x = first.x; x <= last.x; ++x)
+        {
+            uint word = LightTileRecord(vc, uint2(x, y)) + LightMaskWords;
+            for (uint i = 0u; i < words; ++i)
+            {
+                mask.Words[i] |=
+                    g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load((word + i) * 4u);
+            }
+        }
+    }
+    return mask;
+}

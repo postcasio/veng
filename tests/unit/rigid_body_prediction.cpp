@@ -281,15 +281,18 @@ TEST_CASE("A body the replay strikes is put back as it stood before the replay")
 {
     // Live, the vehicle waits ten ticks and then drives away from the loose body. The replay drives
     // it straight into the loose body instead, as a correction would; once the replay ends, the
-    // loose body is back where the live ticks left it, untouched.
+    // loose body is back where the live ticks left it, untouched. It is kept awake, so its whole
+    // solver state is what comes back; a sleeping one is the case below.
     TestSupport::TestServices services;
     Rig rig;
     const Entity loose = rig.Spawn(vec3(0.0f, 0.0f, 2.5f), false);
+    rig.World->Get<RigidBody>(loose).AllowSleeping = false;
     rig.Start(services);
     for (u64 tick = 1; tick <= 30; ++tick)
     {
         rig.Step(services, tick, tick <= 10 ? vec2(0.0f) : vec2(1.0f, 0.0f));
     }
+    REQUIRE(rig.Solver().IsBodyActive(loose));
     const vector<u8> before = rig.Solver().SaveBodyState(loose);
     const Transform transformBefore = rig.World->Get<Transform>(loose);
 
@@ -306,6 +309,46 @@ TEST_CASE("A body the replay strikes is put back as it stood before the replay")
     CHECK(rig.Solver().SaveBodyState(loose) == before);
     CHECK(rig.World->Get<Transform>(loose).Position == transformBefore.Position);
     CHECK(rig.World->Get<Transform>(loose).Rotation == transformBefore.Rotation);
+}
+
+TEST_CASE("A sleeping body the replay strikes ends at its pre-replay pose, asleep")
+{
+    // As above, but the loose body sleeps through the live ticks; the replay wakes it with a
+    // strike.
+    TestSupport::TestServices services;
+    Rig rig;
+    const Entity sleeper = rig.World->CreateEntity();
+    rig.World->Add<Transform>(sleeper, Transform{.Position = vec3(0.0f, 0.0f, 2.5f)});
+    rig.World->Add<RigidBody>(
+        sleeper, RigidBody{.Motion = MotionType::Dynamic, .Mass = 1.0f, .StartAsleep = true});
+    rig.World->Add<Collider>(sleeper,
+                             Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(0.5f)});
+    rig.Start(services);
+    for (u64 tick = 1; tick <= 30; ++tick)
+    {
+        rig.Step(services, tick, tick <= 10 ? vec2(0.0f) : vec2(1.0f, 0.0f));
+    }
+    REQUIRE_FALSE(rig.Solver().IsBodyActive(sleeper));
+    const PhysicsPose before = *rig.Solver().GetBodyPose(sleeper);
+    const Transform transformBefore = rig.World->Get<Transform>(sleeper);
+
+    BeginPhysicsReplay(*rig.World, 10);
+    bool woke = false;
+    for (u64 tick = 11; tick <= 30; ++tick)
+    {
+        rig.Step(services, tick, vec2(0.0f, 1.0f), true);
+        woke = woke || rig.Solver().IsBodyActive(sleeper);
+    }
+    EndPhysicsReplay(*rig.World);
+
+    CHECK(woke);
+    CHECK_FALSE(rig.Solver().IsBodyActive(sleeper));
+    const PhysicsPose after = *rig.Solver().GetBodyPose(sleeper);
+    CHECK(after.Position == before.Position);
+    CHECK(after.Rotation == before.Rotation);
+    CHECK(rig.Solver().GetLinearVelocity(sleeper) == vec3(0.0f));
+    CHECK(rig.World->Get<Transform>(sleeper).Position == transformBefore.Position);
+    CHECK(rig.World->Get<Transform>(sleeper).Rotation == transformBefore.Rotation);
 }
 
 TEST_CASE("A struck body marked Predicted rolls back with the vehicle")

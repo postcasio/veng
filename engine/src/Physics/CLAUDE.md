@@ -472,9 +472,14 @@ the ones whose components changed. It runs six passes:
 cannot tell the step's own pull (stamped this tick) from a system writing after the step in the same
 tick; the reconcile therefore counts a stamp *at* the last reconcile's tick as a change (an entity
 edited before the step is reconciled twice, idempotently) and the push compares values against the
-last pushed pose, which is exact. Change ticks also cannot see a write a reconciliation replay stamps
-with a past tick, so **the first step, and a step after a replay, after `DestroyAllBodies`, or whose
-scene tick went backwards, walks every physics entity through the const view and sweeps orphans**.
+last pushed pose, which is exact. **The first step, and a step after `DestroyAllBodies` or whose
+scene tick went backwards, walks every physics entity through the const view and sweeps orphans**,
+since change ticks cannot say what moved then. A reconciliation replay the world sits out (the gate
+below) stamps its writes with the past ticks it replays, which a scan from the last reconcile's tick
+cannot see; so the gated `OnUpdate` keeps the earliest of them (`ReplayFloorTick`), and **the next
+live step scans from that tick** — it visits what the replay wrote or added, and what the live ticks
+since then touched again, rather than every body. A removal or a destroyed entity reaches it through
+the removal hook, as it does live.
 A component written through a pointer retained across ticks stamps nothing and is not seen, exactly
 as such a write bypasses the net layer's delta; write physics components through the scene's
 accessors. A scene stepped
@@ -774,10 +779,14 @@ records onto the predicted set's components and before the first replayed tick, 
   dynamic one's `PhysicsPose` from it; a predicted body with no record for C is left as it is. It
   captures every other non-static body — its solver state, its `PhysicsPose`, the `Transform` the
   readback writes, and a driven body's push record — and marks the world as replaying
-  (`PhysicsWorld::IsReplaying`).
+  (`PhysicsWorld::IsReplaying`). A body asleep at Begin cannot move, so its solver pose and its
+  sleep are its whole state, and that is all Begin saves of it.
 - **End** puts every captured body back exactly, so a mispredict of N ticks advances it by the live
   ticks only, never N more, and restores the step count, so `GetStepCount` keeps counting live
-  steps. A captured body the replay destroyed is skipped, and one it re-created, or created, is left
+  steps. A sleeping body the replay woke, or moved and let settle, goes back to its pose with zero
+  velocity, asleep; one it never touched is left alone. Waking resets the solver's sleep test, so
+  the sleep-test state the replay left on it never reaches a later step. A captured body the
+  replay destroyed is skipped, and one it re-created, or created, is left
   as the replay made it: re-creating it is the creating system's business.
 - **The sets are fixed at Begin.** A body marked or unmarked `Predicted` during the replay keeps the
   role it had when the replay began.

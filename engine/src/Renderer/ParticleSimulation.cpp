@@ -163,6 +163,7 @@ namespace Veng::Renderer
             RingBuffer(context, "Particle Fed Spawns", FedSpawnRegionBytes, m_FramesInFlight);
         std::memset(m_StatsRing->GetMappedData(), 0, StatsRegionBytes * m_FramesInFlight);
         m_SlotSequence.assign(m_FramesInFlight, 0);
+        m_SlotAlphaIssued.assign(m_FramesInFlight, 0);
 
         vector<DescriptorBinding> bindings;
         for (u32 binding = 0; binding < BindingCount; ++binding)
@@ -255,6 +256,7 @@ namespace Veng::Renderer
         if (m_SlotSequence[frame] > m_StatsSequence)
         {
             m_StatsSequence = m_SlotSequence[frame];
+            m_StatsAlphaIssued = m_SlotAlphaIssued[frame];
             u32 words[8] = {};
             std::memcpy(words, Region(m_StatsRing, StatsRegionBytes, frame), sizeof(words));
             m_Stats = ParticleGpuStats{
@@ -263,6 +265,7 @@ namespace Veng::Renderer
                 .Dropped = words[2],
                 .AlphaCount = words[3],
                 .AlphaSorted = words[4],
+                .AlphaLive = words[7],
             };
         }
 
@@ -283,14 +286,22 @@ namespace Veng::Renderer
         m_RangeCount = static_cast<u32>(plan.Ranges.size());
         m_AliveBound = plan.AliveBound;
         m_UpdateRuns = m_GpuMayHoldLive || m_SpawnTotal > 0;
+        m_AlphaIssued += plan.AlphaSpawnTotal;
         m_SortSize = 0;
         if (m_UpdateRuns && plan.AlphaBound > 0)
         {
-            m_SortSize = std::max(SortBlock, std::bit_ceil(plan.AlphaBound));
+            // Particles enter only by spawning, so what may draw alpha now is at most what the last
+            // reported update left that may, plus every alpha spawn issued after that frame's; the
+            // gather's own bound caps it while the readback is cold.
+            const u64 reported =
+                static_cast<u64>(m_Stats.AlphaLive) + (m_AlphaIssued - m_StatsAlphaIssued);
+            const u32 bound = static_cast<u32>(std::min<u64>(plan.AlphaBound, reported));
+            m_SortSize = std::max(SortBlock, std::bit_ceil(bound));
         }
         // An idle frame writes no stats; what the last finalize reported stands, and the update
         // before an idle frame left nothing alive.
         m_SlotSequence[frame] = m_UpdateRuns ? m_Sequence : 0;
+        m_SlotAlphaIssued[frame] = m_AlphaIssued;
     }
 
     void ParticleSimulation::Commit()
@@ -432,7 +443,12 @@ namespace Veng::Renderer
             .StorageBufferWrite(m_DrawsId)
             .StorageBufferWrite(m_AlphaKeysId)
             .StorageBufferWrite(m_AdditiveId);
-        // The six-way light gather reads the shadow atlases in this compute stage.
+        // The six-way light gather reads the shadow atlases in this compute stage, and the forward
+        // light-tile masks the cull wrote earlier in the frame.
+        if (io.LightTileMasks.IsValid())
+        {
+            update.StorageBufferRead(io.LightTileMasks);
+        }
         if (io.ShadowMap.IsValid())
         {
             update.Sample(io.ShadowMap, AccessKind::SampleCompute);

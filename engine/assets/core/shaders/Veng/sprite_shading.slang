@@ -79,9 +79,9 @@ float SpriteAreaLightFalloff(ViewConstants vc, GpuLight light, float3 worldPos,
     return projected / max(max(dist * dist, floorRadius * floorRadius), 1e-4) * rangeFactor;
 }
 
-// The radiance arriving along each of a six-way flipbook's axes from this view's lights, shadowed. centre is the sprite's world centre, X, Y and Z its frame's unit
-// world axes (X right, Y up, Z toward the viewer), and radius its world radius. The result's
-// Ambient is zero; SpriteAmbient supplies it.
+// Adds the index-th light of this view to a six-way flipbook's gather: the radiance arriving along
+// each of its axes from that light, shadowed. centre is the sprite's world centre, X, Y and Z its
+// frame's unit world axes (X right, Y up, Z toward the viewer), and radius its world radius.
 //
 // - A directional light arrives along its own direction, at its full radiance.
 // - A point or spot light is attenuated by PunctualLightFalloff with a distance floor of radius, so
@@ -94,53 +94,76 @@ float SpriteAreaLightFalloff(ViewConstants vc, GpuLight light, float3 worldPos,
 // Visibility is LightVisibility at the centre through the 3×3 PCF kernel, one lookup per light per
 // sprite, so a sprite drifting across a shadow's edge fades rather than popping. A sprite is a
 // member of light channel 0, so a light not on channel 0 skips it.
-SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X, float3 Y,
-                                       float3 Z, float radius)
+void AccumulateSpriteLight(ViewConstants vc, uint index, float3 centre, float3 X, float3 Y,
+                           float3 Z, float radius, inout SpriteLightGather gather)
 {
-    SpriteLightGather gather = SpriteLightGatherNone();
-    uint count = vc.LightState.y;
-    for (uint i = 0; i < count; ++i)
+    GpuLight light = LoadLight(vc, index);
+    float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
+    float type = light.DirectionType.w;
+    // A sprite carries no light-channel membership of its own: it is a member of channel 0.
+    if ((LightChannels(light.Cone.w) & 0x1u) == 0u || all(radiance == float3(0.0)))
     {
-        GpuLight light = LoadLight(vc, i);
-        float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
-        float type = light.DirectionType.w;
-        // A sprite carries no light-channel membership of its own: it is a member of channel 0.
-        if ((LightChannels(light.Cone.w) & 0x1u) == 0u || all(radiance == float3(0.0)))
-        {
-            continue;
-        }
+        return;
+    }
 
-        float3 L;
-        float attenuation = 1.0;
-        float directionality = 1.0;
-        if (type == LightTypeDirectional)
+    float3 L;
+    float attenuation = 1.0;
+    float directionality = 1.0;
+    if (type == LightTypeDirectional)
+    {
+        L = normalize(-light.DirectionType.xyz);
+    }
+    else
+    {
+        float dist;
+        if (type > LightTypeSpot + 0.5)
         {
-            L = normalize(-light.DirectionType.xyz);
+            attenuation = SpriteAreaLightFalloff(vc, light, centre, radius, L, dist);
         }
         else
         {
-            float dist;
-            if (type > LightTypeSpot + 0.5)
-            {
-                attenuation = SpriteAreaLightFalloff(vc, light, centre, radius, L, dist);
-            }
-            else
-            {
-                float sinSource;
-                attenuation = PunctualLightFalloff(light, centre, radius, L, dist, sinSource);
-            }
-            if (attenuation <= 0.0)
-            {
-                continue;
-            }
-            directionality = saturate(dist / max(radius, 1e-4));
+            float sinSource;
+            attenuation = PunctualLightFalloff(light, centre, radius, L, dist, sinSource);
         }
+        if (attenuation <= 0.0)
+        {
+            return;
+        }
+        directionality = saturate(dist / max(radius, 1e-4));
+    }
 
-        float visibility = LightVisibility(vc, i, centre, LightVisibilityPcf);
-        float3 d = float3(dot(L, X), dot(L, Y), dot(L, Z));
-        AddSixWayLight(gather, d, radiance * (attenuation * visibility), directionality);
+    float visibility = LightVisibility(vc, index, centre, LightVisibilityPcf);
+    float3 d = float3(dot(L, X), dot(L, Y), dot(L, Z));
+    AddSixWayLight(gather, d, radiance * (attenuation * visibility), directionality);
+}
+
+// The radiance arriving along each of a six-way flipbook's axes from the lights of this view that
+// lightMask names (AccumulateSpriteLight, in index order). The result's Ambient is zero;
+// SpriteAmbient supplies it. A caller that knows a light reaches no visible part of the sprite — a
+// per-tile cull — clears its bit and skips it outright.
+SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X, float3 Y,
+                                       float3 Z, float radius, LightMask lightMask)
+{
+    SpriteLightGather gather = SpriteLightGatherNone();
+    LightMask live = AllLightsMask(vc.LightState.y);
+    for (uint word = 0u; word < LightMaskWords; ++word)
+    {
+        uint remaining = lightMask.Words[word] & live.Words[word];
+        while (remaining != 0u)
+        {
+            uint index = word * 32u + firstbitlow(remaining);
+            remaining &= remaining - 1u;
+            AccumulateSpriteLight(vc, index, centre, X, Y, Z, radius, gather);
+        }
     }
     return gather;
+}
+
+// EvaluateSpriteLights over every light of this view.
+SpriteLightGather EvaluateSpriteLights(ViewConstants vc, float3 centre, float3 X, float3 Y,
+                                       float3 Z, float radius)
+{
+    return EvaluateSpriteLights(vc, centre, X, Y, Z, radius, AllLightsMask(vc.LightState.y));
 }
 
 // The ambient term of the view's ambient arm for a white diffuse surface facing direction n, with
@@ -174,12 +197,20 @@ float3 SpriteAmbient(ViewConstants vc, float3 X, float3 Y, float3 Z)
     return sum / 6.0;
 }
 
-// Everything a six-way flipbook receives from the scene: EvaluateSpriteLights with SpriteAmbient as
-// its Ambient. The one call a sprite or a particle makes per frame; its result feeds ShadeSixWay.
+// Everything a six-way flipbook receives from the scene: EvaluateSpriteLights over the lights
+// lightMask names, with SpriteAmbient as its Ambient. The one call a sprite or a particle makes per
+// frame; its result feeds ShadeSixWay.
+SpriteLightGather EvaluateSpriteLighting(ViewConstants vc, float3 centre, float3 X, float3 Y,
+                                         float3 Z, float radius, LightMask lightMask)
+{
+    SpriteLightGather gather = EvaluateSpriteLights(vc, centre, X, Y, Z, radius, lightMask);
+    gather.Ambient = SpriteAmbient(vc, X, Y, Z);
+    return gather;
+}
+
+// EvaluateSpriteLighting over every light of this view.
 SpriteLightGather EvaluateSpriteLighting(ViewConstants vc, float3 centre, float3 X, float3 Y,
                                          float3 Z, float radius)
 {
-    SpriteLightGather gather = EvaluateSpriteLights(vc, centre, X, Y, Z, radius);
-    gather.Ambient = SpriteAmbient(vc, X, Y, Z);
-    return gather;
+    return EvaluateSpriteLighting(vc, centre, X, Y, Z, radius, AllLightsMask(vc.LightState.y));
 }

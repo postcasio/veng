@@ -259,9 +259,12 @@ namespace Veng
         /// one pass over each physics pool's packed change ticks, so the pass touches only the
         /// entities whose RigidBody, Collider, Sensor or ContactReport moved. Removals reach it
         /// through the components' removal hook (Pending), and an entity waiting on cooked geometry
-        /// is re-checked each step. The first step, a step after a replay or a DestroyAllBodies, and any step
+        /// is re-checked each step. The first step, a step after a DestroyAllBodies, and any step
         /// whose scene tick has gone backwards walk every physics entity instead and sweep orphans,
-        /// since change ticks cannot say what moved then.
+        /// since change ticks cannot say what moved then. A replay the world sat out stamped its
+        /// writes at the replayed ticks, below the last reconcile's, so the step after it scans from
+        /// the earliest of them instead: it visits what the replay touched, and what the live ticks
+        /// since then touched again, rather than every body.
         /// @param scene  The scene whose components are the authority.
         /// @param world  The world whose bodies are brought into line.
         /// @param stats  The step's counters.
@@ -270,8 +273,9 @@ namespace Veng
             PhysicsWorld::Native& native = world.GetNative();
             const Scene& readScene = scene;
             const u64 now = scene.GetChangeTick();
-            const u64 since = native.ReconciledTick;
-            const bool full = native.FullReconcile || now < since;
+            const bool full = native.FullReconcile || now < native.ReconciledTick;
+            const u64 since = std::min(native.ReconciledTick, native.ReplayFloorTick);
+            native.ReplayFloorTick = PhysicsWorld::Native::NoReplayTick;
 
             vector<Entity> work = std::move(native.Pending);
             native.Pending.clear();
@@ -698,6 +702,7 @@ namespace Veng
         native.ReplayStepCount = native.StepCount;
 
         const Scene& readScene = scene;
+        const JPH::BodyInterface& bodies = native.System.GetBodyInterface();
         native.HeldCount = 0;
         for (const auto& [entity, body] : native.Bodies)
         {
@@ -748,7 +753,15 @@ namespace Veng
             held.Owner = entity;
             held.Id = body.Id;
             held.State.clear();
-            (void)Detail::SaveBodyBytes(native, body.Id, held.State);
+            held.Asleep = !bodies.IsActive(body.Id);
+            if (held.Asleep)
+            {
+                bodies.GetPositionAndRotation(body.Id, held.BodyPosition, held.BodyRotation);
+            }
+            else
+            {
+                (void)Detail::SaveBodyBytes(native, body.Id, held.State);
+            }
             const PhysicsPose* pose = alive ? readScene.TryGet<PhysicsPose>(entity) : nullptr;
             held.HasPose = pose != nullptr;
             if (pose != nullptr)
@@ -779,13 +792,35 @@ namespace Veng
             return;
         }
         PhysicsWorld::Native& native = world->GetNative();
+        JPH::BodyInterface& bodies = native.System.GetBodyInterface();
         for (usize i = 0; i < native.HeldCount; ++i)
         {
             const Detail::HeldBody& held = native.Held[i];
             // A body the replay destroyed is gone, and one it re-created is not the body captured.
             const auto body = native.Bodies.find(held.Owner);
-            if (body == native.Bodies.end() || body->second.Id != held.Id ||
-                !Detail::RestoreBodyBytes(native, held.Id, held.State))
+            if (body == native.Bodies.end() || body->second.Id != held.Id)
+            {
+                continue;
+            }
+            if (held.Asleep)
+            {
+                // A sleeping body the replay left asleep where it lay is untouched. One it woke, or
+                // moved and let settle, goes back to its pose, still and asleep: waking resets the
+                // sleep test, so nothing else of its state reaches a later step.
+                JPH::RVec3 position;
+                JPH::Quat rotation;
+                bodies.GetPositionAndRotation(held.Id, position, rotation);
+                if (bodies.IsActive(held.Id) || position != held.BodyPosition ||
+                    rotation != held.BodyRotation)
+                {
+                    bodies.SetPositionAndRotation(held.Id, held.BodyPosition, held.BodyRotation,
+                                                  JPH::EActivation::DontActivate);
+                    bodies.SetLinearAndAngularVelocity(held.Id, JPH::Vec3::sZero(),
+                                                       JPH::Vec3::sZero());
+                    bodies.DeactivateBody(held.Id);
+                }
+            }
+            else if (!Detail::RestoreBodyBytes(native, held.Id, held.State))
             {
                 continue;
             }
@@ -832,11 +867,12 @@ namespace Veng
         if (context.IsReplay && (current == nullptr || !current->IsReplaying()) &&
             !HasPredictedBody(scene))
         {
-            // The replay's Sim systems stamp past ticks, which the reconcile's change test cannot
-            // see past, so the next live step walks every physics entity.
+            // The replay's Sim systems stamp past ticks, below the last reconcile's, so the next
+            // live step scans for changes from the earliest of them.
             if (PhysicsWorld* world = scene.GetPhysicsWorld())
             {
-                world->GetNative().FullReconcile = true;
+                u64& floor = world->GetNative().ReplayFloorTick;
+                floor = std::min(floor, scene.GetChangeTick());
             }
             return;
         }

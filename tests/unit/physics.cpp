@@ -624,6 +624,64 @@ TEST_CASE("a mispredict of N replayed ticks advances the physics world by exactl
     CHECK(fixture.Physics().GetStepCount() == before + 1);
 }
 
+TEST_CASE("a replay the world sits out is reconciled from its earliest tick, not by walking every "
+          "body")
+{
+    const PhysicsFixture fixture;
+    PhysicsSystem system;
+    TestSupport::TestServices services;
+
+    // A small field of sleepers and one awake body falling clear of them; one sleeper the replay
+    // destroys, and one entity with a RigidBody that gains its Collider during the replay.
+    vector<Entity> field;
+    for (u32 i = 0; i < 12; ++i)
+    {
+        const Entity body = fixture.World->CreateEntity();
+        fixture.World->Add<Transform>(
+            body, Transform{.Position = vec3(static_cast<f32>(i) * 3.0f, 0.0f, 0.0f)});
+        fixture.World->Add<RigidBody>(body, RigidBody{.StartAsleep = true});
+        fixture.World->Add<Collider>(body, Collider{.Extents = vec3(0.5f)});
+        field.push_back(body);
+    }
+    (void)fixture.SpawnBox(vec3(-50.0f, 10.0f, -50.0f));
+    const Entity gaining = fixture.World->CreateEntity();
+    fixture.World->Add<Transform>(gaining, Transform{.Position = vec3(0.0f, 0.0f, 9.0f)});
+    fixture.World->Add<RigidBody>(gaining, RigidBody{.StartAsleep = true});
+    fixture.Tick(3);
+    REQUIRE_FALSE(fixture.Physics().HasBody(gaining));
+
+    // The replay re-runs the last three ticks, stamping its writes at them; the world sits it out.
+    const u64 live = fixture.SimTick;
+    for (u64 tick = live - 2; tick <= live; ++tick)
+    {
+        fixture.World->SetChangeTick(tick);
+        if (tick == live - 2)
+        {
+            fixture.World->Add<Collider>(gaining, Collider{.Extents = vec3(0.5f)});
+            fixture.World->DestroyEntity(field[4]);
+        }
+        SystemContext replay = services.Make();
+        replay.Tick = tick;
+        replay.IsReplay = true;
+        system.OnUpdate(*fixture.World, FixedStep, replay);
+    }
+
+    SystemContext next = services.Make();
+    next.Tick = ++fixture.SimTick;
+    fixture.World->SetChangeTick(next.Tick);
+    system.OnUpdate(*fixture.World, FixedStep, next);
+    const PhysicsStepStats& stats = fixture.Physics().GetStepStats();
+    CHECK_FALSE(stats.FullReconcile);
+    CHECK(stats.Reconciled == 2);
+    CHECK(stats.ReadBack == 1);
+    CHECK(fixture.Physics().HasBody(gaining));
+    CHECK_FALSE(fixture.Physics().HasBody(field[4]));
+
+    // The scan widened for that one step only.
+    fixture.Tick(1);
+    CHECK(fixture.Physics().GetStepStats().Reconciled == 0);
+}
+
 TEST_CASE("the pose hash is a determinism golden, regenerated only on a solver bump")
 {
     // A fixed fixture stepped a fixed number of ticks hashes to a fixed value. The solver is built

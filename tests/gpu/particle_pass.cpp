@@ -1,11 +1,13 @@
 // The particle chain on a real device, at a pool of 64: a particle drawn from the closed form lands
-// where the CPU twin puts it, a burst spawns exactly its count, a burst past the pool is clamped and
-// counted, death and an early retire empty the pool and idle the chain, alpha particles sort back to
-// front whichever spawned first, a fed particle draws where it was placed, each particle plays the
-// flipbook variant its key picks, and a streak lights the span between its tail and its head. A
-// white premultiplied flipbook makes a billboard's pixel its tint.
+// where the CPU twin puts it, a burst spawns exactly its count, a burst past the pool is clamped
+// and counted, death and an early retire empty the pool and idle the chain, alpha particles sort
+// back to front whichever spawned first, a fed particle draws where it was placed, each particle
+// plays the flipbook variant its key picks, a streak lights the span between its tail and its head,
+// a six-way particle takes the lights of the tiles it covers, and the alpha sort covers spawns that
+// outrun the readback. A white premultiplied flipbook makes a billboard's pixel its tint.
 
 #include <array>
+#include <cmath>
 #include <vector>
 
 #include <glm/gtc/packing.hpp>
@@ -424,6 +426,61 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(centre.x < 0.1f);
 }
 
+// The sort runs over a bound on what may draw alpha: the last read-back count plus every alpha
+// spawn since. A far shell bursting every frame climbs past each sort length in turn, faster than
+// the readback follows, and the nearest particle, spawned first, still composites last. A shell
+// most of whose particles have died sorts over what is left, not over the gather's lifetime bound.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "particle pass: the alpha sort covers spawns that outrun the readback")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<Flipbook> flipbook = WhiteFlipbook(Context);
+    ParticleEmitterDesc nearest = Billboard(flipbook, ParticleBlend::Alpha);
+    nearest.Size = vec2(1.0f);
+    nearest.TintCurve = {{.T = 0.0f, .Value = vec3(0.0f, 1.0f, 0.0f)}};
+    ParticleEmitterDesc shell = Billboard(flipbook, ParticleBlend::Alpha);
+    shell.BurstCount = 700;
+    shell.Size = vec2(2.0f);
+    shell.Shape = ParticleShape::Shell;
+    shell.ShapeRadius = 0.5f;
+    shell.TintCurve = {{.T = 0.0f, .Value = vec3(1.0f, 0.0f, 0.0f)}};
+    const AssetHandle<ParticleEffect> shellEffect = Effect({shell});
+
+    {
+        ParticleView render = MakeRenderer(Context, assets, 4096);
+        const Unique<Scene> scene = Scene::Create(Types);
+        (void)Play(*scene, Effect({nearest}), vec3(0.0f, 0.0f, -1.0f), 0.1f);
+        u32 greenFrames = 0;
+        for (u32 frame = 0; frame < 5; ++frame)
+        {
+            (void)Play(*scene, shellEffect, vec3(0.0f, 0.0f, 1.5f), 0.1f);
+            render.Render(Context, *scene);
+            const vec3 centre = render.At(vec3(0.0f));
+            greenFrames += centre.y > 0.9f && centre.x < 0.1f ? 1u : 0u;
+        }
+        CHECK(greenFrames == 5u);
+        CHECK(render.Renderer->GetParticleStats().AlphaSorted == 4096);
+    }
+
+    ParticleEmitterDesc fading = shell;
+    fading.BurstCount = 1500;
+    fading.Lifetime = vec2(0.1f, 10.0f);
+    ParticleView render = MakeRenderer(Context, assets, 2048);
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = Play(*scene, Effect({fading}), vec3(0.0f, 0.0f, 1.5f), 0.05f);
+    render.Render(Context, *scene);
+    render.Render(Context, *scene);
+    CHECK(render.Renderer->GetParticleStats().AlphaSorted == 2048);
+    // Past 9 s about one particle in ten lives; the gather still bounds all 1,500 alive.
+    SetTime(*scene, entity, 9.0f);
+    for (u32 frame = 0; frame < 4; ++frame)
+    {
+        render.Render(Context, *scene);
+    }
+    CHECK(render.Renderer->GetParticleStats().AlphaSorted == 1024);
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "particle pass: a streak lights the span from its tail to its head")
 {
@@ -485,6 +542,55 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Get<Light>(sun).Direction = right;
     render.Render(Context, *scene);
     CHECK(glm::length(render.At(vec3(0.0f)) - baseline) < 1e-3f);
+}
+
+// A six-way particle is lit from the lights whose tiles its drawn extent covers. Each particle here
+// is centred just past a screen edge, so only a strip of it is seen, and a point light reaches its
+// centre from its +X side, the one axis its flipbook answers.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "particle pass: a six-way particle is lit by the lights of the tiles it covers")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<ParticleEffect> effect = [&]
+    {
+        ParticleEmitterDesc emitter = Billboard(SixWayFlipbook(Context), ParticleBlend::Alpha);
+        emitter.Size = vec2(3.0f);
+        return Effect({emitter});
+    }();
+
+    // The camera at z = -5 sees x within about +-2.33 at z = 0; each particle spans 1.5 either side
+    // of its centre, which sits 2.93 out, so a strip about 0.9 wide shows at the edge.
+    const auto litBy = [&](const f32 side, const f32 lightOffset, const f32 range)
+    {
+        ParticleView render = MakeRenderer(Context, assets);
+        const Unique<Scene> scene = Scene::Create(Types);
+        const mat4 view = render.Camera.View();
+        const vec3 right = glm::normalize(vec3(view[0][0], view[1][0], view[2][0]));
+        const vec3 centre = side * 2.93f * right;
+        const vec3 seen = side * 1.9f * right;
+        (void)Play(*scene, effect, centre, 0.1f);
+        render.Render(Context, *scene);
+        const vec3 baseline = render.At(seen);
+
+        const Entity lamp = scene->CreateEntity();
+        scene->Add<Transform>(lamp, Transform{.Position = centre + lightOffset * right});
+        scene->Add<Light>(lamp) = Light{.Type = LightType::Point,
+                                        .Color = vec3(1.0f),
+                                        .Intensity = 20.0f * 4.0f * glm::pi<f32>() / LuminousAnchor,
+                                        .Range = range};
+        render.Render(Context, *scene);
+        return render.At(seen).x - baseline.x;
+    };
+
+    // Past the right edge, a light further out reaches the centre, but its sphere lies wholly off
+    // screen: no tile the particle covers names it, so it adds nothing.
+    CHECK(std::abs(litBy(1.0f, 0.4f, 0.6f)) < 1e-3f);
+
+    // Past the left edge, a light toward the screen reaches the centre and its sphere reaches the
+    // strip the particle shows: a tile the particle covers names it, though its centre lies in
+    // none.
+    CHECK(litBy(-1.0f, 0.8f, 1.0f) > 0.1f);
 }
 
 // With no translucent surface drawn, the first translucent pass still records and clears the

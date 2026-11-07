@@ -98,6 +98,30 @@ LightMask AllLightsMask(uint count)
     return mask;
 }
 
+// Byte offset of the type lane, DirectionType.w, within a packed light.
+static const uint LightTypeOffset = 28;
+
+// A light mask naming every directional light of this view: the lights with no position, which
+// reach every point alike. Reads only each light's type lane.
+LightMask DirectionalLightsMask(ViewConstants vc)
+{
+    LightMask mask;
+    for (uint i = 0u; i < LightMaskWords; ++i)
+    {
+        mask.Words[i] = 0u;
+    }
+    uint count = min(vc.LightState.y, MaxLights);
+    for (uint i = 0u; i < count; ++i)
+    {
+        float type = asfloat(g_Lights.Load((vc.LightState.x + i) * LightStride + LightTypeOffset));
+        if (type == LightTypeDirectional)
+        {
+            mask.Words[i / 32u] |= 1u << (i % 32u);
+        }
+    }
+    return mask;
+}
+
 // The attenuation of a point or spot light at worldPos: the inverse-square falloff, its smooth
 // cutoff at the light's Range, and a spot's cone. Returns 0 at or past the range and outside the
 // cone. L receives the unit direction from worldPos toward the light ((0, 0, 1) when the two

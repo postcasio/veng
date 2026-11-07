@@ -3,16 +3,22 @@
 // returns its slot to the dead list. A survivor joins the other half of the live list and, unless
 // its instance is hidden this frame, writes its draw record: the closed-form position and velocity
 // at its age, its over-life curves read from the emitter's tables, its flipbook frame, and — for a
-// six-way flipbook — the scene's light gathered once at its centre. Its draw index then joins the
-// additive list, or the alpha keys with its view distance for the sort.
+// six-way flipbook — the scene's light gathered once at its centre, from the lights whose forward
+// tile masks the particle's drawn extent covers (ForwardSphereLightMask). Its draw index then joins
+// the additive list, or the alpha keys with its view distance for the sort.
+//
+// A survivor that may draw alpha — its emitter's record is alpha, or its instance is hidden this
+// frame, whose records are not read — is counted for the CPU's bound on the next frames' sort.
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
+[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 
 #include "particle_compute.slang"
 #include "particle_math.slang"
 #include "Veng/sprite_shading.slang"
+#include "Veng/light_tiles.slang"
 
 // One tap of an emitter's over-life tables at normalised age u: the first table in the result's
 // xyzw, the tint in tint.
@@ -65,11 +71,16 @@ void csMain(uint3 id : SV_DispatchThreadID)
     g_LiveList[(1u - cur) * g_PC.Capacity + o] = slot;
     if ((instance.Generation & ParticleInstanceHidden) != 0u)
     {
+        g_Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
         return;
     }
 
     uint emitterIndex = instance.EmitterBase + particle.Emitter;
     GpuParticleEmitter emitter = g_Emitters[emitterIndex];
+    if (emitter.Mode.y == 0u)
+    {
+        g_Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
+    }
     uint key = particle.Random;
     float u = particle.Lifetime > 0.0 ? age / particle.Lifetime : 1.0;
     float3 tint;
@@ -173,7 +184,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
             float3 world = centre + view.CameraPosition.xyz + toCentre.x * axisX +
                            toCentre.y * axisY;
             float radius = 0.5 * max(width, height) * extent;
-            gather = EvaluateSpriteLighting(view, world, axisX, axisY, axisZ, radius);
+            // The drawn quad lies within half its diagonal at the larger frame extent of world.
+            float reach = 0.5 * length(float2(width, height)) *
+                          max(draw.FrameScale, draw.FrameScaleNext);
+            LightMask lights = ForwardSphereLightMask(view, world, reach);
+            gather = EvaluateSpriteLighting(view, world, axisX, axisY, axisZ, radius, lights);
         }
     }
 

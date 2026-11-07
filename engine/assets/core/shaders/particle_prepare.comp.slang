@@ -11,4 +11,5 @@ void csMain()
     g_Counters.Store(LiveCounter(1u - g_PC.Cur), 0u);
     g_Counters.Store(ParticleCounterAlpha, 0u);
     g_Counters.Store(ParticleCounterAdditive, 0u);
+    g_Counters.Store(ParticleCounterAlphaLive, 0u);
 }

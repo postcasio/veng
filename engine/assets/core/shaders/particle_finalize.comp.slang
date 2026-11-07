@@ -1,5 +1,6 @@
 // Particle Finalize: one thread writes the alpha and additive draws' vertex counts and copies the
-// counters into this frame's stats region, which the CPU reads when its slot comes round again.
+// counters into this frame's stats region, which the CPU reads when its slot comes round again —
+// among them the survivors that may draw alpha, which bound the sort of the frames after.
 #include "particle_compute.slang"
 
 [shader("compute")]
@@ -17,5 +18,5 @@ void csMain()
     g_Stats[4] = g_PC.SortSize;
     g_Stats[5] = additive;
     g_Stats[6] = 1u;
-    g_Stats[7] = 0u;
+    g_Stats[7] = g_Counters.Load(ParticleCounterAlphaLive);
 }

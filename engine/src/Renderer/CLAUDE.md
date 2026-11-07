@@ -798,7 +798,12 @@ tile by projecting its world position (`ForwardTileLightMask`), since its layer 
 resolution than the opaque pass the tiles were laid over; the view block's `LightTiles.w` carries that
 extent. Every translucent pass declares a `StorageBufferRead` on the masks (`PassIO::LightTileMasks`),
 so the graph orders the cull ahead of it. Sprites and particles are lit per sprite or per particle,
-not per pixel, and loop the view's lights with their own range test.
+not per pixel. A sprite loops the view's lights with its own range test. A particle's update visits
+the union of the forward masks over every tile its drawn extent's projection covers
+(`ForwardSphereLightMask`): a light reaching any visible part of the particle is in the mask of a tile
+it covers, so the union keeps it wherever the particle's centre falls. A particle wholly off screen
+takes the directional lights alone; one reaching the camera plane, or covering more than 64 tiles,
+takes every light. The update declares a `StorageBufferRead` on the masks, ordering it after the cull.
 `SceneRenderer::ReadbackLightTileMasks()` downloads the last frame's masks for tests and diagnostics,
 and the toggle stays a setting so the two costs can be compared in a capture.
 
@@ -1523,7 +1528,8 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   generation or age onto the dead list, else append to the other live half and write the draw
   record — closed-form position and velocity, the curves read from the emitter's tables, the
   flipbook frame, and for a six-way flipbook the scene's light gathered once with
-  `EvaluateSpriteLighting` — then push to the additive list or the alpha keys), **Particle Sort**,
+  `EvaluateSpriteLighting` over the lights its tiles name — then push to the additive list or the
+  alpha keys, and count the survivors that may draw alpha), **Particle Sort**,
   **Particle Finalize** (the two draws' vertex counts, and the stats region) — all declared ahead of
   the "Scene Layers" pass — and the draw inside it (two `DrawIndirect` calls: alpha, then
   additive). The update binds the IBL and shadow
@@ -1536,7 +1542,12 @@ mask — so alpha particles composite over sprites, and resolve, bloom and tonem
   pass. Wiring has the sprite pass's hysteresis (`ParticleIdleFrameLimit`, 256 gathers tracking no
   instance), and the battery is created and destroyed with it.
 - **The sort is a bitonic sort** of `(complement of the view distance's float bits, draw index)`
-  keys, ascending — so back to front — over `P = max(1024, nextpow2(AlphaBound))`, in one source
+  keys, ascending — so back to front — over `P = max(1024, nextpow2(B))`. `B` is
+  `min(AlphaBound, reported + issued)`: `reported` is the last read-back update's survivors that may
+  draw alpha (an alpha emitter record's, and every particle of an instance hidden that frame), and
+  `issued` every spawn the gather issued since that frame for an emitter any of whose records is
+  alpha. Particles enter only by spawning, so `B` bounds what draws alpha however late the readback
+  is, and the sort tracks what is alive rather than the gather's lifetime bound. It runs in one source
   with three entries: `csSortLocal` sorts 1,024-key blocks in groupshared memory, reading an index
   past the frame's alpha count as the sentinel `0xFFFFFFFF` so no padding pass is needed;
   `csSortGlobal` is one compare-exchange step for `j ≥ 1024`; `csSortMergeLocal` finishes a stage's

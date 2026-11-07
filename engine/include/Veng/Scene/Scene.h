@@ -273,7 +273,8 @@ namespace Veng
         /// than by looking each entity up, and skipped outright when GetPoolChangeTick is below
         /// @p tick. Tick-granular: a write stamped while the scene's change tick has been set lower —
         /// a reconciliation replay re-running past ticks — is not found by a later, higher @p tick, so
-        /// a pass that may run beside a replay re-walks everything after one. Removals are not visited.
+        /// a pass that may run beside a replay scans from the earliest tick it replayed. Removals are
+        /// not visited.
         /// @tparam T   The component type to scan.
         /// @tparam Fn  A callable taking an Entity.
         /// @param tick  The earliest stamp visited.

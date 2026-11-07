@@ -242,6 +242,9 @@ namespace Veng::Renderer
         u32 AliveBound = 0;
         /// @brief An upper bound on the alpha particles drawn this frame.
         u32 AlphaBound = 0;
+        /// @brief The spawns this frame issues for emitters that may draw alpha: those whose
+        ///        records, or any of their further flipbooks' records, are alpha.
+        u32 AlphaSpawnTotal = 0;
         /// @brief How many instances the table holds.
         u32 InstanceCount = 0;
         /// @brief Spawns trimmed past the capacity or the range table, never issued.

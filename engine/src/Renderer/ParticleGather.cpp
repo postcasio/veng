@@ -418,6 +418,7 @@ namespace Veng::Renderer
             // the playback time and still alive is issued once, a run of one emitter's spawns
             // sharing a range; one past the budgets is passed over and counted.
             vector<u64> fedAlive(emitterCount, 0);
+            vector<u32> fedIssued(emitterCount, 0);
             if (feed != nullptr)
             {
                 const auto& emitters = effect.GetEmitters();
@@ -466,6 +467,7 @@ namespace Veng::Renderer
                     });
                     ++plan.Ranges.back().Count;
                     ++plan.SpawnTotal;
+                    ++fedIssued[spawn.Emitter];
                 }
                 if (drawn)
                 {
@@ -486,6 +488,7 @@ namespace Veng::Renderer
                 ParticleStreamCounts& cursor = slot.Cursors[e];
                 const ParticleStreamCounts first =
                     ParticleFirstPossiblyAlive(emitter, instance->Time);
+                const u32 issuedBefore = plan.SpawnTotal;
                 if (drawn)
                 {
                     const ParticleStreamCounts end =
@@ -545,6 +548,7 @@ namespace Veng::Renderer
                 if (alpha)
                 {
                     alphaAlive += live;
+                    plan.AlphaSpawnTotal += plan.SpawnTotal - issuedBefore + fedIssued[e];
                 }
                 if (soft && !masked)
                 {

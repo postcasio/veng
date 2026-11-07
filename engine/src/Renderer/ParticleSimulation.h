@@ -34,6 +34,9 @@ namespace Veng::Renderer
         u32 AlphaCount = 0;
         /// @brief The length the last reported frame's sort ran over; 0 when it sorted nothing.
         u32 AlphaSorted = 0;
+        /// @brief Particles alive after the last reported update that may draw alpha: those whose
+        ///        emitter record is alpha, and every particle of an instance hidden that frame.
+        u32 AlphaLive = 0;
     };
 
     /// @brief The renderer's particle battery: the pool, its lists and rings, and the compute chain
@@ -250,6 +253,12 @@ namespace Veng::Renderer
         vector<u64> m_SlotSequence;
         /// @brief The Prepare whose stats m_Stats holds.
         u64 m_StatsSequence = 0;
+        /// @brief Alpha spawns issued since the pool was allocated, through this frame's.
+        u64 m_AlphaIssued = 0;
+        /// @brief m_AlphaIssued as it stood at the Prepare each frame slot last ran.
+        vector<u64> m_SlotAlphaIssued;
+        /// @brief m_AlphaIssued as it stood at the Prepare whose stats m_Stats holds.
+        u64 m_StatsAlphaIssued = 0;
         /// @brief What the GPU last reported.
         ParticleGpuStats m_Stats;
     };

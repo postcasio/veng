@@ -761,7 +761,14 @@ namespace Veng::Detail
         Entity Owner;
         /// @brief The body captured; a body the replay re-created is not this one and is skipped.
         JPH::BodyID Id;
-        /// @brief The body's solver state when the replay began (SaveBodyBytes).
+        /// @brief Whether the body was asleep when the replay began. A sleeping body cannot move,
+        ///        so its pose and its sleep are its whole state, and State is left empty.
+        bool Asleep = false;
+        /// @brief A sleeping body's solver pose when the replay began.
+        JPH::RVec3 BodyPosition;
+        /// @brief See BodyPosition.
+        JPH::Quat BodyRotation;
+        /// @brief An awake body's solver state when the replay began (SaveBodyBytes).
         vector<u8> State;
         /// @brief Whether the entity carried a PhysicsPose, which the replay's readback rewrites.
         bool HasPose = false;
@@ -846,9 +853,14 @@ namespace Veng
         /// @brief The scene change tick the last reconcile ran at; a component stamped at or after
         ///        it is a change the next reconcile picks up.
         u64 ReconciledTick = 0;
-        /// @brief Whether the next reconcile walks every physics entity, as after a replay or a
+        /// @brief Whether the next reconcile walks every physics entity, as after a
         ///        DestroyAllBodies, when change ticks cannot say what moved.
         bool FullReconcile = true;
+        /// @brief ReplayFloorTick when no replay ran since the last reconcile.
+        static constexpr u64 NoReplayTick = ~0ULL;
+        /// @brief The earliest change tick a replay the world sat out stamped since the last
+        ///        reconcile, or NoReplayTick; the next reconcile scans for changes from it.
+        u64 ReplayFloorTick = NoReplayTick;
         /// @brief Whether StepPhysics is reconciling, so its own body calls queue nothing.
         bool Reconciling = false;
         /// @brief Entities whose body was placed or restored outside a step, read back by the next

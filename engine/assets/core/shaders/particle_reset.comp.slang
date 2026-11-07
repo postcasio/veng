@@ -19,5 +19,6 @@ void csMain(uint3 id : SV_DispatchThreadID)
         g_Counters.Store(ParticleCounterAdditive, 0u);
         g_Counters.Store(ParticleCounterSpawned, 0u);
         g_Counters.Store(ParticleCounterDropped, 0u);
+        g_Counters.Store(ParticleCounterAlphaLive, 0u);
     }
 }
