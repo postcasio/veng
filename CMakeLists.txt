@@ -2257,9 +2257,8 @@ if (VENG_BUILD_TESTS)
             TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
 
-    # The cases below (and texture_loader.cpp, registered with the Vulkan-only cases above) cook
-    # fixture packs in-process, so the target needs the cooker library and the cooker fixtures'
-    # directory.
+    # The cases below cook fixture packs in-process, so the target needs the cooker library and the
+    # cooker fixtures' directory.
     target_sources(veng_test_gpu PRIVATE
             # font_loader.cpp cooks the font fixture pack in-process, wires a shared GlyphSource +
             # GlyphAtlas, LoadSyncs the Font, and asserts the face-backed metrics + ShapeRun contract.
@@ -2374,6 +2373,42 @@ if (VENG_BUILD_TESTS)
             # A cooked flipbook loads every texture it carries and the shading, motion and emission
             # its header records; a header whose slots disagree with it is refused.
             tests/gpu/flipbook_loader.cpp
+            tests/gpu/environment_ibl.cpp
+            tests/gpu/hi_z_pyramid.cpp
+            # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
+            # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
+            # a valid IBL source carrying the scene in the right direction, the revision advances only
+            # on a completed six-face sweep, and the self-lit layer is kept by the shared capture
+            # default but dropped when the capture declares the exclusion.
+            tests/gpu/scene_capture_cube.cpp
+            # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
+            # the Sky lights until the first sweep lands, the capture then re-lights once per
+            # completed sweep under a baked, direct, environment or absent Sky, disabling it
+            # restores the Sky's lighting, and the capture's own faces never light from it.
+            tests/gpu/scene_lighting_capture.cpp
+            # A layered bake beginning with a field: the later layers read each field target back
+            # bicubically, by mip and by its solid-angle mean; a re-composite over a standing field
+            # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
+            # ticks charge their own layer's cost.
+            tests/gpu/sky_bake_field.cpp
+            # The sky cubemap bake: cooks an analytic Sky material, bakes it into the
+            # renderer-internal radiance cube, and asserts twelve-edge seam continuity,
+            # the per-direction analytic radiance, in-place re-bake, and the baked cube
+            # round-tripping the skybox display path (baked ≈ direct through the renderer).
+            tests/gpu/sky_bake.cpp
+            # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
+            # depth hierarchy's reduction, the classifier's ray and tile lists against the
+            # selection rule, the indirect arguments, the blue-noise tile, the intersection's
+            # environment fallback, reflected hit and quad copies, the denoiser's finite output,
+            # zero early-out, first-frame and accumulated sample counts and variance ping-pong,
+            # the apply composite against its formula, a renderer recording the chain only with
+            # SSR on, with and without TAA, and SSR on drawing SSR off's frame when nothing in view
+            # is glossy and no image-based lighting is bound.
+            tests/gpu/ssr_chain.cpp
+            # The texture loader's and the generated-texture service's cases; the few assertions on
+            # tracked layout state read the Vulkan backend's private header, and compile only there.
+            tests/gpu/generated_texture.cpp
+            tests/gpu/texture_loader.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE
@@ -2414,40 +2449,6 @@ if (VENG_BUILD_TESTS)
     if (VE_GPU_BACKEND STREQUAL "Vulkan")
         target_sources(veng_test_gpu PRIVATE
                 tests/gpu/bindless_registry.cpp
-                tests/gpu/environment_ibl.cpp
-                tests/gpu/generated_texture.cpp
-                tests/gpu/hi_z_pyramid.cpp
-                # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
-                # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
-                # a valid IBL source carrying the scene in the right direction, the revision advances only
-                # on a completed six-face sweep, and the self-lit layer is kept by the shared capture
-                # default but dropped when the capture declares the exclusion.
-                tests/gpu/scene_capture_cube.cpp
-                # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
-                # the Sky lights until the first sweep lands, the capture then re-lights once per
-                # completed sweep under a baked, direct, environment or absent Sky, disabling it
-                # restores the Sky's lighting, and the capture's own faces never light from it.
-                tests/gpu/scene_lighting_capture.cpp
-                # A layered bake beginning with a field: the later layers read each field target back
-                # bicubically, by mip and by its solid-angle mean; a re-composite over a standing field
-                # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
-                # ticks charge their own layer's cost.
-                tests/gpu/sky_bake_field.cpp
-                # The sky cubemap bake: cooks an analytic Sky material, bakes it into the
-                # renderer-internal radiance cube, and asserts twelve-edge seam continuity,
-                # the per-direction analytic radiance, in-place re-bake, and the baked cube
-                # round-tripping the skybox display path (baked ≈ direct through the renderer).
-                tests/gpu/sky_bake.cpp
-                # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
-                # depth hierarchy's reduction, the classifier's ray and tile lists against the
-                # selection rule, the indirect arguments, the blue-noise tile, the intersection's
-                # environment fallback, reflected hit and quad copies, the denoiser's finite output,
-                # zero early-out, first-frame and accumulated sample counts and variance ping-pong,
-                # the apply composite against its formula, a renderer recording the chain only with
-                # SSR on, with and without TAA, and SSR on drawing SSR off's frame when nothing in view
-                # is glossy and no image-based lighting is bound.
-                tests/gpu/ssr_chain.cpp
-                tests/gpu/texture_loader.cpp
                 tests/gpu/transfer_retire.cpp
         )
         target_link_libraries(veng_test_gpu PRIVATE
@@ -2502,10 +2503,23 @@ if (VENG_BUILD_TESTS)
             OUTPUT_VARIABLE VENG_GPU_BACKEND_FILES)
     list(JOIN VENG_GPU_BACKEND_FILES "," VENG_GPU_BACKEND_FILTER)
 
+    # A third entry holds the capture cases — capture surfaces, portraits, screenshots, the video
+    # recorder and external-texture import — which reach the platform's capture and encoder
+    # interop, so a backend can carry them apart from the scene renderer's.
+    set(VENG_GPU_CAPTURE_CASES
+            capture_surface frame_capture model_portrait video_recorder_apple
+            video_recorder_unavailable external_texture_import)
+    list(TRANSFORM VENG_GPU_CAPTURE_CASES REPLACE "^(.*)$" "*/tests/gpu/\\1.*"
+            OUTPUT_VARIABLE VENG_GPU_CAPTURE_FILES)
+    list(JOIN VENG_GPU_CAPTURE_FILES "," VENG_GPU_CAPTURE_FILTER)
+
     add_test(NAME veng_test_gpu.backend COMMAND veng_test_gpu "-sf=${VENG_GPU_BACKEND_FILTER}")
     set_tests_properties(veng_test_gpu.backend PROPERTIES LABELS "gpu;backend"
             SKIP_RETURN_CODE 77)
-    add_test(NAME veng_test_gpu COMMAND veng_test_gpu "-sfe=${VENG_GPU_BACKEND_FILTER}")
+    add_test(NAME veng_test_gpu.capture COMMAND veng_test_gpu "-sf=${VENG_GPU_CAPTURE_FILTER}")
+    set_tests_properties(veng_test_gpu.capture PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    add_test(NAME veng_test_gpu COMMAND veng_test_gpu
+            "-sfe=${VENG_GPU_BACKEND_FILTER},${VENG_GPU_CAPTURE_FILTER}")
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # ---- MCP render-tools proof (GPU band) ---------------------------------
@@ -2855,8 +2869,8 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         set_tests_properties(validation_gate PROPERTIES LABELS validation)
     elseif (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Metal")
         # On Metal the gate runs what the backend runs — the headless smoke, the compute dispatch,
-        # the `backend` entry's gpu cases, the example launcher and the material preview — under
-        # Metal's API and shader validation.
+        # the gpu cases outside the capture entry, the example launcher and the material preview —
+        # under Metal's API and shader validation.
         set(VENG_GATE_MATERIAL_PREVIEW_ARG)
         if (TARGET veng_test_material_preview)
             set(VENG_GATE_MATERIAL_PREVIEW_ARG
@@ -2869,7 +2883,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
                 -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
                 -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
                 -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
-                "-DVENG_GATE_GPU_ARGS=-sf=${VENG_GPU_BACKEND_FILTER}"
+                "-DVENG_GATE_GPU_ARGS=-sfe=${VENG_GPU_CAPTURE_FILTER}"
                 -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
                 ${VENG_GATE_MATERIAL_PREVIEW_ARG}
                 -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
@@ -3114,6 +3128,7 @@ if (VENG_BUILD_TESTS AND VE_GPU_BACKEND STREQUAL "Metal")
     option(VENG_RUN_METAL_PENDING "Run the gpu tests the Metal backend does not run yet" OFF)
     set(VENG_METAL_RUNS
             veng_test_gpu.backend
+            veng_test_gpu
             death.buffer_upload_overrun
             death.material_block_overruns_allocation
             death.material_range_overruns_block

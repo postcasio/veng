@@ -42,7 +42,7 @@ namespace Veng::Renderer
                                          tracked.PendingTransferValue);
         }
 
-        // With no layouts, a decision that only changes layout between two reads orders nothing.
+        // With no layouts, a decision between two reads orders only the stages new to the reads.
         const Metal::MetalBarrier barrier = Metal::MapBarrier(
             decision.Src.Stage, decision.Src.Access, decision.Dst.Stage, decision.Dst.Access);
         if (decision.NeedsBarrier && barrier.IsNeeded())

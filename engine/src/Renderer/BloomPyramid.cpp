@@ -37,9 +37,10 @@ namespace Veng::Renderer
         constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
         constexpr AssetId BloomTailCompId{0x797EE8100DA96F4AULL};
 
-        // Texels the tail dispatch's shared memory holds: RGB as halves, eight bytes a texel, within
-        // a 32 KiB workgroup budget. Matches TAIL_CAPACITY in bloom_tail.comp.
-        constexpr u32 BloomTailTexelCapacity = 3584;
+        // Texels the tail dispatch's shared memory holds: RGB as halves, eight bytes a texel, 14 KiB
+        // in all, so Metal's shader validation, which doubles it, stays inside the 32 KiB workgroup
+        // budget. Matches TAIL_CAPACITY in bloom_tail.comp.
+        constexpr u32 BloomTailTexelCapacity = 1792;
 
         // The tail's first storage binding; one binding per tail slot follows.
         constexpr u32 BloomTailFirstStorageBinding = 2;

@@ -33,7 +33,6 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Types.h>
@@ -144,18 +143,9 @@ namespace
             {
                 cmd.PrepareForAccess(mipView, AccessKind::TransferSrc);
 
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = level,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 1},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = w, .height = h, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*buffer), 1, &region);
+                const BufferImageCopyRegion region{
+                    .MipLevel = level, .BaseArrayLayer = 0, .ArrayLayers = 1, .Extent = {w, h, 1}};
+                cmd.CopyImageToBuffer(image, buffer, std::span(&region, 1));
             });
 
         const std::vector<u8> bytes = buffer->Download();
@@ -193,18 +183,19 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
 
     const u32 mips = MipCountFor(W, H);
 
-    auto source = Image::Create(Context, {
-                                             .Name = "HiZ Source Depth Field",
-                                             .Extent = {W, H, 1},
-                                             .Format = Format::R32Sfloat,
-                                             .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
-                                         });
+    const auto source =
+        Image::Create(Context, {
+                                   .Name = "HiZ Source Depth Field",
+                                   .Extent = {W, H, 1},
+                                   .Format = Format::R32Sfloat,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
     source->UploadSync(
         std::span(reinterpret_cast<const u8*>(field.data()), field.size() * sizeof(float)));
 
     auto sourceView = ImageView::Create(Context, {.Name = "HiZ Source View", .Image = source});
 
-    auto hiZ = Image::Create(
+    const auto hiZ = Image::Create(
         Context, {
                      .Name = "HiZ Pyramid",
                      .Extent = {W, H, 1},
@@ -235,7 +226,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
                                                           .Stages = ShaderStage::Compute},
                                                      },
                                              });
-    auto layout = PipelineLayout::Create(
+    const auto layout = PipelineLayout::Create(
         Context,
         {
             .Name = "HiZ Reduce Layout",
@@ -305,10 +296,10 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
             }
 
             std::vector<RenderGraph::ImportBinding> bindings;
-            bindings.push_back({sourceId, sourceView});
+            bindings.push_back({.Id = sourceId, .View = sourceView});
             for (u32 k = 0; k < mips; ++k)
             {
-                bindings.push_back({chain.Level(k), mipViews[k]});
+                bindings.push_back({.Id = chain.Level(k), .View = mipViews[k]});
             }
             graph.Compile()->Execute(cmd, bindings);
         });

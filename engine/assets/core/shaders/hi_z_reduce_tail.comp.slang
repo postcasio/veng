@@ -11,7 +11,7 @@
 // parent's extent. Every tail level is written to its storage mip.
 
 #include "Veng/binding.slang"
-#define TAIL_CAPACITY 7168
+#define TAIL_CAPACITY 3584
 #define THREADS 256
 
 

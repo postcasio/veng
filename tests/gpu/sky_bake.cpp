@@ -49,7 +49,6 @@
 #include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -129,21 +128,11 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 6},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = faceSize, .height = faceSize, .depth = 1},
-                };
-                Renderer::GetVkCommandBuffer(cmd).copyImageToBuffer(
-                    Renderer::GetVkImage(*bake.GetCubeImage()),
-                    vk::ImageLayout::eTransferSrcOptimal, Renderer::GetVkBuffer(*staging), 1,
-                    &region);
+                const BufferImageCopyRegion region{.MipLevel = 0,
+                                                   .BaseArrayLayer = 0,
+                                                   .ArrayLayers = 6,
+                                                   .Extent = {faceSize, faceSize, 1}};
+                cmd.CopyImageToBuffer(bake.GetCubeImage(), staging, std::span(&region, 1));
                 cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::SampleGraphics);
             });
 
@@ -429,21 +418,11 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 cmd.PrepareForAccess(levelView, AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = mip,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 6},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = faceSize, .height = faceSize, .depth = 1},
-                };
-                Renderer::GetVkCommandBuffer(cmd).copyImageToBuffer(
-                    Renderer::GetVkImage(*bake.GetCubeImage()),
-                    vk::ImageLayout::eTransferSrcOptimal, Renderer::GetVkBuffer(*staging), 1,
-                    &region);
+                const BufferImageCopyRegion region{.MipLevel = mip,
+                                                   .BaseArrayLayer = 0,
+                                                   .ArrayLayers = 6,
+                                                   .Extent = {faceSize, faceSize, 1}};
+                cmd.CopyImageToBuffer(bake.GetCubeImage(), staging, std::span(&region, 1));
                 cmd.PrepareForAccess(levelView, AccessKind::SampleGraphics);
             });
         return staging->Download();

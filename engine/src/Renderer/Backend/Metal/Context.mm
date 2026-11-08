@@ -227,12 +227,25 @@ namespace Veng::Renderer
                 if (it->Dedicated)
                 {
                     Evict(it->Object);
+                    EvictedHeaps.push_back({.Object = it->Object,
+                                            .QueueCommits = QueueCommits.load(),
+                                            .TransferCommits = TransferCommits.load()});
                     heaps->erase(it);
                 }
                 return;
             }
         }
         VE_ASSERT(false, "Context: freeing a placement in a heap the context does not hold");
+    }
+
+    void Context::Native::ReleaseEvictedHeaps()
+    {
+        const std::scoped_lock lock(HeapMutex);
+        const u64 queueCommits = QueueCommits.load();
+        const u64 transferCommits = TransferCommits.load();
+        std::erase_if(
+            EvictedHeaps, [queueCommits, transferCommits](const EvictedHeap& heap)
+            { return queueCommits > heap.QueueCommits && transferCommits > heap.TransferCommits; });
     }
 
     void Context::Native::MakeResident(const id<MTLAllocation> allocation)
@@ -303,6 +316,14 @@ namespace Veng::Renderer
 
         const id<MTL4CommandBuffer> buffers[] = {commandBuffer};
         [queue commit:buffers count:1 options:options];
+        if (queue == Queue)
+        {
+            ++QueueCommits;
+        }
+        if (queue == TransferQueue)
+        {
+            ++TransferCommits;
+        }
         if (event != nil)
         {
             [queue signalEvent:event value:value];
@@ -392,6 +413,7 @@ namespace Veng::Renderer
         {
             teardown();
         }
+        ReleaseEvictedHeaps();
     }
 
     void Context::Native::DrainAllRetireBins()

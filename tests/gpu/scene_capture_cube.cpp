@@ -35,7 +35,6 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -125,20 +124,11 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 cmd.PrepareForAccess(view, AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = CubeFaces},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = faceSize, .height = faceSize, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*staging), 1, &region);
+                const BufferImageCopyRegion region{.MipLevel = 0,
+                                                   .BaseArrayLayer = 0,
+                                                   .ArrayLayers = CubeFaces,
+                                                   .Extent = {faceSize, faceSize, 1}};
+                cmd.CopyImageToBuffer(image, staging, std::span(&region, 1));
                 cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
             });
         return staging->Download();

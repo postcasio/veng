@@ -46,7 +46,11 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
+// The tracked layout state is read through the Vulkan backend's private header; a Metal tree checks
+// the pixels alone, since its header is Objective-C++.
+#ifdef VE_GPU_BACKEND_VULKAN
 #include <Renderer/Backend/Vulkan/Natives.h>
+#endif
 
 #include <gpu/fixture.h>
 #include <support/TempPath.h>
@@ -1017,11 +1021,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 cmd.EndRendering();
             }
         });
+#ifdef VE_GPU_BACKEND_VULKAN
     std::array<ImageLayout, AdoptedLayer> before{};
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
     {
         before[layer] = image->GetNative().At(layer, 0).Layout;
     }
+#endif
 
     constexpr GeneratedTextureKey Key = 0x5721'1A7Eull;
     u32 ticks = 0;
@@ -1034,11 +1040,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(result.has_value());
     CHECK(result->Targets[0]->GetBaseLayer() == AdoptedLayer);
     CHECK(result->Targets[0]->GetLayerCount() == 1u);
+#ifdef VE_GPU_BACKEND_VULKAN
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
     {
         CHECK(image->GetNative().At(layer, 0).Layout == before[layer]);
     }
     CHECK(image->GetNative().At(AdoptedLayer, 0).Layout == ImageLayout::ShaderReadOnly);
+#endif
 
     const std::array<std::vector<u8>, LayerCount> layers = ReadLayers(Context, image);
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
@@ -1086,10 +1094,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(service.IsResident(WarmKey));
     CHECK(warmTicks == 0u);
     CHECK(service.GetStats().RestoredTotal == 1u);
+#ifdef VE_GPU_BACKEND_VULKAN
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
     {
         CHECK(warm->GetNative().At(layer, 0).Layout == ImageLayout::Undefined);
     }
+#endif
     CHECK(LayerIs(ReadLayers(Context, warm)[AdoptedLayer], 7));
 
     service.SetCache(nullptr, nullptr);

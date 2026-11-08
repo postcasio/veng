@@ -18,6 +18,11 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 
+namespace Veng::Renderer::Metal
+{
+    struct AreaClear;
+}
+
 namespace Veng::Renderer
 {
     class SwapChain;
@@ -85,8 +90,14 @@ namespace Veng::Renderer
         id<MTLSamplerState> BlitSampler = nil;
         /// @brief The scaled blit's pipeline for each destination pixel format.
         std::unordered_map<NSUInteger, id<MTLRenderPipelineState>> BlitPipelines;
-        /// @brief Guards the blit library and pipelines.
+        /// @brief Guards the blit library and pipelines, and the area-clear pipelines and states.
         std::mutex BlitMutex;
+        /// @brief The area clear's pipeline for each attachment layout and clear mask.
+        std::unordered_map<string, id<MTLRenderPipelineState>> ClearPipelines;
+        /// @brief The area clear's depth state that writes depth everywhere.
+        id<MTLDepthStencilState> ClearDepthWrite = nil;
+        /// @brief The area clear's depth state that leaves depth alone.
+        id<MTLDepthStencilState> ClearDepthKeep = nil;
         /// @brief Every allocation the GPU reads: the heaps, and imported textures.
         id<MTLResidencySet> Residency = nil;
         /// @brief Whether the residency set changed since it was committed.
@@ -111,6 +122,31 @@ namespace Veng::Renderer
         vector<Heap> PrivateHeaps;
         /// @brief Guards the heaps; workers allocate upload buffers.
         std::mutex HeapMutex;
+
+        /// @brief A dedicated heap evicted from the residency set and not yet released.
+        struct EvictedHeap
+        {
+            /// @brief The heap.
+            id<MTLHeap> Object = nil;
+            /// @brief The graphics queue's commit count when it was evicted.
+            u64 QueueCommits = 0;
+            /// @brief The transfer queue's commit count when it was evicted.
+            u64 TransferCommits = 0;
+        };
+
+        /// @brief Evicted dedicated heaps, released once both queues have committed since.
+        ///
+        /// Shader validation holds each queue's view of a heap's placements until that queue's
+        /// next commit after the eviction, and messages a heap released before it. Guarded by
+        /// HeapMutex.
+        vector<EvictedHeap> EvictedHeaps;
+        /// @brief Commits made on the graphics queue.
+        std::atomic<u64> QueueCommits{0};
+        /// @brief Commits made on the transfer queue; the graphics queue's when they are one.
+        std::atomic<u64> TransferCommits{0};
+
+        /// @brief Releases the evicted heaps both queues have committed past.
+        void ReleaseEvictedHeaps();
 
         /// @brief Whether the context has no window.
         bool Headless = true;
@@ -312,6 +348,12 @@ namespace Veng::Renderer
 
         /// @brief The scaled blit's pipeline writing @p format, built at first use.
         id<MTLRenderPipelineState> BlitPipeline(MTLPixelFormat format);
+
+        /// @brief The area clear's pipeline for @p clear's attachments and mask, built at first use.
+        id<MTLRenderPipelineState> ClearPipeline(const Metal::AreaClear& clear);
+
+        /// @brief The area clear's depth state, writing depth when @p writesDepth.
+        id<MTLDepthStencilState> ClearDepthState(bool writesDepth);
 
         /// @brief Takes a push-constant ring chunk from the free list or creates one.
         Ref<Buffer> AcquireRingChunk(Context& context);

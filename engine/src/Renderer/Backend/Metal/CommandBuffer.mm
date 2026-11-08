@@ -379,6 +379,20 @@ namespace Veng::Renderer
         m_ActiveColorAttachmentFormats.clear();
         m_ActiveColorAttachmentFormats.reserve(info.ColorAttachments.size());
 
+        // A load action clears the whole attachment where Vulkan clears the render area alone, so
+        // an attachment the area does not cover loads, and the clear is drawn over the area.
+        const auto coversAttachment = [&info](const ImageView& view)
+        {
+            const uvec3 extent = view.GetImage()->GetExtent();
+            const u32 mip = view.GetBaseMipLevel();
+            const uvec2 full(std::max(extent.x >> mip, 1u), std::max(extent.y >> mip, 1u));
+            return info.Offset == ivec2(0) && glm::all(glm::greaterThanEqual(info.Extent, full));
+        };
+        Metal::AreaClear areaClear;
+        VE_ASSERT(info.ColorAttachments.size() <= Metal::MaxAreaClearAttachments,
+                  "CommandBuffer::BeginRendering: {} colour attachments exceed the {}-slot limit",
+                  info.ColorAttachments.size(), Metal::MaxAreaClearAttachments);
+
         MTL4RenderPassDescriptor* const pass = [[MTL4RenderPassDescriptor alloc] init];
         for (usize i = 0; i < info.ColorAttachments.size(); ++i)
         {
@@ -394,26 +408,49 @@ namespace Veng::Renderer
             color.texture = attachment.ImageView->GetNative().Texture;
             color.loadAction = Metal::ToMetal(attachment.LoadOp);
             color.storeAction = Metal::ToMetal(attachment.StoreOp);
-            if (const auto* clear = std::get_if<ClearColor>(&attachment.ClearValue))
+            areaClear.ColorFormats[i] = [color.texture pixelFormat];
+            areaClear.SampleCount = [color.texture sampleCount];
+            const auto* clear = std::get_if<ClearColor>(&attachment.ClearValue);
+            if (clear != nullptr)
             {
                 color.clearColor = MTLClearColorMake(clear->R, clear->G, clear->B, clear->A);
+            }
+            if (attachment.LoadOp == LoadOp::Clear && !coversAttachment(*attachment.ImageView))
+            {
+                color.loadAction = MTLLoadActionLoad;
+                areaClear.ColorMask |= 1u << i;
+                areaClear.Colors[i] =
+                    clear != nullptr ? vec4(clear->R, clear->G, clear->B, clear->A) : vec4(0.0f);
             }
         }
 
         const auto bindDepthStencil =
-            [pass](const RenderingAttachmentInfo& attachment, const bool depth, const bool stencil)
+            [pass, &areaClear, &coversAttachment](const RenderingAttachmentInfo& attachment,
+                                                  const bool depth, const bool stencil)
         {
             const id<MTLTexture> texture = attachment.ImageView->GetNative().Texture;
             const auto* clear = std::get_if<ClearDepth>(&attachment.ClearValue);
+            const bool partialClear =
+                attachment.LoadOp == LoadOp::Clear && !coversAttachment(*attachment.ImageView);
+            areaClear.SampleCount = [texture sampleCount];
             if (depth)
             {
                 pass.depthAttachment.texture = texture;
                 pass.depthAttachment.loadAction = Metal::ToMetal(attachment.LoadOp);
                 pass.depthAttachment.storeAction = Metal::ToMetal(attachment.StoreOp);
                 pass.depthAttachment.clearDepth = clear != nullptr ? clear->Depth : 1.0;
+                if (partialClear)
+                {
+                    pass.depthAttachment.loadAction = MTLLoadActionLoad;
+                    areaClear.ClearsDepth = true;
+                    areaClear.Depth = clear != nullptr ? clear->Depth : 1.0f;
+                }
             }
             if (stencil)
             {
+                VE_ASSERT(!partialClear,
+                          "CommandBuffer::BeginRendering: the Metal backend clears no stencil "
+                          "over part of an attachment");
                 pass.stencilAttachment.texture = texture;
                 pass.stencilAttachment.loadAction = Metal::ToMetal(attachment.LoadOp);
                 pass.stencilAttachment.storeAction = Metal::ToMetal(attachment.StoreOp);
@@ -456,6 +493,13 @@ namespace Veng::Renderer
         [m_Native->Render setFrontFacingWinding:MTLWindingCounterClockwise];
         SetViewport(info.Offset, info.Extent);
         SetScissor(info.Offset, info.Extent);
+        if (areaClear.IsNeeded())
+        {
+            VE_ASSERT(info.LayerCount <= 1,
+                      "CommandBuffer::BeginRendering: the Metal backend clears no layered pass "
+                      "over part of its attachments");
+            Metal::ClearRenderArea(m_Context, *this, areaClear);
+        }
         if (m_Native->BoundGraphics)
         {
             ApplyGraphicsPipeline(*m_Native, *m_Native->BoundGraphics);

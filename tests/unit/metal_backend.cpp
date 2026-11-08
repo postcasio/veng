@@ -211,7 +211,7 @@ TEST_CASE("Metal push constants: the ring places copies aligned, spills to a new
 }
 
 TEST_CASE("Metal barriers: a hazard maps onto the stages that run it, and a read after a read "
-          "orders nothing")
+          "orders only the stages new to the reads")
 {
     const MetalBarrier computeRaw = MapBarrier(SyncStage::ComputeShader, SyncAccess::ShaderWrite,
                                                SyncStage::ComputeShader, SyncAccess::ShaderRead);
@@ -229,8 +229,14 @@ TEST_CASE("Metal barriers: a hazard maps onto the stages that run it, and a read
     CHECK(war.IsNeeded());
 
     CHECK_FALSE(MapBarrier(SyncStage::FragmentShader, SyncAccess::ShaderRead,
-                           SyncStage::ComputeShader, SyncAccess::ShaderRead)
+                           SyncStage::FragmentShader, SyncAccess::ShaderRead)
                     .IsNeeded());
+    // A read in a stage the earlier reads did not run in waits on them, which chains it after the
+    // write they waited on.
+    const MetalBarrier newStage = MapBarrier(SyncStage::FragmentShader, SyncAccess::ShaderRead,
+                                             SyncStage::Transfer, SyncAccess::TransferRead);
+    CHECK(newStage.After == MetalStage::Fragment);
+    CHECK(newStage.Before == MetalStage::Blit);
 
     // A first use waits on nothing, and the scopes the pipe's ends name follow Vulkan's reading.
     CHECK_FALSE(MapBarrier(SyncStage::TopOfPipe, SyncAccess::None, SyncStage::Transfer,

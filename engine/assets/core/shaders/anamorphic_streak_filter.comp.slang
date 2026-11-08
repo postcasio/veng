@@ -119,6 +119,10 @@ void csMain(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
         g_Set3.Dest[int2(x, row)] = float4(forward, 1.0);
     }
 
+    // The backward sweep reads back what this thread just wrote to Dest. Metal orders a
+    // read_write texture's store before a later load only across a texture memory barrier.
+    AllMemoryBarrierWithGroupSync();
+
     backward = backwardIn;
     for (int x = end - 1; x >= begin; x--)
     {

@@ -55,9 +55,9 @@ Objective-C translation unit. No engine source outside `Backend/` includes it or
 
 `VE_GPU_BACKEND=Metal` (the native backend on Apple) builds `Backend/Metal/`, Objective-C++ compiled
 with ARC, against **Metal 4**: a device of the Metal 4 GPU family (Apple silicon on macOS 26) is
-required, and `Context::Initialize` fails naming the device where it is missing. It runs the whole
-engine surface below `SceneRenderer`: resources, binding, compute, graphics pipelines and render
-passes, blits, indirect draws, presentation, the pipeline archive and GPU timing. Its device-free
+required, and `Context::Initialize` fails naming the device where it is missing. It runs resources,
+binding, compute, graphics pipelines and render passes, blits, indirect draws, presentation, the
+pipeline archive and GPU timing, and the `SceneRenderer` and its batteries above them. Its device-free
 logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
 `PushConstantRing.h`, `BarrierMapping.h`), which `tests/unit/metal_backend.cpp` covers.
 
@@ -73,7 +73,8 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   half, which on Metal orders nothing more. `WaitIdle` signals an event on each queue and waits both.
 - **Memory.** Buffers and images are placed in `MTLHeap`s of the placement type, 64 MiB each, with
   a first-fit sub-allocator over each heap's free ranges; a placement over a quarter of that takes a
-  heap of its own, released with it. Every heap, every texture placed in one, and every imported
+  heap of its own, evicted with it and released once both queues have committed since, because shader
+  validation holds each queue's view of a heap's placements until that queue's next commit. Every heap, every texture placed in one, and every imported
   texture is in one residency set the queue holds, committed before each submission that follows a
   change; a placed texture is listed beside its heap because Metal's shader validation counts it
   resident only then, and reads one it does not as zero. A mappable buffer is
@@ -131,8 +132,10 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   encoder could not order an earlier render pass's fragment work. A recording begins as if a barrier
   from all earlier work to every stage were pending, so its first compute and first render encoder
   each wait on every earlier submission. The graph's device-free decision maps onto Metal stages
-  (`BarrierMapping.h`): there are no layouts, so a read after a read needs nothing whatever layouts
-  it names, and a transfer covers the blit stage and the render-pass clear. `Fence`, `Semaphore` and
+  (`BarrierMapping.h`): there are no layouts, so a read after a read orders only the stages the earlier reads did not
+  run in — after those readers' stages, which chains the new stage after the write they waited on,
+  as Vulkan's execution dependency chain does — and a transfer covers the blit stage and the
+  render-pass clear. `Fence`, `Semaphore` and
   `TimelineSemaphore` are `MTLSharedEvent`s; `WaitIdle` signals an event after everything committed
   and waits for it and for every submission's feedback.
 - **Validation and diagnostics.** Every submission carries a feedback handler that logs a reported

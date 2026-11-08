@@ -20,7 +20,7 @@
 
 #include "Veng/binding.slang"
 #define MAX_TAIL_LEVELS 8
-#define TAIL_CAPACITY 3584
+#define TAIL_CAPACITY 1792
 #define THREADS 256
 
 struct BloomTailSet3

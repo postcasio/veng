@@ -35,9 +35,10 @@ namespace Veng::Renderer
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
         constexpr AssetId HiZReduceTailCompId{0xB9FFDDCA3144D470ULL};
 
-        // Texels the tail dispatch's shared memory holds: one float each, within a 32 KiB
-        // workgroup budget. Matches TAIL_CAPACITY in hi_z_reduce_tail.comp.
-        constexpr u32 HiZTailTexelCapacity = 7168;
+        // Texels the tail dispatch's shared memory holds: one float each, 14 KiB in all, so Metal's
+        // shader validation, which doubles it, stays inside the 32 KiB workgroup budget. Matches
+        // TAIL_CAPACITY in hi_z_reduce_tail.comp.
+        constexpr u32 HiZTailTexelCapacity = 3584;
 
         // The tail's first storage binding; one binding per tail slot follows.
         constexpr u32 HiZTailFirstStorageBinding = 1;
@@ -92,7 +93,8 @@ namespace Veng::Renderer
     {
         ResolveActiveCullMode(settings);
 
-        auto LoadShader = [&assets](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [&assets](const AssetId id,
+                                          const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "GpuCullSystem: {} shader load failed: {}", what,

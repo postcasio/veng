@@ -12,7 +12,8 @@
 //   4. The metric bends the path — rows of metric 0.5 advance a dye front half as far.
 //   5. Relaxation holds a jet — a zero field converges on its target at exactly the configured
 //      rate, and rate 0 leaves it alone.
-//   6. Determinism — a fixed seed, configuration and step count hash to a pinned digest.
+//   6. Determinism — a fixed seed, configuration and step count reproduce their bytes, and on the
+//      Vulkan backend hash to a pinned digest.
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
@@ -609,8 +610,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "fluid sim: relaxation converges on it
     CHECK(untouched.Velocity(7, 9).x == doctest::Approx(0.0f).epsilon(0.001));
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "fluid sim: a fixed seed, config and step count hash to a pinned digest")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "fluid sim: a fixed seed, config and step count reproduce their bytes, pinned on Vulkan")
 {
     AssetManager assets(Context, Tasks, Types);
     constexpr uvec2 Extent{32, 32};
@@ -683,8 +685,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // a second run must land on the same bytes.
     CHECK(Run() == first);
 
-    // Pinned on the reference host (Apple M2, MoltenVK). Cross-device bit-identity is not
-    // promised and is not asserted anywhere; this is a change detector, re-pinned freely and
-    // without ceremony on an intended solver change, with a note saying what moved.
+    // Pinned on the reference host's Vulkan backend (Apple silicon, MoltenVK). Cross-device and
+    // cross-backend bit-identity is not promised and is not asserted anywhere — the Metal backend
+    // compiles the solver through another compiler and lands on other bits, so it keeps only the
+    // determinism above. This is a change detector, re-pinned freely and without ceremony on an
+    // intended solver change, with a note saying what moved.
+#ifdef VE_GPU_BACKEND_VULKAN
     CHECK(first == 0xC95ADBA6BC0A9AC5ull);
+#endif
 }

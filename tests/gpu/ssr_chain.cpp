@@ -56,7 +56,6 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -267,18 +266,11 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 cmd.PrepareForAccess(view, AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = level,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 1},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = extent.x, .height = extent.y, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*buffer), 1, &region);
+                const BufferImageCopyRegion region{.MipLevel = level,
+                                                   .BaseArrayLayer = 0,
+                                                   .ArrayLayers = 1,
+                                                   .Extent = {extent.x, extent.y, 1}};
+                cmd.CopyImageToBuffer(image, buffer, std::span(&region, 1));
             });
         const std::vector<u8> bytes = buffer->Download();
         std::vector<f32> values(static_cast<usize>(extent.x) * extent.y);

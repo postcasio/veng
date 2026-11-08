@@ -16,7 +16,11 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+// The landed-upload case reads the tracked subresource state through the Vulkan backend's private
+// header, so it registers only in a Vulkan tree; the Metal backend's header is Objective-C++.
+#ifdef VE_GPU_BACKEND_VULKAN
 #include <Renderer/Backend/Vulkan/Natives.h>
+#endif
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
@@ -679,6 +683,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+#ifdef VE_GPU_BACKEND_VULKAN
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: an async Load lands with its upload already submitted")
 {
@@ -719,6 +724,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Tasks.WaitForAll();
     std::filesystem::remove(outArchive);
 }
+#endif
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: the three half-float widths load and sample")

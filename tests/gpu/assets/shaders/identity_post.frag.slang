@@ -4,10 +4,8 @@
 // SV_Target0). It proves the PostProcess fullscreen-material path end to end:
 // build-from-material, set-0 bind, upstream sample, selector push at offset 0,
 // fullscreen draw, output written.
-//
-// The push block is the per-draw MaterialOffset selector alone, at offset 0 — a
-// PostProcess shader has no geometry block, so the selector sits at the start of
-// the push range (the PostProcess domain's selector offset).
+
+#include "Veng/postprocess.slang"
 
 struct MaterialParams
 {
@@ -15,32 +13,15 @@ struct MaterialParams
     uint SourceSampler; // runtime-bound sampler handle
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-
 MaterialParams LoadMaterialParams(uint offset)
 {
     return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
-struct PushConstants
-{
-    uint MaterialOffset;
-};
-
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
-
-struct VSOutput
-{
-    float4 sv_position : SV_Position;
-    float2 v_UV : TEXCOORD0;
-};
-
 [shader("fragment")]
-float4 fsMain(VSOutput input) : SV_Target0
+float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    return g_Textures[NonUniformResourceIndex(p.Source)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.SourceSampler)], input.v_UV);
+    return g_Textures[NonUniformIndex(p.Source)].Sample(
+        g_Samplers[NonUniformIndex(p.SourceSampler)], input.v_UV);
 }

@@ -36,9 +36,10 @@ namespace Veng::Renderer
         // The chain's coarse-tail compute shader.
         constexpr AssetId SceneColorDownsampleTailCompId{0x8CD110A72061F09BULL};
 
-        // Texels the tail dispatch's shared memory holds: RGB as halves, eight bytes a texel, within
-        // a 32 KiB workgroup budget. Matches TAIL_CAPACITY in scene_color_downsample_tail.comp.
-        constexpr u32 TailTexelCapacity = 3584;
+        // Texels the tail dispatch's shared memory holds: RGB as halves, eight bytes a texel, 14 KiB
+        // in all, so Metal's shader validation, which doubles it, stays inside the 32 KiB workgroup
+        // budget. Matches TAIL_CAPACITY in scene_color_downsample_tail.comp.
+        constexpr u32 TailTexelCapacity = 1792;
 
         // The tail's first storage binding; one binding per tail slot follows.
         constexpr u32 TailFirstStorageBinding = 2;

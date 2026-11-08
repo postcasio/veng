@@ -32,7 +32,6 @@
 #include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Scene/BuiltinTypes.h>
 
 using namespace Veng;
@@ -135,16 +134,11 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 6},
-                    .imageExtent = {.width = FaceSize, .height = FaceSize, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*bake.GetCubeImage()),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*staging), 1, &region);
+                const BufferImageCopyRegion region{.MipLevel = 0,
+                                                   .BaseArrayLayer = 0,
+                                                   .ArrayLayers = 6,
+                                                   .Extent = {FaceSize, FaceSize, 1}};
+                cmd.CopyImageToBuffer(bake.GetCubeImage(), staging, std::span(&region, 1));
                 cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::SampleGraphics);
             });
         return staging->Download();

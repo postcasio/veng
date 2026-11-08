@@ -12,7 +12,7 @@
 // the precision its mip stores (RGB as halves).
 
 #include "Veng/binding.slang"
-#define TAIL_CAPACITY 3584
+#define TAIL_CAPACITY 1792
 #define THREADS 256
 
 

@@ -4972,7 +4972,9 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "postprocess_pack.json", outArchive)
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "postprocess_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);

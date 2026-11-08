@@ -68,12 +68,13 @@ struct PunctualShadows
 
 // The set's images and sampler form its block; the two per-frame constant blocks are dynamic uniform
 // buffers, bound by address after it (the first and second dynamic buffers of every layout that
-// carries this set).
+// carries this set). The atlases are depth textures: Metal compares only against a depth2d, and a
+// plain Texture2D reaches SampleCmp through a reinterpreting copy the Metal compiler may miscompile.
 struct ShadowSet
 {
-    Texture2D Atlas;
+    DepthTexture2D Atlas;
     SamplerComparisonState Sampler;
-    Texture2D PunctualAtlas;
+    DepthTexture2D PunctualAtlas;
 };
 VE_DESCRIPTOR_SET(VE_SHADOW_SET, ShadowSet, g_ShadowSet);
 VE_DYNAMIC_UNIFORM_BUFFER(3, VE_SHADOW_SET, 0, ShadowConstants, g_Shadow);
@@ -111,7 +112,7 @@ uint SelectCascade(float viewDepth, uint count, uint set)
 // array. Returns full visibility when the projected point falls behind the projection,
 // outside the tile, or outside the valid depth range. Shared by the cascade and punctual
 // paths over the two atlases, selected by the atlas + sampler the caller passes.
-float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tileViewProj,
+float SampleAtlasTile(DepthTexture2D atlas, SamplerComparisonState cmp, float4x4 tileViewProj,
                       float3 worldPos, float bias, float2 texel, float2 tileMin, float2 tileMax,
                       int pcfRadius)
 {
@@ -418,7 +419,7 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     {
         float2 sUv = clamp(uv + AreaDiskOffset(AreaPoissonDisk[i], rot, searchTexels, texel),
                            clampMin, clampMax);
-        float d = g_PunctualAtlas.Load(int3(int2(sUv * atlasDims), 0)).r;
+        float d = g_PunctualAtlas.Load(int3(int2(sUv * atlasDims), 0));
         if (d > refDepth)
         {
             blockerSum += d;

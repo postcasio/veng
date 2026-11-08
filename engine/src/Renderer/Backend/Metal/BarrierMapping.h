@@ -93,7 +93,10 @@ namespace Veng::Renderer::Metal
 
     /// @brief Maps one dependency onto a Metal barrier.
     ///
-    /// A read after a read needs none: with no layouts there is nothing to transition.
+    /// A read after a read orders only the stages the earlier reads did not run in: with no layouts
+    /// there is nothing to transition, but a new stage was never ordered after the write those
+    /// reads waited on, and waiting on the earlier readers' stages reaches it, as Vulkan's
+    /// execution dependency chain does.
     /// @param srcStage  The producing stages.
     /// @param srcAccess The producing access.
     /// @param dstStage  The consuming stages.
@@ -104,10 +107,12 @@ namespace Veng::Renderer::Metal
                                                  const SyncStage dstStage,
                                                  const SyncAccess dstAccess)
     {
+        const MetalStage after = ToMetalStages(srcStage, true);
+        MetalStage before = ToMetalStages(dstStage, false);
         if (!IsWriteAccess(srcAccess) && !IsWriteAccess(dstAccess))
         {
-            return {};
+            before = static_cast<MetalStage>(static_cast<u64>(before) & ~static_cast<u64>(after));
         }
-        return {.After = ToMetalStages(srcStage, true), .Before = ToMetalStages(dstStage, false)};
+        return {.After = after, .Before = before};
     }
 }

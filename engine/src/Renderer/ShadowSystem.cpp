@@ -70,9 +70,9 @@ namespace Veng::Renderer
     {
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
 
-        // Immutable comparison sampler for hardware SampleCmp: LESS-or-equal, linear
-        // filter for the hardware 2×2 PCF. The MoltenVK argument-buffer restriction
-        // applies only to set-0 bindless arrays; a dedicated set 1 sampler is fine.
+        // Immutable comparison sampler for hardware SampleCmp: GREATER-or-equal (reverse-Z),
+        // linear filter for the hardware 2×2 PCF. The MoltenVK argument-buffer restriction
+        // applies only to set-0 bindless arrays; a dedicated set's sampler is fine.
         m_ComparisonSampler =
             Sampler::Create(m_Context, {
                                            .Name = "SceneRenderer Shadow Comparison Sampler",
@@ -89,7 +89,7 @@ namespace Veng::Renderer
                                            .BorderColor = BorderColor::OpaqueWhite,
                                        });
 
-        // Set 1 — the shadow system:
+        // The shadow set (set 3 in the lighting layout, set 5 in a material's):
         //   0: directional cascade atlas (SampledImage)
         //   1: shared immutable comparison sampler (baked into the layout)
         //   2: punctual shadow atlas (SampledImage)
@@ -227,7 +227,7 @@ namespace Veng::Renderer
         CreatePunctualAtlas(settings);
     }
 
-    // The shadow system holds no set-0 bindless slots (all of set 1 is off bindless), so the
+    // The shadow system holds no set-0 bindless slots (its whole set is off bindless), so the
     // destructor releases none; the owned Refs retire through the per-frame bin as they drop.
     ShadowSystem::~ShadowSystem() = default;
 
@@ -290,8 +290,7 @@ namespace Veng::Renderer
     void ShadowSystem::RebuildSets(const Ref<ImageView>& atlasView)
     {
         // Fresh sets every rebuild: the prior sets may still be referenced by an
-        // in-flight command buffer, and the bindings carry no update-after-bind flags
-        // (set 1 stays out of Metal argument buffers for the comparison sampler), so
+        // in-flight command buffer, and the bindings carry no update-after-bind flags, so
         // they are never updated in place. The old sets retire through the per-frame
         // bin once their last frame's fence signals.
         m_Set = DescriptorSet::Create(m_Context, {
