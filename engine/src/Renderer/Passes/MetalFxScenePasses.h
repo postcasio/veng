@@ -76,8 +76,8 @@ namespace Veng::Renderer
     /// Takes the TAA resolve's place under AntiAliasingMode::MetalFXTemporal: reads the conditioned
     /// colour, the g-buffer depth and the motion target, and reconstructs the scene-colour
     /// allocation into the target the HDR tail reads. The scaler keeps its own history, so there is
-    /// no history copy. Its work runs outside Vulkan, between two submits of the frame
-    /// (Context::SplitFrame); the declared accesses place the barriers either side of it.
+    /// no history copy. Its work is encoded by MetalFX (see MetalFxTemporalScaler::Encode); the
+    /// declared accesses place the barriers either side of it.
     class MetalFxTemporalScenePass final : public ScenePass
     {
     public:

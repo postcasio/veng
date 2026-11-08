@@ -158,9 +158,11 @@ namespace Veng::Renderer
         [queue signalDrawable:m_Drawable];
         [m_Drawable present];
         // The drawable goes back to the layer's pool once presented; holding its texture would
-        // keep it from being vended again.
+        // keep it from being vended again. A command buffer retains nothing it renders into, so
+        // the drawable lives until the frame's slot retires.
         m_Images[m_CurrentIndex]->GetNative().Texture = nil;
         m_Views[m_CurrentIndex]->GetNative().Texture = nil;
+        m_Context.GetNative().Retire(m_Drawable);
         m_Drawable = nil;
     }
 

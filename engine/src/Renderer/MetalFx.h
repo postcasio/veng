@@ -2,8 +2,9 @@
 
 // The MetalFX upscalers, wrapped for the renderer. Free of every graphics API's types and of the
 // backend: the scalers read and write engine Images through their platform textures
-// (AppleInterop.h), and schedule their work between two segments of the frame with
-// Context::SplitFrame.
+// (AppleInterop.h). On the Metal backend they encode into the recording command buffer itself; on
+// the Vulkan backend their work runs on a queue of their own, between two segments of the frame
+// that Context::SplitFrame submits.
 //
 // On Apple the declarations below are defined in MetalFx.mm, the one translation unit that names
 // MetalFX. Elsewhere there is no MetalFX, and the inline definitions at the bottom of this header
@@ -14,6 +15,7 @@
 
 namespace Veng::Renderer
 {
+    class CommandBuffer;
     class Context;
     class Image;
 }
@@ -35,7 +37,8 @@ namespace Veng::Renderer
 
     /// @brief Reads what MetalFX supports on the context's device.
     ///
-    /// Everything false where the context cannot split a frame (no platform-object interop), on a
+    /// Everything false where the context can run no platform GPU work (the Vulkan backend with no
+    /// platform-object interop, or no frame split), on a
     /// system without the MetalFX framework, and on every platform but Apple.
     /// @param context The render context.
     /// @return The device's MetalFX support.
@@ -111,10 +114,11 @@ namespace Veng::Renderer
         MetalFxTemporalScaler(const MetalFxTemporalScaler&) = delete;
         MetalFxTemporalScaler& operator=(const MetalFxTemporalScaler&) = delete;
 
-        /// @brief Encodes one frame's reconstruction, splitting the frame around it.
+        /// @brief Encodes one frame's reconstruction, after everything recorded before it.
+        /// @param cmd   The recording command buffer, outside any render pass.
         /// @param frame The frame's inputs and per-frame parameters.
         /// @pre Every image was created with ImageInfo::PlatformExport and matches the shape.
-        void Encode(const MetalFxTemporalFrame& frame);
+        void Encode(const CommandBuffer& cmd, const MetalFxTemporalFrame& frame);
 
         /// @brief The shape the scaler was created with.
         [[nodiscard]] const MetalFxTemporalInfo& GetInfo() const { return m_Info; }
@@ -126,9 +130,10 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The shape the scaler was created with.
         MetalFxTemporalInfo m_Info;
-        /// @brief The retained MTLFXTemporalScaler.
+        /// @brief The retained temporal scaler (MTL4FXTemporalScaler on the Metal backend).
         void* m_Scaler = nullptr;
-        /// @brief The retained MTLCommandQueue the scaler's work is committed to.
+        /// @brief The retained MTLCommandQueue the scaler's work is committed to; null on the Metal
+        ///        backend, where the work joins the recording.
         void* m_Queue = nullptr;
         /// @brief One retained 1x1 exposure texture per frame in flight, so a frame's write never
         ///        lands on one an earlier frame's encode still reads.
@@ -178,10 +183,11 @@ namespace Veng::Renderer
         MetalFxSpatialScaler(const MetalFxSpatialScaler&) = delete;
         MetalFxSpatialScaler& operator=(const MetalFxSpatialScaler&) = delete;
 
-        /// @brief Encodes one frame's upscale, splitting the frame around it.
+        /// @brief Encodes one frame's upscale, after everything recorded before it.
+        /// @param cmd   The recording command buffer, outside any render pass.
         /// @param frame The frame's input, output and content size.
         /// @pre Both images were created with ImageInfo::PlatformExport and match the shape.
-        void Encode(const MetalFxSpatialFrame& frame);
+        void Encode(const CommandBuffer& cmd, const MetalFxSpatialFrame& frame);
 
         /// @brief The shape the scaler was created with.
         [[nodiscard]] const MetalFxSpatialInfo& GetInfo() const { return m_Info; }
@@ -193,13 +199,11 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The shape the scaler was created with.
         MetalFxSpatialInfo m_Info;
-        /// @brief The retained MTLFXSpatialScaler.
+        /// @brief The retained spatial scaler (MTL4FXSpatialScaler on the Metal backend).
         void* m_Scaler = nullptr;
-        /// @brief The retained MTLCommandQueue the scaler's work is committed to.
+        /// @brief The retained MTLCommandQueue the scaler's work is committed to; null on the Metal
+        ///        backend, where the work joins the recording.
         void* m_Queue = nullptr;
-        /// @brief One retained 1x1 exposure texture per frame in flight, so a frame's write never
-        ///        lands on one an earlier frame's encode still reads.
-        vector<void*> m_Exposure;
     };
 
 #ifndef __APPLE__
@@ -216,7 +220,7 @@ namespace Veng::Renderer
 
     inline MetalFxTemporalScaler::~MetalFxTemporalScaler() = default;
 
-    inline void MetalFxTemporalScaler::Encode(const MetalFxTemporalFrame&) {}
+    inline void MetalFxTemporalScaler::Encode(const CommandBuffer&, const MetalFxTemporalFrame&) {}
 
     inline Unique<MetalFxSpatialScaler> MetalFxSpatialScaler::Create(Context&,
                                                                      const MetalFxSpatialInfo&)
@@ -226,6 +230,6 @@ namespace Veng::Renderer
 
     inline MetalFxSpatialScaler::~MetalFxSpatialScaler() = default;
 
-    inline void MetalFxSpatialScaler::Encode(const MetalFxSpatialFrame&) {}
+    inline void MetalFxSpatialScaler::Encode(const CommandBuffer&, const MetalFxSpatialFrame&) {}
 #endif
 }

@@ -714,8 +714,7 @@ the default and catches more. Do not build both routinely.
   renderer or backend work — with `ctest --test-dir build-debug -C Validation -j 4 -L validation`.
   It fails on any unallowlisted `Vulkan validation` or `Metal validation` ERROR line
   (`cmake/ValidationGate.cmake`; allowlist currently empty). In a Vulkan tree it runs the
-  `gpu`-labelled binaries; in a Metal tree it runs the same binaries — the gpu suite without its
-  capture entry — with Metal's API and shader validation on (`MTL_DEBUG_LAYER`, `MTL_SHADER_VALIDATION`,
+  `gpu`-labelled binaries; in a Metal tree it runs the same binaries with Metal's API and shader validation on (`MTL_DEBUG_LAYER`, `MTL_SHADER_VALIDATION`,
   `MTL_SHADER_VALIDATION_REPORT_TO_STDERR`) and also fails on the shader validation layer's own
   stderr report and on a non-zero exit. The `validation_gate_selftest.*` cases feed the gate a
   recorded log carrying each kind of finding and pass only when it fails, so the gate is known to be
@@ -723,28 +722,35 @@ the default and catches more. Do not build both routinely.
   reliably (a shader validation report reaches stderr intermittently, and a faulting store reaches no
   submission's error). Metal has no synchronization validation. The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
-- **A Metal tree runs part of the gpu band.** Every gpu test the Metal backend does not run yet
-  carries the `metal-pending` label and is disabled, so the tree's default band passes;
-  `-DVENG_RUN_METAL_PENDING=ON` runs them anyway. The gpu suite is three entries selected by source
+- **Both trees run the whole gpu band.** The gpu suite is three entries selected by source
   file, the same lists in both trees: `veng_test_gpu.backend` (label `backend`,
   `VENG_GPU_BACKEND_CASES`), the backend-level cases; `veng_test_gpu.capture`
   (`VENG_GPU_CAPTURE_CASES`), the capture surfaces, portraits, screenshots, video recorder and
-  external-texture import, which a Metal tree leaves pending; and `veng_test_gpu`, everything else —
+  external-texture import; and `veng_test_gpu`, everything else —
   the scene renderer and the systems above it. The cooker suite runs in both trees: its fixture
   shaders declare their resources in the portable form, its pack cooks put the engine shader
   headers on the include path (`tests/cooker/FixturePack.h`), and a case reading the SPIR-V section
   asks for SPIR-V itself.
-- **Some gpu cases are backend-specific, each for a stated reason.** Registered in a Vulkan tree
-  only: `bindless_registry.cpp` and `transfer_retire.cpp`, backend-level cases that stage their
-  states through the Vulkan backend's raw handles (a frame slot's fence, a VMA allocation on the
-  transfer timeline); `bindless_lifecycle.cpp` carries the backend-neutral half. Within files both trees run, a few
-  assertions compile only under `VE_GPU_BACKEND_VULKAN`: the tracked layout state
-  `generated_texture.cpp` reads and the landed-upload case in `texture_loader.cpp`, since the Metal
-  backend's private header is Objective-C++; and the fluid solver's pinned digest
-  (`fluid_sim.cpp`), since the two backends' compilers land on different bits — both keep the
-  determinism half of that case. Registered in a Metal tree only: `pipeline_archive.mm`, which
-  reads the Metal backend's pipeline counters. `external_texture_import.mm` and
-  `video_recorder_apple.mm` register on every Apple tree.
+- **Some cases are backend-specific, each for a stated reason.** No gpu case is skipped on either
+  backend otherwise.
+  - **Registered in a Vulkan tree only:** `bindless_registry.cpp` and `transfer_retire.cpp`,
+    backend-level gpu cases that stage their states through the Vulkan backend's raw handles (a
+    frame slot's fence, a VMA allocation on the transfer timeline; `bindless_lifecycle.cpp` carries
+    the backend-neutral half); and the unit `type_mapping.cpp` and `death.tovk_unmapped`, which test
+    that backend's own enum mapping.
+  - **Registered in a Metal tree only:** `pipeline_archive.mm`, which reads the Metal backend's
+    pipeline counters, and the unit `metal_backend.cpp`, over that backend's device-free headers.
+  - **Registered on every Apple tree:** `external_texture_import.mm` and `video_recorder_apple.mm`.
+  - **Vulkan-only assertions within shared files:** the tracked layout state
+    `generated_texture.cpp` reads and the landed-upload case in `texture_loader.cpp`, since the
+    Metal backend's private header is Objective-C++; and the fluid solver's pinned digest
+    (`fluid_sim.cpp`), since the two backends' compilers land on different bits — both keep the
+    determinism half of that case.
+  - **Metal-only assertions within shared files:** `async_upload.cpp` holds that uploads run on a
+    queue of their own and `async_submit.cpp` that the submit mode is the driver's (both are
+    MoltenVK's choices on Vulkan); `taa_stability.cpp` requires the MetalFX temporal and spatial
+    scalers to be available, since every device the Metal backend runs on runs them, so their cases
+    cannot pass through the "unavailable" branch there.
 - **Synchronization validation cannot see a shader access through the bindless sets.** The
   context turns on its shader-access analysis (`syncval_shader_accesses_heuristic`), without which
   it checks no descriptor access a draw or dispatch makes at all; with it, accesses through an

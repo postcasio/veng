@@ -735,6 +735,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const bool supported = Context.GetDeviceCapabilities().MetalFxTemporal;
     CHECK((scene.Resolved({.AntiAliasing = AntiAliasingMode::MetalFXTemporal}).AntiAliasing ==
            AntiAliasingMode::MetalFXTemporal) == supported);
+#if defined(VE_GPU_BACKEND_METAL)
+    // Every device the Metal backend runs on (Metal 4, Apple silicon) runs the scaler.
+    REQUIRE(supported);
+#endif
     if (!supported)
     {
         MESSAGE("MetalFX temporal scaling is unavailable on this device; nothing to measure");
@@ -882,6 +886,10 @@ TEST_CASE_FIXTURE(
                                          .AO = false};
     const bool supported = Context.GetDeviceCapabilities().MetalFxSpatial;
     CHECK((scene.Resolved(settings).Upscale == UpscaleFilter::MetalFXSpatial) == supported);
+#if defined(VE_GPU_BACKEND_METAL)
+    // Every device the Metal backend runs on (Metal 4, Apple silicon) runs the scaler.
+    REQUIRE(supported);
+#endif
     if (!supported)
     {
         MESSAGE("MetalFX spatial scaling is unavailable on this device; nothing to measure");

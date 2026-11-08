@@ -3,10 +3,10 @@
 // The engine's seam to Apple's GPU objects, free of every graphics API's types: the video
 // recorder and the MetalFX scalers reach Metal through it whichever backend is compiled in. The
 // Vulkan backend implements it through MoltenVK's Metal-object export; the Metal backend hands out
-// its own objects. The
-// device (Context::GetExternalDevice) and the frame-split shared event (FrameSplitPoint) already
-// reach a caller through the public Context; this adds what is per image and the release that
-// follows a frame.
+// its own objects. The device (Context::GetExternalDevice) already reaches a caller through the
+// public Context, as does, on the Vulkan backend, the frame-split shared event (FrameSplitPoint);
+// this adds what is per image and the release that follows a frame, and on the Metal backend the
+// recording command buffer, the pipeline compiler and the residency set that platform work shares.
 //
 // Every object returned is +0 (unretained): a caller that keeps one retains it.
 //
@@ -23,6 +23,7 @@
 
 namespace Veng::Renderer
 {
+    class CommandBuffer;
     class Context;
     class Image;
 }
@@ -91,6 +92,43 @@ namespace Veng::Renderer::Apple
     /// @param object  The retained object (an Objective-C object on Apple); its one reference is
     ///                consumed.
     VE_API void ReleaseAfterFrame(const Context& context, void* object);
+
+#if defined(VE_GPU_BACKEND_METAL)
+    /// @brief Encodes platform GPU work into the command buffer the Metal backend is recording.
+    ///
+    /// For work a platform API encodes into a Metal 4 command buffer of its own accord, such as a
+    /// hardware upscaler: it runs in the frame, with no submission split around it. Any open
+    /// encoder is ended. @p encode receives the recording's @c MTL4CommandBuffer and an
+    /// @c MTLFence that every command recorded earlier updates, which the work must wait before it
+    /// starts; every command recorded after the call waits on the work.
+    /// @param context The context @p cmd records for.
+    /// @param cmd     The recording command buffer; no render pass may be open.
+    /// @param encode  Encodes the work; called once, synchronously, with both objects at +0.
+    VE_API void EncodeIntoRecording(const Context& context, const CommandBuffer& cmd,
+                                    const function<void(void* commandBuffer, void* fence)>& encode);
+
+    /// @brief Returns the compiler the Metal backend builds its pipelines with (+0).
+    ///
+    /// Platform work that builds pipelines of its own on a Metal 4 device takes it, so they share
+    /// the backend's compiler.
+    /// @param context The context.
+    /// @return The @c MTL4Compiler.
+    [[nodiscard]] VE_API void* GetPipelineCompiler(const Context& context);
+
+    /// @brief Adds an allocation the backend did not make to the residency set its queues read.
+    ///
+    /// Metal 4 reads only resident allocations, so a texture or buffer platform work creates
+    /// directly on the device joins the set for as long as the work reads it.
+    /// @param context    The context.
+    /// @param allocation The @c MTLAllocation; the set holds its own reference.
+    VE_API void MakeResident(const Context& context, void* allocation);
+
+    /// @brief Evicts an allocation MakeResident added once the frame now recording has retired,
+    ///        then releases it as ReleaseAfterFrame does.
+    /// @param context    The context.
+    /// @param allocation The retained allocation; its one reference is consumed.
+    VE_API void ReleaseResidentAfterFrame(const Context& context, void* allocation);
+#endif
 
 #ifndef __APPLE__
     inline void* GetPlatformTexture(const Context&, const Image&)

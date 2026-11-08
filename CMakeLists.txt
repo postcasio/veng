@@ -2486,7 +2486,7 @@ if (VENG_BUILD_TESTS)
                 SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
     endif ()
 
-    # The suite is two entries, split by source file with doctest's -sf/-sfe filters. The `backend`
+    # The suite is three entries, split by source file with doctest's -sf/-sfe filters. The `backend`
     # entry holds the cases at the GPU backend's own level — resources, binding, barriers, graphics
     # pipelines and render passes, blits, the graph's scheduling, indirect draws, uploads and
     # present — which a renderer or backend change also runs against the Vulkan reference tree
@@ -2834,17 +2834,16 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     endif ()
 
     # ---- Local validation-error gate ----------------------------------------
-    # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
-    # validation messages and fails if a new [ERROR] Vulkan validation line
-    # appears (see cmake/ValidationGate.cmake for the allowlist of documented
-    # gaps). Includes the launcher path so the real shipping shape runs under the
-    # gate too. Registered after the examples subdirectory so the launcher target
-    # exists. Registered only under VE_VALIDATION: a tree without the layers
-    # would run it and prove nothing. It carries CONFIGURATIONS Validation, so an
-    # ordinary ctest run skips it: it re-runs the whole gpu suite under the layers,
-    # which doubles the band's GPU time, so it is run on demand —
+    # ctest -L validation: runs the gpu-labelled binaries under the backend's validation (the
+    # Vulkan validation layers, or Metal's API and shader validation) and fails if a new
+    # [ERROR] <backend> validation line appears (see cmake/ValidationGate.cmake for the allowlist
+    # of documented gaps). Includes the launcher path so the real shipping shape runs under the
+    # gate too. Registered after the examples subdirectory so the launcher target exists.
+    # Registered only under VE_VALIDATION: a tree without it would run the gate and prove nothing.
+    # It carries CONFIGURATIONS Validation, so an ordinary ctest run skips it: it re-runs the whole
+    # gpu suite under validation, which doubles the band's GPU time, so it is run on demand —
     # `ctest --test-dir build-debug -C Validation -L validation`.
-    if (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Vulkan")
+    if (VE_VALIDATION)
         # The MaterialPreview gate binary exists only when the editor is built; pass its
         # path through only when the target was built so the gate runs the two-renderer
         # handoff there too.
@@ -2857,33 +2856,10 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         add_test(NAME validation_gate
             CONFIGURATIONS Validation
             COMMAND ${CMAKE_COMMAND}
-                -D VENG_GATE_BACKEND=Vulkan
+                -D VENG_GATE_BACKEND=${VE_GPU_BACKEND}
                 -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
                 -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
                 -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
-                -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
-                ${VENG_GATE_MATERIAL_PREVIEW_ARG}
-                -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
-        )
-        set_tests_properties(validation_gate PROPERTIES LABELS validation)
-    elseif (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Metal")
-        # On Metal the gate runs what the backend runs — the headless smoke, the compute dispatch,
-        # the gpu cases outside the capture entry, the example launcher and the material preview —
-        # under Metal's API and shader validation.
-        set(VENG_GATE_MATERIAL_PREVIEW_ARG)
-        if (TARGET veng_test_material_preview)
-            set(VENG_GATE_MATERIAL_PREVIEW_ARG
-                -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_test_material_preview>)
-        endif ()
-        add_test(NAME validation_gate
-            CONFIGURATIONS Validation
-            COMMAND ${CMAKE_COMMAND}
-                -D VENG_GATE_BACKEND=Metal
-                -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
-                -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
-                -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
-                "-DVENG_GATE_GPU_ARGS=-sfe=${VENG_GPU_CAPTURE_FILTER}"
                 -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
                 ${VENG_GATE_MATERIAL_PREVIEW_ARG}
                 -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
@@ -3119,45 +3095,3 @@ configure_file(
         ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
         @ONLY
 )
-
-# In a Metal tree the GPU work the Metal backend does not run yet is `metal-pending`: every test
-# labelled gpu except those in VENG_METAL_RUNS takes the label and is disabled, so the tree's
-# default band passes. VENG_RUN_METAL_PENDING runs them anyway, for a backend under development.
-# Placed after every test is registered.
-if (VENG_BUILD_TESTS AND VE_GPU_BACKEND STREQUAL "Metal")
-    option(VENG_RUN_METAL_PENDING "Run the gpu tests the Metal backend does not run yet" OFF)
-    set(VENG_METAL_RUNS
-            veng_test_gpu.backend
-            veng_test_gpu
-            death.buffer_upload_overrun
-            death.material_block_overruns_allocation
-            death.material_range_overruns_block
-            death.descriptor_type_mismatch
-            death.index_u16_into_u32
-            death.index_u32_into_u16
-            headless_smoke
-            compute_dispatch
-            mcp_screenshot
-            veng_test_material_preview
-            veng_test_multi_viewport_imgui
-            smoke_golden
-            hello_triangle_launcher_smoke
-            mcp_conformance
-            editor_mcp_conformance
-            mcp_cli_conformance
-            editor_mcp_cli_conformance
-            sdk_conformance_install
-            sdk_conformance_buildtree
-    )
-    get_property(VENG_ALL_TESTS DIRECTORY PROPERTY TESTS)
-    foreach (VENG_TEST IN LISTS VENG_ALL_TESTS)
-        get_test_property(${VENG_TEST} LABELS VENG_TEST_LABELS)
-        if ("gpu" IN_LIST VENG_TEST_LABELS AND NOT VENG_TEST IN_LIST VENG_METAL_RUNS)
-            list(APPEND VENG_TEST_LABELS metal-pending)
-            set_tests_properties(${VENG_TEST} PROPERTIES LABELS "${VENG_TEST_LABELS}")
-            if (NOT VENG_RUN_METAL_PENDING)
-                set_tests_properties(${VENG_TEST} PROPERTIES DISABLED ON)
-            endif ()
-        endif ()
-    endforeach ()
-endif ()

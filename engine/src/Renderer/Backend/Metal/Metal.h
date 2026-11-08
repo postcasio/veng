@@ -9,6 +9,11 @@
 #include <Veng/Assert.h>
 #include <Veng/Veng.h>
 
+// The runtime's autorelease pool entry points, the calls @autoreleasepool compiles to; declared here
+// because a recording opens its pool in one call and drains it in another.
+extern "C" void* objc_autoreleasePoolPush(void);
+extern "C" void objc_autoreleasePoolPop(void* pool);
+
 namespace Veng::Renderer::Metal
 {
     /// @brief Converts engine text to an NSString.

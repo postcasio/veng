@@ -15,9 +15,7 @@
 # script is that proof: any unallowlisted validation ERROR line fails the test.
 #
 # A tree without VE_VALIDATION compiles in no validation, so no such lines could appear; the gate
-# is registered only where it is compiled in. A binary whose path is not passed is not run, which
-# is how a tree leaves out what its backend does not run yet. VENG_GATE_GPU_ARGS is passed to the
-# gpu suite (a doctest filter selecting the cases a tree runs).
+# is registered only where it is compiled in. A binary whose path is not passed is not run.
 
 # ---------------------------------------------------------------------------
 # Allowlist of documented, pinned validation gaps.
@@ -99,12 +97,10 @@ endif ()
 set(VENG_GATE_NAMES)
 set(VENG_GATE_PATHS)
 set(VENG_GATE_ENVS)
-set(VENG_GATE_ARGS)
 
 # Appends one binary to the run, when its path was passed. ENV is a `|`-separated list of
-# NAME=VALUE pairs; ARGS one argument. An empty one is stored as "-", since a list drops an empty
-# element.
-macro(veng_gate_add NAME PATH ENV ARGS)
+# NAME=VALUE pairs; an empty one is stored as "-", since a list drops an empty element.
+macro(veng_gate_add NAME PATH ENV)
     if (NOT "${PATH}" STREQUAL "")
         list(APPEND VENG_GATE_NAMES "${NAME}")
         list(APPEND VENG_GATE_PATHS "${PATH}")
@@ -112,11 +108,6 @@ macro(veng_gate_add NAME PATH ENV ARGS)
             list(APPEND VENG_GATE_ENVS "-")
         else ()
             list(APPEND VENG_GATE_ENVS "${ENV}")
-        endif ()
-        if ("${ARGS}" STREQUAL "")
-            list(APPEND VENG_GATE_ARGS "-")
-        else ()
-            list(APPEND VENG_GATE_ARGS "${ARGS}")
         endif ()
     endif ()
 endmacro()
@@ -128,9 +119,9 @@ if (VENG_GATE_BACKEND STREQUAL "Metal")
         "MTL_DEBUG_LAYER=1|MTL_SHADER_VALIDATION=1|MTL_SHADER_VALIDATION_REPORT_TO_STDERR=1")
 endif ()
 
-veng_gate_add("veng_test_headless_smoke" "${VENG_GATE_BIN_HEADLESS_SMOKE}" "${VENG_GATE_BACKEND_ENV}" "")
-veng_gate_add("veng_test_compute_dispatch" "${VENG_GATE_BIN_COMPUTE_DISPATCH}" "${VENG_GATE_BACKEND_ENV}" "")
-veng_gate_add("veng_test_gpu" "${VENG_GATE_BIN_GPU}" "${VENG_GATE_BACKEND_ENV}" "${VENG_GATE_GPU_ARGS}")
+veng_gate_add("veng_test_headless_smoke" "${VENG_GATE_BIN_HEADLESS_SMOKE}" "${VENG_GATE_BACKEND_ENV}")
+veng_gate_add("veng_test_compute_dispatch" "${VENG_GATE_BIN_COMPUTE_DISPATCH}" "${VENG_GATE_BACKEND_ENV}")
+veng_gate_add("veng_test_gpu" "${VENG_GATE_BIN_GPU}" "${VENG_GATE_BACKEND_ENV}")
 # The launcher runs windowed by default; HT_SMOKE makes it render headless and exit, so the gate can
 # run it display-free like the rest of the band.
 if (NOT "${VENG_GATE_BIN_LAUNCHER}" STREQUAL "")
@@ -138,11 +129,11 @@ if (NOT "${VENG_GATE_BIN_LAUNCHER}" STREQUAL "")
     if (NOT VENG_GATE_BACKEND_ENV STREQUAL "")
         string(APPEND VENG_GATE_LAUNCHER_ENV "|${VENG_GATE_BACKEND_ENV}")
     endif ()
-    veng_gate_add("hello_triangle-launcher" "${VENG_GATE_BIN_LAUNCHER}" "${VENG_GATE_LAUNCHER_ENV}" "")
+    veng_gate_add("hello_triangle-launcher" "${VENG_GATE_BIN_LAUNCHER}" "${VENG_GATE_LAUNCHER_ENV}")
 endif ()
 # The MaterialPreview GPU target (two live SceneRenderers) is gated on the editor library, so it may
 # not exist in every build.
-veng_gate_add("veng_test_material_preview" "${VENG_GATE_BIN_MATERIAL_PREVIEW}" "${VENG_GATE_BACKEND_ENV}" "")
+veng_gate_add("veng_test_material_preview" "${VENG_GATE_BIN_MATERIAL_PREVIEW}" "${VENG_GATE_BACKEND_ENV}")
 
 list(LENGTH VENG_GATE_NAMES VENG_GATE_COUNT)
 if (VENG_GATE_COUNT EQUAL 0)
@@ -154,7 +145,6 @@ foreach (INDEX RANGE ${VENG_GATE_LAST})
     list(GET VENG_GATE_NAMES ${INDEX} BINARY_NAME)
     list(GET VENG_GATE_PATHS ${INDEX} BINARY_PATH)
     list(GET VENG_GATE_ENVS ${INDEX} BINARY_ENV)
-    list(GET VENG_GATE_ARGS ${INDEX} BINARY_ARGS)
 
     if (NOT EXISTS "${BINARY_PATH}")
         message(FATAL_ERROR "validation_gate: ${BINARY_NAME} binary not found at '${BINARY_PATH}' — build it first.")
@@ -166,13 +156,8 @@ foreach (INDEX RANGE ${VENG_GATE_LAST})
         set(ENV_PREFIX ${CMAKE_COMMAND} -E env ${BINARY_ENV_LIST})
     endif ()
 
-    set(ARGUMENTS)
-    if (NOT BINARY_ARGS STREQUAL "-")
-        set(ARGUMENTS "${BINARY_ARGS}")
-    endif ()
-
     execute_process(
-        COMMAND ${ENV_PREFIX} "${BINARY_PATH}" ${ARGUMENTS}
+        COMMAND ${ENV_PREFIX} "${BINARY_PATH}"
         OUTPUT_VARIABLE BINARY_STDOUT
         ERROR_VARIABLE BINARY_STDERR
         RESULT_VARIABLE BINARY_RESULT

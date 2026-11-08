@@ -928,12 +928,16 @@ namespace Veng::Renderer
         VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
                   "BeginTransferRecording: worker index {} out of range ({} transfer pools)",
                   workerIndex, m_Native->TransferPools.size());
-        const auto& pool = m_Native->TransferPools[workerIndex];
+        auto& pool = m_Native->TransferPools[workerIndex];
         // The worker's one command buffer is reused once its last upload has completed.
         if (pool.LastSubmittedValue != 0)
         {
             m_Native->TransferTimeline->Wait(pool.LastSubmittedValue);
         }
+        VE_ASSERT(pool.Pool == nullptr,
+                  "BeginTransferRecording: worker {} began a recording it never submitted",
+                  workerIndex);
+        pool.Pool = objc_autoreleasePoolPush();
         pool.CommandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
         return *pool.CommandBuffer;
     }
@@ -953,6 +957,8 @@ namespace Veng::Renderer
         m_Native->Commit(pool.CommandBuffer->GetNative().CommandBuffer, timeline.GetNative().Event,
                          value, false, m_Native->TransferQueue);
         pool.LastSubmittedValue = value;
+        objc_autoreleasePoolPop(pool.Pool);
+        pool.Pool = nullptr;
         return value;
     }
 
@@ -1166,6 +1172,8 @@ namespace Veng::Renderer
 
     CommandBuffer& Context::BeginFrame()
     {
+        VE_ASSERT(m_Native->FramePool == nullptr, "BeginFrame: the previous frame never ended");
+        m_Native->FramePool = objc_autoreleasePoolPush();
         // A minimized window parks here, pumping events, before anything waits on the GPU.
         if (!IsHeadless())
         {
@@ -1283,6 +1291,8 @@ namespace Veng::Renderer
         }
         // Retires from here until the next BeginFrame park in the pending bin.
         m_Native->FrameRecording = false;
+        objc_autoreleasePoolPop(m_Native->FramePool);
+        m_Native->FramePool = nullptr;
     }
 
     void Context::SubmitFrame(const SynchronizationFrame& frame) const
@@ -1330,73 +1340,78 @@ namespace Veng::Renderer
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
     {
-        auto& self = const_cast<Context&>(*this);
-        Native& native = *m_Native;
-        const auto commandBuffer = CommandBuffer::Create(self);
-        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
-
-        // A one-shot recording times its scopes into a heap of its own; a frame left recording is
-        // paused so none of this work lands in the frame's stamps. A nested call records untimed.
-        const bool wasRecording = self.m_GpuScopeRecording;
-        const bool wasImmediate = native.ImmediateScopeRecording;
-        const bool timed = m_GpuTimingSupported && !wasImmediate;
-        self.m_GpuScopeRecording = false;
-        native.ImmediateScopeRecording = timed;
-        if (timed)
+        // Drains what Metal autoreleases while the recording is made (see Native::FramePool).
+        @autoreleasepool
         {
-            native.ImmediateScopeNames.clear();
-            native.ImmediateScopeDepths.clear();
-            native.ImmediateOpenScopeStack.clear();
-        }
+            auto& self = const_cast<Context&>(*this);
+            Native& native = *m_Native;
+            const auto commandBuffer = CommandBuffer::Create(self);
+            commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
-        // Outside a frame the current slot's last frame may still read its per-view and material
-        // regions, so its fence is waited before the recording takes them over.
-        CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
-        const bool outsideFrame = !native.FrameRecording && outerImmediate == nullptr;
-        if (outsideFrame && native.Bindless)
-        {
-            native.SynchronizationFrames[native.CurrentFrameInFlight].GetInFlightFence().Wait();
-            native.Bindless->OnImmediateRecordingBegun(native.CurrentFrameInFlight);
-        }
-        native.ActiveImmediateCommands = commandBuffer.get();
-        self.DrainSetupCommands(*commandBuffer);
-        // Inside a frame what went resident waits for the next frame: an acquire recorded here
-        // would run ahead of commands the frame recorded before it.
-        if (outsideFrame)
-        {
-            self.DrainBindlessAcquires(*commandBuffer);
-        }
-        function(*commandBuffer);
-        native.ActiveImmediateCommands = outerImmediate;
-
-        VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
-                  "ImmediateCommands: {} GPU scope(s) left open by the recording",
-                  native.ImmediateOpenScopeStack.size());
-        native.ImmediateScopeRecording = wasImmediate;
-        self.m_GpuScopeRecording = wasRecording;
-
-        commandBuffer->End();
-        SubmitImmediateCommands(*commandBuffer);
-
-        if (timed)
-        {
-            // The submit has completed, so every written stamp is resolvable.
-            self.m_ImmediateGpuPassTimings.clear();
-            const vector<string>& names = native.ImmediateScopeNames;
-            if (!names.empty())
+            // A one-shot recording times its scopes into a heap of its own; a frame left recording is
+            // paused so none of this work lands in the frame's stamps. A nested call records untimed.
+            const bool wasRecording = self.m_GpuScopeRecording;
+            const bool wasImmediate = native.ImmediateScopeRecording;
+            const bool timed = m_GpuTimingSupported && !wasImmediate;
+            self.m_GpuScopeRecording = false;
+            native.ImmediateScopeRecording = timed;
+            if (timed)
             {
-                const vector<u64> ticks = ResolveTimestamps(native.ImmediateTimestampHeap, 0,
-                                                            static_cast<u32>(names.size() * 2));
-                self.m_ImmediateGpuPassTimings = TimingsOf(
-                    names, native.ImmediateScopeDepths, ticks, ticks[0], native.TimestampPeriodNs);
+                native.ImmediateScopeNames.clear();
+                native.ImmediateScopeDepths.clear();
+                native.ImmediateOpenScopeStack.clear();
             }
-        }
 
-        // A process submitting only one-off work never reaches a BeginFrame, so what it dropped
-        // and released is reclaimed here once nothing else is in flight.
-        if (outsideFrame)
-        {
-            native.DrainPendingRetiresIfIdle();
+            // Outside a frame the current slot's last frame may still read its per-view and material
+            // regions, so its fence is waited before the recording takes them over.
+            CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
+            const bool outsideFrame = !native.FrameRecording && outerImmediate == nullptr;
+            if (outsideFrame && native.Bindless)
+            {
+                native.SynchronizationFrames[native.CurrentFrameInFlight].GetInFlightFence().Wait();
+                native.Bindless->OnImmediateRecordingBegun(native.CurrentFrameInFlight);
+            }
+            native.ActiveImmediateCommands = commandBuffer.get();
+            self.DrainSetupCommands(*commandBuffer);
+            // Inside a frame what went resident waits for the next frame: an acquire recorded here
+            // would run ahead of commands the frame recorded before it.
+            if (outsideFrame)
+            {
+                self.DrainBindlessAcquires(*commandBuffer);
+            }
+            function(*commandBuffer);
+            native.ActiveImmediateCommands = outerImmediate;
+
+            VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
+                      "ImmediateCommands: {} GPU scope(s) left open by the recording",
+                      native.ImmediateOpenScopeStack.size());
+            native.ImmediateScopeRecording = wasImmediate;
+            self.m_GpuScopeRecording = wasRecording;
+
+            commandBuffer->End();
+            SubmitImmediateCommands(*commandBuffer);
+
+            if (timed)
+            {
+                // The submit has completed, so every written stamp is resolvable.
+                self.m_ImmediateGpuPassTimings.clear();
+                const vector<string>& names = native.ImmediateScopeNames;
+                if (!names.empty())
+                {
+                    const vector<u64> ticks = ResolveTimestamps(native.ImmediateTimestampHeap, 0,
+                                                                static_cast<u32>(names.size() * 2));
+                    self.m_ImmediateGpuPassTimings =
+                        TimingsOf(names, native.ImmediateScopeDepths, ticks, ticks[0],
+                                  native.TimestampPeriodNs);
+                }
+            }
+
+            // A process submitting only one-off work never reaches a BeginFrame, so what it dropped
+            // and released is reclaimed here once nothing else is in flight.
+            if (outsideFrame)
+            {
+                native.DrainPendingRetiresIfIdle();
+            }
         }
     }
 

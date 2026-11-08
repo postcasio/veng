@@ -38,7 +38,11 @@ engine-typed, and meets the backend at a handful of private seams:
   `WindowNative.h`) and held by the window as an opaque handle.
 - **Apple objects** reach the video recorder and MetalFX through `AppleInterop.h` (+0 references);
   the Vulkan backend implements it in `Backend/Vulkan/MetalInterop.mm` through the Metal-object
-  export, and the device and the frame-split shared event already reach a caller through `Context`.
+  export (compiled into Vulkan builds only), and the device and the frame-split shared event already
+  reach a caller through `Context`. The Metal backend implements it in
+  `Backend/Metal/AppleInterop.mm`, handing out its own objects, and adds what work encoding into its
+  recording needs: the recording command buffer and a fence ordering the work
+  (`EncodeIntoRecording`), its pipeline compiler, and its residency set.
 - **The GPU test probe** is `Renderer::HasGpuDevice` (`Veng/Renderer/DeviceProbe.h`), answered by
   the backend; a test that includes a backend header or `Native.h` registers only in a tree built
   against that backend.
@@ -57,7 +61,9 @@ Objective-C translation unit. No engine source outside `Backend/` includes it or
 with ARC, against **Metal 4**: a device of the Metal 4 GPU family (Apple silicon on macOS 26) is
 required, and `Context::Initialize` fails naming the device where it is missing. It runs resources,
 binding, compute, graphics pipelines and render passes, blits, indirect draws, presentation, the
-pipeline archive and GPU timing, and the `SceneRenderer` and its batteries above them. Its device-free
+pipeline archive and GPU timing, and everything above them: the `SceneRenderer` and its batteries,
+the capture surfaces, portraits and the video recorder's frame import, the MetalFX upscalers (see
+"MetalFX"), the editor and the MCP surface. Its device-free
 logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
 `PushConstantRing.h`, `BarrierMapping.h`), which `tests/unit/metal_backend.cpp` covers.
 
@@ -71,6 +77,11 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   queue, and the next graphics submission that uses the image waits for it with a queue-level
   `waitForEvent`; the device-free decision sees the two families differ and records the acquire
   half, which on Metal orders nothing more. `WaitIdle` signals an event on each queue and waits both.
+- **Autorelease pools.** Metal autoreleases objects while work is recorded — its API validation
+  layer, a reference to each resource an encoder names — and nothing obliges the thread recording
+  to drain a pool, so a headless run never would. Each recording drains its own: a frame's pool is
+  pushed at `BeginFrame` and popped at `EndFrame`, a one-shot recording runs inside one, and a
+  worker's upload pushes at `BeginTransferRecording` and pops at `SubmitTransfer`.
 - **Memory.** Buffers and images are placed in `MTLHeap`s of the placement type, 64 MiB each, with
   a first-fit sub-allocator over each heap's free ranges; a placement over a quarter of that takes a
   heap of its own, evicted with it and released once both queues have committed since, because shader
@@ -158,9 +169,10 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   keeps a ring of three image and view wrappers and points the next one at each frame's drawable
   texture at `BeginFrame`; the frame's commit is preceded by the queue's `waitForDrawable` and
   followed by `signalDrawable` and `present`, standing in for Vulkan's acquire and render-finished
-  semaphores, and the wrapper lets the texture go once presented. A framebuffer resize sets the
-  layer's drawable size before the next drawable is taken and rebuilds the ring — no device wait,
-  since no drawable is held between frames. `DisplayMode` maps onto the layer: SDR is
+  semaphores, and the wrapper lets the texture go once presented. The drawable itself is retired
+  with the frame, since a command buffer retains nothing it renders into. A framebuffer resize sets
+  the layer's drawable size before the next drawable is taken and rebuilds the ring — no device
+  wait, since no wrapper points at a drawable between frames. `DisplayMode` maps onto the layer: SDR is
   `BGRA8Unorm_sRGB` in sRGB, HDR10 `RGB10A2Unorm` in BT.2100 PQ, and Auto and ExtendedLinear
   `RGBA16Float` in extended linear sRGB with extended dynamic range on. `PresentMode::Immediate`
   turns the layer's display sync off; Mailbox has no Metal form and waits for the refresh.
@@ -826,18 +838,31 @@ support, or allocations outside its scale range — `MetalFXTemporal` runs as `T
 `MetalFXSpatial` as `Bilinear`, and `GetSettings()` reports what runs. `ResolveRenderScale` floors a
 dynamic-resolution frame's scale at what the temporal scaler's maximum content scale allows.
 
-**The scalers run outside Vulkan, between two submits of the frame.** Their inputs and outputs are
-created `ImageInfo::PlatformExport` (and storage-writable where a scaler writes them) only while a
-MetalFX choice is configured, so no other configuration pays for the usage. Each pass calls
-`Context::SplitFrame` (see "Splitting a frame for platform GPU work"), and its encoder commits a
-command buffer on the scaler's own `MTLCommandQueue` that waits the split's shared event, encodes the
-scaler, and signals it. The pass's declared accesses (sampled inputs, a storage-written output) place
-the graph's barriers on either side as for any compute pass. `MetalFx.{h,mm}` is the one
-translation unit that names MetalFX, which is weak-linked; it reaches Metal objects only through
-`AppleInterop.h`, so it is backend-neutral, and its header is free of every graphics API and
-compiles to inert stubs elsewhere. `tests/gpu/taa_stability.cpp` holds the temporal scaler to the
-TAA cases' stillness claims on bounds sized to the scaler's own residual, and the spatial scaler to
-placing a half-scale render where native lies.
+**On the Metal backend the scalers encode into the frame; on the Vulkan backend they run between two
+submits of it.** Their inputs and outputs are created `ImageInfo::PlatformExport` (and
+storage-writable where a scaler writes them) only while a MetalFX choice is configured, so no other
+configuration pays for the usage; on Metal every image's texture is already the scaler's. Each pass
+hands the scaler the recording `CommandBuffer`, and the pass's declared accesses (sampled inputs, a
+storage-written output) place the graph's barriers on either side as for any compute pass.
+
+- **Metal.** The scalers are Metal 4's (`MTL4FXTemporalScaler`, `MTL4FXSpatialScaler`), built with
+  the backend's pipeline compiler, and encode straight into the frame's `MTL4CommandBuffer` through
+  `Apple::EncodeIntoRecording`. MetalFX's own encoders apply none of the recording's barriers, so
+  that call ends the open encoder and opens one that waits on every earlier stage and updates a
+  fence, which the scaler waits (its `fence` property); every encoder opened after it waits on every
+  stage before it. The temporal scaler's per-slot exposure textures are created on the device and
+  join the backend's residency set while the scaler lives. Nothing is submitted around the work.
+- **Vulkan.** Each pass calls `Context::SplitFrame` (see "Splitting a frame for platform GPU work"),
+  and its encoder commits a command buffer on the scaler's own `MTLCommandQueue` that waits the
+  split's shared event, encodes the scaler, and signals it.
+
+`MetalFx.{h,mm}` is the one translation unit that names MetalFX, which is weak-linked; it reaches
+Metal objects only through `AppleInterop.h`, choosing the backend's path at compile time, and its
+header is free of every graphics API and compiles to inert stubs elsewhere.
+`tests/gpu/taa_stability.cpp` holds the temporal scaler to the TAA cases' stillness claims on bounds
+sized to the scaler's own residual, and the spatial scaler to placing a half-scale render where
+native lies; in a Metal tree it requires both scalers to be available, so neither case can pass
+through its "unavailable" branch there.
 
 #### Spatial anti-aliasing — FXAA and CMAA2
 
@@ -3137,6 +3162,9 @@ single-queue graph each frame, ordered by the graph's derived barriers.
 ### Splitting a frame for platform GPU work
 
 **`Context::SplitFrame(encode)` lets work a platform API encodes outside Vulkan run inside a frame.**
+It is the Vulkan backend's; the Metal backend splits nothing (`IsFrameSplitSupported()` is false
+there), since platform work encodes into its recording directly (`Apple::EncodeIntoRecording`, see
+"The Metal backend").
 It ends the frame's command buffer, submits it as one segment signalling `FrameSplitPoint::WaitValue`
 on the context's interop timeline — a timeline semaphore created exportable on the first split, whose
 `MTLSharedEvent` is `FrameSplitPoint::SharedEvent` — calls `encode`, and resumes recording in a spare

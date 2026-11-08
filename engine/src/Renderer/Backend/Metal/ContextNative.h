@@ -84,6 +84,9 @@ namespace Veng::Renderer
         /// @brief How many pipelines the compiler built while the context keeps an archive.
         u64 ArchiveBuilds = 0;
 
+        /// @brief The fence platform work encoded into a recording waits on, created at first use.
+        id<MTLFence> InteropFence = nil;
+
         /// @brief The library of the scaled blit's shaders, compiled at first use.
         id<MTLLibrary> BlitLibrary = nil;
         /// @brief The scaled blit's linear sampler.
@@ -165,6 +168,8 @@ namespace Veng::Renderer
             Ref<CommandBuffer> CommandBuffer;
             /// @brief The timeline value its last upload signalled.
             u64 LastSubmittedValue = 0;
+            /// @brief The autorelease pool its open recording drains at submit, or null.
+            void* Pool = nullptr;
         };
 
         /// @brief The per-worker upload recorders.
@@ -209,6 +214,12 @@ namespace Veng::Renderer
         bool FrameRecording = false;
         /// @brief Whether the frame's command buffer is open.
         bool FrameCommandsOpen = false;
+        /// @brief The autorelease pool the frame drains at EndFrame, or null.
+        ///
+        /// Metal autoreleases objects while work is recorded (its debug layer, references to every
+        /// resource an encoder names), and a render thread need not drain a pool of its own; each
+        /// recording drains its own, so they do not accumulate for the life of the process.
+        void* FramePool = nullptr;
         /// @brief The one-shot recording in progress, or null.
         CommandBuffer* ActiveImmediateCommands = nullptr;
         /// @brief Set once teardown has drained the bins; a later retire is a lifetime bug.

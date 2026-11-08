@@ -5,6 +5,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include "AppleInterop.h"
@@ -39,7 +40,7 @@ namespace Veng::Renderer
         id<MTLTexture> TextureFor(const Context& context, const Image& image,
                                   const MTLTextureUsage required, const char* role)
         {
-            id<MTLTexture> texture = (id<MTLTexture>)Apple::GetPlatformTexture(context, image);
+            const auto texture = (id<MTLTexture>)Apple::GetPlatformTexture(context, image);
             VE_ASSERT(texture != nil, "MetalFX: the {} image '{}' exports no texture", role,
                       image.GetName());
             VE_ASSERT(([texture usage] & required) == required,
@@ -48,6 +49,40 @@ namespace Veng::Renderer
                       role, image.GetName(), static_cast<u64>([texture usage]),
                       static_cast<u64>(required));
             return texture;
+        }
+
+#if defined(VE_GPU_BACKEND_METAL)
+        /// @brief Whether the device runs MetalFX: the Metal backend's device is the scalers' own.
+        bool CanRunScalers(const Context& context)
+        {
+            return context.GetExternalDevice() != nullptr;
+        }
+
+        /// @brief Encodes a scaler's work into the recording command buffer, after everything
+        ///        recorded before it.
+        template <typename Scaler>
+        void EncodeScaler(const Context& context, const CommandBuffer& cmd, Scaler scaler)
+        {
+            Apple::EncodeIntoRecording(
+                context, cmd,
+                [scaler](void* commandBuffer, void* fence)
+                {
+                    scaler.fence = (id<MTLFence>)fence;
+                    [scaler encodeToCommandBuffer:(id<MTL4CommandBuffer>)commandBuffer];
+                });
+        }
+
+        /// @brief Defers releasing a scaler until the frame that used it retires.
+        void RetireObjects(const Context& context, void* scaler, void* /*queue*/)
+        {
+            Apple::ReleaseAfterFrame(context, scaler);
+        }
+#else
+        /// @brief Whether the device runs MetalFX: its work runs between two submitted segments of
+        ///        the frame, so the context must split one.
+        bool CanRunScalers(const Context& context)
+        {
+            return context.GetExternalDevice() != nullptr && context.IsFrameSplitSupported();
         }
 
         /// @brief Schedules a scaler's work between two segments of the recording frame.
@@ -63,9 +98,10 @@ namespace Veng::Renderer
                 {
                     @autoreleasepool
                     {
-                        id<MTLCommandBuffer> commandBuffer = [(id<MTLCommandQueue>)queue commandBuffer];
+                        const id<MTLCommandBuffer> commandBuffer =
+                            [(id<MTLCommandQueue>)queue commandBuffer];
                         [commandBuffer setLabel:@"MetalFX"];
-                        id<MTLSharedEvent> event = (id<MTLSharedEvent>)point.SharedEvent;
+                        const auto event = (id<MTLSharedEvent>)point.SharedEvent;
                         [commandBuffer encodeWaitForEvent:event value:point.WaitValue];
                         encode(commandBuffer);
                         [commandBuffer encodeSignalEvent:event value:point.SignalValue];
@@ -75,17 +111,42 @@ namespace Veng::Renderer
         }
 
         /// @brief Defers releasing a scaler and its queue until the frame that used them retires.
-        void RetireObjects(Context& context, void* scaler, void* queue)
+        void RetireObjects(const Context& context, void* scaler, void* queue)
         {
             Apple::ReleaseAfterFrame(context, scaler);
             Apple::ReleaseAfterFrame(context, queue);
+        }
+
+        /// @brief Encodes a scaler's work on its own queue, between two segments of the frame.
+        template <typename Scaler>
+        void EncodeScaler(Context& context, const CommandBuffer& /*cmd*/, void* queue,
+                          Scaler scaler)
+        {
+            EncodeBetweenSegments(context, queue, [scaler](id<MTLCommandBuffer> commandBuffer)
+                                  { [scaler encodeToCommandBuffer:commandBuffer]; });
+        }
+#endif
+
+        /// @brief Creates the queue a scaler's work is committed to; none where it encodes into
+        ///        the recording.
+        void* CreateScalerQueue(id<MTLDevice> device, NSString* label)
+        {
+#if defined(VE_GPU_BACKEND_METAL)
+            (void)device;
+            (void)label;
+            return nullptr;
+#else
+            const id<MTLCommandQueue> queue = [device newCommandQueue];
+            [queue setLabel:label];
+            return (void*)queue;
+#endif
         }
     }
 
     MetalFxSupport QueryMetalFxSupport(const Context& context)
     {
-        id<MTLDevice> device = (id<MTLDevice>)context.GetExternalDevice();
-        if (device == nil || !context.IsFrameSplitSupported())
+        const auto device = (id<MTLDevice>)context.GetExternalDevice();
+        if (!CanRunScalers(context))
         {
             return {};
         }
@@ -109,8 +170,8 @@ namespace Veng::Renderer
     Unique<MetalFxTemporalScaler> MetalFxTemporalScaler::Create(Context& context,
                                                                 const MetalFxTemporalInfo& info)
     {
-        id<MTLDevice> device = (id<MTLDevice>)context.GetExternalDevice();
-        if (device == nil || !context.IsFrameSplitSupported())
+        const auto device = (id<MTLDevice>)context.GetExternalDevice();
+        if (!CanRunScalers(context))
         {
             Log::Warn("MetalFX temporal scaler: this device has no platform-object interop");
             return nullptr;
@@ -127,12 +188,13 @@ namespace Veng::Renderer
             Log::Warn("MetalFX temporal scaler: {}x{} -> {}x{} (content scale {:.3f}..{:.3f}) is "
                       "outside what the device supports ({:.3f}..{:.3f})",
                       info.InputExtent.x, info.InputExtent.y, info.OutputExtent.x,
-                      info.OutputExtent.y, allocationScale, info.MaxScale,
-                      support.TemporalMinScale, support.TemporalMaxScale);
+                      info.OutputExtent.y, allocationScale, info.MaxScale, support.TemporalMinScale,
+                      support.TemporalMaxScale);
             return nullptr;
         }
 
-        MTLFXTemporalScalerDescriptor* descriptor = [[MTLFXTemporalScalerDescriptor alloc] init];
+        MTLFXTemporalScalerDescriptor* const descriptor =
+            [[MTLFXTemporalScalerDescriptor alloc] init];
         descriptor.colorTextureFormat = PixelFormatFor(info.ColorFormat);
         descriptor.depthTextureFormat = PixelFormatFor(info.DepthFormat);
         descriptor.motionTextureFormat = PixelFormatFor(info.MotionFormat);
@@ -166,7 +228,13 @@ namespace Veng::Renderer
             }
         }
 
-        id<MTLFXTemporalScaler> scaler = [descriptor newTemporalScalerWithDevice:device];
+#if defined(VE_GPU_BACKEND_METAL)
+        const id<MTL4FXTemporalScaler> scaler = [descriptor
+            newTemporalScalerWithDevice:device
+                               compiler:(id<MTL4Compiler>)Apple::GetPipelineCompiler(context)];
+#else
+        const id<MTLFXTemporalScaler> scaler = [descriptor newTemporalScalerWithDevice:device];
+#endif
         [descriptor release];
         if (scaler == nil)
         {
@@ -177,8 +245,7 @@ namespace Veng::Renderer
         }
         scaler.depthReversed = info.DepthReversed ? YES : NO;
 
-        id<MTLCommandQueue> queue = [device newCommandQueue];
-        [queue setLabel:@"MetalFX Temporal"];
+        void* queue = CreateScalerQueue(device, @"MetalFX Temporal");
 
         // What the scaler was created with, so Encode binds a reactive mask only to one that takes it.
         MetalFxTemporalInfo created = info;
@@ -188,8 +255,8 @@ namespace Veng::Renderer
         }
 
         Unique<MetalFxTemporalScaler> made(
-            new MetalFxTemporalScaler(context, created, (void*)scaler, (void*)queue));
-        MTLTextureDescriptor* exposure =
+            new MetalFxTemporalScaler(context, created, (void*)scaler, queue));
+        MTLTextureDescriptor* const exposure =
             [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
                                                                width:1
                                                               height:1
@@ -200,6 +267,9 @@ namespace Veng::Renderer
         {
             id<MTLTexture> texture = [device newTextureWithDescriptor:exposure];
             [texture setLabel:@"MetalFX Exposure"];
+#if defined(VE_GPU_BACKEND_METAL)
+            Apple::MakeResident(context, (void*)texture);
+#endif
             made->m_Exposure.push_back((void*)texture);
         }
         return made;
@@ -216,18 +286,28 @@ namespace Veng::Renderer
         RetireObjects(m_Context, m_Scaler, m_Queue);
         for (void* texture : m_Exposure)
         {
+#if defined(VE_GPU_BACKEND_METAL)
+            Apple::ReleaseResidentAfterFrame(m_Context, texture);
+#else
             Apple::ReleaseAfterFrame(m_Context, texture);
+#endif
         }
     }
 
-    void MetalFxTemporalScaler::Encode(const MetalFxTemporalFrame& frame)
+    void MetalFxTemporalScaler::Encode(const CommandBuffer& cmd, const MetalFxTemporalFrame& frame)
     {
         VE_ASSERT(frame.Color && frame.Depth && frame.Motion && frame.Output,
                   "MetalFX temporal scaler: every input and the output must be set");
 
-        id<MTLFXTemporalScaler> scaler = (id<MTLFXTemporalScaler>)m_Scaler;
-        scaler.colorTexture = TextureFor(m_Context, *frame.Color, scaler.colorTextureUsage, "colour");
-        scaler.depthTexture = TextureFor(m_Context, *frame.Depth, scaler.depthTextureUsage, "depth");
+#if defined(VE_GPU_BACKEND_METAL)
+        const auto scaler = (id<MTL4FXTemporalScaler>)m_Scaler;
+#else
+        const auto scaler = (id<MTLFXTemporalScaler>)m_Scaler;
+#endif
+        scaler.colorTexture =
+            TextureFor(m_Context, *frame.Color, scaler.colorTextureUsage, "colour");
+        scaler.depthTexture =
+            TextureFor(m_Context, *frame.Depth, scaler.depthTextureUsage, "depth");
         scaler.motionTexture =
             TextureFor(m_Context, *frame.Motion, scaler.motionTextureUsage, "motion");
         scaler.outputTexture =
@@ -239,7 +319,7 @@ namespace Veng::Renderer
         scaler.motionVectorScaleX = frame.MotionScale.x;
         scaler.motionVectorScaleY = frame.MotionScale.y;
         scaler.reset = frame.Reset ? YES : NO;
-        id<MTLTexture> exposure = (id<MTLTexture>)
+        const auto exposure = (id<MTLTexture>)
             m_Exposure[m_Context.GetCurrentFrameInFlight() % static_cast<u32>(m_Exposure.size())];
         const f32 value = frame.Exposure;
         [exposure replaceRegion:MTLRegionMake2D(0, 0, 1, 1)
@@ -251,27 +331,30 @@ namespace Veng::Renderer
         {
             if (@available(macOS 14.4, iOS 17.4, *))
             {
-                scaler.reactiveMaskTexture = TextureFor(m_Context, *frame.Reactive,
-                                                        scaler.reactiveTextureUsage, "reactive");
+                scaler.reactiveMaskTexture =
+                    TextureFor(m_Context, *frame.Reactive, scaler.reactiveTextureUsage, "reactive");
             }
         }
 
-        EncodeBetweenSegments(m_Context, m_Queue, [scaler](id<MTLCommandBuffer> commandBuffer)
-                              { [scaler encodeToCommandBuffer:commandBuffer]; });
+#if defined(VE_GPU_BACKEND_METAL)
+        EncodeScaler(m_Context, cmd, scaler);
+#else
+        EncodeScaler(m_Context, cmd, m_Queue, scaler);
+#endif
     }
 
     Unique<MetalFxSpatialScaler> MetalFxSpatialScaler::Create(Context& context,
                                                               const MetalFxSpatialInfo& info)
     {
-        id<MTLDevice> device = (id<MTLDevice>)context.GetExternalDevice();
-        if (device == nil || !context.IsFrameSplitSupported() ||
-            !QueryMetalFxSupport(context).Spatial)
+        const auto device = (id<MTLDevice>)context.GetExternalDevice();
+        if (!CanRunScalers(context) || !QueryMetalFxSupport(context).Spatial)
         {
             Log::Warn("MetalFX spatial scaler: unsupported on this device");
             return nullptr;
         }
 
-        MTLFXSpatialScalerDescriptor* descriptor = [[MTLFXSpatialScalerDescriptor alloc] init];
+        MTLFXSpatialScalerDescriptor* const descriptor =
+            [[MTLFXSpatialScalerDescriptor alloc] init];
         descriptor.colorTextureFormat = PixelFormatFor(info.ColorFormat);
         descriptor.outputTextureFormat = PixelFormatFor(info.OutputFormat);
         descriptor.inputWidth = info.InputExtent.x;
@@ -281,7 +364,13 @@ namespace Veng::Renderer
         // The scene colour ahead of the tonemap: linear, and unbounded above one.
         descriptor.colorProcessingMode = MTLFXSpatialScalerColorProcessingModeHDR;
 
-        id<MTLFXSpatialScaler> scaler = [descriptor newSpatialScalerWithDevice:device];
+#if defined(VE_GPU_BACKEND_METAL)
+        const id<MTL4FXSpatialScaler> scaler = [descriptor
+            newSpatialScalerWithDevice:device
+                              compiler:(id<MTL4Compiler>)Apple::GetPipelineCompiler(context)];
+#else
+        const id<MTLFXSpatialScaler> scaler = [descriptor newSpatialScalerWithDevice:device];
+#endif
         [descriptor release];
         if (scaler == nil)
         {
@@ -291,11 +380,10 @@ namespace Veng::Renderer
             return nullptr;
         }
 
-        id<MTLCommandQueue> queue = [device newCommandQueue];
-        [queue setLabel:@"MetalFX Spatial"];
+        void* queue = CreateScalerQueue(device, @"MetalFX Spatial");
 
         return Unique<MetalFxSpatialScaler>(
-            new MetalFxSpatialScaler(context, info, (void*)scaler, (void*)queue));
+            new MetalFxSpatialScaler(context, info, (void*)scaler, queue));
     }
 
     MetalFxSpatialScaler::MetalFxSpatialScaler(Context& context, const MetalFxSpatialInfo& info,
@@ -309,19 +397,27 @@ namespace Veng::Renderer
         RetireObjects(m_Context, m_Scaler, m_Queue);
     }
 
-    void MetalFxSpatialScaler::Encode(const MetalFxSpatialFrame& frame)
+    void MetalFxSpatialScaler::Encode(const CommandBuffer& cmd, const MetalFxSpatialFrame& frame)
     {
         VE_ASSERT(frame.Color && frame.Output,
                   "MetalFX spatial scaler: the input and the output must be set");
 
-        id<MTLFXSpatialScaler> scaler = (id<MTLFXSpatialScaler>)m_Scaler;
-        scaler.colorTexture = TextureFor(m_Context, *frame.Color, scaler.colorTextureUsage, "colour");
+#if defined(VE_GPU_BACKEND_METAL)
+        const auto scaler = (id<MTL4FXSpatialScaler>)m_Scaler;
+#else
+        const auto scaler = (id<MTLFXSpatialScaler>)m_Scaler;
+#endif
+        scaler.colorTexture =
+            TextureFor(m_Context, *frame.Color, scaler.colorTextureUsage, "colour");
         scaler.outputTexture =
             TextureFor(m_Context, *frame.Output, scaler.outputTextureUsage, "output");
         scaler.inputContentWidth = std::clamp<u32>(frame.ContentExtent.x, 1, m_Info.InputExtent.x);
         scaler.inputContentHeight = std::clamp<u32>(frame.ContentExtent.y, 1, m_Info.InputExtent.y);
 
-        EncodeBetweenSegments(m_Context, m_Queue, [scaler](id<MTLCommandBuffer> commandBuffer)
-                              { [scaler encodeToCommandBuffer:commandBuffer]; });
+#if defined(VE_GPU_BACKEND_METAL)
+        EncodeScaler(m_Context, cmd, scaler);
+#else
+        EncodeScaler(m_Context, cmd, m_Queue, scaler);
+#endif
     }
 }

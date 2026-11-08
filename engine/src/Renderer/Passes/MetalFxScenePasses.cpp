@@ -59,22 +59,24 @@ namespace Veng::Renderer
                               "MetalFX Temporal: the pass is wired with no scaler held");
                     const SceneView& view = Wrap(inner).View();
                     const vec2 content = vec2(view.RenderExtent);
-                    scaler->Encode({
-                        .Color = inner.Resolved(m_LitId).GetImage().get(),
-                        .Depth = inner.Resolved(m_DepthId).GetImage().get(),
-                        .Motion = inner.Resolved(m_VelocityId).GetImage().get(),
-                        .Reactive = inner.Resolved(m_ReactiveId).GetImage().get(),
-                        .Output = inner.Resolved(m_OutputId).GetImage().get(),
-                        .ContentExtent = view.RenderExtent,
-                        // The jitter moved the image by JitterNdc / 2 of the sub-rect, in the
-                        // same axes the scaler's pixel offset is in.
-                        .JitterPixels = view.JitterNdc * 0.5f * content,
-                        // Velocity is current minus previous position in viewport UV; the scaler
-                        // wants the step back to the previous position, in content pixels.
-                        .MotionScale = -content,
-                        .Reset = *m_HistoryReset,
-                        .Exposure = *m_Exposure,
-                    });
+                    scaler->Encode(
+                        inner.Cmd(),
+                        {
+                            .Color = inner.Resolved(m_LitId).GetImage().get(),
+                            .Depth = inner.Resolved(m_DepthId).GetImage().get(),
+                            .Motion = inner.Resolved(m_VelocityId).GetImage().get(),
+                            .Reactive = inner.Resolved(m_ReactiveId).GetImage().get(),
+                            .Output = inner.Resolved(m_OutputId).GetImage().get(),
+                            .ContentExtent = view.RenderExtent,
+                            // The jitter moved the image by JitterNdc / 2 of the sub-rect, in the
+                            // same axes the scaler's pixel offset is in.
+                            .JitterPixels = view.JitterNdc * 0.5f * content,
+                            // Velocity is current minus previous position in viewport UV; the scaler
+                            // wants the step back to the previous position, in content pixels.
+                            .MotionScale = -content,
+                            .Reset = *m_HistoryReset,
+                            .Exposure = *m_Exposure,
+                        });
                 });
     }
 
@@ -90,11 +92,12 @@ namespace Veng::Renderer
                     VE_ASSERT(scaler != nullptr,
                               "MetalFX Spatial: the pass is wired with no scaler held");
                     const SceneView& view = Wrap(inner).View();
-                    scaler->Encode({
-                        .Color = inner.Resolved(m_SourceId).GetImage().get(),
-                        .Output = inner.Resolved(m_OutputId).GetImage().get(),
-                        .ContentExtent = view.SceneColorExtent,
-                    });
+                    scaler->Encode(inner.Cmd(),
+                                   {
+                                       .Color = inner.Resolved(m_SourceId).GetImage().get(),
+                                       .Output = inner.Resolved(m_OutputId).GetImage().get(),
+                                       .ContentExtent = view.SceneColorExtent,
+                                   });
                 });
     }
 }

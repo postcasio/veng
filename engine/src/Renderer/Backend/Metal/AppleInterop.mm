@@ -1,13 +1,17 @@
 // The Metal backend's side of the Apple interop seam: its objects are already Metal, so the device
-// and a texture are handed out directly and an external texture is wrapped as an image.
+// and a texture are handed out directly, an external texture is wrapped as an image, and platform
+// work encodes straight into the recording command buffer.
 
 #include "../../AppleInterop.h"
 
 #include <Veng/Log.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 
+#include "BarrierMapping.h"
 #include "Natives.h"
+#include "Recording.h"
 
 namespace Veng::Renderer::Apple
 {
@@ -95,5 +99,53 @@ namespace Veng::Renderer::Apple
     void ReleaseAfterFrame(const Context& context, void* object)
     {
         context.GetNative().Retire(function<void()>([object] { CFRelease(object); }));
+    }
+
+    void EncodeIntoRecording(const Context& owner, const CommandBuffer& cmd,
+                             const function<void(void* commandBuffer, void* fence)>& encode)
+    {
+        using Metal::MetalStage;
+        CommandBuffer::Native& native = cmd.GetNative();
+        Context::Native& context = owner.GetNative();
+        if (context.InteropFence == nil)
+        {
+            context.InteropFence = [context.Device newFence];
+            [context.InteropFence setLabel:@"Platform Work Fence"];
+        }
+
+        // The platform's own encoders apply none of the recording's barriers, so an encoder that
+        // waits on everything earlier updates the fence the work waits instead.
+        Metal::Recording::Barrier(cmd, MetalStage::All, Metal::ComputeEncoderStages);
+        const id<MTL4ComputeCommandEncoder> encoder = Metal::Recording::ComputeEncoder(cmd);
+        [encoder updateFence:context.InteropFence
+            afterEncoderStages:static_cast<MTLStages>(Metal::ComputeEncoderStages)];
+        Metal::Recording::EndEncoder(cmd);
+
+        encode((__bridge void*)native.CommandBuffer, (__bridge void*)context.InteropFence);
+
+        // What follows waits on every stage of the work, whichever encoders it opened.
+        native.PendingAfter |= MetalStage::All;
+        native.PendingBefore |= MetalStage::All;
+    }
+
+    void* GetPipelineCompiler(const Context& context)
+    {
+        return (__bridge void*)context.GetNative().Compiler;
+    }
+
+    void MakeResident(const Context& context, void* allocation)
+    {
+        context.GetNative().MakeResident((__bridge id<MTLAllocation>)allocation);
+    }
+
+    void ReleaseResidentAfterFrame(const Context& context, void* allocation)
+    {
+        Context::Native& native = context.GetNative();
+        native.Retire(function<void()>(
+            [&native, allocation]
+            {
+                native.Evict((__bridge id<MTLAllocation>)allocation);
+                CFRelease(allocation);
+            }));
     }
 }

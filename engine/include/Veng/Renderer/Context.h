@@ -589,8 +589,9 @@ namespace Veng::Renderer
 
         /// @brief Whether an external platform texture can be imported as an Image on this device.
         ///
-        /// True on Apple when the Metal-object interop extension was advertised and enabled at
-        /// device creation; false everywhere else. The import needs only a device, so a headless
+        /// Always true on the Metal backend; on the Vulkan backend, true on Apple when the
+        /// Metal-object interop extension was advertised and enabled at device creation; false
+        /// everywhere else. The import needs only a device, so a headless
         /// context supports it exactly as a windowed one does.
         /// @see GetExternalDevice
         [[nodiscard]] bool IsExternalTextureImportSupported() const;
@@ -607,7 +608,9 @@ namespace Veng::Renderer
 
         /// @brief Whether platform GPU work can be scheduled inside a frame (SplitFrame).
         ///
-        /// True on Apple when the Metal-object interop extension was enabled, false elsewhere.
+        /// True on the Vulkan backend on Apple when the Metal-object interop extension was enabled.
+        /// False on the Metal backend, whose platform work encodes into the frame's own command
+        /// buffer with no split, and everywhere else.
         [[nodiscard]] bool IsFrameSplitSupported() const;
 
         /// @brief Submits the frame recorded so far, runs platform GPU work, then resumes the frame.
