@@ -181,18 +181,27 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   `RGBA16Float` in extended linear sRGB with extended dynamic range on. `PresentMode::Immediate`
   turns the layer's display sync off; Mailbox has no Metal form and waits for the refresh.
 - **The pipeline archive.** With `PipelineCachePath` set, the compiler records every pipeline it
-  builds through an `MTL4PipelineDataSetSerializer`, and teardown writes them as an `MTL4Archive`
-  (beside the path, then moved over it). The next run opens the archive and serves each pipeline it
-  holds from it, graphics and compute alike, building only what it lacks; the serializer holds only
-  what this run's compiler built, so teardown first rebuilds what the archive served through the
-  compiler with the archive as a lookup (cheap) — otherwise the rewritten archive would lose it — and
-  a run that built nothing leaves the file as it is. The archive lives at `<stem>.metal<extension>`
+  creates through an `MTL4PipelineDataSetSerializer`, and teardown writes them as an `MTL4Archive`
+  (beside the path, then moved over it). The next run opens the archive and names it as the
+  compiler's lookup archive, so every pipeline, graphics and compute alike, is still created through
+  the compiler — which takes what the archive holds from it instead of compiling — and the serializer
+  records each one, so the archive teardown writes holds the run's whole set with nothing rebuilt at
+  teardown. The compiler reports no lookup hit; `Context::Native::CountArchiveHits` asks the archive
+  directly as well, for the test that reads it. **A process that can be GPU-captured, or runs Metal's
+  validation layers, keeps no archive**, logs that it is off, and compiles every pipeline: Metal 4's
+  capture layer (`MTLCaptureManager` supporting the developer-tools or trace-document destination —
+  Xcode's capture, or `MTL_CAPTURE_ENABLED`) refuses a process that has opened one, the API
+  validation layer (`MTL_DEBUG_LAYER`, which Xcode sets by default) faults inside the driver
+  compiling against a lookup archive, and shader validation (`MTL_SHADER_VALIDATION`) instruments
+  every pipeline, which no archive holds. So the validation gate never exercises the archive; the
+  ordinary band does. The archive lives at `<stem>.metal<extension>`
   beside the path (see "Pipeline cache"). Its header is checked before Metal opens it, since Metal
   faults on a file that is not an archive rather than refusing it: anything that is not a Mach-O
   image (thin, or the universal form Metal writes), or cannot be read, is logged and ignored, and a
   stale archive Metal refuses is too, so the run starts cold. `tests/gpu/pipeline_archive.mm` holds a
-  second context to building nothing, and a foreign file at both paths to being ignored, left alone
-  at the cache path and replaced by an archive at the backend's own.
+  second context to finding every pipeline in the archive and a third to finding them in the one the
+  second rewrote, and a foreign file at both paths to being ignored, left alone at the cache path and
+  replaced by an archive at the backend's own.
 - **Interop.** `AppleInterop.h` hands out the backend's own objects; an external texture is wrapped
   as an image that holds it and keeps it resident until the image retires.
 

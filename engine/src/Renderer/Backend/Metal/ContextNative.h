@@ -71,17 +71,21 @@ namespace Veng::Renderer
         id<MTL4Compiler> Compiler = nil;
         /// @brief The pipeline archive a previous run wrote, or nil.
         id<MTL4Archive> Archive = nil;
-        /// @brief Records every pipeline the compiler builds, for the archive written at teardown;
+        /// @brief Compiler options naming the archive as a lookup, so a pipeline it holds is taken
+        ///        from it rather than compiled; nil without an archive.
+        MTL4CompilerTaskOptions* ArchiveLookup = nil;
+        /// @brief Records every pipeline the compiler creates, for the archive written at teardown;
         ///        nil when the context keeps no pipeline cache.
         id<MTL4PipelineDataSetSerializer> Serializer = nil;
         /// @brief Where the pipeline archive is read from and written to; empty for none.
         string ArchivePath;
-        /// @brief The pipelines the archive served, which teardown builds again through the
-        ///        compiler so the archive it writes keeps them.
-        NSMutableArray<MTL4PipelineDescriptor*>* ArchiveServed = nil;
-        /// @brief How many pipelines the archive served rather than the compiler building them.
+        /// @brief When set, each pipeline created is also asked of the archive directly, so
+        ///        ArchiveHits counts what it holds. The compiler does not report a lookup hit, so
+        ///        this is the only way to observe one; it costs a second creation per pipeline.
+        bool CountArchiveHits = false;
+        /// @brief How many created pipelines the archive held; counted only under CountArchiveHits.
         u64 ArchiveHits = 0;
-        /// @brief How many pipelines the compiler built while the context keeps an archive.
+        /// @brief How many pipelines the compiler created while the context keeps an archive.
         u64 ArchiveBuilds = 0;
 
         /// @brief The fence platform work encoded into a recording waits on, created at first use.
@@ -357,11 +361,12 @@ namespace Veng::Renderer
         ///
         /// The archive is its own file, `<stem>.metal<extension>` beside the cache path, so a
         /// backend sharing the path never reads or overwrites this one's. A file there that is not
-        /// a Metal archive, or cannot be read, is logged and ignored, and the run starts cold.
+        /// a Metal archive, or cannot be read, is logged and ignored, and the run starts cold. When
+        /// a GPU capture is possible the context keeps no archive at all, since Metal 4's capture
+        /// layer refuses a process that opens one.
         void OpenPipelineArchive(const path& cachePath);
 
-        /// @brief Writes the pipeline archive, when the context keeps one and this run built a
-        ///        pipeline it did not hold.
+        /// @brief Writes the pipeline archive, when the context keeps one and created a pipeline.
         void SavePipelineArchive();
 
         /// @brief The scaled blit's pipeline writing @p format, built at first use.

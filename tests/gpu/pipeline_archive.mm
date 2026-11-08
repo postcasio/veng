@@ -1,7 +1,6 @@
 // The Metal backend's pipeline archive: a context given a pipeline cache path records every pipeline
-// its compiler builds and writes them at teardown, and the next context given the path builds the
-// same pipelines from that archive instead of compiling them. Reads the backend's own counters, so
-// it registers only in a Metal tree.
+// it creates and writes them at teardown, and the next context given the path finds the same
+// pipelines in that archive. Reads the backend's own counters, so it registers only in a Metal tree.
 
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +9,8 @@
 #include <iterator>
 
 #include <doctest/doctest.h>
+
+#import <Metal/Metal.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
@@ -40,8 +41,19 @@ namespace
         path Archive;
     };
 
+    // A process that can be GPU-captured, or runs Metal's validation layers, keeps no archive.
+    bool IsArchiveOff()
+    {
+        MTLCaptureManager* const capture = [MTLCaptureManager sharedCaptureManager];
+        return [capture supportsDestination:MTLCaptureDestinationDeveloperTools] ||
+               [capture supportsDestination:MTLCaptureDestinationGPUTraceDocument] ||
+               std::getenv("MTL_DEBUG_LAYER") != nullptr ||
+               std::getenv("MTL_SHADER_VALIDATION") != nullptr;
+    }
+
     // Brings a context up on @p archive, builds one graphics and one compute pipeline from the
-    // test pack, and reports how the context's pipelines came to be; teardown writes the archive.
+    // test pack, and reports how many it created and how many the archive held; teardown writes the
+    // archive.
     ArchiveCounts BuildPipelines(const path& archive)
     {
         Context context;
@@ -49,6 +61,7 @@ namespace
                             .HeadlessExtent = {4, 4},
                             .PipelineCachePath = archive},
                            nullptr);
+        context.GetNative().CountArchiveHits = true;
         TaskSystem tasks{TaskSystemInfo{.WorkerCount = 1}};
         TypeRegistry types;
         {
@@ -92,9 +105,13 @@ namespace
     }
 }
 
-TEST_CASE("pipeline archive: a second context builds its pipelines from the archive the first "
-          "wrote")
+TEST_CASE("pipeline archive: the archive a context writes holds every pipeline it created")
 {
+    if (IsArchiveOff())
+    {
+        MESSAGE("GPU capture or Metal validation is on, so the context keeps no pipeline archive");
+        return;
+    }
     const path directory = std::filesystem::temp_directory_path() / "veng_pipeline_archive_test";
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
@@ -108,22 +125,24 @@ TEST_CASE("pipeline archive: a second context builds its pipelines from the arch
     CHECK(cold.Archive.parent_path() == archive.parent_path());
     REQUIRE(std::filesystem::exists(cold.Archive));
 
-    // Under shader validation every pipeline is built instrumented, which no archive holds.
-    if (std::getenv("MTL_SHADER_VALIDATION") != nullptr)
-    {
-        MESSAGE("shader validation builds every pipeline instrumented; the archive serves none");
-        std::filesystem::remove_all(directory);
-        return;
-    }
     const ArchiveCounts warm = BuildPipelines(archive);
-    CHECK(warm.Builds == 0);
+    CHECK(warm.Builds == cold.Builds);
     CHECK(warm.Hits == cold.Builds);
+
+    // The archive the warm context rewrote still holds what it found in the one before.
+    const ArchiveCounts again = BuildPipelines(archive);
+    CHECK(again.Hits == cold.Builds);
 
     std::filesystem::remove_all(directory);
 }
 
 TEST_CASE("pipeline archive: a file that is not a Metal archive is ignored, not read")
 {
+    if (IsArchiveOff())
+    {
+        MESSAGE("GPU capture or Metal validation is on, so the context keeps no pipeline archive");
+        return;
+    }
     const path directory =
         std::filesystem::temp_directory_path() / "veng_pipeline_archive_foreign_test";
     std::filesystem::remove_all(directory);
@@ -160,13 +179,9 @@ TEST_CASE("pipeline archive: a file that is not a Metal archive is ignored, not 
                                std::istreambuf_iterator<char>());
     CHECK(keptBytes == foreign);
 
-    // The backend's own file now holds an archive the next context builds from.
-    if (std::getenv("MTL_SHADER_VALIDATION") == nullptr)
-    {
-        const ArchiveCounts warm = BuildPipelines(cachePath);
-        CHECK(warm.Builds == 0);
-        CHECK(warm.Hits == counts.Builds);
-    }
+    // The backend's own file now holds an archive the next context finds its pipelines in.
+    const ArchiveCounts warm = BuildPipelines(cachePath);
+    CHECK(warm.Hits == counts.Builds);
 
     std::filesystem::remove_all(directory);
 }

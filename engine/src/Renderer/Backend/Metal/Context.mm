@@ -547,20 +547,16 @@ namespace Veng::Renderer
     Context::Native::CreateRenderPipeline(MTL4RenderPipelineDescriptor* const descriptor,
                                           NSError** const error)
     {
-        if (Archive != nil)
+        if (CountArchiveHits && Archive != nil &&
+            [Archive newRenderPipelineStateWithDescriptor:descriptor error:nil] != nil)
         {
-            const id<MTLRenderPipelineState> served =
-                [Archive newRenderPipelineStateWithDescriptor:descriptor error:nil];
-            if (served != nil)
-            {
-                ++ArchiveHits;
-                [ArchiveServed addObject:[descriptor copy]];
-                return served;
-            }
+            ++ArchiveHits;
         }
+        // Created through the compiler even when the archive holds it, so the serializer records
+        // it and the archive written at teardown keeps it.
         ArchiveBuilds += Serializer != nil ? 1 : 0;
         return [Compiler newRenderPipelineStateWithDescriptor:descriptor
-                                          compilerTaskOptions:nil
+                                          compilerTaskOptions:ArchiveLookup
                                                         error:error];
     }
 
@@ -568,20 +564,14 @@ namespace Veng::Renderer
     Context::Native::CreateComputePipeline(MTL4ComputePipelineDescriptor* const descriptor,
                                            NSError** const error)
     {
-        if (Archive != nil)
+        if (CountArchiveHits && Archive != nil &&
+            [Archive newComputePipelineStateWithDescriptor:descriptor error:nil] != nil)
         {
-            const id<MTLComputePipelineState> served =
-                [Archive newComputePipelineStateWithDescriptor:descriptor error:nil];
-            if (served != nil)
-            {
-                ++ArchiveHits;
-                [ArchiveServed addObject:[descriptor copy]];
-                return served;
-            }
+            ++ArchiveHits;
         }
         ArchiveBuilds += Serializer != nil ? 1 : 0;
         return [Compiler newComputePipelineStateWithDescriptor:descriptor
-                                           compilerTaskOptions:nil
+                                           compilerTaskOptions:ArchiveLookup
                                                          error:error];
     }
 
@@ -618,11 +608,29 @@ namespace Veng::Renderer
 
     void Context::Native::OpenPipelineArchive(const path& cachePath)
     {
+        // Metal 4's capture layer refuses a process that has opened an archive, so a run that can
+        // be captured keeps none, and builds every pipeline.
+        MTLCaptureManager* const capture = [MTLCaptureManager sharedCaptureManager];
+        if ([capture supportsDestination:MTLCaptureDestinationDeveloperTools] ||
+            [capture supportsDestination:MTLCaptureDestinationGPUTraceDocument])
+        {
+            Log::Info(
+                "Pipeline archive off: GPU capture is available, and Metal 4 capture does not "
+                "support archives");
+            return;
+        }
+        // Metal's validation layers fault compiling against a lookup archive, and shader
+        // validation instruments every pipeline, which no archive holds.
+        if (std::getenv("MTL_DEBUG_LAYER") != nullptr ||
+            std::getenv("MTL_SHADER_VALIDATION") != nullptr)
+        {
+            Log::Info("Pipeline archive off: Metal's validation layer is on");
+            return;
+        }
         path archive = cachePath;
         archive.replace_filename(cachePath.stem().string() + ".metal" +
                                  cachePath.extension().string());
         ArchivePath = archive.string();
-        ArchiveServed = [NSMutableArray array];
         MTL4PipelineDataSetSerializerDescriptor* const serializer =
             [[MTL4PipelineDataSetSerializerDescriptor alloc] init];
         serializer.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
@@ -665,43 +673,21 @@ namespace Veng::Renderer
         {
             Log::Warn("Pipeline archive '{}' could not be read; building every pipeline: {}",
                       ArchivePath, Metal::Describe(error));
+            return;
         }
+        ArchiveLookup = [[MTL4CompilerTaskOptions alloc] init];
+        ArchiveLookup.lookupArchives = @[ Archive ];
     }
 
     void Context::Native::SavePipelineArchive()
     {
-        // A run the archive served entirely leaves it as it is; the serializer holds only what
-        // the compiler built.
+        // Every pipeline went through the compiler, so the serializer already holds the run's set.
+        ArchiveLookup = nil;
+        Archive = nil;
         if (Serializer == nil || ArchiveBuilds == 0)
         {
             return;
         }
-        // What the archive served is built again through the compiler, which its binaries make
-        // cheap, so the archive written now keeps it.
-        MTL4CompilerTaskOptions* const options = [[MTL4CompilerTaskOptions alloc] init];
-        if (Archive != nil)
-        {
-            options.lookupArchives = @[ Archive ];
-        }
-        for (MTL4PipelineDescriptor* const descriptor in ArchiveServed)
-        {
-            if ([descriptor isKindOfClass:[MTL4RenderPipelineDescriptor class]])
-            {
-                (void)[Compiler
-                    newRenderPipelineStateWithDescriptor:(MTL4RenderPipelineDescriptor*)descriptor
-                                     compilerTaskOptions:options
-                                                   error:nil];
-            }
-            else if ([descriptor isKindOfClass:[MTL4ComputePipelineDescriptor class]])
-            {
-                (void)[Compiler
-                    newComputePipelineStateWithDescriptor:(MTL4ComputePipelineDescriptor*)descriptor
-                                      compilerTaskOptions:options
-                                                    error:nil];
-            }
-        }
-        Archive = nil;
-        ArchiveServed = nil;
 
         // Written beside the archive and moved over it, so a failed write leaves the last one.
         const string staging = ArchivePath + ".incoming";
