@@ -3,7 +3,7 @@
 // filtering between two codes would name a third.
 #include "ssr_coverage.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -11,7 +11,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -43,6 +43,6 @@ float3 CoverageColour(uint code)
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float stored = g_Textures[NonUniformResourceIndex(g_PC.CoverageTexture)].Load(int3(int2(input.sv_position.xy), 0)).r;
+    float stored = g_Textures[NonUniformIndex(g_PC.CoverageTexture)].Load(int3(int2(input.sv_position.xy), 0)).r;
     return float4(CoverageColour(uint(round(stored * 255.0))), 1.0);
 }

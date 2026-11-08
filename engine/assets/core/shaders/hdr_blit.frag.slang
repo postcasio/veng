@@ -3,8 +3,7 @@
 // of the deferred chain — a tonemap pass replaces it, mapping HDR → output with a
 // real curve. The clamp keeps an out-of-range HDR value from wrapping the output
 // while the chain has no tonemap.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -12,7 +11,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -23,7 +22,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float3 hdr = g_Textures[NonUniformResourceIndex(g_PC.HdrTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).rgb;
+    float3 hdr = g_Textures[NonUniformIndex(g_PC.HdrTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).rgb;
     return float4(saturate(hdr), 1.0);
 }

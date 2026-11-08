@@ -2,8 +2,14 @@
 // its six layers — as float RGBA into a storage buffer, layer-major then row-major. A texel fetch
 // decodes whatever the image stores (sRGB, block-compressed, packed float), so one pipeline reads
 // any sampleable colour format, and the image needs no transfer usage.
-[[vk::binding(0, 3)]] Texture2DArray<float4> g_Source;
-[[vk::binding(1, 3)]] RWStructuredBuffer<float4> g_Texels;
+
+#include "Veng/binding.slang"
+struct TextureReadbackSet3
+{
+    Texture2DArray<float4> Source;
+    RWStructuredBuffer<float4> Texels;
+};
+VE_DESCRIPTOR_SET(3, TextureReadbackSet3, g_Set3);
 
 struct PushConstants
 {
@@ -12,7 +18,7 @@ struct PushConstants
     uint  Pad;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -23,5 +29,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
     }
     const uint index = (id.z * g_PC.Extent.y + id.y) * g_PC.Extent.x + id.x;
-    g_Texels[index] = g_Source.Load(int4(int2(id.xy), int(id.z), 0));
+    g_Set3.Texels[index] = g_Set3.Source.Load(int4(int2(id.xy), int(id.z), 0));
 }

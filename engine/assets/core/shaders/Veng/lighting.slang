@@ -80,8 +80,8 @@ struct LightingResult
 // a pixel's variance comes from its own row and column neighbours.
 float NormalScreenVariance(float3 normal)
 {
-    float3 du = ddx_fine(normal);
-    float3 dv = ddy_fine(normal);
+    float3 du = DdxFine(normal);
+    float3 dv = DdyFine(normal);
     return dot(du, du) + dot(dv, dv);
 }
 
@@ -185,11 +185,11 @@ static const float LtcLutBias = 0.5 / LtcLutSize;
 // t2 returns the BRDF magnitude (x) and Fresnel weight (y) the specular tint is split across.
 float3x3 LtcMatrix(ViewConstants vc, float nDotV, float roughness, out float4 t2)
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(vc.LightLuts.z)];
+    SamplerState samp = g_Samplers[NonUniformIndex(vc.LightLuts.z)];
     float2 uv = float2(roughness, sqrt(saturate(1.0 - nDotV)));
     uv = uv * LtcLutScale + LtcLutBias;
-    float4 t1 = g_Textures[NonUniformResourceIndex(vc.LightLuts.x)].SampleLevel(samp, uv, 0.0);
-    t2 = g_Textures[NonUniformResourceIndex(vc.LightLuts.y)].SampleLevel(samp, uv, 0.0);
+    float4 t1 = g_Textures[NonUniformIndex(vc.LightLuts.x)].SampleLevel(samp, uv, 0.0);
+    t2 = g_Textures[NonUniformIndex(vc.LightLuts.y)].SampleLevel(samp, uv, 0.0);
     // The LUT packs glm column-major invM[col][row]: t1.y is row 2/col 0 and t1.z row 0/col 2,
     // so the row-major reconstruction places t1.z in the top row — swapping them transposes the
     // matrix and mirrors the specular lobe to the wrong side of the light.

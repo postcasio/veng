@@ -15,8 +15,7 @@
 // offsets the renderer writes (and at the correct per-frame region).
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -29,7 +28,7 @@ struct PushConstants
     uint Pad1;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -135,7 +134,7 @@ float3 NoiseRotation(uint2 pixel)
 [shader("fragment")]
 float fsMain(VSOutput input) : SV_Target
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
 
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
@@ -144,7 +143,7 @@ float fsMain(VSOutput input) : SV_Target
     // the raw logical UV.
     float2 gUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
 
-    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, gUV).r;
+    float depth = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, gUV).r;
 
     // The reverse-Z cleared depth (0.0) marks the background, where there is no geometry
     // to occlude — leave it fully unoccluded so the lighting pass's background ambient
@@ -156,7 +155,7 @@ float fsMain(VSOutput input) : SV_Target
     float3 viewPos = ViewPositionFromDepth(invProj, input.v_UV, depth);
 
     // The world-space normal (G1) carried into view space by the view rotation.
-    float3 worldNormal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, gUV).xyz;
+    float3 worldNormal = g_Textures[NonUniformIndex(g_PC.NormalTexture)].Sample(samp, gUV).xyz;
     float normalLength = length(worldNormal);
     if (normalLength < 1e-4)
         return 1.0;
@@ -184,7 +183,7 @@ float fsMain(VSOutput input) : SV_Target
         // Remap the projected logical UV into the depth target's valid sub-rect for the read;
         // reconstruction below uses the raw logical sampleUV (NDC), as for the primary fragment.
         float2 sampleGUV = ScaledSampleUV(sampleUV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
-        float sampleDepth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleGUV).r;
+        float sampleDepth = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleGUV).r;
         float3 storedPos = ViewPositionFromDepth(invProj, sampleUV, sampleDepth);
 
         // A range check fades the contribution when the occluder is far in depth, so

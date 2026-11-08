@@ -22,25 +22,10 @@
 // The normal-variance companion's decode and the roughness widening it drives.
 #include "normal_variance.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-// The byte-address storage-buffer bindless array (set 0, binding 3): each slot a whole
-// game-supplied buffer a material reads typed at a byte offset
-// (g_Buffers[params.Handle].Load<T>(off)), bound at full range and selected by handle
-// index. The engine stays layout-agnostic (bytes + a slot); the shader owns the struct,
-// mirroring the param block's own byte-addressed design. A material's handle is uniform
-// across a draw (one material → one handle), so a load needs no NonUniformResourceIndex.
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-// The 3D sampled-image bindless array (the volume set, set 1): a material samples a volume
-// through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
-// a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
-[[vk::binding(0, 1)]] Texture3D g_Volumes[];
-// The normal-variance array (set 0, binding 8), parallel to g_Textures: slot i is the companion of
-// the texture at slot i — a cooked normal map's per-level normal spread — or reads zero when that
-// texture has none. A normal map's handle therefore reaches its own variance, read with the normal
-// map's sampler and coordinates so the hardware picks the same level (SampleNormalVariance).
-[[vk::binding(8, 0)]] Texture2D g_NormalVariance[];
+// The set-0 bindless registry (g_Textures, g_Samplers, g_Buffers, g_MaterialParams,
+// g_NormalVariance) and the volume set (g_Volumes). A material's g_Buffers handle is uniform across
+// a draw (one material, one handle), so a load from it needs no NonUniformIndex.
+#include "bindless.slang"
 
 // Per-draw record indexed by the candidate id, std430-identical to the engine's
 // DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
@@ -69,7 +54,12 @@ struct DrawData
 // path on MoltenVK.
 // Ring-buffered for frames-in-flight; the current frame's region base is folded into
 // the candidate id by the pushed FrameBase, exactly as the material block selector is.
-[[vk::binding(0, 3)]] StructuredBuffer<DrawData> g_DrawData;
+struct SurfaceDrawSet
+{
+    StructuredBuffer<DrawData> DrawData;
+};
+VE_DESCRIPTOR_SET(3, SurfaceDrawSet, g_SurfaceDraw);
+#define g_DrawData g_SurfaceDraw.DrawData
 
 DrawData LoadDrawData(uint candidateId)
 {
@@ -173,7 +163,7 @@ float3 UnpackNormal(float4 sampled)
 float SampleNormalVariance(uint normalMap, SamplerState samplerState, float2 uv)
 {
     return DecodeNormalVariance(
-        g_NormalVariance[NonUniformResourceIndex(normalMap)].Sample(samplerState, uv).r);
+        g_NormalVariance[NonUniformIndex(normalMap)].Sample(samplerState, uv).r);
 }
 
 // SampleNormalVariance with explicit derivatives, for a material that samples its normal map
@@ -181,7 +171,7 @@ float SampleNormalVariance(uint normalMap, SamplerState samplerState, float2 uv)
 float SampleNormalVarianceGrad(uint normalMap, SamplerState samplerState, float2 uv, float2 dx,
                                float2 dy)
 {
-    return DecodeNormalVariance(g_NormalVariance[NonUniformResourceIndex(normalMap)]
+    return DecodeNormalVariance(g_NormalVariance[NonUniformIndex(normalMap)]
                                     .SampleGrad(samplerState, uv, dx, dy)
                                     .r);
 }
@@ -216,7 +206,7 @@ struct PushConstants
 // v_Instance.x for a draw that is not an instanced-set draw: InstanceDatum reads zero.
 static const uint InstanceNone = 0xFFFFFFFFu;
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The interpolants a Surface fragment reads, written by the standard surface vertex
 // stage (surface.vert). A surface fragment's fsMain signature takes this struct.

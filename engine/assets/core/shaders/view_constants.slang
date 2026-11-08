@@ -178,7 +178,7 @@ float ViewInverseExposure(ViewConstants vc)
     return vc.ExposureParams.y > 0.0 ? vc.ExposureParams.y : 1.0;
 }
 
-[[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
+#include "Veng/bindless.slang"
 
 ViewConstants LoadViewConstants(uint index)
 {

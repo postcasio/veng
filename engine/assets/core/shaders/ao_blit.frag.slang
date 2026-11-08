@@ -2,8 +2,7 @@
 // (the SsaoScenePass's single-channel R8 result) through the bindless set-0 array
 // and writes it as greyscale — 1 is unoccluded (white), 0 fully occluded (black).
 // A debug view of the SSAO term before the lighting pass folds it into the ambient.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -11,7 +10,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -22,7 +21,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float ao = g_Textures[NonUniformResourceIndex(g_PC.AoTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).r;
+    float ao = g_Textures[NonUniformIndex(g_PC.AoTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).r;
     return float4(ao, ao, ao, 1.0);
 }

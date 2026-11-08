@@ -20,14 +20,12 @@ float3 ToView(ViewConstants view, float3 v)
 }
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // The VertexIndex builtin read directly; SV_VertexID would pull in DrawParameters.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
     uint index = vertexId / 6u;
-    uint drawIndex = g_PC.List == 0u ? g_AlphaKeys[index].y : g_AdditiveList[index];
-    GpuParticleDraw draw = g_Draws[drawIndex];
-    GpuParticleEmitter emitter = g_Emitters[draw.Emitter];
+    uint drawIndex = g_PC.List == 0u ? g_Set3.AlphaKeys[index].y : g_Set3.AdditiveList[index];
+    GpuParticleDraw draw = g_Set3.Draws[drawIndex];
+    GpuParticleEmitter emitter = g_Set3.Emitters[draw.Emitter];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     static const float2 corners[6] = {

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "bright_tap.slang"
+#include "Veng/binding.slang"
 
 struct PushConstants
 {
@@ -19,7 +20,7 @@ struct PushConstants
     float  FireflyCeiling; // the most luminance one tap carries, in source units (level 0 only)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // One level-0 tap, conditioned before it is averaged (ConditionBrightTap) under this pass's ceiling.
 float3 ConditionTap(float3 c)

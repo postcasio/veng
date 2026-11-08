@@ -1,4 +1,5 @@
 #include "Veng/depth_caster.slang"
+#include "Veng/binding.slang"
 
 // Depth-only shadow vertex stage. Renders the scene's opaque static meshes from the light-space
 // view-projection into a shadow map tile; no fragment stage and no color output, only depth.
@@ -25,7 +26,7 @@ struct ShadowPushConstants
     float4x4 ViewProj;  // world -> light clip
 };
 
-[[vk::push_constant]] ConstantBuffer<ShadowPushConstants> g_PC;
+VE_PUSH_CONSTANTS(ShadowPushConstants, g_PC);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)

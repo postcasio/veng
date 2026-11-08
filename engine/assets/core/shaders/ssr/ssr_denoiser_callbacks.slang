@@ -3,8 +3,8 @@
 // from the FidelityFX SDK v1.1.4.
 //
 // As in the reference, a pass defines the DENOISER_BIND_* names of the resources it binds before
-// including this file, each to its binding in the pass's set 3; binding 0 is the chain's constants
-// and binding 1 the linear sampler. The g-buffer's world normal and motion vectors are read through
+// including this file, each to its binding in the pass's set 3; binding 0 is the linear sampler, and
+// the chain's constants are a dynamic buffer bound after the block. The g-buffer's world normal and motion vectors are read through
 // the bindless array by the indices in the push block, so their DENOISER_BIND_* names only say the
 // pass reads them.
 //
@@ -44,10 +44,8 @@
 
 #include "ssr_denoiser_common.slang"
 
-[[vk::binding(1, 3)]] SamplerState s_LinearSampler;
-
 #if defined(DENOISER_BIND_SRV_INPUT_NORMAL) || defined(DENOISER_BIND_SRV_INPUT_MOTION_VECTORS)
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
 struct DenoiserPushConstants
 {
@@ -55,7 +53,7 @@ struct DenoiserPushConstants
     uint MotionVectorTexture; // the g-buffer motion vectors' bindless index (G3)
 };
 
-[[vk::push_constant]] ConstantBuffer<DenoiserPushConstants> g_PC;
+VE_PUSH_CONSTANTS(DenoiserPushConstants, g_PC);
 #endif
 
 bool DenoiserIsInside(int2 coordinate, uint2 extent)
@@ -87,70 +85,77 @@ uint2 DenoiserExtent(Texture2D<float4> texture)
     return uint2(width, height);
 }
 
-// SRVs
+// The pass's set-3 block, in binding order: the sampler, then each resource the pass defines a
+// DENOISER_BIND_* name for. Every pass's bindings follow this declaration order.
+struct DenoiserSet
+{
+    SamplerState s_LinearSampler;
+    // SRVs
 #if defined DENOISER_BIND_SRV_INPUT_DEPTH_HIERARCHY
-[[vk::binding(DENOISER_BIND_SRV_INPUT_DEPTH_HIERARCHY, 3)]] Texture2D<float> r_input_depth_hierarchy;
+    Texture2D<float> r_input_depth_hierarchy;
 #endif
 #if defined DENOISER_BIND_SRV_RADIANCE
-[[vk::binding(DENOISER_BIND_SRV_RADIANCE, 3)]] Texture2D<float4> r_radiance;
+    Texture2D<float4> r_radiance;
 #endif
 #if defined DENOISER_BIND_SRV_RADIANCE_HISTORY
-[[vk::binding(DENOISER_BIND_SRV_RADIANCE_HISTORY, 3)]] Texture2D<float4> r_radiance_history;
+    Texture2D<float4> r_radiance_history;
 #endif
 #if defined DENOISER_BIND_SRV_VARIANCE
-[[vk::binding(DENOISER_BIND_SRV_VARIANCE, 3)]] Texture2D<float> r_variance;
+    Texture2D<float> r_variance;
 #endif
 #if defined DENOISER_BIND_SRV_SAMPLE_COUNT
-[[vk::binding(DENOISER_BIND_SRV_SAMPLE_COUNT, 3)]] Texture2D<float> r_sample_count;
+    Texture2D<float> r_sample_count;
 #endif
 #if defined DENOISER_BIND_SRV_AVERAGE_RADIANCE
-[[vk::binding(DENOISER_BIND_SRV_AVERAGE_RADIANCE, 3)]] Texture2D<float3> r_average_radiance;
+    Texture2D<float3> r_average_radiance;
 #endif
 #if defined DENOISER_BIND_SRV_EXTRACTED_ROUGHNESS
-[[vk::binding(DENOISER_BIND_SRV_EXTRACTED_ROUGHNESS, 3)]] Texture2D<float> r_extracted_roughness;
+    Texture2D<float> r_extracted_roughness;
 #endif
 #if defined DENOISER_BIND_SRV_DEPTH_HISTORY
-[[vk::binding(DENOISER_BIND_SRV_DEPTH_HISTORY, 3)]] Texture2D<float> r_depth_history;
+    Texture2D<float> r_depth_history;
 #endif
 #if defined DENOISER_BIND_SRV_NORMAL_HISTORY
-[[vk::binding(DENOISER_BIND_SRV_NORMAL_HISTORY, 3)]] Texture2D<float4> r_normal_history;
+    Texture2D<float4> r_normal_history;
 #endif
 #if defined DENOISER_BIND_SRV_ROUGHNESS_HISTORY
-[[vk::binding(DENOISER_BIND_SRV_ROUGHNESS_HISTORY, 3)]] Texture2D<float> r_roughness_history;
+    Texture2D<float> r_roughness_history;
 #endif
 #if defined DENOISER_BIND_SRV_REPROJECTED_RADIANCE
-[[vk::binding(DENOISER_BIND_SRV_REPROJECTED_RADIANCE, 3)]] Texture2D<float4> r_reprojected_radiance;
+    Texture2D<float4> r_reprojected_radiance;
 #endif
 
-// UAVs
+    // UAVs
 #if defined DENOISER_BIND_UAV_RADIANCE
-[[vk::binding(DENOISER_BIND_UAV_RADIANCE, 3)]] [format("rgba16f")] RWTexture2D<float4> rw_radiance;
+    [format("rgba16f")] RWTexture2D<float4> rw_radiance;
 #endif
 #if defined DENOISER_BIND_UAV_VARIANCE
-[[vk::binding(DENOISER_BIND_UAV_VARIANCE, 3)]] [format("r16f")] RWTexture2D<float> rw_variance;
+    [format("r16f")] RWTexture2D<float> rw_variance;
 #endif
 #if defined DENOISER_BIND_UAV_SAMPLE_COUNT
-[[vk::binding(DENOISER_BIND_UAV_SAMPLE_COUNT, 3)]] [format("r16f")] RWTexture2D<float> rw_sample_count;
+    [format("r16f")] RWTexture2D<float> rw_sample_count;
 #endif
 #if defined DENOISER_BIND_UAV_AVERAGE_RADIANCE
-[[vk::binding(DENOISER_BIND_UAV_AVERAGE_RADIANCE, 3)]] [format("r11f_g11f_b10f")] RWTexture2D<float3> rw_average_radiance;
+    [format("r11f_g11f_b10f")] RWTexture2D<float3> rw_average_radiance;
 #endif
 #if defined DENOISER_BIND_UAV_DENOISER_TILE_LIST
-[[vk::binding(DENOISER_BIND_UAV_DENOISER_TILE_LIST, 3)]] RWStructuredBuffer<uint> rw_denoiser_tile_list;
+    RWStructuredBuffer<uint> rw_denoiser_tile_list;
 #endif
 #if defined DENOISER_BIND_UAV_REPROJECTED_RADIANCE
-// The reference's float3 view of an RGBA16F target; nothing reads the fourth channel.
-[[vk::binding(DENOISER_BIND_UAV_REPROJECTED_RADIANCE, 3)]] [format("rgba16f")] RWTexture2D<float4> rw_reprojected_radiance;
+    // The reference's float3 view of an RGBA16F target; nothing reads the fourth channel.
+    [format("rgba16f")] RWTexture2D<float4> rw_reprojected_radiance;
 #endif
+};
+VE_DESCRIPTOR_SET(3, DenoiserSet, g_Denoiser);
 
 float3 LoadRadiance(int3 coordinate)
 {
 #if defined (DENOISER_BIND_SRV_RADIANCE)
-    if (!DenoiserIsInside(coordinate.xy, DenoiserExtent(r_radiance)))
+    if (!DenoiserIsInside(coordinate.xy, DenoiserExtent(g_Denoiser.r_radiance)))
     {
         return float3(0.0);
     }
-    return r_radiance.Load(coordinate).xyz;
+    return g_Denoiser.r_radiance.Load(coordinate).xyz;
 #else
     return float3(0.0f);
 #endif
@@ -159,11 +164,11 @@ float3 LoadRadiance(int3 coordinate)
 float LoadVariance(int3 coordinate)
 {
 #if defined (DENOISER_BIND_SRV_VARIANCE)
-    if (!DenoiserIsInside(coordinate.xy, DenoiserExtent(r_variance)))
+    if (!DenoiserIsInside(coordinate.xy, DenoiserExtent(g_Denoiser.r_variance)))
     {
         return 0.0;
     }
-    return r_variance.Load(coordinate).x;
+    return g_Denoiser.r_variance.Load(coordinate).x;
 #else
     return 0.0f;
 #endif
@@ -174,11 +179,11 @@ float3 FFX_DENOISER_LoadWorldSpaceNormal(int2 pixel_coordinate)
 #if defined(DENOISER_BIND_SRV_INPUT_NORMAL)
     uint width;
     uint height;
-    g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].GetDimensions(width, height);
+    g_Textures[NonUniformIndex(g_PC.NormalTexture)].GetDimensions(width, height);
     float3 normal = float3(0.0);
     if (DenoiserIsInside(pixel_coordinate, uint2(width, height)))
     {
-        normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz;
+        normal = g_Textures[NonUniformIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz;
     }
     return normalize(normal);
 #else
@@ -189,11 +194,11 @@ float3 FFX_DENOISER_LoadWorldSpaceNormal(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_EXTRACTED_ROUGHNESS)
 float FFX_DNSR_Reflections_LoadRoughness(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_extracted_roughness)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_extracted_roughness)))
     {
         return 0.0;
     }
-    float rawRoughness = (float)r_extracted_roughness.Load(int3(pixel_coordinate, 0));
+    float rawRoughness = (float)g_Denoiser.r_extracted_roughness.Load(int3(pixel_coordinate, 0));
     return rawRoughness;
 }
 #endif // #if defined (DENOISER_BIND_SRV_EXTRACTED_ROUGHNESS)
@@ -203,10 +208,10 @@ void StoreRadiance(int2 coordinate, float4 radiance)
 #if defined (DENOISER_BIND_UAV_RADIANCE)
     uint width;
     uint height;
-    rw_radiance.GetDimensions(width, height);
+    g_Denoiser.rw_radiance.GetDimensions(width, height);
     if (DenoiserIsInside(coordinate, uint2(width, height)))
     {
-        rw_radiance[coordinate] = radiance;
+        g_Denoiser.rw_radiance[coordinate] = radiance;
     }
 #endif
 }
@@ -216,10 +221,10 @@ void StoreVariance(int2 coordinate, float variance)
 #if defined (DENOISER_BIND_UAV_VARIANCE)
     uint width;
     uint height;
-    rw_variance.GetDimensions(width, height);
+    g_Denoiser.rw_variance.GetDimensions(width, height);
     if (DenoiserIsInside(coordinate, uint2(width, height)))
     {
-        rw_variance[coordinate] = variance;
+        g_Denoiser.rw_variance[coordinate] = variance;
     }
 #endif
 }
@@ -239,39 +244,39 @@ void FFX_DNSR_Reflections_StoreTemporalAccumulation(int2 pixel_coordinate, float
 #if defined (DENOISER_BIND_SRV_AVERAGE_RADIANCE)
 float3 FFX_DNSR_Reflections_SampleAverageRadiance(float2 uv)
 {
-    return (float3)r_average_radiance.SampleLevel(s_LinearSampler, uv, 0.0f).xyz;
+    return (float3)g_Denoiser.r_average_radiance.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f).xyz;
 }
 #endif // #if defined (DENOISER_BIND_SRV_AVERAGE_RADIANCE)
 
 #if defined (DENOISER_BIND_SRV_RADIANCE_HISTORY)
 float3 FFX_DNSR_Reflections_LoadRadianceHistory(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_radiance_history)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_radiance_history)))
     {
         return float3(0.0);
     }
-    return (float3)r_radiance_history.Load(int3(pixel_coordinate, 0)).xyz;
+    return (float3)g_Denoiser.r_radiance_history.Load(int3(pixel_coordinate, 0)).xyz;
 }
 #endif // #if defined (DENOISER_BIND_SRV_RADIANCE_HISTORY)
 
 #if defined (DENOISER_BIND_SRV_RADIANCE_HISTORY)
 float3 FFX_DNSR_Reflections_SampleRadianceHistory(float2 uv)
 {
-    return (float3)r_radiance_history.SampleLevel(s_LinearSampler, uv, 0.0f).xyz;
+    return (float3)g_Denoiser.r_radiance_history.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f).xyz;
 }
 #endif // #if defined (DENOISER_BIND_SRV_RADIANCE_HISTORY)
 
 #if defined (DENOISER_BIND_SRV_VARIANCE)
 float FFX_DNSR_Reflections_SampleVarianceHistory(float2 uv)
 {
-    return (float)r_variance.SampleLevel(s_LinearSampler, uv, 0.0f).x;
+    return (float)g_Denoiser.r_variance.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f).x;
 }
 #endif // #if defined (DENOISER_BIND_SRV_VARIANCE)
 
 #if defined (DENOISER_BIND_SRV_SAMPLE_COUNT)
 float FFX_DNSR_Reflections_SampleNumSamplesHistory(float2 uv)
 {
-    return (float)r_sample_count.SampleLevel(s_LinearSampler, uv, 0.0f).x;
+    return (float)g_Denoiser.r_sample_count.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f).x;
 }
 #endif // #if defined (DENOISER_BIND_SRV_SAMPLE_COUNT)
 
@@ -280,10 +285,10 @@ void FFX_DNSR_Reflections_StoreRadianceReprojected(int2 pixel_coordinate, float3
 {
     uint width;
     uint height;
-    rw_reprojected_radiance.GetDimensions(width, height);
+    g_Denoiser.rw_reprojected_radiance.GetDimensions(width, height);
     if (DenoiserIsInside(pixel_coordinate, uint2(width, height)))
     {
-        rw_reprojected_radiance[pixel_coordinate] = float4(value, 0.0);
+        g_Denoiser.rw_reprojected_radiance[pixel_coordinate] = float4(value, 0.0);
     }
 }
 #endif // #if defined (DENOISER_BIND_UAV_REPROJECTED_RADIANCE)
@@ -293,10 +298,10 @@ void FFX_DNSR_Reflections_StoreAverageRadiance(int2 pixel_coordinate, float3 val
 {
     uint width;
     uint height;
-    rw_average_radiance.GetDimensions(width, height);
+    g_Denoiser.rw_average_radiance.GetDimensions(width, height);
     if (DenoiserIsInside(pixel_coordinate, uint2(width, height)))
     {
-        rw_average_radiance[pixel_coordinate] = value;
+        g_Denoiser.rw_average_radiance[pixel_coordinate] = value;
     }
 }
 #endif // #if defined (DENOISER_BIND_UAV_AVERAGE_RADIANCE)
@@ -309,7 +314,7 @@ float3 FFX_DNSR_Reflections_LoadWorldSpaceNormal(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_ROUGHNESS_HISTORY)
 float FFX_DNSR_Reflections_SampleRoughnessHistory(float2 uv)
 {
-    float rawRoughness = (float)r_roughness_history.SampleLevel(s_LinearSampler, uv, 0.0f);
+    float rawRoughness = (float)g_Denoiser.r_roughness_history.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f);
     return rawRoughness;
 }
 #endif // #if defined (DENOISER_BIND_SRV_ROUGHNESS_HISTORY)
@@ -318,9 +323,9 @@ float FFX_DNSR_Reflections_SampleRoughnessHistory(float2 uv)
 float3 FFX_DNSR_Reflections_LoadWorldSpaceNormalHistory(int2 pixel_coordinate)
 {
     float3 normal = float3(0.0);
-    if (DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_normal_history)))
+    if (DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_normal_history)))
     {
-        normal = r_normal_history.Load(int3(pixel_coordinate, 0)).xyz;
+        normal = g_Denoiser.r_normal_history.Load(int3(pixel_coordinate, 0)).xyz;
     }
     return normalize((float3)(normal));
 }
@@ -329,18 +334,18 @@ float3 FFX_DNSR_Reflections_LoadWorldSpaceNormalHistory(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_NORMAL_HISTORY)
 float3 FFX_DNSR_Reflections_SampleWorldSpaceNormalHistory(float2 uv)
 {
-    return normalize((float3)(r_normal_history.SampleLevel(s_LinearSampler, uv, 0.0f).xyz));
+    return normalize((float3)(g_Denoiser.r_normal_history.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f).xyz));
 }
 #endif // #if defined (DENOISER_BIND_SRV_NORMAL_HISTORY)
 
 #if defined (DENOISER_BIND_SRV_RADIANCE)
 float FFX_DNSR_Reflections_LoadRayLength(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_radiance)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_radiance)))
     {
         return 0.0;
     }
-    return (float)r_radiance.Load(int3(pixel_coordinate, 0)).w;
+    return (float)g_Denoiser.r_radiance.Load(int3(pixel_coordinate, 0)).w;
 }
 #endif // #if defined (DENOISER_BIND_SRV_RADIANCE)
 
@@ -354,10 +359,10 @@ void FFX_DNSR_Reflections_StoreNumSamples(int2 pixel_coordinate, float value)
 {
     uint width;
     uint height;
-    rw_sample_count.GetDimensions(width, height);
+    g_Denoiser.rw_sample_count.GetDimensions(width, height);
     if (DenoiserIsInside(pixel_coordinate, uint2(width, height)))
     {
-        rw_sample_count[pixel_coordinate] = value;
+        g_Denoiser.rw_sample_count[pixel_coordinate] = value;
     }
 }
 #endif // #if defined (DENOISER_BIND_UAV_SAMPLE_COUNT)
@@ -370,11 +375,11 @@ float3 FFX_DNSR_Reflections_LoadRadiance(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_REPROJECTED_RADIANCE)
 float3 FFX_DNSR_Reflections_LoadRadianceReprojected(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_reprojected_radiance)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_reprojected_radiance)))
     {
         return float3(0.0);
     }
-    return (float3)r_reprojected_radiance.Load(int3(pixel_coordinate, 0)).xyz;
+    return (float3)g_Denoiser.r_reprojected_radiance.Load(int3(pixel_coordinate, 0)).xyz;
 }
 #endif // #if defined (DENOISER_BIND_SRV_REPROJECTED_RADIANCE)
 
@@ -386,11 +391,11 @@ float FFX_DNSR_Reflections_LoadVariance(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_SAMPLE_COUNT)
 float FFX_DNSR_Reflections_LoadNumSamples(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_sample_count)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_sample_count)))
     {
         return 0.0;
     }
-    return (float)r_sample_count.Load(int3(pixel_coordinate, 0)).x;
+    return (float)g_Denoiser.r_sample_count.Load(int3(pixel_coordinate, 0)).x;
 }
 #endif // #if defined (DENOISER_BIND_SRV_SAMPLE_COUNT)
 
@@ -400,12 +405,12 @@ float FFX_DENOISER_LoadDepth(int2 pixel_coordinate, int mip)
     uint width;
     uint height;
     uint levels;
-    r_input_depth_hierarchy.GetDimensions(0, width, height, levels);
+    g_Denoiser.r_input_depth_hierarchy.GetDimensions(0, width, height, levels);
     if (uint(mip) >= levels || !DenoiserIsInside(pixel_coordinate, max(uint2(width, height) >> uint(mip), uint2(1))))
     {
         return 0.0;
     }
-    return r_input_depth_hierarchy.Load(int3(pixel_coordinate, mip));
+    return g_Denoiser.r_input_depth_hierarchy.Load(int3(pixel_coordinate, mip));
 #else
     return 0.0f;
 #endif
@@ -414,7 +419,7 @@ float FFX_DENOISER_LoadDepth(int2 pixel_coordinate, int mip)
 #if defined (DENOISER_BIND_UAV_DENOISER_TILE_LIST)
 uint GetDenoiserTile(uint group_id)
 {
-    return rw_denoiser_tile_list[group_id];
+    return g_Denoiser.rw_denoiser_tile_list[group_id];
 }
 #endif // #if defined (DENOISER_BIND_UAV_DENOISER_TILE_LIST)
 
@@ -429,12 +434,12 @@ float2 FFX_DNSR_Reflections_LoadMotionVector(int2 pixel_coordinate)
 {
     uint width;
     uint height;
-    g_Textures[NonUniformResourceIndex(g_PC.MotionVectorTexture)].GetDimensions(width, height);
+    g_Textures[NonUniformIndex(g_PC.MotionVectorTexture)].GetDimensions(width, height);
     if (!DenoiserIsInside(pixel_coordinate, uint2(width, height)))
     {
         return MotionVectorScale() * float2(0.0);
     }
-    return MotionVectorScale() * g_Textures[NonUniformResourceIndex(g_PC.MotionVectorTexture)].Load(int3(pixel_coordinate, 0)).xy;
+    return MotionVectorScale() * g_Textures[NonUniformIndex(g_PC.MotionVectorTexture)].Load(int3(pixel_coordinate, 0)).xy;
 }
 #endif // #if defined (DENOISER_BIND_SRV_INPUT_MOTION_VECTORS)
 
@@ -446,17 +451,17 @@ float FFX_DNSR_Reflections_LoadDepth(int2 pixel_coordinate)
 #if defined (DENOISER_BIND_SRV_DEPTH_HISTORY)
 float FFX_DNSR_Reflections_LoadDepthHistory(int2 pixel_coordinate)
 {
-    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(r_depth_history)))
+    if (!DenoiserIsInside(pixel_coordinate, DenoiserExtent(g_Denoiser.r_depth_history)))
     {
         return 0.0;
     }
-    return r_depth_history.Load(int3(pixel_coordinate, 0));
+    return g_Denoiser.r_depth_history.Load(int3(pixel_coordinate, 0));
 }
 #endif // #if defined (DENOISER_BIND_SRV_DEPTH_HISTORY)
 
 #if defined (DENOISER_BIND_SRV_DEPTH_HISTORY)
 float FFX_DNSR_Reflections_SampleDepthHistory(float2 uv)
 {
-    return r_depth_history.SampleLevel(s_LinearSampler, uv, 0.0f);
+    return g_Denoiser.r_depth_history.SampleLevel(g_Denoiser.s_LinearSampler, uv, 0.0f);
 }
 #endif // #if defined (DENOISER_BIND_SRV_DEPTH_HISTORY)

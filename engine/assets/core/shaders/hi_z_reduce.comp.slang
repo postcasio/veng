@@ -12,8 +12,14 @@
 //
 // Set 0 is reserved across every pipeline layout for the bindless registry; this
 // closed producer→consumer reduction binds its own resources on set 1.
-[[vk::binding(0, 3)]] Texture2D<float> g_Source;
-[[vk::binding(1, 3)]] [format("r32f")] RWTexture2D<float> g_Dest;
+
+#include "Veng/binding.slang"
+struct HiZReduceSet3
+{
+    Texture2D<float> Source;
+    [format("r32f")] RWTexture2D<float> Dest;
+};
+VE_DESCRIPTOR_SET(3, HiZReduceSet3, g_Set3);
 
 struct PushConstants
 {
@@ -21,7 +27,7 @@ struct PushConstants
     uint2 SourceExtent;  // source mip dimensions in texels
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // Point-load a source texel, clamping the coordinate into the source extent. The
 // edge clamp keeps every read a real depth value (never a spurious 0), which the
@@ -31,7 +37,7 @@ float LoadClamped(int2 coord)
 {
     int2 maxCoord = int2(g_PC.SourceExtent) - 1;
     coord = clamp(coord, int2(0, 0), maxCoord);
-    return g_Source.Load(int3(coord, 0));
+    return g_Set3.Source.Load(int3(coord, 0));
 }
 
 [shader("compute")]
@@ -48,7 +54,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     // destination texel mins a 2x2 (or 3x3 on an odd parent) footprint.
     if (g_PC.SourceExtent.x == g_PC.DestExtent.x && g_PC.SourceExtent.y == g_PC.DestExtent.y)
     {
-        g_Dest[dst] = LoadClamped(dst);
+        g_Set3.Dest[dst] = LoadClamped(dst);
         return;
     }
 
@@ -83,5 +89,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
         m = min(m, LoadClamped(int2(base.x + 2, base.y + 2)));
     }
 
-    g_Dest[dst] = m;
+    g_Set3.Dest[dst] = m;
 }

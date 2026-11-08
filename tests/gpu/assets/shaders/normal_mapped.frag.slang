@@ -30,13 +30,13 @@ GBufferOutput fsMain(VSOutput input)
     MaterialParams p = g_MaterialParams.Load<MaterialParams>(input.v_MaterialOffset);
     const ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
-    float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);
+    float4 baseColor = g_Textures[NonUniformIndex(p.BaseColor)].Sample(
+        g_Samplers[NonUniformIndex(p.BaseColorSampler)], input.v_UV);
 
     const float2 uv = input.v_UV * p.UVScale;
-    SamplerState normalSampler = g_Samplers[NonUniformResourceIndex(p.NormalMapSampler)];
+    SamplerState normalSampler = g_Samplers[NonUniformIndex(p.NormalMapSampler)];
     float3 tangentNormal =
-        UnpackNormal(g_Textures[NonUniformResourceIndex(p.NormalMap)].Sample(normalSampler, uv));
+        UnpackNormal(g_Textures[NonUniformIndex(p.NormalMap)].Sample(normalSampler, uv));
     tangentNormal.xy *= p.NormalStrength;
     const float3 normal = normalize(float3(tangentNormal.x, tangentNormal.z, tangentNormal.y));
 

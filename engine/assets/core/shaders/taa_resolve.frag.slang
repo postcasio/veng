@@ -37,8 +37,7 @@
 // (ReactiveCurrentShare at full coverage).
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -54,7 +53,7 @@ struct PushConstants
     uint ReactiveTexture; // the reactive mask sprites and particles wrote (bindless index)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -142,8 +141,8 @@ float3 SampleHistoryCatmullRom(uint texture, uint samp, float2 uv, float2 texelS
     const float2 texPos3 = (texPos1 + 2.0) * texelSize;
     const float2 texPos12 = (texPos1 + offset12) * texelSize;
 
-    SamplerState s = g_Samplers[NonUniformResourceIndex(samp)];
-    Texture2D t = g_Textures[NonUniformResourceIndex(texture)];
+    SamplerState s = g_Samplers[NonUniformIndex(samp)];
+    Texture2D t = g_Textures[NonUniformIndex(texture)];
 
     float3 result = 0.0;
     result += t.Sample(s, float2(texPos0.x, texPos0.y)).rgb * w0.x * w0.y;
@@ -172,8 +171,8 @@ float4 fsMain(VSOutput input) : SV_Target0
     const float2 outputTexel = 1.0 / float2(g_PC.Extent);
     const float2 kernelScale =
         clamp(float2(g_PC.Extent) / renderExtent, 1.0, MaxKernelSharpening);
-    Texture2D current = g_Textures[NonUniformResourceIndex(g_PC.CurrentTexture)];
-    Texture2D depthTexture = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
+    Texture2D current = g_Textures[NonUniformIndex(g_PC.CurrentTexture)];
+    Texture2D depthTexture = g_Textures[NonUniformIndex(g_PC.DepthTexture)];
 
     // Where this pixel's unjittered position fell in the jittered render: the scene moved by
     // JitterNdc, which is JitterNdc / 2 of the extent in UV.
@@ -195,7 +194,7 @@ float4 fsMain(VSOutput input) : SV_Target0
     // The most any texel of the 3x3 is owned by a sprite or particle: under upscaling a covered
     // render texel may not be the one nearest the output pixel.
     float reactive = 0.0;
-    Texture2D reactiveTexture = g_Textures[NonUniformResourceIndex(g_PC.ReactiveTexture)];
+    Texture2D reactiveTexture = g_Textures[NonUniformIndex(g_PC.ReactiveTexture)];
     [unroll]
     for (int y = -1; y <= 1; ++y)
     {
@@ -240,7 +239,7 @@ float4 fsMain(VSOutput input) : SV_Target0
     if (nearestDepth > 0.0)
     {
         const float2 velocity =
-            g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Load(int3(nearestTexel, 0)).rg;
+            g_Textures[NonUniformIndex(g_PC.VelocityTexture)].Load(int3(nearestTexel, 0)).rg;
         prevUv = uv - velocity;
     }
     else

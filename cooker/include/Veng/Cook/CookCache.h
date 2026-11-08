@@ -138,8 +138,9 @@ namespace Veng::Cook
     /// entry's manifest JSON (id, type, per-asset fields), the pack directory (source paths are
     /// relative to it, so it disambiguates two packs that reuse a relative source name), the active
     /// configuration's fingerprint (role → format table + zstd level, so macOS/Windows/debug/release
-    /// never collide), and the engine shader-include directory (it changes which engine header a
-    /// shader resolves).
+    /// never collide), the engine shader-include directory (it changes which engine header a
+    /// shader resolves), and, for a shader, its targets and the Metal toolchain's version (a
+    /// toolchain update recooks).
     struct CookCacheKeyInputs
     {
         /// @brief The manifest entry JSON, canonically serialized (id, type, source, per-asset fields).
@@ -150,6 +151,9 @@ namespace Veng::Cook
         string ConfigFingerprint;
         /// @brief The engine core shader-include directory threaded onto the cook, or empty.
         path ShaderIncludeDir;
+        /// @brief The shader targets and the Metal toolchain version, for a shader entry; empty for
+        ///        every other entry, which no shader target changes.
+        string ShaderTargets;
         /// @brief Whether the importer that produces this entry reads a loaded module image.
         ///
         /// True folds the cache's module tag into the key, so a module rebuild invalidates the

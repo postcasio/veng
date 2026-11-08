@@ -2,8 +2,7 @@
 // unclamped, into the persisted history target so the next frame can reproject
 // against it. Distinct from hdr_blit, which saturates to [0, 1] for display — the
 // history must keep its full HDR range, since the resolve blends in linear HDR.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -11,7 +10,7 @@ struct PushConstants
     uint Sampler;       // shared sampler
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -22,7 +21,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
-    const float3 resolved = g_Textures[NonUniformResourceIndex(g_PC.SourceTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).rgb;
+    const float3 resolved = g_Textures[NonUniformIndex(g_PC.SourceTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).rgb;
     return float4(resolved, 1.0);
 }

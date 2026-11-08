@@ -6,11 +6,16 @@
 // and every dye whatever format each of those carries; a per-format store kernel moves the
 // result back out.
 #include "fluid_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] Texture2D<float4> g_Velocity;
-[[vk::binding(2, 3)]] [format("rgba32f")] RWTexture2D<float4> g_Dest;
-[[vk::binding(3, 3)]] StructuredBuffer<float> g_RowMetric;
+struct FluidAdvectSet3
+{
+    Texture2D<float4> Source;
+    Texture2D<float4> Velocity;
+    [format("rgba32f")] RWTexture2D<float4> Dest;
+    StructuredBuffer<float> RowMetric;
+};
+VE_DESCRIPTOR_SET(3, FluidAdvectSet3, g_Set3);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -20,13 +25,13 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
 
     int2 texel = int2(id.xy);
-    float2 velocity = g_Velocity.Load(int3(texel, 0)).xy;
-    float metric = FluidRowMetric(g_RowMetric, texel.y);
+    float2 velocity = g_Set3.Velocity.Load(int3(texel, 0)).xy;
+    float metric = FluidRowMetric(g_Set3.RowMetric, texel.y);
 
     float2 centre = float2(id.xy) + 0.5;
     float2 source = centre - g_Fluid.TimeStep * float2(velocity.x * metric, velocity.y);
 
-    g_Dest[texel] = (g_Fluid.Flags & FluidFlagCubicAdvect) != 0u
-                        ? FluidSampleCatmullRom(g_Source, source)
-                        : FluidSampleBilinear(g_Source, source);
+    g_Set3.Dest[texel] = (g_Fluid.Flags & FluidFlagCubicAdvect) != 0u
+                        ? FluidSampleCatmullRom(g_Set3.Source, source)
+                        : FluidSampleBilinear(g_Set3.Source, source);
 }

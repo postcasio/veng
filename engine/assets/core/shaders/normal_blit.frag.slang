@@ -3,8 +3,7 @@
 // signed [-1, 1] world normal remapped to the [0, 1] display range
 // (n * 0.5 + 0.5), the conventional normal-buffer debug visualization. A debug
 // view of the deferred g-buffer; the background (a zero normal) maps to mid-grey.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -12,7 +11,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -23,7 +22,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float3 normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).xyz;
+    float3 normal = g_Textures[NonUniformIndex(g_PC.NormalTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).xyz;
     return float4(normal * 0.5 + 0.5, 1.0);
 }

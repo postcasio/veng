@@ -33,11 +33,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> reflectionTarget;
-[[vk::binding(1, 3)]] Texture2D<float4> brdfTexture;
-[[vk::binding(2, 3)]] SamplerState linearSampler;
+struct SsrApplyReflectionsSet3
+{
+    Texture2D<float4> reflectionTarget;
+    Texture2D<float4> brdfTexture;
+    SamplerState linearSampler;
+};
+VE_DESCRIPTOR_SET(3, SsrApplyReflectionsSet3, g_Set3);
 
 // The sample's ApplyReflectionsConstants (its viewDirection: the camera's direction, w 0), followed
 // by the g-buffer the engine reaches through bindless.
@@ -50,7 +54,7 @@ struct PushConstants
     uint Padding;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -63,7 +67,7 @@ float3 getIBLContribution(float perceptualRoughness, float3 f0, float3 specularL
 {
     float NdotV = clamp(dot(n, v), 0.0, 1.0);
     float2 brdfSamplePoint = saturate(float2(NdotV, perceptualRoughness));
-    float2 brdf = brdfTexture.SampleLevel(linearSampler, brdfSamplePoint, 0.0).rg;
+    float2 brdf = g_Set3.brdfTexture.SampleLevel(g_Set3.linearSampler, brdfSamplePoint, 0.0).rg;
 
     return specularLight * (f0 * brdf.x + brdf.y);
 }
@@ -72,12 +76,12 @@ float3 getIBLContribution(float perceptualRoughness, float3 f0, float3 specularL
 float4 fsMain(VSOutput input) : SV_Target
 {
     int3 texel = int3(int2(input.sv_position.xy), 0);
-    float4 aoRoughnessMetallic = g_Textures[NonUniformResourceIndex(g_PC.MaterialTexture)].Load(texel);
-    float3 radiance = reflectionTarget.Load(texel).xyz;
+    float4 aoRoughnessMetallic = g_Textures[NonUniformIndex(g_PC.MaterialTexture)].Load(texel);
+    float3 radiance = g_Set3.reflectionTarget.Load(texel).xyz;
     float perceptualRoughness = aoRoughnessMetallic.g;
-    float3 baseColor = g_Textures[NonUniformResourceIndex(g_PC.BaseColorTexture)].Load(texel).rgb;
+    float3 baseColor = g_Textures[NonUniformIndex(g_PC.BaseColorTexture)].Load(texel).rgb;
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), baseColor, float3(aoRoughnessMetallic.b, aoRoughnessMetallic.b, aoRoughnessMetallic.b));
-    float3 normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Load(texel).xyz;
+    float3 normal = g_Textures[NonUniformIndex(g_PC.NormalTexture)].Load(texel).xyz;
     float3 view = g_PC.viewDirection.xyz;
 
     radiance = getIBLContribution(perceptualRoughness, f0, radiance, normal, view);

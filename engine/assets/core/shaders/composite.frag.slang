@@ -30,9 +30,8 @@ struct PushConstants
     float PeakNits;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+#include "Veng/bindless.slang"
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // Rec.709 (sRGB) primaries to Rec.2020 primaries, each row summing to ~1.
 static const float3x3 Rec709ToRec2020 = float3x3(0.627402, 0.329292, 0.043306, 0.069095, 0.919544,
@@ -54,15 +53,15 @@ float3 PqEncode(float3 nits)
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float4 scene = g_Textures[NonUniformResourceIndex(g_PC.SceneTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
+    float4 scene = g_Textures[NonUniformIndex(g_PC.SceneTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV);
 
     float3 color = scene.rgb;
 
     if (g_PC.BlendOverlay != 0)
     {
-        float4 ui = g_Textures[NonUniformResourceIndex(g_PC.ImGuiTexture)].Sample(
-            g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
+        float4 ui = g_Textures[NonUniformIndex(g_PC.ImGuiTexture)].Sample(
+            g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV);
         color = lerp(scene.rgb, ui.rgb, ui.a);
     }
 

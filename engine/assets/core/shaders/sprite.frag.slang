@@ -12,8 +12,7 @@
 // one stage serves both.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 #include "sprite_record.slang"
 #include "Veng/scene_depth.slang"
@@ -67,7 +66,7 @@ struct SpriteShade
 
 SpriteShade ShadeSprite(VSOutput input)
 {
-    GpuSprite sprite = g_Sprites[input.v_Sprite];
+    GpuSprite sprite = g_Set3.Sprites[input.v_Sprite];
     uint blend = SpriteFrameBlendOf(sprite);
     bool sixWay = (sprite.Flags & SpriteFlagSixWay) != 0u;
     // Taken before any branch: the shading mode is flat per primitive, but derivatives are only
@@ -78,21 +77,21 @@ SpriteShade ShadeSprite(VSOutput input)
     SpriteShade shade;
     if (!sixWay && blend == SpriteBlendStep)
     {
-        float4 texel = g_Textures[NonUniformResourceIndex(input.v_Texture)].Sample(
-            g_Samplers[NonUniformResourceIndex(input.v_Sampler)], input.v_UV);
+        float4 texel = g_Textures[NonUniformIndex(input.v_Texture)].Sample(
+            g_Samplers[NonUniformIndex(input.v_Sampler)], input.v_UV);
         shade.Color = ShadeUnlitSprite(texel, input.v_AlphaMode, input.v_Color.rgb,
                                        input.v_Color.a);
         shade.Mask = saturate(dot(shade.Color.rgb, SpriteLumaWeights));
     }
     else
     {
-        SamplerState atlasSampler = g_Samplers[NonUniformResourceIndex(sprite.Sampler)];
+        SamplerState atlasSampler = g_Samplers[NonUniformIndex(sprite.Sampler)];
         SpriteFramePair pair = SpriteFramePairOf(sprite);
         SpriteFrameTaps taps =
             SpriteFrameTapsAt(pair, input.v_Quad, dqdx, dqdy, float2(0.0), float2(0.0));
         if (blend == SpriteBlendMotion)
         {
-            Texture2D motion = g_Textures[NonUniformResourceIndex(sprite.Motion)];
+            Texture2D motion = g_Textures[NonUniformIndex(sprite.Motion)];
             float2 storedN = motion.SampleGrad(atlasSampler, taps.UvN, taps.DxN, taps.DyN).rg;
             float2 storedN1 =
                 motion.SampleGrad(atlasSampler, taps.UvN1, taps.DxN1, taps.DyN1).rg;
@@ -101,7 +100,7 @@ SpriteShade ShadeSprite(VSOutput input)
                                      DecodeMotion(storedN1, sprite.MotionScale));
         }
 
-        float4 primary = SampleFrameBlended(g_Textures[NonUniformResourceIndex(sprite.Texture)],
+        float4 primary = SampleFrameBlended(g_Textures[NonUniformIndex(sprite.Texture)],
                                             atlasSampler, taps);
         if (!sixWay)
         {
@@ -111,10 +110,10 @@ SpriteShade ShadeSprite(VSOutput input)
         }
         else
         {
-            float4 lightB = SampleFrameBlended(g_Textures[NonUniformResourceIndex(sprite.LightB)],
+            float4 lightB = SampleFrameBlended(g_Textures[NonUniformIndex(sprite.LightB)],
                                                atlasSampler, taps);
             float4 temperature = SampleFrameBlended(
-                g_Textures[NonUniformResourceIndex(sprite.Temperature)], atlasSampler, taps);
+                g_Textures[NonUniformIndex(sprite.Temperature)], atlasSampler, taps);
             float stored =
                 (sprite.Flags & SpriteFlagTemperatureRed) != 0u ? temperature.r : temperature.a;
             float t = SpriteTemperature(stored, (sprite.Flags & SpriteFlagSqrtTemperature) != 0u,
@@ -132,7 +131,7 @@ SpriteShade ShadeSprite(VSOutput input)
             gather.In[5] = input.v_In5;
             gather.Ambient = input.v_Ambient;
             SpriteEmissionRamp ramp = (sprite.Flags & SpriteFlagEmits) != 0u
-                                          ? g_SpriteRamps[sprite.Ramp]
+                                          ? g_Set3.SpriteRamps[sprite.Ramp]
                                           : SpriteEmissionRampNone();
 
             SixWayShade sixWayShade =

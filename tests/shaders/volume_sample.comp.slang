@@ -5,14 +5,20 @@
 // bindless registries; the sampled source (binding 0) and storage destination
 // (binding 1) bind on set 3, matching the test's hand-built layout. Drives the
 // 3D sampled-image read path (the MoltenVK 3D-storage probe).
-[[vk::binding(0, 3)]] Sampler3D u_Source;
-[[vk::binding(1, 3)]] [format("rgba16f")] RWTexture3D<float4> u_Destination;
+
+#include "Veng/binding.slang"
+struct VolumeSampleSet3
+{
+    Sampler3D Source;
+    [format("rgba16f")] RWTexture3D<float4> Destination;
+};
+VE_DESCRIPTOR_SET(3, VolumeSampleSet3, g_Set3);
 
 struct VolumePush
 {
     uint3 Extent;
 };
-[[vk::push_constant]] VolumePush u_Push;
+VE_PUSH_CONSTANTS(VolumePush, u_Push);
 
 [shader("compute")]
 [numthreads(4, 4, 4)]
@@ -24,5 +30,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
     // Voxel-center UVW: (id + 0.5) / extent maps to the texel's center.
     float3 uvw = (float3(id) + 0.5) / float3(u_Push.Extent);
-    u_Destination[id] = u_Source.SampleLevel(uvw, 0.0);
+    g_Set3.Destination[id] = g_Set3.Source.SampleLevel(uvw, 0.0);
 }

@@ -46,6 +46,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   reflected view-model, attaching it to a viewport, resolving its bindings each
   frame, and opening a `SeatFocusScope` to make a menu interactive — plus the
   boundary against `Veng::UI` (the editor/debug ImGui vocabulary).
+- **[Declaring shader resources for every GPU backend](guides/shader-bindings.md)** — the
+  portable declaration form (one `ParameterBlock` per descriptor set through `Veng/binding.slang`,
+  the bindless registries in `Veng/bindless.slang`, `NonUniformIndex`), the binding model the cook
+  and the Metal backend share (argument buffers, element IDs, the reserved buffer slots), the
+  cross-target data-layout rule and how to rewrite a struct that breaks it, and `VE_SHADER_TARGETS`.
 - **[Diegetic and glowing UI](guides/diegetic-ui.md)** — putting a `Veng::Gui`
   document in the world with a `GuiSurface`: the HDR render target, the translucent
   and opaque-emissive material domains, the `rgb()` linear-float colors that let a

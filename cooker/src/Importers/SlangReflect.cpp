@@ -1,5 +1,7 @@
 #include "SlangReflect.h"
 
+#include <Veng/Cook/ShaderTargets.h>
+
 #include <algorithm>
 #include <cctype>
 
@@ -553,21 +555,20 @@ namespace Veng::Cook
 
         if (descriptorSets != nullptr)
         {
-            // The parameters the shader importer reflects into the cooked interface: every global
-            // that is not the push block, in an author set.
-            descriptorSets->clear();
-            for (unsigned i = 0; i < layout->getParameterCount(); ++i)
+            // The sets the shader importer reflects into the cooked interface, by the same
+            // reflection, so a set declared as a parameter block counts as one declared loose.
+            const Result<ReflectedShaderInterface> reflected =
+                ReflectShaderInterface(*layout, nullptr, slangSource.Path.string());
+            if (!reflected)
             {
-                slang::VariableLayoutReflection* param = layout->getParameterByIndex(i);
-                if (param->getCategory() == slang::ParameterCategory::PushConstantBuffer)
+                return std::unexpected(fmt::format("material importer: {}", reflected.error()));
+            }
+            descriptorSets->clear();
+            for (const CookedDescriptorBinding& binding : reflected->Bindings)
+            {
+                if (std::ranges::find(*descriptorSets, binding.Set) == descriptorSets->end())
                 {
-                    continue;
-                }
-                const u32 set = param->getBindingSpace();
-                if (set >= Veng::Renderer::BindlessRegistry::FirstUserSet &&
-                    std::ranges::find(*descriptorSets, set) == descriptorSets->end())
-                {
-                    descriptorSets->push_back(set);
+                    descriptorSets->push_back(binding.Set);
                 }
             }
             std::ranges::sort(*descriptorSets);

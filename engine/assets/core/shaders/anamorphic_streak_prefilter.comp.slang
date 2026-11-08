@@ -7,6 +7,7 @@
 // Set 3 binds the scene colour, a clamp-to-edge linear sampler, and the destination (the bloom's
 // down/up set layout); sets 0-2 are the typed bindless registries.
 #include "bright_tap.slang"
+#include "Veng/binding.slang"
 
 struct PushConstants
 {
@@ -17,16 +18,20 @@ struct PushConstants
     float  FireflyCeiling; // the most luminance one tap carries, in scene units
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+struct AnamorphicStreakPrefilterSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, AnamorphicStreakPrefilterSet3, g_Set3);
 
 float3 SampleSource(float2 uv)
 {
     const float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
-    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+    return g_Set3.Source.SampleLevel(g_Set3.Sampler, physical, 0.0).rgb;
 }
 
 [shader("compute")]
@@ -44,5 +49,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     const float3 left = ConditionBrightTap(SampleSource(uv - offset), g_PC.FireflyCeiling);
     const float3 right = ConditionBrightTap(SampleSource(uv + offset), g_PC.FireflyCeiling);
     const float3 average = 0.5 * (left + right);
-    g_Dest[int2(id.xy)] = float4(average * BrightPassGain(average, g_PC.Threshold), 1.0);
+    g_Set3.Dest[int2(id.xy)] = float4(average * BrightPassGain(average, g_PC.Threshold), 1.0);
 }

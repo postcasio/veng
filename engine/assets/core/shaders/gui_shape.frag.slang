@@ -20,6 +20,7 @@
 // Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
 // space.
 
+#include "Veng/bindless.slang"
 #include "Veng/guisilhouette.slang"
 
 struct VSOutput
@@ -48,7 +49,7 @@ struct PushConstants
     uint GradientBase;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The GPU gradient record, matching Gui::GpuGradient byte-for-byte (48 bytes, scalar layout). Loaded
 // from the byte-address gradient buffer by index; geometry is in normalized box space.
@@ -68,10 +69,6 @@ struct GpuGradient
 
 static const float InvTau = 0.15915494309189535; // 1 / (2*pi)
 static const uint GradientStride = 48;
-
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
@@ -141,7 +138,7 @@ float4 fsMain(VSOutput input) : SV_Target
     float colorAlphaSource = -1.0;
     if (selector > 0)
     {
-        GpuGradient grad = g_Buffers[NonUniformResourceIndex(g_PC.GradientBuffer)]
+        GpuGradient grad = g_Buffers[NonUniformIndex(g_PC.GradientBuffer)]
                                .Load<GpuGradient>((g_PC.GradientBase + selector - 1) * GradientStride);
         float2 p = input.v_RectCoord / max(input.v_RectHalf, float2(1e-4, 1e-4));
         float t;
@@ -158,8 +155,8 @@ float4 fsMain(VSOutput input) : SV_Target
         {
             t = frac(atan2(p.y - grad.P0.y, p.x - grad.P0.x) * InvTau - grad.AngleOffset);
         }
-        float4 ramp = g_Textures[NonUniformResourceIndex(grad.RampTexture)].Sample(
-            g_Samplers[NonUniformResourceIndex(grad.RampSampler)], float2(saturate(t), 0.5));
+        float4 ramp = g_Textures[NonUniformIndex(grad.RampTexture)].Sample(
+            g_Samplers[NonUniformIndex(grad.RampSampler)], float2(saturate(t), 0.5));
         color *= ramp;
     }
     else if (textureIndex >= 0)
@@ -181,8 +178,8 @@ float4 fsMain(VSOutput input) : SV_Target
         // discontinuous at every seam, so an implicit-derivative Sample would spike there and drop
         // a mipped texture to its smallest level along a one-pixel line — a bright or muddy seam in
         // exactly the place a tiled frame has to read as continuous.
-        float4 texel = g_Textures[NonUniformResourceIndex(textureIndex)].SampleGrad(
-            g_Samplers[NonUniformResourceIndex(samplerIndex)], uv, ddx(unwrapped), ddy(unwrapped));
+        float4 texel = g_Textures[NonUniformIndex(textureIndex)].SampleGrad(
+            g_Samplers[NonUniformIndex(samplerIndex)], uv, ddx(unwrapped), ddy(unwrapped));
         if (input.v_TexelPremultiplied != 0)
         {
             colorAlphaSource = color.a;

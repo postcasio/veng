@@ -2,9 +2,7 @@
 // it read: red from the texture registered this frame, green from one registered two frames
 // earlier, blue from this frame's slice of a host-written ring. Any slot rewritten, freed, or
 // slice overwritten while a submitted frame still reads it shows up as a wrong channel.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -15,7 +13,7 @@ struct PushConstants
     uint RingOffset;     // byte offset of this frame's slice in the ring
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -26,10 +24,10 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    SamplerState samplerState = g_Samplers[NonUniformResourceIndex(g_PC.SamplerIndex)];
-    float current = g_Textures[NonUniformResourceIndex(g_PC.CurrentTexture)].Sample(
+    SamplerState samplerState = g_Samplers[NonUniformIndex(g_PC.SamplerIndex)];
+    float current = g_Textures[NonUniformIndex(g_PC.CurrentTexture)].Sample(
         samplerState, input.v_UV).r;
-    float earlier = g_Textures[NonUniformResourceIndex(g_PC.EarlierTexture)].Sample(
+    float earlier = g_Textures[NonUniformIndex(g_PC.EarlierTexture)].Sample(
         samplerState, input.v_UV).r;
     float ring = g_Buffers[g_PC.RingBuffer].Load<float4>(g_PC.RingOffset).x;
     return float4(current, earlier, ring, 1.0);

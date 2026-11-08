@@ -4,7 +4,7 @@
 // bilinear footprint AND by how closely its reduced depth matches this full-res pixel's own
 // opaque depth — so the layer hugs geometry edges instead of haloing across them; over open
 // interior regions the depth weights are uniform and the filter degrades to plain bilinear.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -17,7 +17,7 @@ struct PushConstants
     float2 HalfValid;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The largest per-channel radiance a single half-res tap may contribute. The layer composites into
 // the lit colour ahead of the bloom bright-pass, so one blown-out texel — a grazing-limb sample a
@@ -35,9 +35,9 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    Texture2D layer = g_Textures[NonUniformResourceIndex(g_PC.LayerTexture)];
-    Texture2D halfDepth = g_Textures[NonUniformResourceIndex(g_PC.HalfDepthTexture)];
-    Texture2D fullDepth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
+    Texture2D layer = g_Textures[NonUniformIndex(g_PC.LayerTexture)];
+    Texture2D halfDepth = g_Textures[NonUniformIndex(g_PC.HalfDepthTexture)];
+    Texture2D fullDepth = g_Textures[NonUniformIndex(g_PC.DepthTexture)];
 
     const int2 pixel = int2(input.sv_position.xy);
     const float ownDepth = fullDepth.Load(int3(pixel, 0)).r;

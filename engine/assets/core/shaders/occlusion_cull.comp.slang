@@ -14,6 +14,7 @@
 // closed producer→consumer pass binds its candidate/command/count buffers and the
 // pyramid on set 1.
 #include "hi_z_occlusion.slang"
+#include "Veng/binding.slang"
 
 // One uploaded camera-frustum survivor: its world AABB plus the indexed-draw args the
 // command needs. std430-identical to the engine's GpuCullCandidate.
@@ -37,10 +38,14 @@ struct DrawIndexedIndirectCommand
     uint FirstInstance;
 };
 
-[[vk::binding(0, 3)]] Texture2D<float> g_HiZ;
-[[vk::binding(1, 3)]] StructuredBuffer<CullCandidate> g_Candidates;
-[[vk::binding(2, 3)]] RWStructuredBuffer<DrawIndexedIndirectCommand> g_Commands;
-[[vk::binding(3, 3)]] RWStructuredBuffer<uint> g_DrawCount; // [0] survivor count for the stat
+struct OcclusionCullSet3
+{
+    Texture2D<float> HiZ;
+    StructuredBuffer<CullCandidate> Candidates;
+    RWStructuredBuffer<DrawIndexedIndirectCommand> Commands;
+    RWStructuredBuffer<uint> DrawCount;  // [0] survivor count for the stat
+};
+VE_DESCRIPTOR_SET(3, OcclusionCullSet3, g_Set3);
 
 struct PushConstants
 {
@@ -53,7 +58,7 @@ struct PushConstants
     uint CountIndex;       // this frame's slot in the survivor-count buffer
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -69,13 +74,13 @@ void csMain(uint3 id : SV_DispatchThreadID)
     // frame's region base into the index, exactly as the per-draw DrawData buffer is.
     uint slot = g_PC.FrameBase + index;
 
-    CullCandidate candidate = g_Candidates[slot];
+    CullCandidate candidate = g_Set3.Candidates[slot];
 
     bool occluded = false;
     if (g_PC.HistoryValid != 0u)
     {
         occluded = IsOccluded(candidate.BoundsMin.xyz, candidate.BoundsMax.xyz, g_PC.PrevViewProj,
-                              g_HiZ, g_PC.HiZBaseExtent, g_PC.DepthBias);
+                              g_Set3.HiZ, g_PC.HiZBaseExtent, g_PC.DepthBias);
     }
 
     uint instanceCount = occluded ? 0u : 1u;
@@ -86,11 +91,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
     command.FirstIndex = candidate.FirstIndex;
     command.VertexOffset = candidate.VertexOffset;
     command.FirstInstance = candidate.FirstInstance;
-    g_Commands[slot] = command;
+    g_Set3.Commands[slot] = command;
 
     // Survivor count for the debug stat only (read back next frame, never gating the draw).
     if (instanceCount != 0u)
     {
-        InterlockedAdd(g_DrawCount[g_PC.CountIndex], 1u);
+        InterlockedAdd(g_Set3.DrawCount[g_PC.CountIndex], 1u);
     }
 }

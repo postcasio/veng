@@ -9,7 +9,7 @@ struct MaterialParams
     float4 Mode; // x the pattern, y the face size in texels
 };
 
-[[vk::push_constant]] ConstantBuffer<SkyPushConstants> g_SkyPC;
+VE_PUSH_CONSTANTS(SkyPushConstants, g_SkyPC);
 
 uint Hash(uint x)
 {

@@ -362,33 +362,69 @@ namespace Veng
         char Name[ShaderNameCapacity] = {};
     };
 
+    /// @brief The current cooked shader format version.
+    ///
+    /// Bumped on any layout change; the loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedShaderVersion = 2u;
+
+    /// @brief The kind of compiled code a cooked shader section holds.
+    enum class CookedShaderCode : u32
+    {
+        /// @brief A SPIR-V module.
+        SpirV = 1,
+        /// @brief A compiled Metal library (.metallib).
+        MetalLibrary = 2,
+    };
+
     /// @brief Cooked header for a shader asset.
     ///
-    /// One cooked shader is one SPIR-V module with one entry point, covering one shader stage.
-    /// A Material asset references a vertex-stage and a fragment-stage shader as separate AssetIds.
-    /// The blob is, in order:
+    /// One cooked shader is one entry point covering one shader stage, compiled for each target
+    /// the cook was asked for. A Material asset references a vertex-stage and a fragment-stage
+    /// shader as separate AssetIds. The blob is, in order:
     ///   CookedShaderHeader
+    ///   CookedShaderSection[SectionCount]
     ///   CookedShaderInterfaceHeader
     ///   CookedDescriptorBinding[BindingCount]
     ///   CookedPushConstantBlock[PushConstantCount]
-    ///   SPIR-V bytes (SpirvBytes)
+    ///   each section's code, at the offset its CookedShaderSection names
     ///
-    /// InterfaceBytes is the size of CookedShaderInterfaceHeader plus the two arrays combined,
-    /// so the loader can seek straight to the SPIR-V. The referenced vertex layout is carried
-    /// as VertexLayoutAssetId in CookedShaderInterfaceHeader (0 = none).
-    /// Bindings, blocks, and the entry point are identified by name.
+    /// InterfaceBytes is the size of CookedShaderInterfaceHeader plus the two arrays combined. The
+    /// referenced vertex layout is carried as VertexLayoutAssetId in CookedShaderInterfaceHeader
+    /// (0 = none). Bindings, blocks, and the entry point are identified by name.
     struct CookedShaderHeader
     {
-        /// @brief The SPIR-V module's OpEntryPoint name.
-        ///
-        /// Slang does not always emit "main" — Shader::Create's ShaderBinaryInfo::EntryPoint
-        /// must match exactly, or pipeline creation fails validation.
-        char EntryPoint[ShaderNameCapacity] = {};
+        /// @brief Must equal CookedShaderVersion; the loader rejects a mismatch.
+        u32 Version = 0;
         /// @brief Byte size of the reflected interface region (CookedShaderInterfaceHeader + binding + push-constant arrays).
         u32 InterfaceBytes = 0;
-        /// @brief Byte size of the SPIR-V module that follows the interface region.
-        u32 SpirvBytes = 0;
+        /// @brief Number of CookedShaderSection entries that follow the header.
+        u32 SectionCount = 0;
+        /// @brief Reserved; zero.
+        u32 Reserved = 0;
     };
+    static_assert(sizeof(CookedShaderHeader) == 16,
+                  "CookedShaderHeader layout changed: bump CookedShaderVersion");
+
+    /// @brief One target's compiled code within a cooked shader blob.
+    struct CookedShaderSection
+    {
+        /// @brief The code kind; underlying CookedShaderCode integer.
+        u32 Code = 0;
+        /// @brief Byte offset of the code from the start of the blob.
+        u32 Offset = 0;
+        /// @brief Byte size of the code.
+        u32 Size = 0;
+        /// @brief Reserved; zero.
+        u32 Reserved = 0;
+        /// @brief The entry point's name in this target's code.
+        ///
+        /// A target's code generator may rename an entry point (Slang's SPIR-V backend names every
+        /// entry point "main"; its Metal backend renames one whose name Metal reserves), and the
+        /// pipeline must name it exactly.
+        char EntryPoint[ShaderNameCapacity] = {};
+    };
+    static_assert(sizeof(CookedShaderSection) == 16 + ShaderNameCapacity,
+                  "CookedShaderSection layout changed: bump CookedShaderVersion");
 
     /// @brief Reflected interface counts and optional vertex-layout reference for a shader.
     struct CookedShaderInterfaceHeader
@@ -404,9 +440,22 @@ namespace Veng
                   "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between "
                   "the u32 fields and the u64");
 
+    /// @brief How a descriptor binding is reached on Metal.
+    enum class CookedMetalBinding : u32
+    {
+        /// @brief The shader was not cooked for Metal.
+        None = 0,
+        /// @brief An element of its set's argument buffer; MetalIndex is the first element.
+        ArgumentBufferElement = 1,
+        /// @brief Bound by address at a buffer slot of its own (a dynamic uniform buffer);
+        /// MetalIndex is the slot.
+        BufferSlot = 2,
+    };
+
     /// @brief One descriptor binding reflected from the shader.
     ///
-    /// Set is >= 1; set 0 is the bindless registry and is excluded by the importer.
+    /// Set is at least the first author set; the bindless registries' sets are excluded by the
+    /// importer.
     struct CookedDescriptorBinding
     {
         /// @brief Descriptor set index (always >= 1).
@@ -419,9 +468,15 @@ namespace Veng
         u32 Count = 1;
         /// @brief Shader stage bitmask; underlying Renderer::ShaderStage integer.
         u32 StageMask = 0;
+        /// @brief How the binding is reached on Metal; underlying CookedMetalBinding integer.
+        u32 MetalBinding = 0;
+        /// @brief The binding's first argument-buffer element, or its buffer slot (MetalBinding).
+        u32 MetalIndex = 0;
         /// @brief Nul-terminated binding name, at most ShaderNameCapacity - 1 bytes.
         char Name[ShaderNameCapacity] = {};
     };
+    static_assert(sizeof(CookedDescriptorBinding) == 28 + ShaderNameCapacity,
+                  "CookedDescriptorBinding layout changed: bump CookedShaderVersion");
 
     /// @brief One push-constant block (or field) reflected from the shader.
     ///

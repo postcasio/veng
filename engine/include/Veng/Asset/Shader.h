@@ -15,7 +15,7 @@ namespace Veng
     /// rather than a hand-declared one.
     struct Shader
     {
-        /// @brief The compiled SPIR-V module.
+        /// @brief The compiled module, built from the cooked code for the backend compiled in.
         Ref<Renderer::ShaderModule> Module;
         /// @brief Reflected parameter/binding layout.
         Renderer::ShaderInterface Interface;

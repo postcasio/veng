@@ -30,26 +30,31 @@
 // THE SOFTWARE.
 
 #include "ssr_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(1, 3)]] Texture2D<uint> g_SobolBuffer;
-[[vk::binding(2, 3)]] Texture2D<uint> g_ScramblingTileBuffer;
-[[vk::binding(3, 3)]] [format("rg8")] RWTexture2D<float2> g_BlueNoiseTexture;
+struct SsrPrepareBlueNoiseSet3
+{
+    Texture2D<uint> SobolBuffer;
+    Texture2D<uint> ScramblingTileBuffer;
+    [format("rg8")] RWTexture2D<float2> BlueNoiseTexture;
+};
+VE_DESCRIPTOR_SET(3, SsrPrepareBlueNoiseSet3, g_Set3);
 
 #define GOLDEN_RATIO 1.61803398875f
 
 uint FFX_SSSR_GetSobolSample(uint3 coordinate)
 {
-    return g_SobolBuffer.Load(int3(coordinate));
+    return g_Set3.SobolBuffer.Load(int3(coordinate));
 }
 
 uint FFX_SSSR_GetScramblingTile(uint3 coordinate)
 {
-    return g_ScramblingTileBuffer.Load(int3(coordinate));
+    return g_Set3.ScramblingTileBuffer.Load(int3(coordinate));
 }
 
 void FFX_SSSR_StoreBlueNoiseSample(uint2 coordinate, float2 blue_noise_sample)
 {
-    g_BlueNoiseTexture[coordinate] = blue_noise_sample;
+    g_Set3.BlueNoiseTexture[coordinate] = blue_noise_sample;
 }
 
 // Blue Noise Sampler by Eric Heitz. Returns a value in the range [0, 1].

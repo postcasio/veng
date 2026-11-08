@@ -4,8 +4,7 @@
 // g_Buffers[] handle (what MaterialInstance::SetStorageBufferHandle writes); the shader
 // loads a float4 from that buffer (set 0, binding 3) and outputs it. Proves a material
 // reaching a game-supplied buffer by handle produces the buffer's contents.
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+#include "Veng/bindless.slang"
 
 struct MaterialParams
 {
@@ -22,7 +21,7 @@ struct PushConstants
     uint MaterialOffset;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

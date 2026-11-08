@@ -1,8 +1,8 @@
 // Fullscreen-triangle vertex stage: emits a single oversized triangle covering
 // the viewport with no vertex inputs; the pixel UV runs 0..1 across the screen.
-// Reads the SPIR-V VertexIndex builtin directly rather than SV_VertexID: the
-// latter subtracts the base-vertex offset and so pulls in the DrawParameters
-// capability, which the device does not enable.
+// SV_VulkanVertexID is the raw vertex index: SV_VertexID would subtract the
+// base-vertex offset and so pull in the DrawParameters capability, which the
+// device does not enable.
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -10,9 +10,9 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexIndex : SV_VulkanVertexID)
 {
-    int vertexID = spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); };
+    int vertexID = int(vertexIndex);
     VSOutput output;
     output.v_UV = float2((vertexID << 1) & 2, vertexID & 2);
     output.sv_position = float4(output.v_UV * 2.0 - 1.0, 0.0, 1.0);

@@ -4,11 +4,22 @@
 #pragma once
 
 #include "particle_types.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(PARTICLE_BINDING_ADDITIVE_LIST, 3)]] StructuredBuffer<uint> g_AdditiveList;
-[[vk::binding(PARTICLE_BINDING_ALPHA_KEYS, 3)]] StructuredBuffer<uint2> g_AlphaKeys;
-[[vk::binding(PARTICLE_BINDING_DRAWS, 3)]] StructuredBuffer<GpuParticleDraw> g_Draws;
-[[vk::binding(PARTICLE_BINDING_EMITTERS, 3)]] StructuredBuffer<GpuParticleEmitter> g_Emitters;
+struct ParticleDrawSet3
+{
+    ByteAddressBuffer Particles; // read by the compute stages only
+    ByteAddressBuffer DeadList; // read by the compute stages only
+    ByteAddressBuffer LiveList; // read by the compute stages only
+    StructuredBuffer<uint> AdditiveList;
+    StructuredBuffer<uint2> AlphaKeys;
+    StructuredBuffer<GpuParticleDraw> Draws;
+    ByteAddressBuffer Counters; // read by the compute stages only
+    ByteAddressBuffer Args; // read by the compute stages only
+    ByteAddressBuffer Instances; // read by the compute stages only
+    StructuredBuffer<GpuParticleEmitter> Emitters;
+};
+VE_DESCRIPTOR_SET(3, ParticleDrawSet3, g_Set3);
 
 // Matches ParticleScenePass's ParticleDrawPush.
 struct ParticleDrawPush
@@ -19,7 +30,7 @@ struct ParticleDrawPush
     uint Pad1;
 };
 
-[[vk::push_constant]] ConstantBuffer<ParticleDrawPush> g_PC;
+VE_PUSH_CONSTANTS(ParticleDrawPush, g_PC);
 
 struct VSOutput
 {

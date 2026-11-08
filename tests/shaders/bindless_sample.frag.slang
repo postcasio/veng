@@ -1,8 +1,7 @@
 // Samples a bindless-registered texture/sampler pair selected by push-constant
 // indices. The set-0 bindless arrays mirror the BindlessRegistry layout
 // (sampled images = 0, samplers = 1) and are excluded from reflection.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -10,7 +9,7 @@ struct PushConstants
     uint SamplerIndex;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -21,6 +20,6 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    return g_Textures[NonUniformResourceIndex(g_PC.TextureIndex)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.SamplerIndex)], input.v_UV);
+    return g_Textures[NonUniformIndex(g_PC.TextureIndex)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.SamplerIndex)], input.v_UV);
 }

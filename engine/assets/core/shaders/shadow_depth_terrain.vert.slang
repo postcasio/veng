@@ -1,4 +1,5 @@
 #include "Veng/sphere_terrain_draw.slang"
+#include "Veng/binding.slang"
 
 // Depth-only vertex stage for sphere terrain's shadow casters: the same placement and morph as the
 // g-buffer stage (SphereTerrainEvaluate), so a tile's shadow stands where its colour does. The push
@@ -14,7 +15,7 @@ struct ShadowTerrainPushConstants
     uint Pad2;
 };
 
-[[vk::push_constant]] ConstantBuffer<ShadowTerrainPushConstants> g_PC;
+VE_PUSH_CONSTANTS(ShadowTerrainPushConstants, g_PC);
 
 struct VSOutput
 {

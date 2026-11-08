@@ -23,8 +23,8 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
     const float2 uv = OctahedralUV(float3(0.0, -1.0, 0.0));
-    const float3 color = g_Textures[NonUniformResourceIndex(p.Texture)]
-                             .Sample(g_Samplers[NonUniformResourceIndex(p.Sampler)], uv)
+    const float3 color = g_Textures[NonUniformIndex(p.Texture)]
+                             .Sample(g_Samplers[NonUniformIndex(p.Sampler)], uv)
                              .rgb;
     return float4(color, 1.0);
 }

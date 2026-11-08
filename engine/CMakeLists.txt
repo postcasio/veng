@@ -439,6 +439,10 @@ target_include_directories(veng PUBLIC
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
+# The Metal binding-slot constants (Veng/Cook/MetalBindingSlots.h) are shared by the cook and the
+# engine. The header is self-contained, so the engine reaches it without linking the cooker.
+target_include_directories(veng PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../cooker/include)
+
 # ImGui/imnodes headers are part of veng's public API surface
 # (Veng/Vendor/ImGui.h includes <imgui.h>, <imnodes.h>, ...).
 target_include_directories(veng PUBLIC

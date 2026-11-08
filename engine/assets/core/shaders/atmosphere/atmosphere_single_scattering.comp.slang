@@ -7,16 +7,21 @@
 // Set 1: the transmittance LUT (sampled) + its sampler, and the destination 3D scattering
 // volume (write-only storage), off the bindless registry.
 #include "atmosphere_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Transmittance;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture3D<float4> g_Scattering;
+struct AtmosphereSingleScatteringSet3
+{
+    Texture2D<float4> Transmittance;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture3D<float4> Scattering;
+};
+VE_DESCRIPTOR_SET(3, AtmosphereSingleScatteringSet3, g_Set3);
 
 struct PushConstants
 {
     AtmosphereParams Atmosphere;
 };
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(4, 4, 4)]
@@ -52,12 +57,12 @@ void csMain(uint3 id : SV_DispatchThreadID)
         float muSi = ClampCosine((r * muS) / ri);
 
         // Transmittance viewer->sample (via the difference of two to-top lookups) and sample->sun.
-        float3 tView = SampleTransmittanceToTop(a, g_Transmittance, g_Sampler, r, mu) /
-                       max(SampleTransmittanceToTop(a, g_Transmittance, g_Sampler, ri,
+        float3 tView = SampleTransmittanceToTop(a, g_Set3.Transmittance, g_Set3.Sampler, r, mu) /
+                       max(SampleTransmittanceToTop(a, g_Set3.Transmittance, g_Set3.Sampler, ri,
                                                     ClampCosine((r * mu + d) / ri)),
                            float3(1e-6));
         tView = clamp(tView, 0.0, 1.0);
-        float3 tSun = SampleTransmittanceToSun(a, g_Transmittance, g_Sampler, ri, muSi);
+        float3 tSun = SampleTransmittanceToSun(a, g_Set3.Transmittance, g_Set3.Sampler, ri, muSi);
         float3 t = tView * tSun;
 
         float densR = exp(-h / a.RayleighHeight);
@@ -68,5 +73,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     rayleigh *= a.RayleighScattering;
     mie *= a.MieScattering;
-    g_Scattering[id] = float4(rayleigh, mie.x);
+    g_Set3.Scattering[id] = float4(rayleigh, mie.x);
 }

@@ -8,9 +8,15 @@
 // layout while its tick runs); the parent's layer as a sampled image, resident and sampleable; the
 // result as one entry of the frame's bounds buffer, bound alone so tiles never share a range.
 
-[[vk::binding(0, 3)]] [format("r32f")] RWTexture2D<float> g_Height;
-[[vk::binding(1, 3)]] Texture2D<float> g_ParentHeight;
-[[vk::binding(2, 3)]] RWStructuredBuffer<float4> g_Bounds;
+#include "../Veng/binding.slang"
+
+struct SphereTerrainBoundsSet3
+{
+    [format("r32f")] RWTexture2D<float> Height;
+    Texture2D<float> ParentHeight;
+    RWStructuredBuffer<float4> Bounds;
+};
+VE_DESCRIPTOR_SET(3, SphereTerrainBoundsSet3, g_Set3);
 
 struct BoundsPush
 {
@@ -19,7 +25,7 @@ struct BoundsPush
     // Nonzero when the tile has a parent to measure against.
     uint HasParent;
 };
-[[vk::push_constant]] BoundsPush u_Push;
+VE_PUSH_CONSTANTS(BoundsPush, u_Push);
 
 static const uint Border = 2;
 static const uint Cells = 128;
@@ -34,7 +40,7 @@ groupshared float s_Error[GroupSize];
 
 float ParentVertex(uint2 vertex)
 {
-    return g_ParentHeight.Load(int3(int2(Border + vertex * TexelsPerQuad), 0));
+    return g_Set3.ParentHeight.Load(int3(int2(Border + vertex * TexelsPerQuad), 0));
 }
 
 [shader("compute")]
@@ -49,7 +55,7 @@ void csMain(uint3 thread : SV_GroupThreadID)
     {
         for (uint x = thread.x; x <= Cells; x += GroupEdge)
         {
-            const float h = g_Height[int2(x + Border, y + Border)];
+            const float h = g_Set3.Height[int2(x + Border, y + Border)];
             low = min(low, h);
             high = max(high, h);
         }
@@ -62,7 +68,7 @@ void csMain(uint3 thread : SV_GroupThreadID)
         {
             for (uint i = thread.x; i <= GridQuads; i += GroupEdge)
             {
-                const float h = g_Height[int2(Border + i * TexelsPerQuad, Border + j * TexelsPerQuad)];
+                const float h = g_Set3.Height[int2(Border + i * TexelsPerQuad, Border + j * TexelsPerQuad)];
                 // The vertex in parent half-vertex units: even is a parent vertex, odd a midpoint.
                 const uint2 halfVertex = u_Push.Quadrant * GridQuads + uint2(i, j);
                 const uint2 base = halfVertex >> 1;
@@ -109,6 +115,6 @@ void csMain(uint3 thread : SV_GroupThreadID)
 
     if (index == 0u)
     {
-        g_Bounds[0] = float4(s_Min[0], s_Max[0], s_Error[0], 1.0);
+        g_Set3.Bounds[0] = float4(s_Min[0], s_Max[0], s_Error[0], 1.0);
     }
 }

@@ -26,6 +26,19 @@ namespace Veng::Renderer
     class Context;
     class DescriptorSetLayout;
 
+    /// @brief How a descriptor binding is reached on Metal.
+    enum class MetalBindingKind : u8
+    {
+        /// @brief The shader was not cooked for Metal.
+        None,
+        /// @brief An element of its set's argument buffer; ShaderBinding::MetalIndex is the first
+        ///        element (a combined image sampler takes two, an arrayed binding one per element).
+        ArgumentBufferElement,
+        /// @brief Bound by address at a buffer slot of its own, as a dynamic uniform buffer is;
+        ///        ShaderBinding::MetalIndex is the slot.
+        BufferSlot,
+    };
+
     /// @brief One descriptor binding reflected from a shader's interface.
     ///
     /// Set is always >= BindlessRegistry::FirstUserSet — the leading sets are the typed
@@ -46,6 +59,10 @@ namespace Veng::Renderer
         u32 Count = 1;
         /// @brief Shader stages that access this binding.
         ShaderStage Stages{};
+        /// @brief How the binding is reached on Metal.
+        MetalBindingKind MetalKind = MetalBindingKind::None;
+        /// @brief The binding's first argument-buffer element, or its buffer slot (MetalKind).
+        u32 MetalIndex = 0;
     };
 
     /// @brief One push-constant block reflected from a shader's interface.

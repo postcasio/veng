@@ -64,8 +64,19 @@ at cook time:
 
 - **Shaders** are authored in **Slang** — Slang only, there is no GLSL path. The cooker
   **always** compiles from source (there is no precompiled-inline path) and **reflects
-  the shader offline** into a serializable `ShaderInterface`; the engine then loads
-  plain SPIR-V.
+  the shader offline** into a serializable `ShaderInterface`; the engine then loads the
+  compiled code for its backend. A shader cooks to the cooker's **shader targets**
+  (`Cooker::SetShaderTargets`, defaulting to the build's `VE_SHADER_TARGETS`; `vengc
+  --shader-targets`): SPIR-V, a Metal library (`xcrun metal`, Metal 4, fast math), or both, one
+  section per target in the cooked blob (`Veng/Asset/CookedShader.h`). SPIR-V is always compiled
+  for reflection; whenever Metal is compiled, `ReflectShaderInterface`
+  (`Veng/Cook/ShaderTargets.h`, the same call a run-time compiler makes) holds the shader to the
+  Metal binding model — every set a parameter block in its own buffer slot, a dynamic uniform
+  buffer or the push block at its reserved slot (`Veng/Cook/MetalBindingSlots.h`) — records each
+  binding's argument-buffer element or slot, and fails the cook on any member offset the two
+  layouts disagree on. A host without the Metal toolchain drops the Metal section with one notice
+  per pack. The declaration form and the binding model are
+  [docs/guides/shader-bindings.md](../docs/guides/shader-bindings.md).
 - **A fragment shader's source can be a graph, not a `.slang` file.** A `*.shader.json` whose
   `"source"` ends in `.graph.json` (plus a `"domain"`: `"Surface"` | `"PostProcess"` | `"Sky"` |
   `"Translucent"` | `"GuiFill"`, `MaterialDomain`'s exact enumerator spellings) is cooked by
@@ -747,6 +758,8 @@ loudly instead, and a consumer **rebuilds; no source change is required.**
   cache's module tag to the entries that actually read a module image. A cook module never needs to
   override it — a module importer's code lives in the image, so the host records it as
   module-dependent without asking.
+- **3 → 4.** `CookContext` gained a trailing `ShaderTargets` field, the GPU targets the shader
+  importer compiles for — a short context.
 
 ### Reading a `--timing` report
 
@@ -846,12 +859,14 @@ so the cooker and the runtime loader share one encoder.
   serve unchanged assets from the cook cache instead of re-encoding them, see [The cook
   cache](#the-cook-cache); `--jobs <n>` to bound the cook's whole concurrency budget and
   `--timing[=<out.csv>]` to emit the per-asset / per-importer report, see [The cook is
-  parallel](#the-cook-is-parallel--and-an-importer-declares-whether-it-may-be)). Engine-internal
+  parallel](#the-cook-is-parallel--and-an-importer-declares-whether-it-may-be);
+  `--shader-targets <Native|All|spirv,metal>` to choose the GPU code shaders cook to, defaulting to
+  the build's `VE_SHADER_TARGETS`). Engine-internal
   packs (the core pack, the editor icons) cook this way.
 - **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
   <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--cook-module <lib>]
   [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>] [--jobs <n>]
-  [--timing[=<out.csv>]]`.
+  [--timing[=<out.csv>]] [--shader-targets <targets>]`.
   `ParseProject` hand-parses the project's `packs`, `editorPacks`, `configurations`,
   `startupLevel` and `defaultUiContext`; the named configuration is matched by
   `BuildConfiguration.Name`; each pack cooks into `<stem><suffix>.vengpack` and a
@@ -967,7 +982,7 @@ passing both is an explicit override of the sibling lookup.
   duplicated machinery. `AssetImporterRegistry::Register` is inline for exactly this reason — an
   out-of-line definition would be an unresolved symbol in the module.
 - **Its own ABI, versioned independently.** `VengCookModuleRegister(VengCookModuleHost*)` with a
-  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently **3** — see
+  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently **4** — see
   [the ABI history](#cook-module-abi-history)), so a change
   to the importer surface never invalidates every runtime module. `ModuleLoader::Load` is
   parameterized on the version symbol and expected value, so both contracts share one platform

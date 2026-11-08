@@ -15,8 +15,7 @@
 #include "view_constants.slang"
 #include "ribbon_common.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct MaskedOutput
 {

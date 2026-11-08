@@ -16,17 +16,17 @@ static const int ScatteringNuRes = 8;
 static const int IrradianceWidth = 64;
 static const int IrradianceHeight = 16;
 
-// The atmosphere parameters, mirroring Veng::Renderer::Atmosphere field-for-field. Pushed
+// The atmosphere parameters, mirroring Veng::Renderer::Atmosphere byte-for-byte. Pushed
 // to every precompute dispatch and to the runtime sky pass so the tables and the eval read
 // identical constants.
 struct AtmosphereParams
 {
-    float3 RayleighScattering;
-    float RayleighHeight;
-    float3 MieScattering;
-    float MieExtinction;
-    float3 OzoneAbsorption;
-    float MieHeight;
+    // Each float3 shares a float4 with the scalar after it, so the scalars sit at the same offsets
+    // on every target (a float3 alone is padded to 16 bytes in a Metal constant block). The
+    // properties read the named components back.
+    float4 RayleighScatteringHeight;
+    float4 MieScatteringExtinction;
+    float4 OzoneAbsorptionMieHeight;
     float MieAnisotropy;
     float OzoneCenter;
     float OzoneWidth;
@@ -35,8 +35,15 @@ struct AtmosphereParams
     float SunAngularRadius;
     float Pad0;
     float Pad1;
-    float3 SunIrradiance;
-    float Pad2;
+    float4 SunIrradiancePad;
+
+    property float3 RayleighScattering { get { return RayleighScatteringHeight.xyz; } }
+    property float RayleighHeight { get { return RayleighScatteringHeight.w; } }
+    property float3 MieScattering { get { return MieScatteringExtinction.xyz; } }
+    property float MieExtinction { get { return MieScatteringExtinction.w; } }
+    property float3 OzoneAbsorption { get { return OzoneAbsorptionMieHeight.xyz; } }
+    property float MieHeight { get { return OzoneAbsorptionMieHeight.w; } }
+    property float3 SunIrradiance { get { return SunIrradiancePad.xyz; } }
 };
 
 // Combined per-channel extinction at altitude h (km above the surface).

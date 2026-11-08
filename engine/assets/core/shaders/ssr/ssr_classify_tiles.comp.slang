@@ -52,18 +52,22 @@
 #include "ssr_common.slang"
 #include "ssr_coverage.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
-[[vk::binding(1, 3)]] TextureCube g_EnvironmentMap;
-[[vk::binding(2, 3)]] SamplerState g_EnvironmentMapSampler;
-[[vk::binding(3, 3)]] Texture2D<float> g_DepthHierarchy;
-[[vk::binding(4, 3)]] Texture2D<float> g_VarianceHistory;
-[[vk::binding(5, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Radiance;
-[[vk::binding(6, 3)]] RWStructuredBuffer<uint> g_RayList;
-[[vk::binding(7, 3)]] RWStructuredBuffer<uint> g_DenoiserTileList;
-[[vk::binding(8, 3)]] globallycoherent RWStructuredBuffer<uint> g_RayCounter;
-[[vk::binding(9, 3)]] [format("r8")] RWTexture2D<float> g_ExtractedRoughness;
-[[vk::binding(10, 3)]] [format("r8")] RWTexture2D<float> g_Coverage; // csCoverage only
+struct SsrClassifyTilesSet3
+{
+    TextureCube EnvironmentMap;
+    SamplerState EnvironmentMapSampler;
+    Texture2D<float> DepthHierarchy;
+    Texture2D<float> VarianceHistory;
+    [format("rgba16f")] RWTexture2D<float4> Radiance;
+    RWStructuredBuffer<uint> RayList;
+    RWStructuredBuffer<uint> DenoiserTileList;
+    globallycoherent RWStructuredBuffer<uint> RayCounter;
+    [format("r8")] RWTexture2D<float> ExtractedRoughness;
+    [format("r8")] RWTexture2D<float> Coverage;  // csCoverage only
+};
+VE_DESCRIPTOR_SET(3, SsrClassifyTilesSet3, g_Set3);
 
 struct PushConstants
 {
@@ -71,7 +75,7 @@ struct PushConstants
     uint MaterialTexture; // the g-buffer occlusion/roughness/metallic's bindless index (G2)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 bool IsInside(uint2 coordinate, uint2 extent)
 {
@@ -90,7 +94,7 @@ uint2 BindlessExtent(uint index)
 {
     uint width;
     uint height;
-    g_Textures[NonUniformResourceIndex(index)].GetDimensions(width, height);
+    g_Textures[NonUniformIndex(index)].GetDimensions(width, height);
     return uint2(width, height);
 }
 
@@ -100,25 +104,25 @@ float3 FFX_SSSR_LoadWorldSpaceNormal(int2 pixel_coordinate)
     {
         return float3(0.0);
     }
-    return normalize(g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz);
+    return normalize(g_Textures[NonUniformIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz);
 }
 
 float FFX_SSSR_LoadDepth(int2 pixel_coordinate, int mip)
 {
-    if (!IsInside(uint2(pixel_coordinate), max(TextureExtent(g_DepthHierarchy) >> uint(mip), uint2(1))))
+    if (!IsInside(uint2(pixel_coordinate), max(TextureExtent(g_Set3.DepthHierarchy) >> uint(mip), uint2(1))))
     {
         return 0.0;
     }
-    return g_DepthHierarchy.Load(int3(pixel_coordinate, mip));
+    return g_Set3.DepthHierarchy.Load(int3(pixel_coordinate, mip));
 }
 
 float FFX_SSSR_LoadVarianceHistory(int3 coordinate)
 {
-    if (!IsInside(uint2(coordinate.xy), TextureExtent(g_VarianceHistory)))
+    if (!IsInside(uint2(coordinate.xy), TextureExtent(g_Set3.VarianceHistory)))
     {
         return 0.0;
     }
-    return g_VarianceHistory.Load(coordinate).x;
+    return g_Set3.VarianceHistory.Load(coordinate).x;
 }
 
 // The reference squares a perceptual input once at this load when told it is perceptual; the
@@ -129,7 +133,7 @@ float LoadRoughnessFromMaterialParametersInput(uint3 coordinate)
     {
         return 0.0;
     }
-    float rawRoughness = g_Textures[NonUniformResourceIndex(g_PC.MaterialTexture)].Load(int3(coordinate)).g;
+    float rawRoughness = g_Textures[NonUniformIndex(g_PC.MaterialTexture)].Load(int3(coordinate)).g;
     rawRoughness *= rawRoughness;
     return rawRoughness;
 }
@@ -144,21 +148,21 @@ float3 FFX_SSSR_SampleEnvironmentMap(float3 direction, float preceptualRoughness
 {
     uint width;
     uint height;
-    g_EnvironmentMap.GetDimensions(width, height);
+    g_Set3.EnvironmentMap.GetDimensions(width, height);
     float Width = float(width);
     int maxMipLevel = int(log2(float(Width > 0 ? Width : 1)));
     float mip = clamp(preceptualRoughness * float(maxMipLevel), 0.0, float(maxMipLevel));
-    return g_EnvironmentMap.SampleLevel(g_EnvironmentMapSampler, EnvironmentLookupDirection(direction), mip).xyz * IBLFactor() * IBLTint();
+    return g_Set3.EnvironmentMap.SampleLevel(g_Set3.EnvironmentMapSampler, EnvironmentLookupDirection(direction), mip).xyz * IBLFactor() * IBLTint();
 }
 
 void FFX_SSSR_StoreRadiance(uint2 coordinate, float4 radiance)
 {
     uint width;
     uint height;
-    g_Radiance.GetDimensions(width, height);
+    g_Set3.Radiance.GetDimensions(width, height);
     if (IsInside(coordinate, uint2(width, height)))
     {
-        g_Radiance[coordinate] = radiance;
+        g_Set3.Radiance[coordinate] = radiance;
     }
 }
 
@@ -166,32 +170,32 @@ void StoreExtractedRoughness(uint2 coordinate, float roughness)
 {
     uint width;
     uint height;
-    g_ExtractedRoughness.GetDimensions(width, height);
+    g_Set3.ExtractedRoughness.GetDimensions(width, height);
     if (IsInside(coordinate, uint2(width, height)))
     {
-        g_ExtractedRoughness[coordinate] = roughness;
+        g_Set3.ExtractedRoughness[coordinate] = roughness;
     }
 }
 
 void IncrementRayCounter(uint value, out uint original_value)
 {
-    InterlockedAdd(g_RayCounter[0], value, original_value);
+    InterlockedAdd(g_Set3.RayCounter[0], value, original_value);
 }
 
 void IncrementDenoiserTileCounter(out uint original_value)
 {
-    InterlockedAdd(g_RayCounter[2], 1, original_value);
+    InterlockedAdd(g_Set3.RayCounter[2], 1, original_value);
 }
 
 void StoreRay(int index, uint2 ray_coord, bool copy_horizontal, bool copy_vertical, bool copy_diagonal)
 {
     uint packedRayCoords = PackRayCoords(ray_coord, copy_horizontal, copy_vertical, copy_diagonal); // Store out pixel to trace
-    g_RayList[index] = packedRayCoords;
+    g_Set3.RayList[index] = packedRayCoords;
 }
 
 void StoreDenoiserTile(int index, uint2 tile_coord)
 {
-    g_DenoiserTileList[index] = ((tile_coord.y & 0xffffu) << 16) | ((tile_coord.x & 0xffffu) << 0); // Store out pixel to trace
+    g_Set3.DenoiserTileList[index] = ((tile_coord.y & 0xffffu) << 16) | ((tile_coord.x & 0xffffu) << 0); // Store out pixel to trace
 }
 
 // ffxRemapForWaveReduction: local index -> 8×8 position, each 2×2 quad on four consecutive indices.
@@ -291,7 +295,7 @@ void ClassifyTiles(uint2 dispatch_thread_id, uint2 group_thread_id, uint local_t
     bool copy_diagonal = g_RequireCopy[local_thread_index ^ 3] != 0u && (SamplesPerQuad() == 1) && is_base_ray;   // QuadReadAcrossDiagonal
 
     // Thus, we need to compact the rays and append them all at once to the ray list.
-    uint local_ray_index_in_wave = WavePrefixCountBits(needs_ray);
+    uint local_ray_index_in_wave = WavePrefixCount(needs_ray);
     uint wave_ray_count = WaveActiveCountBits(needs_ray);
     uint base_ray_index = 0;
     if (is_first_lane_of_wave)
@@ -413,6 +417,6 @@ void csCoverage(uint LocalThreadIndex : SV_GroupIndex, uint3 WorkGroupId : SV_Gr
 
     if (all(dispatch_thread_id < RenderSize()))
     {
-        g_Coverage[dispatch_thread_id] = float(g_CoverageCode[LocalThreadIndex]) / 255.0;
+        g_Set3.Coverage[dispatch_thread_id] = float(g_CoverageCode[LocalThreadIndex]) / 255.0;
     }
 }

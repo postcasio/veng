@@ -23,7 +23,11 @@ struct GpuFieldPoint
 // FieldPoint byte-for-byte. Read through a ByteAddressBuffer at an explicit 20-byte stride so the
 // element layout cannot drift from the CPU's on a std430 float3-alignment interpretation (a
 // StructuredBuffer<GpuFieldPoint> would round the float3 up to a 16-byte member and shear the read).
-[[vk::binding(0, 3)]] ByteAddressBuffer g_Points;
+struct PointSpriteDirectSet3
+{
+    ByteAddressBuffer Points;
+};
+VE_DESCRIPTOR_SET(3, PointSpriteDirectSet3, g_Set3);
 
 static const uint FieldPointStride = 20;
 
@@ -31,9 +35,9 @@ GpuFieldPoint LoadPoint(uint index)
 {
     uint base = index * FieldPointStride;
     GpuFieldPoint p;
-    p.Position = asfloat(g_Points.Load3(base));
-    p.ColorRgba8 = g_Points.Load(base + 12);
-    p.Size = asfloat(g_Points.Load(base + 16));
+    p.Position = asfloat(g_Set3.Points.Load3(base));
+    p.ColorRgba8 = g_Set3.Points.Load(base + 12);
+    p.Size = asfloat(g_Set3.Points.Load(base + 16));
     return p;
 }
 
@@ -57,7 +61,7 @@ struct PushConstants
     float JitterNdcY;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -76,12 +80,10 @@ float4 UnpackRgba8(uint packed)
 }
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // Read the VertexIndex builtin directly (not SV_VertexID) to avoid the base-vertex subtract
-    // that pulls in the DrawParameters capability the device does not enable. The indexed draw
-    // sets firstIndex=0 and vertexOffset=0, so the builtin equals the index buffer's value.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
+    // The indexed draw sets firstIndex=0 and vertexOffset=0, so the vertex index equals the index
+    // buffer\'s value.
 
     // An indexed draw of 4 unique vertices per point (vertex id = 4*point + corner): vertexId / 4
     // selects the point within the cell, vertexId & 3 the quad corner. FirstPoint offsets into the

@@ -19,8 +19,7 @@ struct VSOutput
     nointerpolation float4 v_Params : TEXCOORD3;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 float Median(float a, float b, float c)
 {
@@ -35,8 +34,8 @@ float4 fsMain(VSOutput input) : SV_Target
     int textureIndex = int(input.v_Params.z);
     int samplerIndex = int(input.v_Params.w);
 
-    Texture2D atlas = g_Textures[NonUniformResourceIndex(textureIndex)];
-    SamplerState atlasSampler = g_Samplers[NonUniformResourceIndex(samplerIndex)];
+    Texture2D atlas = g_Textures[NonUniformIndex(textureIndex)];
+    SamplerState atlasSampler = g_Samplers[NonUniformIndex(samplerIndex)];
 
     // An Msdf glyph reconstructs the signed distance from the median of its three channels; an Sdf
     // glyph carries a single-channel field in red. Both encode the same distance range, so the

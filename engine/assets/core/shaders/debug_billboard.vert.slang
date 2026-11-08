@@ -17,7 +17,11 @@ struct GpuBillboard
     uint Pad2;
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuBillboard> g_Billboards;
+struct DebugBillboardSet3
+{
+    StructuredBuffer<GpuBillboard> Billboards;
+};
+VE_DESCRIPTOR_SET(3, DebugBillboardSet3, g_Set3);
 
 struct PushConstants
 {
@@ -31,7 +35,7 @@ struct PushConstants
     uint Pad3;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -44,19 +48,15 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // Read the SPIR-V VertexIndex builtin directly rather than SV_VertexID: the latter subtracts
-    // the base-vertex offset and so pulls in the DrawParameters capability, which the device does
-    // not enable (the same reason fullscreen.vert reads it this way).
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
 
     // A single non-instanced draw of 6*N vertices: vertexId / 6 selects the billboard record,
     // vertexId % 6 the quad corner — no instance attribute, no SV_InstanceID.
     uint instanceId = vertexId / 6;
     uint cornerId = vertexId % 6;
 
-    GpuBillboard bb = g_Billboards[instanceId];
+    GpuBillboard bb = g_Set3.Billboards[instanceId];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     // Two-triangle quad corners (0,0)(1,0)(0,1) / (1,0)(1,1)(0,1) in [-0.5, 0.5].

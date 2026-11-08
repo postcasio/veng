@@ -163,6 +163,10 @@ namespace Veng::Renderer
                          });
         }
 
+        // The chain's constants are a dynamic uniform buffer, which a shader declares outside its
+        // set's parameter block, so its binding sits past every pass's block fields.
+        constexpr u32 SsrConstantsBinding = 16;
+
         [[nodiscard]] DescriptorBinding Binding(const u32 binding, const DescriptorType type)
         {
             return {.Binding = binding, .Type = type, .Count = 1, .Stages = ShaderStage::Compute};
@@ -206,22 +210,23 @@ namespace Veng::Renderer
                                               "Depth Downsample", m_DownsampleLayout);
 
         m_ClassifySetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Classify Tiles Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::SampledImage),
-                                   Binding(2, DescriptorType::Sampler),
-                                   Binding(3, DescriptorType::SampledImage),
-                                   Binding(4, DescriptorType::SampledImage),
-                                   Binding(5, DescriptorType::StorageImage),
-                                   Binding(6, DescriptorType::StorageBuffer),
-                                   Binding(7, DescriptorType::StorageBuffer),
-                                   Binding(8, DescriptorType::StorageBuffer),
-                                   Binding(9, DescriptorType::StorageImage),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Classify Tiles Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::SampledImage),
+                        Binding(1, DescriptorType::Sampler),
+                        Binding(2, DescriptorType::SampledImage),
+                        Binding(3, DescriptorType::SampledImage),
+                        Binding(4, DescriptorType::StorageImage),
+                        Binding(5, DescriptorType::StorageBuffer),
+                        Binding(6, DescriptorType::StorageBuffer),
+                        Binding(7, DescriptorType::StorageBuffer),
+                        Binding(8, DescriptorType::StorageImage),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_ClassifyLayout = PipelineLayout::Create(
             m_Context,
             {
@@ -233,16 +238,17 @@ namespace Veng::Renderer
                                             "Classify Tiles", m_ClassifyLayout);
 
         m_BlueNoiseSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Prepare Blue Noise Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::SampledImage),
-                                   Binding(2, DescriptorType::SampledImage),
-                                   Binding(3, DescriptorType::StorageImage),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Prepare Blue Noise Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::SampledImage),
+                        Binding(1, DescriptorType::SampledImage),
+                        Binding(2, DescriptorType::StorageImage),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_BlueNoiseLayout =
             PipelineLayout::Create(m_Context, {
                                                   .Name = "SSR Prepare Blue Noise Layout",
@@ -269,21 +275,22 @@ namespace Veng::Renderer
                                                 "Prepare Indirect Args", m_IndirectArgsLayout);
 
         m_IntersectSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Intersect Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::SampledImage),
-                                   Binding(2, DescriptorType::Sampler),
-                                   Binding(3, DescriptorType::SampledImage),
-                                   Binding(4, DescriptorType::SampledImage),
-                                   Binding(5, DescriptorType::SampledImage),
-                                   Binding(6, DescriptorType::StorageBuffer),
-                                   Binding(7, DescriptorType::StorageBuffer),
-                                   Binding(8, DescriptorType::StorageImage),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Intersect Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::SampledImage),
+                        Binding(1, DescriptorType::Sampler),
+                        Binding(2, DescriptorType::SampledImage),
+                        Binding(3, DescriptorType::SampledImage),
+                        Binding(4, DescriptorType::SampledImage),
+                        Binding(5, DescriptorType::StorageBuffer),
+                        Binding(6, DescriptorType::StorageBuffer),
+                        Binding(7, DescriptorType::StorageImage),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_IntersectLayout = PipelineLayout::Create(
             m_Context,
             {
@@ -295,28 +302,29 @@ namespace Veng::Renderer
             CreatePipeline(m_Context, assets, IntersectCompId, "Intersect", m_IntersectLayout);
 
         m_ReprojectSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Denoiser Reproject Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::Sampler),
-                                   Binding(2, DescriptorType::SampledImage),
-                                   Binding(3, DescriptorType::SampledImage),
-                                   Binding(4, DescriptorType::SampledImage),
-                                   Binding(5, DescriptorType::SampledImage),
-                                   Binding(6, DescriptorType::SampledImage),
-                                   Binding(7, DescriptorType::SampledImage),
-                                   Binding(8, DescriptorType::SampledImage),
-                                   Binding(9, DescriptorType::SampledImage),
-                                   Binding(10, DescriptorType::SampledImage),
-                                   Binding(11, DescriptorType::StorageImage),
-                                   Binding(12, DescriptorType::StorageImage),
-                                   Binding(13, DescriptorType::StorageImage),
-                                   Binding(14, DescriptorType::StorageBuffer),
-                                   Binding(15, DescriptorType::StorageImage),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Denoiser Reproject Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::Sampler),
+                        Binding(1, DescriptorType::SampledImage),
+                        Binding(2, DescriptorType::SampledImage),
+                        Binding(3, DescriptorType::SampledImage),
+                        Binding(4, DescriptorType::SampledImage),
+                        Binding(5, DescriptorType::SampledImage),
+                        Binding(6, DescriptorType::SampledImage),
+                        Binding(7, DescriptorType::SampledImage),
+                        Binding(8, DescriptorType::SampledImage),
+                        Binding(9, DescriptorType::SampledImage),
+                        Binding(10, DescriptorType::StorageImage),
+                        Binding(11, DescriptorType::StorageImage),
+                        Binding(12, DescriptorType::StorageImage),
+                        Binding(13, DescriptorType::StorageBuffer),
+                        Binding(14, DescriptorType::StorageImage),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_ReprojectLayout = PipelineLayout::Create(
             m_Context,
             {
@@ -328,22 +336,23 @@ namespace Veng::Renderer
                                              "Denoiser Reproject", m_ReprojectLayout);
 
         m_PrefilterSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Denoiser Prefilter Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::Sampler),
-                                   Binding(2, DescriptorType::SampledImage),
-                                   Binding(3, DescriptorType::SampledImage),
-                                   Binding(4, DescriptorType::SampledImage),
-                                   Binding(5, DescriptorType::SampledImage),
-                                   Binding(6, DescriptorType::SampledImage),
-                                   Binding(7, DescriptorType::StorageImage),
-                                   Binding(8, DescriptorType::StorageImage),
-                                   Binding(9, DescriptorType::StorageBuffer),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Denoiser Prefilter Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::Sampler),
+                        Binding(1, DescriptorType::SampledImage),
+                        Binding(2, DescriptorType::SampledImage),
+                        Binding(3, DescriptorType::SampledImage),
+                        Binding(4, DescriptorType::SampledImage),
+                        Binding(5, DescriptorType::SampledImage),
+                        Binding(6, DescriptorType::StorageImage),
+                        Binding(7, DescriptorType::StorageImage),
+                        Binding(8, DescriptorType::StorageBuffer),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_PrefilterLayout = PipelineLayout::Create(
             m_Context,
             {
@@ -355,23 +364,24 @@ namespace Veng::Renderer
                                              "Denoiser Prefilter", m_PrefilterLayout);
 
         m_ResolveSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SSR Denoiser Resolve Temporal Set Layout",
-                           .Bindings =
-                               {
-                                   Binding(0, DescriptorType::UniformBufferDynamic),
-                                   Binding(1, DescriptorType::Sampler),
-                                   Binding(2, DescriptorType::SampledImage),
-                                   Binding(3, DescriptorType::SampledImage),
-                                   Binding(4, DescriptorType::SampledImage),
-                                   Binding(5, DescriptorType::SampledImage),
-                                   Binding(6, DescriptorType::SampledImage),
-                                   Binding(7, DescriptorType::SampledImage),
-                                   Binding(8, DescriptorType::StorageImage),
-                                   Binding(9, DescriptorType::StorageImage),
-                                   Binding(10, DescriptorType::StorageBuffer),
-                               },
-                       });
+            m_Context,
+            {
+                .Name = "SSR Denoiser Resolve Temporal Set Layout",
+                .Bindings =
+                    {
+                        Binding(0, DescriptorType::Sampler),
+                        Binding(1, DescriptorType::SampledImage),
+                        Binding(2, DescriptorType::SampledImage),
+                        Binding(3, DescriptorType::SampledImage),
+                        Binding(4, DescriptorType::SampledImage),
+                        Binding(5, DescriptorType::SampledImage),
+                        Binding(6, DescriptorType::SampledImage),
+                        Binding(7, DescriptorType::StorageImage),
+                        Binding(8, DescriptorType::StorageImage),
+                        Binding(9, DescriptorType::StorageBuffer),
+                        Binding(SsrConstantsBinding, DescriptorType::UniformBufferDynamic),
+                    },
+            });
         m_ResolveLayout =
             PipelineLayout::Create(m_Context, {
                                                   .Name = "SSR Denoiser Resolve Temporal Layout",
@@ -579,7 +589,7 @@ namespace Veng::Renderer
         if (m_CoveragePipeline == nullptr)
         {
             vector<DescriptorBinding> bindings = m_ClassifySetLayout->GetBindings();
-            bindings.push_back(Binding(10, DescriptorType::StorageImage));
+            bindings.push_back(Binding(9, DescriptorType::StorageImage));
             m_CoverageSetLayout = DescriptorSetLayout::Create(
                 m_Context, {
                                .Name = "SSR Classify Tiles Coverage Set Layout",
@@ -836,16 +846,16 @@ namespace Veng::Renderer
                                                      .Name = "SSR Classify Tiles Set",
                                                      .Layout = m_ClassifySetLayout,
                                                  });
-            set->Write(0, m_Constants, 0, sizeof(SsrConstants));
-            set->Write(1, m_Environment);
-            set->Write(2, m_EnvironmentSampler);
-            set->Write(3, m_DepthHierarchyView);
-            set->Write(4, m_Variance[varianceHistory]);
-            set->Write(5, m_Radiance[radiance]);
-            set->Write(6, m_RayList);
-            set->Write(7, m_DenoiserTileList);
-            set->Write(8, m_RayCounter);
-            set->Write(9, m_ExtractedRoughness);
+            set->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+            set->Write(0, m_Environment);
+            set->Write(1, m_EnvironmentSampler);
+            set->Write(2, m_DepthHierarchyView);
+            set->Write(3, m_Variance[varianceHistory]);
+            set->Write(4, m_Radiance[radiance]);
+            set->Write(5, m_RayList);
+            set->Write(6, m_DenoiserTileList);
+            set->Write(7, m_RayCounter);
+            set->Write(8, m_ExtractedRoughness);
             m_ClassifySets[parity] = set;
 
             m_CoverageSets[parity] = nullptr;
@@ -856,17 +866,17 @@ namespace Veng::Renderer
                                                          .Name = "SSR Classify Tiles Coverage Set",
                                                          .Layout = m_CoverageSetLayout,
                                                      });
-                coverage->Write(0, m_Constants, 0, sizeof(SsrConstants));
-                coverage->Write(1, m_Environment);
-                coverage->Write(2, m_EnvironmentSampler);
-                coverage->Write(3, m_DepthHierarchyView);
-                coverage->Write(4, m_Variance[varianceHistory]);
-                coverage->Write(5, m_Radiance[radiance]);
-                coverage->Write(6, m_RayList);
-                coverage->Write(7, m_DenoiserTileList);
-                coverage->Write(8, m_RayCounter);
-                coverage->Write(9, m_ExtractedRoughness);
-                coverage->Write(10, m_Coverage);
+                coverage->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+                coverage->Write(0, m_Environment);
+                coverage->Write(1, m_EnvironmentSampler);
+                coverage->Write(2, m_DepthHierarchyView);
+                coverage->Write(3, m_Variance[varianceHistory]);
+                coverage->Write(4, m_Radiance[radiance]);
+                coverage->Write(5, m_RayList);
+                coverage->Write(6, m_DenoiserTileList);
+                coverage->Write(7, m_RayCounter);
+                coverage->Write(8, m_ExtractedRoughness);
+                coverage->Write(9, m_Coverage);
                 m_CoverageSets[parity] = coverage;
             }
 
@@ -875,15 +885,15 @@ namespace Veng::Renderer
                                                      .Name = "SSR Intersect Set",
                                                      .Layout = m_IntersectSetLayout,
                                                  });
-            intersect->Write(0, m_Constants, 0, sizeof(SsrConstants));
-            intersect->Write(1, m_Environment);
-            intersect->Write(2, m_EnvironmentSampler);
-            intersect->Write(3, m_DepthHierarchyView);
-            intersect->Write(4, m_ExtractedRoughness);
-            intersect->Write(5, m_BlueNoise);
-            intersect->Write(6, m_RayList);
-            intersect->Write(7, m_RayCounter);
-            intersect->Write(8, m_Radiance[radiance]);
+            intersect->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+            intersect->Write(0, m_Environment);
+            intersect->Write(1, m_EnvironmentSampler);
+            intersect->Write(2, m_DepthHierarchyView);
+            intersect->Write(3, m_ExtractedRoughness);
+            intersect->Write(4, m_BlueNoise);
+            intersect->Write(5, m_RayList);
+            intersect->Write(6, m_RayCounter);
+            intersect->Write(7, m_Radiance[radiance]);
             m_IntersectSets[parity] = intersect;
         }
 
@@ -891,10 +901,10 @@ namespace Veng::Renderer
                                                               .Name = "SSR Prepare Blue Noise Set",
                                                               .Layout = m_BlueNoiseSetLayout,
                                                           });
-        m_BlueNoiseSet->Write(0, m_Constants, 0, sizeof(SsrConstants));
-        m_BlueNoiseSet->Write(1, m_Sobol);
-        m_BlueNoiseSet->Write(2, m_ScramblingTile);
-        m_BlueNoiseSet->Write(3, m_BlueNoise);
+        m_BlueNoiseSet->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+        m_BlueNoiseSet->Write(0, m_Sobol);
+        m_BlueNoiseSet->Write(1, m_ScramblingTile);
+        m_BlueNoiseSet->Write(2, m_BlueNoise);
 
         m_IndirectArgsSet =
             DescriptorSet::Create(m_Context, {
@@ -917,22 +927,22 @@ namespace Veng::Renderer
                                                  .Name = "SSR Denoiser Reproject Set",
                                                  .Layout = m_ReprojectSetLayout,
                                              });
-        reproject->Write(0, m_Constants, 0, sizeof(SsrConstants));
-        reproject->Write(1, m_DenoiserSampler);
-        reproject->Write(2, m_DepthHierarchyView);
-        reproject->Write(3, m_Radiance[written]);
-        reproject->Write(4, m_Radiance[read]);
-        reproject->Write(5, m_Variance[read]);
-        reproject->Write(6, m_SampleCount[read]);
-        reproject->Write(7, m_ExtractedRoughness);
-        reproject->Write(8, m_DepthHistory);
-        reproject->Write(9, m_NormalHistory);
-        reproject->Write(10, m_RoughnessHistory);
-        reproject->Write(11, m_Variance[written]);
-        reproject->Write(12, m_SampleCount[written]);
-        reproject->Write(13, m_AverageRadiance[written]);
-        reproject->Write(14, m_DenoiserTileList);
-        reproject->Write(15, m_ReprojectedRadiance);
+        reproject->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+        reproject->Write(0, m_DenoiserSampler);
+        reproject->Write(1, m_DepthHierarchyView);
+        reproject->Write(2, m_Radiance[written]);
+        reproject->Write(3, m_Radiance[read]);
+        reproject->Write(4, m_Variance[read]);
+        reproject->Write(5, m_SampleCount[read]);
+        reproject->Write(6, m_ExtractedRoughness);
+        reproject->Write(7, m_DepthHistory);
+        reproject->Write(8, m_NormalHistory);
+        reproject->Write(9, m_RoughnessHistory);
+        reproject->Write(10, m_Variance[written]);
+        reproject->Write(11, m_SampleCount[written]);
+        reproject->Write(12, m_AverageRadiance[written]);
+        reproject->Write(13, m_DenoiserTileList);
+        reproject->Write(14, m_ReprojectedRadiance);
         m_ReprojectSets[parity] = reproject;
 
         // The prefilter reads the variance the reprojection wrote and writes its result over the
@@ -942,16 +952,16 @@ namespace Veng::Renderer
                                                  .Name = "SSR Denoiser Prefilter Set",
                                                  .Layout = m_PrefilterSetLayout,
                                              });
-        prefilter->Write(0, m_Constants, 0, sizeof(SsrConstants));
-        prefilter->Write(1, m_DenoiserSampler);
-        prefilter->Write(2, m_DepthHierarchyView);
-        prefilter->Write(3, m_Radiance[written]);
-        prefilter->Write(4, m_Variance[written]);
-        prefilter->Write(5, m_AverageRadiance[read]);
-        prefilter->Write(6, m_ExtractedRoughness);
-        prefilter->Write(7, m_Radiance[read]);
-        prefilter->Write(8, m_Variance[read]);
-        prefilter->Write(9, m_DenoiserTileList);
+        prefilter->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+        prefilter->Write(0, m_DenoiserSampler);
+        prefilter->Write(1, m_DepthHierarchyView);
+        prefilter->Write(2, m_Radiance[written]);
+        prefilter->Write(3, m_Variance[written]);
+        prefilter->Write(4, m_AverageRadiance[read]);
+        prefilter->Write(5, m_ExtractedRoughness);
+        prefilter->Write(6, m_Radiance[read]);
+        prefilter->Write(7, m_Variance[read]);
+        prefilter->Write(8, m_DenoiserTileList);
         m_PrefilterSets[parity] = prefilter;
 
         // The temporal resolve reads the prefilter's output and writes the denoised reflection and
@@ -961,17 +971,17 @@ namespace Veng::Renderer
                                                  .Name = "SSR Denoiser Resolve Temporal Set",
                                                  .Layout = m_ResolveSetLayout,
                                              });
-        resolve->Write(0, m_Constants, 0, sizeof(SsrConstants));
-        resolve->Write(1, m_DenoiserSampler);
-        resolve->Write(2, m_Radiance[read]);
-        resolve->Write(3, m_Variance[read]);
-        resolve->Write(4, m_SampleCount[read]);
-        resolve->Write(5, m_AverageRadiance[read]);
-        resolve->Write(6, m_ExtractedRoughness);
-        resolve->Write(7, m_ReprojectedRadiance);
-        resolve->Write(8, m_Radiance[written]);
-        resolve->Write(9, m_Variance[written]);
-        resolve->Write(10, m_DenoiserTileList);
+        resolve->Write(SsrConstantsBinding, m_Constants, 0, sizeof(SsrConstants));
+        resolve->Write(0, m_DenoiserSampler);
+        resolve->Write(1, m_Radiance[read]);
+        resolve->Write(2, m_Variance[read]);
+        resolve->Write(3, m_SampleCount[read]);
+        resolve->Write(4, m_AverageRadiance[read]);
+        resolve->Write(5, m_ExtractedRoughness);
+        resolve->Write(6, m_ReprojectedRadiance);
+        resolve->Write(7, m_Radiance[written]);
+        resolve->Write(8, m_Variance[written]);
+        resolve->Write(9, m_DenoiserTileList);
         m_ResolveSets[parity] = resolve;
     }
 

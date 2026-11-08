@@ -7,9 +7,14 @@
 // format; a per-format store kernel moves the result back out. Shares fluid_common.slang's wrap
 // fold and push block with the advection it companions.
 #include "fluid_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] [format("rgba32f")] RWTexture2D<float4> g_Dest;
+struct FlowSharpenSet3
+{
+    Texture2D<float4> Source;
+    [format("rgba32f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, FlowSharpenSet3, g_Set3);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -19,7 +24,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
 
     int2 texel = int2(id.xy);
-    float4 centre = FluidLoad(g_Source, texel);
+    float4 centre = FluidLoad(g_Set3.Source, texel);
 
     float4 sum = float4(0.0);
     float4 lo = centre;
@@ -28,7 +33,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     {
         for (int dx = -1; dx <= 1; ++dx)
         {
-            float4 s = FluidLoad(g_Source, texel + int2(dx, dy));
+            float4 s = FluidLoad(g_Set3.Source, texel + int2(dx, dy));
             sum += s;
             lo = min(lo, s);
             hi = max(hi, s);
@@ -38,5 +43,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     float strength = g_Fluid.Scale;
     float4 sharpened = centre + strength * (centre - blur);
-    g_Dest[texel] = clamp(sharpened, lo, hi);
+    g_Set3.Dest[texel] = clamp(sharpened, lo, hi);
 }

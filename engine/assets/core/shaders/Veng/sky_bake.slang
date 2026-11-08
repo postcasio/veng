@@ -11,8 +11,8 @@
 
 #include "sky.slang"
 
-// The cube sampled-image bindless array (the cube set, set 2): the field targets are registered here.
-[[vk::binding(0, 2)]] TextureCube g_Cubes[];
+// The cube set (g_Cubes, set 2) holds the field targets; bindless.slang declares it.
+#include "bindless.slang"
 
 // The field's target count in this view: zero outside a field bake's later layers.
 uint SkyBakeFieldTargetCount(SkyPushConstants pc)
@@ -76,8 +76,8 @@ float4 SkyBakeField(SkyPushConstants pc, uint target, float3 dir)
     {
         return float4(0.0);
     }
-    const TextureCube cube = g_Cubes[NonUniformResourceIndex(vc.SkyBakeFieldCubes[target])];
-    const SamplerState samp = g_Samplers[NonUniformResourceIndex(vc.SkyBakeFieldInfo.z)];
+    const TextureCube cube = g_Cubes[NonUniformIndex(vc.SkyBakeFieldCubes[target])];
+    const SamplerState samp = g_Samplers[NonUniformIndex(vc.SkyBakeFieldInfo.z)];
     const float size = float(vc.SkyBakeFieldInfo.w);
 
     uint face;
@@ -115,8 +115,8 @@ float4 SkyBakeFieldLod(SkyPushConstants pc, uint target, float3 dir, float lod)
     {
         return float4(0.0);
     }
-    return g_Cubes[NonUniformResourceIndex(vc.SkyBakeFieldCubes[target])].SampleLevel(
-        g_Samplers[NonUniformResourceIndex(vc.SkyBakeFieldInfo.z)], dir, lod);
+    return g_Cubes[NonUniformIndex(vc.SkyBakeFieldCubes[target])].SampleLevel(
+        g_Samplers[NonUniformIndex(vc.SkyBakeFieldInfo.z)], dir, lod);
 }
 
 // The mean of field target `target` over the sphere, each field texel weighted by the solid angle
@@ -130,7 +130,7 @@ float4 SkyBakeFieldMean(SkyPushConstants pc, uint target)
     {
         return float4(0.0);
     }
-    const ByteAddressBuffer sums = g_Buffers[NonUniformResourceIndex(vc.SkyBakeFieldInfo.y)];
+    const ByteAddressBuffer sums = g_Buffers[NonUniformIndex(vc.SkyBakeFieldInfo.y)];
     float4 total = float4(0.0);
     for (uint face = 0u; face < 6u; ++face)
     {

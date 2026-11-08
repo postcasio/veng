@@ -8,7 +8,7 @@ struct MaterialParams
     float4 Scale; // an authored param so the block is non-empty
 };
 
-[[vk::push_constant]] ConstantBuffer<SkyPushConstants> g_SkyPC;
+VE_PUSH_CONSTANTS(SkyPushConstants, g_SkyPC);
 
 struct FieldOutput
 {

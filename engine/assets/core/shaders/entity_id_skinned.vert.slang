@@ -21,7 +21,11 @@ struct VSOutput
     nointerpolation uint v_EntityIndex : TEXCOORD0;
 };
 
-[[vk::binding(0, 4)]] StructuredBuffer<float4x4> g_Palette;
+struct EntityIdSkinnedSet4
+{
+    StructuredBuffer<float4x4> Palette;
+};
+VE_DESCRIPTOR_SET(4, EntityIdSkinnedSet4, g_Set4);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)
@@ -30,10 +34,10 @@ VSOutput vsMain(VSInput input)
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     uint base = draw.PaletteBase;
-    float4x4 skin = input.a_BoneWeights.x * g_Palette[base + input.a_BoneIndices.x] +
-                    input.a_BoneWeights.y * g_Palette[base + input.a_BoneIndices.y] +
-                    input.a_BoneWeights.z * g_Palette[base + input.a_BoneIndices.z] +
-                    input.a_BoneWeights.w * g_Palette[base + input.a_BoneIndices.w];
+    float4x4 skin = input.a_BoneWeights.x * g_Set4.Palette[base + input.a_BoneIndices.x] +
+                    input.a_BoneWeights.y * g_Set4.Palette[base + input.a_BoneIndices.y] +
+                    input.a_BoneWeights.z * g_Set4.Palette[base + input.a_BoneIndices.z] +
+                    input.a_BoneWeights.w * g_Set4.Palette[base + input.a_BoneIndices.w];
 
     float4 skinnedPos = mul(skin, float4(input.a_Position, 1.0));
     float4 worldPos = mul(draw.World, skinnedPos);

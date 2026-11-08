@@ -364,8 +364,8 @@ TEST_CASE("CompileMaterialGraph: a TextureSample3D samples a volume and emits a 
 
     // It samples the typed 3D bindless array through a VolumeHandle slot with SampleLevel, never
     // the 2D g_Textures array, and the UVW defaults to the origin when unconnected.
-    CHECK(Contains(src, "g_Volumes[NonUniformResourceIndex(p."));
-    CHECK(Contains(src, ".SampleLevel(g_Samplers[NonUniformResourceIndex(p."));
+    CHECK(Contains(src, "g_Volumes[NonUniformIndex(p."));
+    CHECK(Contains(src, ".SampleLevel(g_Samplers[NonUniformIndex(p."));
     CHECK(Contains(src, "float3(0,0,0)")); // the unconnected UVW pin's zero-literal default
 
     // The emitted MaterialParams carry a uint volume slot; the .vmat field list lowers it to a

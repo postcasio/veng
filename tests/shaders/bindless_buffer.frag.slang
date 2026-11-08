@@ -4,10 +4,8 @@
 // set-0 descriptor set: the load and the paired texture sample together exercise a
 // non-dynamic, full-range byte-address buffer coexisting with a sampler in one
 // argument buffer (the MoltenVK descriptor-layout question). The handle is uniform
-// across the draw, so it needs no NonUniformResourceIndex.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+// across the draw, so it needs no NonUniformIndex.
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -16,7 +14,7 @@ struct PushConstants
     uint SamplerIndex; // g_Samplers[] slot for the paired sample
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -30,8 +28,8 @@ float4 fsMain(VSOutput input) : SV_Target
     // The buffer read carries the result; the texture sample proves a sampler and a
     // byte-address buffer array bind together in set 0 without mistranslation.
     float4 fromBuffer = g_Buffers[g_PC.BufferIndex].Load<float4>(0);
-    float4 fromTexture = g_Textures[NonUniformResourceIndex(g_PC.TextureIndex)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.SamplerIndex)], input.v_UV);
+    float4 fromTexture = g_Textures[NonUniformIndex(g_PC.TextureIndex)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.SamplerIndex)], input.v_UV);
     // Fold in a zero-weighted texture tap so the sampler binding is genuinely used
     // (and cannot be optimized out) while the buffer value drives the output.
     return fromBuffer + fromTexture * 0.0;

@@ -12,8 +12,7 @@
 // Like the copy that fills level 0, this maps its UV through the dynamic-resolution sub-rect: every
 // level renders only the sub-rect its parent occupied, halved, and clamps its reads inside the
 // parent's valid region, so the cleared area outside it never bleeds inward.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -26,7 +25,7 @@ struct PushConstants
     float2 TexelSize;   // 1 / parentAlloc, the offset one parent texel subtends
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -37,8 +36,8 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input)
 {
-    const SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
-    const Texture2D source = g_Textures[NonUniformResourceIndex(g_PC.SourceTexture)];
+    const SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
+    const Texture2D source = g_Textures[NonUniformIndex(g_PC.SourceTexture)];
     const float2 centre = input.v_UV * g_PC.ScaleUV;
     const float2 step = g_PC.TexelSize;
 

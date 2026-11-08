@@ -9,20 +9,26 @@
 // level is exactly hi_z_reduce's: mip 0 a 1:1 copy, mip n>0 the min of its 2x2 parent footprint,
 // widened to the extra row or column when a parent dimension is odd, every read clamped into the
 // parent's extent. Every tail level is written to its storage mip.
+
+#include "Veng/binding.slang"
 #define TAIL_CAPACITY 7168
 #define THREADS 256
 
-[[vk::binding(0, 3)]] Texture2D<float> g_Source;
 
-// One storage binding per tail slot (bindings 1..8), the slots past LevelCount bound but unwritten.
-[[vk::binding(1, 3)]] [format("r32f")] RWTexture2D<float> g_Level0;
-[[vk::binding(2, 3)]] [format("r32f")] RWTexture2D<float> g_Level1;
-[[vk::binding(3, 3)]] [format("r32f")] RWTexture2D<float> g_Level2;
-[[vk::binding(4, 3)]] [format("r32f")] RWTexture2D<float> g_Level3;
-[[vk::binding(5, 3)]] [format("r32f")] RWTexture2D<float> g_Level4;
-[[vk::binding(6, 3)]] [format("r32f")] RWTexture2D<float> g_Level5;
-[[vk::binding(7, 3)]] [format("r32f")] RWTexture2D<float> g_Level6;
-[[vk::binding(8, 3)]] [format("r32f")] RWTexture2D<float> g_Level7;
+struct HiZReduceTailSet3
+{
+    Texture2D<float> Source;
+    // One storage binding per tail slot (bindings 1..8), the slots past LevelCount bound but unwritten.
+    [format("r32f")] RWTexture2D<float> Level0;
+    [format("r32f")] RWTexture2D<float> Level1;
+    [format("r32f")] RWTexture2D<float> Level2;
+    [format("r32f")] RWTexture2D<float> Level3;
+    [format("r32f")] RWTexture2D<float> Level4;
+    [format("r32f")] RWTexture2D<float> Level5;
+    [format("r32f")] RWTexture2D<float> Level6;
+    [format("r32f")] RWTexture2D<float> Level7;
+};
+VE_DESCRIPTOR_SET(3, HiZReduceTailSet3, g_Set3);
 
 struct PushConstants
 {
@@ -31,7 +37,7 @@ struct PushConstants
     uint  LevelCount; // levels in the tail (>= 2)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 groupshared float g_Texels[TAIL_CAPACITY];
 
@@ -39,14 +45,14 @@ void StoreLevel(uint slot, uint2 id, float value)
 {
     switch (slot)
     {
-    case 0: g_Level0[id] = value; break;
-    case 1: g_Level1[id] = value; break;
-    case 2: g_Level2[id] = value; break;
-    case 3: g_Level3[id] = value; break;
-    case 4: g_Level4[id] = value; break;
-    case 5: g_Level5[id] = value; break;
-    case 6: g_Level6[id] = value; break;
-    default: g_Level7[id] = value; break;
+    case 0: g_Set3.Level0[id] = value; break;
+    case 1: g_Set3.Level1[id] = value; break;
+    case 2: g_Set3.Level2[id] = value; break;
+    case 3: g_Set3.Level3[id] = value; break;
+    case 4: g_Set3.Level4[id] = value; break;
+    case 5: g_Set3.Level5[id] = value; break;
+    case 6: g_Set3.Level6[id] = value; break;
+    default: g_Set3.Level7[id] = value; break;
     }
 }
 
@@ -73,7 +79,7 @@ float LoadAbove(uint index, int2 coord, uint2 sourceExtent, uint sourceOffset)
     coord = clamp(coord, int2(0, 0), int2(sourceExtent) - 1);
     if (index == 0)
     {
-        return g_Source.Load(int3(coord, 0));
+        return g_Set3.Source.Load(int3(coord, 0));
     }
     return g_Texels[sourceOffset + uint(coord.y) * sourceExtent.x + uint(coord.x)];
 }

@@ -12,8 +12,7 @@
 // when it carried this upscale: the same filter on the same linear HDR values in the same order,
 // so promoting the upscale to here leaves a frame with nothing between the two unchanged.
 // Unclamped, like taa_history_copy and unlike hdr_blit — the tail after it is still linear HDR.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -27,7 +26,7 @@ struct PushConstants
     float2 MaskMaxUV;    // fsPair: the mask's own clamp, as MaxUV
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -38,8 +37,8 @@ struct VSOutput
 // One bilinear tap of `source` through its sub-rect mapping.
 float4 Promote(uint source, float2 uv, float2 scaleUV, float2 maxUV)
 {
-    const float3 texel = g_Textures[NonUniformResourceIndex(source)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], min(uv * scaleUV, maxUV)).rgb;
+    const float3 texel = g_Textures[NonUniformIndex(source)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], min(uv * scaleUV, maxUV)).rgb;
     return float4(texel, 1.0);
 }
 

@@ -18,15 +18,8 @@
 // The set-0 bindless arrays a PostProcess effect reads: the sampled images + samplers (an
 // upstream target is runtime-bound as a handle field), the byte-address storage-buffer array
 // (a data-driven effect reads a game-supplied buffer by handle), and the per-material param
-// block. Mirrors the BindlessRegistry layout.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-// The 3D sampled-image bindless array (the volume set, set 1): a material samples a volume
-// through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
-// a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
-[[vk::binding(0, 1)]] Texture3D g_Volumes[];
+// block, beside the volume set.
+#include "bindless.slang"
 
 // A PostProcess fragment's per-draw selector sits at push-constant offset 0 (no geometry
 // block precedes it, unlike a Surface shader's MVP). A PostProcess fragment reads its
@@ -36,7 +29,7 @@ struct PostProcessPushConstants
     uint MaterialOffset; // per-material param-block selector (frame-folded)
 };
 
-[[vk::push_constant]] ConstantBuffer<PostProcessPushConstants> g_PC;
+VE_PUSH_CONSTANTS(PostProcessPushConstants, g_PC);
 
 // The screen-UV interpolant a PostProcess fragment reads, written by the fullscreen vertex
 // stage (fullscreen.vert). A PostProcess fragment's fsMain signature takes this struct and
@@ -66,15 +59,15 @@ struct PostProcessFragmentInput
 float3 SamplePostProcessScene(uint tex, uint samp, float4 sceneScaleUV, float2 uv)
 {
     float2 scaled = min(uv * sceneScaleUV.xy, sceneScaleUV.zw);
-    return g_Textures[NonUniformResourceIndex(tex)]
-        .Sample(g_Samplers[NonUniformResourceIndex(samp)], scaled)
+    return g_Textures[NonUniformIndex(tex)]
+        .Sample(g_Samplers[NonUniformIndex(samp)], scaled)
         .rgb;
 }
 
 float SamplePostProcessDepth(uint tex, uint samp, float4 depthScaleUV, float2 uv)
 {
     float2 scaled = min(uv * depthScaleUV.xy, depthScaleUV.zw);
-    return g_Textures[NonUniformResourceIndex(tex)]
-        .Sample(g_Samplers[NonUniformResourceIndex(samp)], scaled)
+    return g_Textures[NonUniformIndex(tex)]
+        .Sample(g_Samplers[NonUniformIndex(samp)], scaled)
         .r;
 }

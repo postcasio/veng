@@ -2,8 +2,8 @@
 // and passes through a per-instance color read from an instance-rate vertex
 // attribute at location 0. An indirect draw carries the candidate index in the
 // command's firstInstance, so the instance-rate fetch lands on the indexed
-// element — the candidate-index read mechanism the GPU cull depends on. Reads the
-// VertexIndex builtin directly rather than SV_VertexID, which would pull in the
+// element — the candidate-index read mechanism the GPU cull depends on. Takes the
+// raw vertex index (SV_VulkanVertexID); SV_VertexID would pull in the
 // DrawParameters capability the device does not enable.
 struct VSInput
 {
@@ -17,9 +17,9 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain(VSInput input)
+VSOutput vsMain(VSInput input, uint vertexIndex : SV_VulkanVertexID)
 {
-    int vertexID = spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); };
+    int vertexID = int(vertexIndex);
     float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
 
     VSOutput output;

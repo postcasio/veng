@@ -23,8 +23,13 @@ struct GpuTrailTube
     uint4 Outline;     // x the first outline point, y the point count
 };
 
-[[vk::binding(1, 3)]] StructuredBuffer<GpuTrailTube> g_Tubes;
-[[vk::binding(2, 3)]] StructuredBuffer<float2> g_Outlines;
+struct RibbonTubeSet3
+{
+    ByteAddressBuffer Segments; // the ribbon records, read by ribbon.vert only
+    StructuredBuffer<GpuTrailTube> Tubes;
+    StructuredBuffer<float2> Outlines;
+};
+VE_DESCRIPTOR_SET(3, RibbonTubeSet3, g_Set3);
 
 // The most sides a tube draws; matches the CPU MaxTrailOutlinePoints.
 static const uint MaxOutlinePoints = 16;
@@ -51,9 +56,9 @@ float3 ToView(ViewConstants view, float3 v)
 // their inverse transpose, which for two perpendicular axes divides each by its squared length.
 float3 RingNormal(GpuTrailTube tube, uint i, uint count, float3 axisX, float3 axisY)
 {
-    float2 point = g_Outlines[tube.Outline.x + i];
-    float2 chord = g_Outlines[tube.Outline.x + (i + 1) % count] -
-                   g_Outlines[tube.Outline.x + (i + count - 1) % count];
+    float2 point = g_Set3.Outlines[tube.Outline.x + i];
+    float2 chord = g_Set3.Outlines[tube.Outline.x + (i + 1) % count] -
+                   g_Set3.Outlines[tube.Outline.x + (i + count - 1) % count];
     float2 normal = float2(chord.y, -chord.x);
     if (dot(normal, point) < 0.0)
     {
@@ -64,19 +69,12 @@ float3 RingNormal(GpuTrailTube tube, uint i, uint count, float3 axisX, float3 ax
     return world;
 }
 
-// The VertexIndex builtin read directly (it includes the draw's firstVertex, which selects the
-// alpha or additive run); SV_VertexID would pull in the DrawParameters capability.
-uint LoadVertexIndex()
-{
-    return uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
-}
-
+// SV_VulkanVertexID includes the draw's firstVertex, which selects the alpha or additive run.
 [shader("vertex")]
-TubeVSOutput vsMain()
+TubeVSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
-    uint vertexId = LoadVertexIndex();
-    GpuTrailTube tube = g_Tubes[vertexId / (MaxOutlinePoints * 6)];
+    GpuTrailTube tube = g_Set3.Tubes[vertexId / (MaxOutlinePoints * 6)];
     uint local = vertexId % (MaxOutlinePoints * 6);
     uint side = local / 6;
     uint count = min(tube.Outline.y, MaxOutlinePoints);
@@ -105,7 +103,7 @@ TubeVSOutput vsMain()
     float3 center = atEnd ? tube.End.xyz : tube.Start.xyz;
     float3 axisX = atEnd ? tube.EndAxisX.xyz : tube.StartAxisX.xyz;
     float3 axisY = atEnd ? tube.EndAxisY.xyz : tube.StartAxisY.xyz;
-    float2 point = g_Outlines[tube.Outline.x + pointIndex];
+    float2 point = g_Set3.Outlines[tube.Outline.x + pointIndex];
     float3 position = ToView(view, center + axisX * point.x + axisY * point.y);
 
     output.sv_position = mul(view.Proj, float4(position, 1.0));

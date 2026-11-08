@@ -15,25 +15,30 @@
 // set 0 is reserved for the bindless registry, so the buffers bind on set 3 as the other test
 // shaders do.
 #include "Veng/ltc.slang"
+#include "Veng/binding.slang"
 
 // Diffuse: CaseCount float4 (rOverD, pad, pad, pad). Specular: CaseCount × 3 float4 — the view
 // direction (xyz), the inverse transform's top row (m00, 0, m02) and its bottom row (m20, 0, m22).
-[[vk::binding(0, 3)]] ByteAddressBuffer u_Cases;
-// Diffuse: (diffSum, sin2theta, 0, 0). Specular: (largest sum from below the plane, mirror sum, 0, 0).
-[[vk::binding(1, 3)]] RWStructuredBuffer<float4> u_Results;
+struct LtcSphereSet3
+{
+    ByteAddressBuffer Cases;
+    // Diffuse: (diffSum, sin2theta, 0, 0). Specular: (largest sum from below the plane, mirror sum, 0, 0).
+    RWStructuredBuffer<float4> Results;
+};
+VE_DESCRIPTOR_SET(3, LtcSphereSet3, g_Set3);
 
 struct LtcSpherePush
 {
     uint CaseCount;
     uint Mode;
 };
-[[vk::push_constant]] LtcSpherePush u_Push;
+VE_PUSH_CONSTANTS(LtcSpherePush, u_Push);
 
 static const float Pi = 3.14159265;
 
 void Diffuse(uint index)
 {
-    const float rOverD = u_Cases.Load<float4>(index * 16).x;
+    const float rOverD = g_Set3.Cases.Load<float4>(index * 16).x;
 
     // The shading point faces the sphere head-on: N points at the centre, so the clamped-cosine
     // form factor is at its analytic maximum sin^2(theta). V is offset off N only to give the LTC a
@@ -47,14 +52,14 @@ void Diffuse(uint index)
     const float3x3 ident = float3x3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
     const float diffSum = LtcSphere(N, V, P, ident, center, r);
-    u_Results[index] = float4(diffSum, rOverD * rOverD, 0.0, 0.0);
+    g_Set3.Results[index] = float4(diffSum, rOverD * rOverD, 0.0, 0.0);
 }
 
 void Specular(uint index)
 {
-    const float3 V = u_Cases.Load<float4>(index * 48).xyz;
-    const float4 top = u_Cases.Load<float4>(index * 48 + 16);
-    const float4 bottom = u_Cases.Load<float4>(index * 48 + 32);
+    const float3 V = g_Set3.Cases.Load<float4>(index * 48).xyz;
+    const float4 top = g_Set3.Cases.Load<float4>(index * 48 + 16);
+    const float4 bottom = g_Set3.Cases.Load<float4>(index * 48 + 32);
     const float3x3 Minv = float3x3(top.x, 0.0, top.z, 0.0, 1.0, 0.0, bottom.x, 0.0, bottom.z);
 
     const float3 P = float3(0.0, 0.0, 0.0);
@@ -83,7 +88,7 @@ void Specular(uint index)
 
     const float3 mirror = reflect(-V, N);
     const float reflected = LtcSphere(N, V, P, Minv, mirror * d, 0.041 * d);
-    u_Results[index] = float4(behind, reflected, 0.0, 0.0);
+    g_Set3.Results[index] = float4(behind, reflected, 0.0, 0.0);
 }
 
 [shader("compute")]

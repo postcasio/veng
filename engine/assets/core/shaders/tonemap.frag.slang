@@ -154,8 +154,8 @@ float3 SampleBloomBSpline(uint texture, uint samplerIndex, float2 uv, float4 tex
     // Each pair of taps folds into one bilinear read between them.
     const float2 uv0 = (i - 1.0 + w1 / g0 + 0.5) * texel.zw;
     const float2 uv1 = (i + 1.0 + w3 / g1 + 0.5) * texel.zw;
-    Texture2D t = g_Textures[NonUniformResourceIndex(texture)];
-    SamplerState s = g_Samplers[NonUniformResourceIndex(samplerIndex)];
+    Texture2D t = g_Textures[NonUniformIndex(texture)];
+    SamplerState s = g_Samplers[NonUniformIndex(samplerIndex)];
     return g0.y * (g0.x * t.Sample(s, float2(uv0.x, uv0.y)).rgb +
                    g1.x * t.Sample(s, float2(uv1.x, uv0.y)).rgb) +
            g1.y * (g0.x * t.Sample(s, float2(uv0.x, uv1.y)).rgb +
@@ -171,16 +171,16 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     // (RenderScale.xy), clamped (RenderScale.zw) so the bilinear tap never bleeds past it. At scale
     // 1.0 RenderScale is (1,1,~1,~1) and this is the plain full-resolution sample.
     float2 uv = min(input.v_UV * p.RenderScale.xy, p.RenderScale.zw);
-    float3 hdr = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.HdrSampler)], uv).rgb;
+    float3 hdr = g_Textures[NonUniformIndex(p.Hdr)].Sample(
+        g_Samplers[NonUniformIndex(p.HdrSampler)], uv).rgb;
     // Bloom is added in linear HDR ahead of exposure; its mip 0 is half the scene's resolution, so
     // this one bilinear tap magnifies it. The branch is uniform across the draw, and with bloom
     // inactive the Bloom slot is never indexed.
     if (p.BloomIntensity > 0.0)
     {
         const float2 bloomUv = min(input.v_UV * p.BloomScale.xy, p.BloomScale.zw);
-        hdr += g_Textures[NonUniformResourceIndex(p.Bloom)].Sample(
-                   g_Samplers[NonUniformResourceIndex(p.BloomSampler)], bloomUv).rgb *
+        hdr += g_Textures[NonUniformIndex(p.Bloom)].Sample(
+                   g_Samplers[NonUniformIndex(p.BloomSampler)], bloomUv).rgb *
                p.BloomIntensity;
     }
     // Lens dirt: the light a dirty lens scatters, the wide bloom times the mask. The mask is read
@@ -189,8 +189,8 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     if (p.LensDirtIntensity > 0.0)
     {
         const float2 dirtUv = input.v_UV * p.LensDirtCover.xy + p.LensDirtCover.zw;
-        const float dirt = g_Textures[NonUniformResourceIndex(p.LensDirt)].Sample(
-                               g_Samplers[NonUniformResourceIndex(p.LensDirtSampler)], dirtUv).r;
+        const float dirt = g_Textures[NonUniformIndex(p.LensDirt)].Sample(
+                               g_Samplers[NonUniformIndex(p.LensDirtSampler)], dirtUv).r;
         const float2 wideUv = min(input.v_UV * p.LensDirtBloomScale.xy, p.LensDirtBloomScale.zw);
         const float3 wide = SampleBloomBSpline(p.LensDirtBloom, p.LensDirtBloomSampler, wideUv,
                                                p.LensDirtBloomTexel);
@@ -201,8 +201,8 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     if (p.StreakIntensity > 0.0)
     {
         const float2 streakUv = min(input.v_UV * p.StreakScale.xy, p.StreakScale.zw);
-        hdr += g_Textures[NonUniformResourceIndex(p.Streak)].Sample(
-                   g_Samplers[NonUniformResourceIndex(p.StreakSampler)], streakUv).rgb *
+        hdr += g_Textures[NonUniformIndex(p.Streak)].Sample(
+                   g_Samplers[NonUniformIndex(p.StreakSampler)], streakUv).rgb *
                p.StreakIntensity;
     }
     float3 exposed = max(hdr * p.Exposure, 0.0);

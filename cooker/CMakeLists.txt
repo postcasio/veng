@@ -308,6 +308,7 @@ add_library(veng_cook_objs OBJECT
         src/CookTiming.cpp
         src/JsonFile.cpp
         src/HostShaderModule.cpp
+        src/ShaderTargets.cpp
         src/Verify.cpp
         src/CoreImporters.cpp
         src/Importers/RawImporter.cpp
@@ -428,6 +429,11 @@ set_source_files_properties(src/Importers/FontImporter.cpp PROPERTIES
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 # The objects are compiled into libveng_cook, so they take its export side of VE_COOK_API.
 target_compile_definitions(veng_cook_objs PRIVATE VE_COOK_BUILD_SHARED)
+# The shader targets a cook defaults to are the build's: VE_SHADER_TARGETS resolved against
+# VE_GPU_BACKEND (ShaderTargets.cpp).
+target_compile_definitions(veng_cook_objs PRIVATE
+        VENG_COOK_SHADER_TARGETS="${VE_SHADER_TARGETS}"
+        VENG_COOK_GPU_BACKEND="${VE_GPU_BACKEND}")
 # veng_cook_objs pulls in fmt through veng's public headers but does not link
 # fmt::fmt (only the executables below do), so it misses the PUBLIC /utf-8 fmt
 # attaches to its consumers. fmt 12.x static_asserts on it under MSVC; add it

@@ -70,7 +70,7 @@ namespace Veng::Renderer
         /// @brief Recreates the punctual shadow atlas image and view at the settings' resolution.
         ///
         /// Sized at PunctualShadowResolution × (MaxShadowedPunctual·CubeFaceCount) tiles; the
-        /// following RebuildSets binds the new view into the recreated shadow set (binding 4).
+        /// following RebuildSets binds the new view into the recreated shadow set (binding 2).
         /// @param settings The renderer settings; PunctualShadowResolution sizes the atlas.
         void Reconfigure(const SceneRendererSettings& settings);
 
@@ -111,7 +111,7 @@ namespace Veng::Renderer
         /// @brief The 1×1 dummy atlas view bound into the set when no shadow pass is wired.
         [[nodiscard]] const Ref<ImageView>& GetDummyView() const { return m_DummyView; }
 
-        /// @brief The punctual shadow atlas view (set 1 binding 4).
+        /// @brief The punctual shadow atlas view (set 1 binding 2).
         [[nodiscard]] const Ref<ImageView>& GetPunctualView() const { return m_PunctualView; }
 
         /// @brief Stride in bytes between ShadowConstants ring regions.
@@ -151,17 +151,17 @@ namespace Veng::Renderer
         /// @brief View over m_DummyImage.
         Ref<ImageView> m_DummyView;
 
-        /// @brief ShadowConstants ring buffer (set 1 binding 2), host-visible + persistently mapped.
+        /// @brief ShadowConstants ring buffer (set 1 binding 3), host-visible + persistently mapped.
         Ref<Buffer> m_ConstantsBuffer;
         /// @brief Stride in bytes between ShadowConstants ring regions.
         u32 m_ConstantsRingStride = 0;
 
-        /// @brief Punctual shadow atlas (set 1 binding 4), a D32 2D atlas of the tile grid.
+        /// @brief Punctual shadow atlas (set 1 binding 2), a D32 2D atlas of the tile grid.
         Ref<Image> m_PunctualImage;
         /// @brief View over m_PunctualImage.
         Ref<ImageView> m_PunctualView;
 
-        /// @brief PunctualShadowBlock ring buffer (set 1 binding 3), host-visible + persistently mapped.
+        /// @brief PunctualShadowBlock ring buffer (set 1 binding 4), host-visible + persistently mapped.
         Ref<Buffer> m_PunctualBuffer;
         /// @brief Stride in bytes between PunctualShadowBlock ring regions.
         u32 m_PunctualRingStride = 0;

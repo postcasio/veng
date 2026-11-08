@@ -10,9 +10,15 @@
 //
 // Set 0 is the bindless registry; set 3 carries the closed resources: the sampled
 // coarser source, the clamp-to-edge linear sampler, and the storage destination level.
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+
+#include "Veng/binding.slang"
+struct BloomUpSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, BloomUpSet3, g_Set3);
 
 struct PushConstants
 {
@@ -22,14 +28,14 @@ struct PushConstants
     float  Radius;         // upsample spread scale
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The source (coarser mip) is rendered into a dynamic-resolution sub-rect; map the valid-space UV
 // into its valid region and clamp so a bilinear tap never bleeds past it (identity at scale 1.0).
 float3 SampleSource(float2 uv)
 {
     float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
-    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+    return g_Set3.Source.SampleLevel(g_Set3.Sampler, physical, 0.0).rgb;
 }
 
 [shader("compute")]
@@ -56,6 +62,6 @@ void csMain(uint3 id : SV_DispatchThreadID)
     sum += SampleSource(uv + float2(1, 1) * o) * 1.0;
     sum *= (1.0 / 16.0);
 
-    float3 existing = g_Dest[int2(id.xy)].rgb;
-    g_Dest[int2(id.xy)] = float4(existing + sum * g_PC.Radius, 1.0);
+    float3 existing = g_Set3.Dest[int2(id.xy)].rgb;
+    g_Set3.Dest[int2(id.xy)] = float4(existing + sum * g_PC.Radius, 1.0);
 }

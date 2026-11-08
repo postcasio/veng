@@ -8,8 +8,7 @@
 // the camera image into the cube-sampling convention (ibl_equirect_to_cube's FaceDirection), so the
 // cube samples correctly by world direction. Distinct from taa_history_copy, which copies with no
 // flip.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -17,7 +16,7 @@ struct PushConstants
     uint Sampler;       // shared clamp sampler
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -29,7 +28,7 @@ struct VSOutput
 float4 fsMain(VSOutput input) : SV_Target0
 {
     const float2 uv = float2(1.0 - input.v_UV.x, input.v_UV.y);
-    const float3 color = g_Textures[NonUniformResourceIndex(g_PC.SourceTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], uv).rgb;
+    const float3 color = g_Textures[NonUniformIndex(g_PC.SourceTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], uv).rgb;
     return float4(color, 1.0);
 }

@@ -26,9 +26,9 @@ struct ShadowInstancedPushConstants
     uint InstanceBase;      // record index of the set's first instance
 };
 
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+#include "Veng/bindless.slang"
 
-[[vk::push_constant]] ConstantBuffer<ShadowInstancedPushConstants> g_PC;
+VE_PUSH_CONSTANTS(ShadowInstancedPushConstants, g_PC);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input, uint listIndex : SV_VulkanInstanceID)

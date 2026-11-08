@@ -17,7 +17,11 @@ struct GpuBillboardPick
     uint Pad1;
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuBillboardPick> g_Billboards;
+struct EntityIdBillboardSet3
+{
+    StructuredBuffer<GpuBillboardPick> Billboards;
+};
+VE_DESCRIPTOR_SET(3, EntityIdBillboardSet3, g_Set3);
 
 struct PushConstants
 {
@@ -27,7 +31,7 @@ struct PushConstants
     uint Pad0;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -37,15 +41,13 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // Read VertexIndex directly (not SV_VertexID) to avoid the DrawParameters capability, the same
-    // way debug_billboard.vert and fullscreen.vert do — a single non-instanced draw of 6*N vertices.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
+    // A single non-instanced draw of 6*N vertices.
     uint instanceId = vertexId / 6;
     uint cornerId = vertexId % 6;
 
-    GpuBillboardPick bb = g_Billboards[instanceId];
+    GpuBillboardPick bb = g_Set3.Billboards[instanceId];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     static const float2 corners[6] = {

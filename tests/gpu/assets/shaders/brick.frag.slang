@@ -42,8 +42,8 @@ GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
-    float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);
+    float4 baseColor = g_Textures[NonUniformIndex(p.BaseColor)].Sample(
+        g_Samplers[NonUniformIndex(p.BaseColorSampler)], input.v_UV);
 
     GBufferOutput output;
     output.Albedo = baseColor * p.BaseColorFactor;

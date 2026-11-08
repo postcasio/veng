@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include "Veng/binding.slang"
+
 // A BC6H (unsigned half float) block encoder, one thread per 4x4 block. Every block is encoded in
 // the one-region mode at 10-bit endpoints (twice: on its bounding-box diagonal, and with each
 // channel oriented by its covariance), then in the two-region modes (7.6 and 9.5 delta) on the
@@ -29,8 +31,12 @@
 // The source is one mip of a float image as a layered view; the blocks of every layer are written
 // layer-major, then row-major, into a buffer a copy moves into the compressed image.
 
-[[vk::binding(0, 3)]] Texture2DArray<float4> g_Source;
-[[vk::binding(1, 3)]] RWStructuredBuffer<uint4> g_Blocks;
+struct SkyBakeBc6hSet3
+{
+    Texture2DArray<float4> Source;
+    RWStructuredBuffer<uint4> Blocks;
+};
+VE_DESCRIPTOR_SET(3, SkyBakeBc6hSet3, g_Set3);
 
 struct PushConstants
 {
@@ -42,7 +48,7 @@ struct PushConstants
     uint Pad2;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const float HalfMax = 65504.0;
 
@@ -829,7 +835,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
         for (uint x = 0; x < 4; ++x)
         {
             const int2 texel = min(int2(id.xy * 4 + uint2(x, y)), lastTexel);
-            float3 value = g_Source.Load(int4(texel, int(id.z), 0)).rgb;
+            float3 value = g_Set3.Source.Load(int4(texel, int(id.z), 0)).rgb;
             value = select(isnan(value), float3(0.0), value);
             texels[y * 4 + x] = clamp(value, 0.0, HalfMax);
         }
@@ -863,5 +869,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     EncodeP2Pattern(block, blockMsle, bestPattern, texels, errorFloor);
 
     const uint index = (id.z * g_PC.BlocksPerAxis.y + id.y) * g_PC.BlocksPerAxis.x + id.x;
-    g_Blocks[g_PC.OutputBase + index] = block;
+    g_Set3.Blocks[g_PC.OutputBase + index] = block;
 }

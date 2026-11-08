@@ -83,6 +83,11 @@ namespace Veng::Cook
         /// stack a second pool on top of the driver's. An importer that spawns no threads ignores
         /// this; one that does must not exceed it.
         u32 ThreadBudget = 1;
+        /// @brief The GPU targets a shader cooks for: ShaderTarget bits (Veng/Cook/ShaderTargets.h).
+        ///
+        /// Set by the cooker from its target set, less any target whose toolchain is absent. Only
+        /// the shader importer reads it.
+        u32 ShaderTargets = 1;
     };
 
     /// @brief Whether an importer's Cook may run concurrently with other importers' Cook calls.

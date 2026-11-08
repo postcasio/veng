@@ -5,9 +5,12 @@
 //
 // The panorama is sampled through the set-0 bindless array (it is a registered asset);
 // the destination is a single storage layer set bound on set 3.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_DestCube;
+#include "Veng/bindless.slang"
+struct IblEquirectToCubeSet3
+{
+    [format("rgba16f")] RWTexture2DArray<float4> DestCube;
+};
+VE_DESCRIPTOR_SET(3, IblEquirectToCubeSet3, g_Set3);
 
 struct PushConstants
 {
@@ -17,7 +20,7 @@ struct PushConstants
     uint Pad0;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const float Pi = 3.14159265358979323846;
 
@@ -61,8 +64,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float3 dir = FaceDirection(id.z, uv);
     float2 euv = EquirectUV(dir);
 
-    float3 color = g_Textures[NonUniformResourceIndex(g_PC.Equirect)]
-                       .SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], euv, 0.0)
+    float3 color = g_Textures[NonUniformIndex(g_PC.Equirect)]
+                       .SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], euv, 0.0)
                        .rgb;
-    g_DestCube[uint3(id.xy, id.z)] = float4(color, 1.0);
+    g_Set3.DestCube[uint3(id.xy, id.z)] = float4(color, 1.0);
 }

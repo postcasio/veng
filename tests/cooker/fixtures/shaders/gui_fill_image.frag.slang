@@ -20,8 +20,8 @@ MaterialParams LoadMaterialParams(uint offset)
 float4 fsMain(GuiFillInputs input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 texel = g_Textures[NonUniformResourceIndex(p.Image)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.ImageSampler)], input.v_UV);
+    float4 texel = g_Textures[NonUniformIndex(p.Image)].Sample(
+        g_Samplers[NonUniformIndex(p.ImageSampler)], input.v_UV);
     float luma = dot(texel.rgb, float3(0.299, 0.587, 0.114));
     float4 fill = float4(lerp(texel.rgb, luma * p.Tint.rgb, 0.8), texel.a * p.Tint.a);
     fill.a *= input.v_Color.a;

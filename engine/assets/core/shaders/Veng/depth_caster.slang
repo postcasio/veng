@@ -3,6 +3,8 @@
 // depth+normal prepass. A depth vertex stage indexes it with its instance-rate a_CandidateId
 // attribute, which each draw's firstInstance selects from the pass's instance-id buffer, so one
 // instanced draw places every instance of a submesh at its own transform.
+#include "binding.slang"
+
 struct CasterRecord
 {
     float4x4 World;        // object -> world
@@ -12,4 +14,9 @@ struct CasterRecord
 };
 
 // Set 3 is the first author set; sets 0-2 are the bindless registry's.
-[[vk::binding(0, 3)]] StructuredBuffer<CasterRecord> g_Casters;
+struct CasterSet
+{
+    StructuredBuffer<CasterRecord> Casters;
+};
+VE_DESCRIPTOR_SET(3, CasterSet, g_CasterSet);
+#define g_Casters g_CasterSet.Casters

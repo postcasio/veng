@@ -211,9 +211,10 @@ namespace Veng::Cook
         // only the entries that read a module image; folding it into every key instead would throw
         // away every shader, texture and mesh in the project each time a module is relinked.
         const string material = fmt::format(
-            "tool={}\nmodule={}\nentry={}\npackdir={}\nconfig={}\nshaderinc={}\n", m_BaseTag,
-            inputs.ConsultsModule ? m_ModuleTag : string{}, inputs.EntryJson,
-            inputs.PackDir.string(), inputs.ConfigFingerprint, inputs.ShaderIncludeDir.string());
+            "tool={}\nmodule={}\nentry={}\npackdir={}\nconfig={}\nshaderinc={}\ntargets={}\n",
+            m_BaseTag, inputs.ConsultsModule ? m_ModuleTag : string{}, inputs.EntryJson,
+            inputs.PackDir.string(), inputs.ConfigFingerprint, inputs.ShaderIncludeDir.string(),
+            inputs.ShaderTargets);
         const XXH128_hash_t h = XXH3_128bits(material.data(), material.size());
         return HexOf(ContentHash{.Lo = h.low64, .Hi = h.high64});
     }

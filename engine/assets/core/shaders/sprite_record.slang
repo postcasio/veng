@@ -5,6 +5,7 @@
 #pragma once
 
 #include "Veng/sprite_shading_core.slang"
+#include "Veng/binding.slang"
 
 // GpuSprite::Flags bits, matching the renderer's SpriteFlag constants.
 static const uint SpriteFlagSixWay = 1u << 0;
@@ -50,8 +51,12 @@ struct GpuSprite
     uint Pad2;
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuSprite> g_Sprites;
-[[vk::binding(1, 3)]] StructuredBuffer<SpriteEmissionRamp> g_SpriteRamps;
+struct SpriteRecordSet3
+{
+    StructuredBuffer<GpuSprite> Sprites;
+    StructuredBuffer<SpriteEmissionRamp> SpriteRamps;
+};
+VE_DESCRIPTOR_SET(3, SpriteRecordSet3, g_Set3);
 
 struct SpritePushConstants
 {
@@ -61,7 +66,7 @@ struct SpritePushConstants
     uint Pad2;
 };
 
-[[vk::push_constant]] ConstantBuffer<SpritePushConstants> g_PC;
+VE_PUSH_CONSTANTS(SpritePushConstants, g_PC);
 
 // The frame blend a sprite resolved to.
 uint SpriteFrameBlendOf(GpuSprite sprite)

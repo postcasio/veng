@@ -40,6 +40,8 @@
 // It declares no binding of its own: it reads g_Textures and g_Samplers from the PostProcess contract,
 // so a material includes it after Veng/postprocess.slang.
 
+#include "binding.slang"
+
 // Loads the document texel under a scene pixel (sv_position.xy), or transparent (premultiplied
 // zero) where the pixel lies outside the document's rect.
 float4 LoadOverlayDocument(uint documentHandle, float4 documentRect, float2 pixel)
@@ -49,7 +51,7 @@ float4 LoadOverlayDocument(uint documentHandle, float4 documentRect, float2 pixe
     {
         return float4(0.0);
     }
-    return g_Textures[NonUniformResourceIndex(documentHandle)].Load(int3(int2(local), 0));
+    return g_Textures[NonUniformIndex(documentHandle)].Load(int3(int2(local), 0));
 }
 
 // Maps a point through a 3x3 homography given as rows, dividing through.
@@ -81,8 +83,8 @@ float3 SampleOverlayBackdrop(uint backdrop, uint backdropSampler, float4 backdro
     }
     const float lod = saturate(blur) * (backdropParams.x - 1.0);
     const float2 uv = saturate(pixel * backdropParams.zw);
-    return g_Textures[NonUniformResourceIndex(backdrop)]
-               .SampleLevel(g_Samplers[NonUniformResourceIndex(backdropSampler)], uv, lod)
+    return g_Textures[NonUniformIndex(backdrop)]
+               .SampleLevel(g_Samplers[NonUniformIndex(backdropSampler)], uv, lod)
                .rgb *
            backdropParams.y;
 }

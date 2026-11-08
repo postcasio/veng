@@ -24,8 +24,8 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     const float2 uv = OctahedralUV(normalize(p.Direction.xyz));
-    const float3 captured = g_Textures[NonUniformResourceIndex(p.Texture)]
-                                .Sample(g_Samplers[NonUniformResourceIndex(p.Sampler)], uv)
+    const float3 captured = g_Textures[NonUniformIndex(p.Texture)]
+                                .Sample(g_Samplers[NonUniformIndex(p.Sampler)], uv)
                                 .rgb;
 
     GBufferOutput output;

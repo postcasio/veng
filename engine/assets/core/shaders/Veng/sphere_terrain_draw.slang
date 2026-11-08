@@ -13,6 +13,7 @@
 // two are kept in step so the unit band can bound the device's arithmetic on the host.
 #pragma once
 
+#include "binding.slang"
 #include "sphere_terrain_mapping.slang"
 
 // One drawn tile; mirrors Veng::Renderer::SphereTerrainDrawRecord (688 bytes, std430).
@@ -56,16 +57,31 @@ static const uint SphereTerrainRecordTileOverlay = 4u;
 #define VE_SPHERE_TERRAIN_SET 4
 #endif
 
-[[vk::binding(0, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel0;
-[[vk::binding(1, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel1;
-[[vk::binding(2, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel2;
-[[vk::binding(3, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel3;
-[[vk::binding(4, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel4;
-[[vk::binding(5, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel5;
-[[vk::binding(6, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel6;
-[[vk::binding(7, VE_SPHERE_TERRAIN_SET)]] Texture2DArray<float4> g_TerrainChannel7;
-[[vk::binding(8, VE_SPHERE_TERRAIN_SET)]] StructuredBuffer<SphereTerrainRecord> g_TerrainRecords;
-[[vk::binding(9, VE_SPHERE_TERRAIN_SET)]] StructuredBuffer<uint> g_TerrainList;
+struct SphereTerrainSet
+{
+    Texture2DArray<float4> Channel0;
+    Texture2DArray<float4> Channel1;
+    Texture2DArray<float4> Channel2;
+    Texture2DArray<float4> Channel3;
+    Texture2DArray<float4> Channel4;
+    Texture2DArray<float4> Channel5;
+    Texture2DArray<float4> Channel6;
+    Texture2DArray<float4> Channel7;
+    StructuredBuffer<SphereTerrainRecord> Records;
+    StructuredBuffer<uint> List;
+};
+VE_DESCRIPTOR_SET(VE_SPHERE_TERRAIN_SET, SphereTerrainSet, g_SphereTerrain);
+
+#define g_TerrainChannel0 g_SphereTerrain.Channel0
+#define g_TerrainChannel1 g_SphereTerrain.Channel1
+#define g_TerrainChannel2 g_SphereTerrain.Channel2
+#define g_TerrainChannel3 g_SphereTerrain.Channel3
+#define g_TerrainChannel4 g_SphereTerrain.Channel4
+#define g_TerrainChannel5 g_SphereTerrain.Channel5
+#define g_TerrainChannel6 g_SphereTerrain.Channel6
+#define g_TerrainChannel7 g_SphereTerrain.Channel7
+#define g_TerrainRecords g_SphereTerrain.Records
+#define g_TerrainList g_SphereTerrain.List
 
 // The grid a tile is drawn with: 32 quads a side, vertex k on texel 2 + 4k.
 static const uint SphereTerrainGridQuads = 32u;

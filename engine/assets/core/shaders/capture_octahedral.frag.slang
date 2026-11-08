@@ -6,8 +6,7 @@
 // SceneCapture.cpp's FaceForward/FaceUp exactly — the two must not drift.
 #include "Veng/octahedral.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -15,7 +14,7 @@ struct PushConstants
     uint Sampler;      // shared clamp sampler
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -65,7 +64,7 @@ float4 fsMain(VSOutput input) : SV_Target0
 
     // The 3×2 atlas cell (row-major: faces 0..2 in the top row, 3..5 in the bottom). A
     // half-texel inset keeps a bilinear tap at a face edge from bleeding into the neighbor.
-    Texture2D atlas = g_Textures[NonUniformResourceIndex(g_PC.AtlasTexture)];
+    Texture2D atlas = g_Textures[NonUniformIndex(g_PC.AtlasTexture)];
     uint atlasWidth;
     uint atlasHeight;
     atlas.GetDimensions(atlasWidth, atlasHeight);
@@ -77,6 +76,6 @@ float4 fsMain(VSOutput input) : SV_Target0
                                  (cell + 1.0) * cellScale - halfTexel);
 
     const float3 color =
-        atlas.SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], clamped, 0.0).rgb;
+        atlas.SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], clamped, 0.0).rgb;
     return float4(color, 1.0);
 }

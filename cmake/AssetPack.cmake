@@ -128,10 +128,15 @@ function(veng_add_asset_pack TARGET_NAME)
     # final compressed bytes instead of re-encoding it. It lives under the build dir, so debug and
     # release trees never share one; the cache key folds the configuration, so a pack's macOS and
     # Windows artifacts never collide within a tree either.
+    # The pack's shaders cook for the engine tree's targets (VE_SHADER_TARGETS).
+    set(SHADER_TARGET_ARGS)
+    if (VENG_SHADER_TARGETS)
+        set(SHADER_TARGET_ARGS --shader-targets ${VENG_SHADER_TARGETS})
+    endif ()
     add_custom_command(
             OUTPUT ${PACK_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} --shader-include ${VENG_CORE_SHADER_DIR} --cache-dir ${CMAKE_BINARY_DIR}/vengc-cache --depfile ${PACK_OUTPUT}.d
+            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} --shader-include ${VENG_CORE_SHADER_DIR} ${SHADER_TARGET_ARGS} --cache-dir ${CMAKE_BINARY_DIR}/vengc-cache --depfile ${PACK_OUTPUT}.d
             DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP} ${CONFIG_DEP}
             DEPFILE ${PACK_OUTPUT}.d
             COMMENT "Cooking asset pack ${PACK_TARGET}")

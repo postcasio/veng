@@ -24,7 +24,11 @@ struct VSInput
 // The per-instance skinning palette: each bone's GlobalInverse * modelBone * InverseBind
 // matrix, indexed by DrawData.PaletteBase + boneIndex. Vertex-stage only, above the static
 // path's DrawData set (a dedicated set 4 the renderer binds for skinned draws).
-[[vk::binding(0, 4)]] StructuredBuffer<float4x4> g_Palette;
+struct SurfaceSkinnedSet4
+{
+    StructuredBuffer<float4x4> Palette;
+};
+VE_DESCRIPTOR_SET(4, SurfaceSkinnedSet4, g_Set4);
 
 [shader("vertex")]
 SurfaceFragmentInput vsMain(VSInput input)
@@ -34,10 +38,10 @@ SurfaceFragmentInput vsMain(VSInput input)
 
     // Linear-blend skinning: the weighted sum of the four influencing bone matrices.
     uint base = draw.PaletteBase;
-    float4x4 skin = input.a_BoneWeights.x * g_Palette[base + input.a_BoneIndices.x] +
-                    input.a_BoneWeights.y * g_Palette[base + input.a_BoneIndices.y] +
-                    input.a_BoneWeights.z * g_Palette[base + input.a_BoneIndices.z] +
-                    input.a_BoneWeights.w * g_Palette[base + input.a_BoneIndices.w];
+    float4x4 skin = input.a_BoneWeights.x * g_Set4.Palette[base + input.a_BoneIndices.x] +
+                    input.a_BoneWeights.y * g_Set4.Palette[base + input.a_BoneIndices.y] +
+                    input.a_BoneWeights.z * g_Set4.Palette[base + input.a_BoneIndices.z] +
+                    input.a_BoneWeights.w * g_Set4.Palette[base + input.a_BoneIndices.w];
 
     float4 skinnedPos = mul(skin, float4(input.a_Position, 1.0));
     float3 skinnedNormal = mul((float3x3)skin, input.a_Normal);
@@ -48,10 +52,10 @@ SurfaceFragmentInput vsMain(VSInput input)
     // rigid (World/PrevWorld) and deformation (animation) movement.
     uint prevBase = draw.PrevPaletteBase;
     float4x4 skinPrev =
-        input.a_BoneWeights.x * g_Palette[prevBase + input.a_BoneIndices.x] +
-        input.a_BoneWeights.y * g_Palette[prevBase + input.a_BoneIndices.y] +
-        input.a_BoneWeights.z * g_Palette[prevBase + input.a_BoneIndices.z] +
-        input.a_BoneWeights.w * g_Palette[prevBase + input.a_BoneIndices.w];
+        input.a_BoneWeights.x * g_Set4.Palette[prevBase + input.a_BoneIndices.x] +
+        input.a_BoneWeights.y * g_Set4.Palette[prevBase + input.a_BoneIndices.y] +
+        input.a_BoneWeights.z * g_Set4.Palette[prevBase + input.a_BoneIndices.z] +
+        input.a_BoneWeights.w * g_Set4.Palette[prevBase + input.a_BoneIndices.w];
     float4 prevSkinnedPos = mul(skinPrev, float4(input.a_Position, 1.0));
 
     return AssembleSurfaceVertex(draw, input.a_CandidateId, view, skinnedPos, skinnedNormal,

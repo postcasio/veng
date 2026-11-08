@@ -321,10 +321,9 @@ namespace VengGraph
                                                         .SamplerTexture = textureField});
 
             const Veng::string uv = inputs.empty() ? Veng::string("input.v_UV") : inputs[0].Expr;
-            const Veng::string expr =
-                fmt::format("g_Textures[NonUniformResourceIndex(p.{})].Sample("
-                            "g_Samplers[NonUniformResourceIndex(p.{})], {})",
-                            textureField, samplerField, uv);
+            const Veng::string expr = fmt::format("g_Textures[NonUniformIndex(p.{})].Sample("
+                                                  "g_Samplers[NonUniformIndex(p.{})], {})",
+                                                  textureField, samplerField, uv);
             return {EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false}};
         };
 
@@ -371,10 +370,9 @@ namespace VengGraph
 
             const Veng::string uvw =
                 inputs.empty() ? Veng::string("float3(0, 0, 0)") : inputs[0].Expr;
-            const Veng::string expr =
-                fmt::format("g_Volumes[NonUniformResourceIndex(p.{})].SampleLevel("
-                            "g_Samplers[NonUniformResourceIndex(p.{})], {}, 0)",
-                            volumeField, samplerField, uvw);
+            const Veng::string expr = fmt::format("g_Volumes[NonUniformIndex(p.{})].SampleLevel("
+                                                  "g_Samplers[NonUniformIndex(p.{})], {}, 0)",
+                                                  volumeField, samplerField, uvw);
             return {EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false}};
         };
 

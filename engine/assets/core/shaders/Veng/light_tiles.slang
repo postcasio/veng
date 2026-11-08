@@ -15,6 +15,7 @@
 // (Veng/light_buffer.slang) and the set-0 storage-buffer array g_Buffers before including this.
 
 #pragma once
+#include "binding.slang"
 
 // The tile edge in pixels. Mirrors LightTileSize in the renderer.
 static const uint LightTileSize = 16;
@@ -51,7 +52,7 @@ LightMask LoadLightMask(ViewConstants vc, uint word)
     LightMask mask;
     for (uint i = 0u; i < LightMaskWords; ++i)
     {
-        mask.Words[i] = g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load((word + i) * 4u);
+        mask.Words[i] = g_Buffers[NonUniformIndex(vc.LightTiles.x)].Load((word + i) * 4u);
     }
     return mask;
 }
@@ -158,7 +159,7 @@ LightMask ForwardSphereLightMask(ViewConstants vc, float3 centre, float radius)
             for (uint i = 0u; i < words; ++i)
             {
                 mask.Words[i] |=
-                    g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load((word + i) * 4u);
+                    g_Buffers[NonUniformIndex(vc.LightTiles.x)].Load((word + i) * 4u);
             }
         }
     }

@@ -2,6 +2,8 @@
 // bilinear tap the semi-Lagrangian advection reads, and the per-row metric that stretches the
 // x axis. Every kernel binds its own resources on set 1 (a closed producer->consumer chain off
 // the bindless registry) and takes this one push block.
+
+#include "../Veng/binding.slang"
 #ifndef VENG_FLUID_COMMON
 #define VENG_FLUID_COMMON
 
@@ -27,7 +29,7 @@ struct FluidParams
     uint Flags;
 };
 
-[[vk::push_constant]] ConstantBuffer<FluidParams> g_Fluid;
+VE_PUSH_CONSTANTS(FluidParams, g_Fluid);
 
 bool FluidOutside(uint3 id)
 {

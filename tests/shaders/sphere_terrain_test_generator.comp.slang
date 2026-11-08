@@ -3,8 +3,8 @@
 // tile's constants can fill the push block. A tile at or past FlatFromLevel holds zero, so a test
 // can make a level carry no detail.
 #include "Veng/sphere_terrain_mapping.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(0, 3)]] [format("r32f")] RWTexture2D<float> g_Height;
 
 struct GeneratorParams
 {
@@ -16,9 +16,14 @@ struct GeneratorParams
     uint FlatFromLevel;
     uint Pad;
 };
-[[vk::binding(1, 3)]] StructuredBuffer<GeneratorParams> g_Params;
+struct SphereTerrainTestGeneratorSet3
+{
+    [format("r32f")] RWTexture2D<float> Height;
+    StructuredBuffer<GeneratorParams> Params;
+};
+VE_DESCRIPTOR_SET(3, SphereTerrainTestGeneratorSet3, g_Set3);
 
-[[vk::push_constant]] SphereTerrainTileConstants u_Tile;
+VE_PUSH_CONSTANTS(SphereTerrainTileConstants, u_Tile);
 
 // Three sinusoids of the direction; its gradient is bounded by Amplitude * Frequency * 3 per unit
 // of direction, since each wave vector is a unit vector.
@@ -37,11 +42,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    const GeneratorParams params = g_Params[0];
+    const GeneratorParams params = g_Set3.Params[0];
     float h = 0.0;
     if (SphereTerrainTileLevel(u_Tile) < params.FlatFromLevel)
     {
         h = TestHeight(SphereTerrainTexelDirection(u_Tile, id.xy, 1u), params);
     }
-    g_Height[id.xy] = h;
+    g_Set3.Height[id.xy] = h;
 }

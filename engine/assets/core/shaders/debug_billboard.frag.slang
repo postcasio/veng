@@ -3,8 +3,7 @@
 // scene geometry — the same single-pass depth-aware occluded fade as the debug lines.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -18,7 +17,7 @@ struct PushConstants
     uint Pad3;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -33,16 +32,16 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
-    float4 texel = g_Textures[NonUniformResourceIndex(input.v_Texture)].Sample(samp, input.v_UV);
+    float4 texel = g_Textures[NonUniformIndex(input.v_Texture)].Sample(samp, input.v_UV);
     float4 color = texel * input.v_Color;
 
     // Sample the g-buffer depth at the dynamic-resolution sub-rect and fade behind geometry.
     float2 sampleUV = ScaledSampleUV(input.v_ScreenUV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     float sceneDepth =
-        g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
+        g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     // Reverse-Z: a smaller device depth is behind the scene geometry.
     const float bias = 0.00005;

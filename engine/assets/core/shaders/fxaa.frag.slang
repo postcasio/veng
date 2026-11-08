@@ -6,8 +6,7 @@
 // The tonemap output is linear (the swapchain composite does the display encode), so the edge
 // detector needs a perceptual luma to key on: sqrt(linear) approximates the sRGB transfer closely
 // enough over [0,1] to place edges where the eye sees them, and is far cheaper than a full encode.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -16,7 +15,7 @@ struct PushConstants
     float2 RcpFrame;   // 1 / output extent, in UV per texel
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -40,8 +39,8 @@ float Luma(float3 linearColor)
 
 float3 SampleRgb(float2 uv)
 {
-    return g_Textures[NonUniformResourceIndex(g_PC.Texture)]
-        .SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], uv, 0.0)
+    return g_Textures[NonUniformIndex(g_PC.Texture)]
+        .SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], uv, 0.0)
         .rgb;
 }
 

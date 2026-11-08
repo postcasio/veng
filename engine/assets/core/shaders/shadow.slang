@@ -17,6 +17,7 @@
 // material's layout carries the per-draw DrawData there (see Veng/forward_lighting.slang). Define
 // it before including this file.
 #pragma once
+#include "Veng/binding.slang"
 #include "Veng/area_shadow.slang"
 
 #ifndef VE_SHADOW_SET
@@ -42,14 +43,10 @@ struct ShadowConstants
     float4     ShadowParams; // x 1/tileRes, y blend-band, z cascade count, w enabled
 };
 
-[[vk::binding(0, VE_SHADOW_SET)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, VE_SHADOW_SET)]] SamplerComparisonState g_ShadowSampler;
-[[vk::binding(2, VE_SHADOW_SET)]] ConstantBuffer<ShadowConstants> g_Shadow;
-
 // The shadow system also carries a bounded set of punctual (point/spot) shadows.
 // MaxShadowedPunctual lights get a record; the lighting pass reads light.Cone.z as
 // the slot (-1 = unshadowed) and SampleCmps Records[slot] through the SAME comparison
-// sampler (binding 1) and a SECOND 2D depth atlas (binding 4), packed in tiles exactly
+// sampler (binding 1) and a SECOND 2D depth atlas (binding 2), packed in tiles exactly
 // as the cascade atlas is. CubeFaceCount is the cube-face count: 1 view for a spot
 // (ViewProj[0]), 6 for a point (ViewProj[0..5]) — each with the atlas tile-remap baked
 // in, so a fragment projected by a record's matrix lands in that light's tile.
@@ -69,8 +66,22 @@ struct PunctualShadows
     float4               AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
 };
 
-[[vk::binding(3, VE_SHADOW_SET)]] ConstantBuffer<PunctualShadows> g_Punctual;
-[[vk::binding(4, VE_SHADOW_SET)]] Texture2D g_PunctualAtlas;
+// The set's images and sampler form its block; the two per-frame constant blocks are dynamic uniform
+// buffers, bound by address after it (the first and second dynamic buffers of every layout that
+// carries this set).
+struct ShadowSet
+{
+    Texture2D Atlas;
+    SamplerComparisonState Sampler;
+    Texture2D PunctualAtlas;
+};
+VE_DESCRIPTOR_SET(VE_SHADOW_SET, ShadowSet, g_ShadowSet);
+VE_DYNAMIC_UNIFORM_BUFFER(3, VE_SHADOW_SET, 0, ShadowConstants, g_Shadow);
+VE_DYNAMIC_UNIFORM_BUFFER(4, VE_SHADOW_SET, 1, PunctualShadows, g_Punctual);
+
+#define g_ShadowAtlas g_ShadowSet.Atlas
+#define g_ShadowSampler g_ShadowSet.Sampler
+#define g_PunctualAtlas g_ShadowSet.PunctualAtlas
 
 // The surface lookups' PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps,
 // each offset by the atlas texel size and individually hardware-filtered, widening the

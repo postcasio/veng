@@ -10,6 +10,20 @@ namespace Veng::Renderer
 {
     class Context;
 
+    /// @brief The kind of code a ShaderModule is created from.
+    ///
+    /// A backend accepts only its own kinds: the Vulkan backend takes SPIR-V, and the Metal backend
+    /// takes a compiled Metal library or Metal source it builds with the device compiler.
+    enum class ShaderCodeKind : u8
+    {
+        /// @brief A SPIR-V module.
+        SpirV,
+        /// @brief A compiled Metal library (.metallib).
+        MetalLibrary,
+        /// @brief Metal Shading Language source text.
+        MetalSource,
+    };
+
     /// @brief Construction parameters for loading a ShaderModule from a SPIR-V file on disk.
     struct ShaderModuleInfo
     {
@@ -21,18 +35,21 @@ namespace Veng::Renderer
         string EntryPoint = "main";
     };
 
-    /// @brief Construction parameters for creating a ShaderModule from an in-memory SPIR-V binary.
+    /// @brief Construction parameters for creating a ShaderModule from in-memory code.
     struct ShaderModuleBinaryInfo
     {
         /// @brief Debug name.
         string Name;
-        /// @brief SPIR-V binary data; must remain valid for the duration of Create.
+        /// @brief The code, of the kind Kind names; must remain valid for the duration of Create.
         std::span<const u8> Binary;
+        /// @brief What Binary holds. Creating a module from a kind the backend compiled in does not
+        ///        accept is a fatal error.
+        ShaderCodeKind Kind = ShaderCodeKind::SpirV;
         /// @brief Shader entry-point name.
         string EntryPoint = "main";
     };
 
-    /// @brief A compiled SPIR-V shader module.
+    /// @brief A compiled shader module.
     ///
     /// Shared (Ref) because the same module is referenced by PipelineShaderStageInfo on
     /// every pipeline that uses it.
@@ -49,9 +66,9 @@ namespace Veng::Renderer
         /// @return A shared reference to the new module, or an error string.
         static Result<Ref<ShaderModule>> Create(Context& context, const ShaderModuleInfo& info);
 
-        /// @brief Creates a ShaderModule from an in-memory SPIR-V binary.
+        /// @brief Creates a ShaderModule from in-memory code.
         /// @param context  Context for shader-module creation.
-        /// @param info     Binary span and entry-point parameters.
+        /// @param info     Code span, its kind, and entry-point parameters.
         /// @return A shared reference to the new module.
         static Ref<ShaderModule> Create(Context& context, const ShaderModuleBinaryInfo& info)
         {

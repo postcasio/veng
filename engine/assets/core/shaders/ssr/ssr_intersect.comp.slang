@@ -38,16 +38,20 @@
 
 #include "ssr_common.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
-[[vk::binding(1, 3)]] TextureCube g_EnvironmentMap;
-[[vk::binding(2, 3)]] SamplerState g_EnvironmentMapSampler;
-[[vk::binding(3, 3)]] Texture2D<float> g_DepthHierarchy;
-[[vk::binding(4, 3)]] Texture2D<float> g_ExtractedRoughness;
-[[vk::binding(5, 3)]] Texture2D<float2> g_BlueNoiseTexture;
-[[vk::binding(6, 3)]] RWStructuredBuffer<uint> g_RayList;
-[[vk::binding(7, 3)]] globallycoherent RWStructuredBuffer<uint> g_RayCounter;
-[[vk::binding(8, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Radiance;
+struct SsrIntersectSet3
+{
+    TextureCube EnvironmentMap;
+    SamplerState EnvironmentMapSampler;
+    Texture2D<float> DepthHierarchy;
+    Texture2D<float> ExtractedRoughness;
+    Texture2D<float2> BlueNoiseTexture;
+    RWStructuredBuffer<uint> RayList;
+    globallycoherent RWStructuredBuffer<uint> RayCounter;
+    [format("rgba16f")] RWTexture2D<float4> Radiance;
+};
+VE_DESCRIPTOR_SET(3, SsrIntersectSet3, g_Set3);
 
 struct PushConstants
 {
@@ -55,7 +59,7 @@ struct PushConstants
     uint ColorTexture;  // this frame's lit opaque colour's bindless index
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 #define M_PI                               3.14159265358979f
 #define FFX_SSSR_FLOAT_MAX                 3.402823466e+38
@@ -72,7 +76,7 @@ uint2 BindlessExtent(uint index)
 {
     uint width;
     uint height;
-    g_Textures[NonUniformResourceIndex(index)].GetDimensions(width, height);
+    g_Textures[NonUniformIndex(index)].GetDimensions(width, height);
     return uint2(width, height);
 }
 
@@ -82,7 +86,7 @@ float3 FFX_SSSR_LoadWorldSpaceNormal(int2 pixel_coordinate)
     {
         return float3(0.0);
     }
-    return normalize(g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz);
+    return normalize(g_Textures[NonUniformIndex(g_PC.NormalTexture)].Load(int3(pixel_coordinate, 0)).xyz);
 }
 
 float FFX_SSSR_LoadDepth(int2 pixel_coordinate, int mip)
@@ -90,40 +94,40 @@ float FFX_SSSR_LoadDepth(int2 pixel_coordinate, int mip)
     uint width;
     uint height;
     uint levels;
-    g_DepthHierarchy.GetDimensions(0, width, height, levels);
+    g_Set3.DepthHierarchy.GetDimensions(0, width, height, levels);
     if (uint(mip) >= levels || !IsInside(uint2(pixel_coordinate), max(uint2(width, height) >> uint(mip), uint2(1))))
     {
         return 0.0;
     }
-    return g_DepthHierarchy.Load(int3(pixel_coordinate, mip));
+    return g_Set3.DepthHierarchy.Load(int3(pixel_coordinate, mip));
 }
 
 float FFX_SSSR_LoadExtractedRoughness(int3 coordinate)
 {
     uint width;
     uint height;
-    g_ExtractedRoughness.GetDimensions(width, height);
+    g_Set3.ExtractedRoughness.GetDimensions(width, height);
     if (!IsInside(uint2(coordinate.xy), uint2(width, height)))
     {
         return 0.0;
     }
-    return g_ExtractedRoughness.Load(coordinate).x;
+    return g_Set3.ExtractedRoughness.Load(coordinate).x;
 }
 
 float2 FFX_SSSR_SampleRandomVector2D(uint2 pixel)
 {
-    return g_BlueNoiseTexture.Load(int3(int2(pixel.xy % 128), 0));
+    return g_Set3.BlueNoiseTexture.Load(int3(int2(pixel.xy % 128), 0));
 }
 
 float3 FFX_SSSR_SampleEnvironmentMap(float3 direction, float preceptualRoughness)
 {
     uint width;
     uint height;
-    g_EnvironmentMap.GetDimensions(width, height);
+    g_Set3.EnvironmentMap.GetDimensions(width, height);
     float Width = float(width);
     int maxMipLevel = int(log2(float(Width > 0 ? Width : 1)));
     float mip = clamp(preceptualRoughness * float(maxMipLevel), 0.0, float(maxMipLevel));
-    return g_EnvironmentMap.SampleLevel(g_EnvironmentMapSampler, EnvironmentLookupDirection(direction), mip).xyz * IBLFactor() * IBLTint();
+    return g_Set3.EnvironmentMap.SampleLevel(g_Set3.EnvironmentMapSampler, EnvironmentLookupDirection(direction), mip).xyz * IBLFactor() * IBLTint();
 }
 
 float3 FFX_SSSR_LoadInputColor(int3 coordinate)
@@ -132,27 +136,27 @@ float3 FFX_SSSR_LoadInputColor(int3 coordinate)
     {
         return float3(0.0);
     }
-    return g_Textures[NonUniformResourceIndex(g_PC.ColorTexture)].Load(coordinate).xyz;
+    return g_Textures[NonUniformIndex(g_PC.ColorTexture)].Load(coordinate).xyz;
 }
 
 bool IsRayIndexValid(uint ray_index)
 {
-    return ray_index < g_RayCounter[1];
+    return ray_index < g_Set3.RayCounter[1];
 }
 
 uint GetRaylist(uint ray_index)
 {
-    return g_RayList[ray_index];
+    return g_Set3.RayList[ray_index];
 }
 
 void FFX_SSSR_StoreRadiance(uint2 coordinate, float4 radiance)
 {
     uint width;
     uint height;
-    g_Radiance.GetDimensions(width, height);
+    g_Set3.Radiance.GetDimensions(width, height);
     if (IsInside(coordinate, uint2(width, height)))
     {
-        g_Radiance[coordinate] = radiance;
+        g_Set3.Radiance[coordinate] = radiance;
     }
 }
 

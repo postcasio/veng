@@ -84,6 +84,15 @@ the format and its serialization — neither importer nor loader.
   encode the cooker writes and the decode and widening the shaders mirror). `CookedTextureVersion` is
   **2** for the field. The header is read by a fixed-offset `memcpy` after a size guard, so the
   loader rejects a `Version` mismatch — an added field would otherwise be misread as garbage.
+- **`AssetTypes::Shader` carries one entry point compiled per GPU target.** A
+  **`CookedShaderHeader`** (`CookedShaderVersion`, currently **2**) is followed by
+  `CookedShaderSection[SectionCount]` — each a code kind (`SpirV`, `MetalLibrary`), an offset, a size
+  and the entry point's name in that target's code — then the reflected interface
+  (`CookedShaderInterfaceHeader`, `CookedDescriptorBinding[]` with each binding's Metal argument-buffer
+  element or buffer slot, `CookedPushConstantBlock[]`), then each section's code.
+  `BuildCookedShaderBlob` and `ParseCookedShader` (`Veng/Asset/CookedShader.h`) are the one writer and
+  the one reader, so the cook and the loader agree by construction; `FindCookedShaderSection` reports a
+  missing target by the asset's name.
 - **`AssetTypes::MaterialInstance` is a parameter override over a parent `Material`.** Its blob is a
   **`CookedMaterialInstanceHeader`** (`CookedMaterialInstanceVersion`, currently `1`) — `ParentId`
   (the parent `Material`'s `AssetId`, resolved as a load-time dependency), `OverrideCount`, and the

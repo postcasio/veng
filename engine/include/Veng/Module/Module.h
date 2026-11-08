@@ -687,10 +687,13 @@ extern "C"
 /// pool and texture retire queue for the renderer's state, and ImGuiLayer::Create takes the asset
 /// manager the renderer's shaders load through. A module drives the layer, so a stale one lays it
 /// out wrong.
+/// Version 175 cooks shaders per GPU target: ShaderBinding grows its Metal placement, and
+/// ShaderModuleBinaryInfo the kind of code it carries, mid-struct. A module reads shader interfaces
+/// and creates modules, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 174u
+#define VENG_MODULE_ABI_VERSION 175u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

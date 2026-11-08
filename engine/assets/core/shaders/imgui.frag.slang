@@ -10,9 +10,8 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+#include "Veng/bindless.slang"
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

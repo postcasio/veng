@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "../Veng/binding.slang"
+
 // The reference's cbSSSR, less the g-buffer decode parameters (the normal unpack pair, the
 // roughness channel and its perceptual flag), which the engine's fixed g-buffer layout settles at
 // the load, followed by the one field of the denoiser's cbDenoiserReflections it does not share:
@@ -65,9 +67,10 @@ struct SsrConstants
     float4 EnvironmentFromWorld;
 };
 
-// Every pass that reads the constants binds them at binding 0 of its own set 3, at this frame's
-// region of the chain's ring (a dynamic offset).
-[[vk::binding(0, 3)]] ConstantBuffer<SsrConstants> g_Ssr;
+// Every pass that reads the constants binds them in its own set 3 at this frame's region of the
+// chain's ring (a dynamic offset). A dynamic buffer stays outside the set's block, so its binding
+// (SsrConstantsBinding on the C++ side) sits past every pass's block fields.
+VE_DYNAMIC_UNIFORM_BUFFER(16, 3, 0, SsrConstants, g_Ssr);
 
 float4x4 InvViewProjection() { return g_Ssr.InvViewProjection; }
 float4x4 Projection() { return g_Ssr.Projection; }

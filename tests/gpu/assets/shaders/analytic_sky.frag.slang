@@ -15,7 +15,7 @@ MaterialParams LoadMaterialParams(uint offset)
     return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
-[[vk::push_constant]] ConstantBuffer<SkyPushConstants> g_SkyPC;
+VE_PUSH_CONSTANTS(SkyPushConstants, g_SkyPC);
 
 [shader("fragment")]
 float4 fsMain(SkyFragmentInput input) : SV_Target0

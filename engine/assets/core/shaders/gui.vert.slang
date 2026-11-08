@@ -12,6 +12,8 @@
 // Vulkan clip space has Y pointing down, so a top-left pixel (y=0)
 // maps to clip y=-1 with no extra flip.
 
+#include "Veng/binding.slang"
+
 struct PushConstants
 {
     float2 InvScreenSize; // 1 / UI image extent in pixels
@@ -19,7 +21,7 @@ struct PushConstants
     uint GradientBase;    // record-index base for the current frame-in-flight (fragment reads it)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSInput
 {

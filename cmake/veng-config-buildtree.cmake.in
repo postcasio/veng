@@ -47,6 +47,10 @@ set(VENG_PACKAGE_MODE "BUILD_TREE")
 # backend's interop header, or registering tests that only run on one backend, reads it here.
 set(VENG_GPU_BACKEND "@VE_GPU_BACKEND@")
 
+# The GPU targets the engine tree cooks shaders to (VE_SHADER_TARGETS: Native or All). The vengc
+# rules pass it to every cook, so a consumer's packs carry the code its engine's backend loads.
+set(VENG_SHADER_TARGETS "@VE_SHADER_TARGETS@")
+
 # The helper *.cmake modules load from the live source tree, so a co-development engine-source
 # edit to a helper (or to the config body) is visible to the game on the next configure.
 set(VENG_CMAKE_HELPER_DIR "@CMAKE_CURRENT_SOURCE_DIR@/cmake")

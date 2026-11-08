@@ -31,8 +31,8 @@ GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = g_MaterialParams.Load<MaterialParams>(input.v_MaterialOffset);
 
-    float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);
+    float4 baseColor = g_Textures[NonUniformIndex(p.BaseColor)].Sample(
+        g_Samplers[NonUniformIndex(p.BaseColorSampler)], input.v_UV);
 
     float2 phase = 2.0 * 3.14159265 * p.RippleFrequency * input.v_UV;
     float2 tilt = p.RippleAmplitude * sin(phase);

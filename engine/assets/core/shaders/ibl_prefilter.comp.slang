@@ -5,10 +5,15 @@
 //
 // Source radiance cube and destination prefilter mip both bind on set 3.
 #include "Veng/brdf.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(0, 3)]] TextureCube g_Env;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_Dest;
+struct IblPrefilterSet3
+{
+    TextureCube Env;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2DArray<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, IblPrefilterSet3, g_Set3);
 
 struct PushConstants
 {
@@ -18,7 +23,7 @@ struct PushConstants
     float SourceSize;  // source cube face edge length (for the mip-bias filter)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 float3 FaceDirection(uint face, float2 uv)
 {
@@ -78,11 +83,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
                 mipBias = 0.5 * log2(saSample / saTexel);
             }
 
-            prefiltered += g_Env.SampleLevel(g_Sampler, lightDir, mipBias).rgb * nDotL;
+            prefiltered += g_Set3.Env.SampleLevel(g_Set3.Sampler, lightDir, mipBias).rgb * nDotL;
             totalWeight += nDotL;
         }
     }
 
     prefiltered = totalWeight > 0.0 ? prefiltered / totalWeight : prefiltered;
-    g_Dest[uint3(id.xy, id.z)] = float4(prefiltered, 1.0);
+    g_Set3.Dest[uint3(id.xy, id.z)] = float4(prefiltered, 1.0);
 }

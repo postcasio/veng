@@ -145,8 +145,8 @@ onto the sibling `MeshRenderer`'s first material each frame:
   reprojects an animated panel correctly. In a hand-authored fragment the write is one line:
 
   ```slang
-  const float3 texel = g_Textures[NonUniformResourceIndex(p.EmissiveTexture)].Sample(
-                           g_Samplers[NonUniformResourceIndex(p.EmissiveSampler)], input.v_UV).rgb;
+  const float3 texel = g_Textures[NonUniformIndex(p.EmissiveTexture)].Sample(
+                           g_Samplers[NonUniformIndex(p.EmissiveSampler)], input.v_UV).rgb;
   o.Emissive = p.EmissiveColor.rgb * texel;   // GBufferOutput.Emissive → G4
   ```
 

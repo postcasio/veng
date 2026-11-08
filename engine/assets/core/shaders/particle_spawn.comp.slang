@@ -23,7 +23,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     while (hi - lo > 1u)
     {
         uint mid = (lo + hi) / 2u;
-        if (g_SpawnRanges[mid].Prefix <= id.x)
+        if (g_Set3.SpawnRanges[mid].Prefix <= id.x)
         {
             lo = mid;
         }
@@ -32,12 +32,12 @@ void csMain(uint3 id : SV_DispatchThreadID)
             hi = mid;
         }
     }
-    GpuParticleSpawnRange range = g_SpawnRanges[lo];
+    GpuParticleSpawnRange range = g_Set3.SpawnRanges[lo];
     bool fed = (range.InstanceEmitter & ParticleRangeFed) != 0u;
     uint slot = range.InstanceEmitter & 0xFFFFu;
     uint emitterIndex = (range.InstanceEmitter >> 16) & 0x7FFFu;
-    GpuParticleInstance instance = g_Instances[slot];
-    GpuParticleEmitter emitter = g_Emitters[instance.EmitterBase + emitterIndex];
+    GpuParticleInstance instance = g_Set3.Instances[slot];
+    GpuParticleEmitter emitter = g_Set3.Emitters[instance.EmitterBase + emitterIndex];
 
     // A scheduled particle's index and time come from its range; a fed one's from its record.
     uint index = range.FirstIndex + (id.x - range.Prefix);
@@ -45,7 +45,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     GpuParticleFedSpawn feed;
     if (fed)
     {
-        feed = g_FedSpawns[index];
+        feed = g_Set3.FedSpawns[index];
         index = feed.Index;
         spawnTime = feed.Time;
     }
@@ -86,15 +86,15 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
 
     uint previous;
-    g_Counters.InterlockedAdd(ParticleCounterDead, 0xFFFFFFFFu, previous);
+    g_Set3.Counters.InterlockedAdd(ParticleCounterDead, 0xFFFFFFFFu, previous);
     if (int(previous) <= 0)
     {
         uint ignored;
-        g_Counters.InterlockedAdd(ParticleCounterDead, 1u, ignored);
-        g_Counters.InterlockedAdd(ParticleCounterDropped, 1u, ignored);
+        g_Set3.Counters.InterlockedAdd(ParticleCounterDead, 1u, ignored);
+        g_Set3.Counters.InterlockedAdd(ParticleCounterDropped, 1u, ignored);
         return;
     }
-    uint particleSlot = g_DeadList[previous - 1u];
+    uint particleSlot = g_Set3.DeadList[previous - 1u];
 
     GpuParticle particle;
     particle.Offset = state.Offset;
@@ -106,11 +106,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
     particle.Emitter = variant == 0u ? emitterIndex : emitter.Variants.y + variant - 1u;
     particle.Random = state.Random;
     particle.Spin = state.Spin;
-    g_Particles[particleSlot] = particle;
+    g_Set3.Particles[particleSlot] = particle;
 
     uint live;
-    g_Counters.InterlockedAdd(LiveCounter(g_PC.Cur), 1u, live);
-    g_LiveList[g_PC.Cur * g_PC.Capacity + live] = particleSlot;
+    g_Set3.Counters.InterlockedAdd(LiveCounter(g_PC.Cur), 1u, live);
+    g_Set3.LiveList[g_PC.Cur * g_PC.Capacity + live] = particleSlot;
     uint spawned;
-    g_Counters.InterlockedAdd(ParticleCounterSpawned, 1u, spawned);
+    g_Set3.Counters.InterlockedAdd(ParticleCounterSpawned, 1u, spawned);
 }

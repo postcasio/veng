@@ -7,7 +7,7 @@ namespace Veng
 {
     /// @brief AssetTypes::Shader loader.
     ///
-    /// Decodes a CookedShaderHeader + reflected interface + SPIR-V into a Veng::Shader
+    /// Decodes a CookedShaderHeader + reflected interface + the backend's code into a Veng::Shader
     /// (ShaderModule + ShaderInterface), bridging the cooked underlying-integer enum
     /// fields to Veng::Renderer enums for bindings, push constants, and vertex inputs.
     class ShaderLoader final : public AssetLoader

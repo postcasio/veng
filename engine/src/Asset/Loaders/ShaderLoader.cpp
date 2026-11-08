@@ -7,6 +7,9 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/CookedShader.h>
+#include <Veng/Cook/MetalBindingSlots.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Asset/VertexLayout.h>
 
 namespace Veng
@@ -61,6 +64,35 @@ namespace Veng
             return string(name, strnlen(name, N));
         }
 
+        // The section and module kind of the backend compiled in.
+#if defined(VE_GPU_BACKEND_VULKAN)
+        constexpr CookedShaderCode NativeShaderCode = CookedShaderCode::SpirV;
+        constexpr Renderer::ShaderCodeKind NativeShaderCodeKind = Renderer::ShaderCodeKind::SpirV;
+#endif
+
+        // A Metal binding names an argument-buffer element, or a buffer slot, which must be one of
+        // the reserved dynamic-uniform-buffer slots.
+        optional<Renderer::MetalBindingKind> BridgeMetalBinding(u32 kind, u32 index)
+        {
+            using namespace Cook::MetalBindingSlots;
+            switch (kind)
+            {
+            case static_cast<u32>(CookedMetalBinding::None):
+                return Renderer::MetalBindingKind::None;
+            case static_cast<u32>(CookedMetalBinding::ArgumentBufferElement):
+                return Renderer::MetalBindingKind::ArgumentBufferElement;
+            case static_cast<u32>(CookedMetalBinding::BufferSlot):
+                if (index < DynamicUniformBufferBase ||
+                    index >= DynamicUniformBufferBase + MaxDynamicUniformBuffers)
+                {
+                    return std::nullopt;
+                }
+                return Renderer::MetalBindingKind::BufferSlot;
+            default:
+                return std::nullopt;
+            }
+        }
+
         AssetLoadError Corrupt(AssetId id, string detail)
         {
             return AssetLoadError{
@@ -72,60 +104,44 @@ namespace Veng
                                                          const AssetId id,
                                                          const std::span<const u8> cooked) const
     {
-        if (cooked.size() < sizeof(CookedShaderHeader))
+        const Result<CookedShaderView> parsedBlob = ParseCookedShader(cooked);
+        if (!parsedBlob)
         {
-            return std::unexpected(
-                Corrupt(id, "shader: cooked blob smaller than CookedShaderHeader"));
+            return std::unexpected(Corrupt(id, fmt::format("shader: {}", parsedBlob.error())));
         }
+        const CookedShaderView& view = *parsedBlob;
 
-        CookedShaderHeader header;
-        std::memcpy(&header, cooked.data(), sizeof(header));
-
-        usize cursor = sizeof(CookedShaderHeader);
-
-        if (cooked.size() < cursor + sizeof(CookedShaderInterfaceHeader))
+        const Result<const CookedShaderSectionView*> section =
+            FindCookedShaderSection(view, NativeShaderCode, fmt::format("{:#018x}", id.Value));
+        if (!section)
         {
-            return std::unexpected(
-                Corrupt(id, "shader: cooked blob smaller than CookedShaderInterfaceHeader"));
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Unsupported, .Id = id, .Detail = section.error()});
         }
-
-        CookedShaderInterfaceHeader interfaceHeader;
-        std::memcpy(&interfaceHeader, cooked.data() + cursor, sizeof(interfaceHeader));
-        cursor += sizeof(CookedShaderInterfaceHeader);
 
         Renderer::ShaderInterface shaderInterface;
-
-        const usize bindingBytes =
-            static_cast<usize>(interfaceHeader.BindingCount) * sizeof(CookedDescriptorBinding);
-        if (cooked.size() < cursor + bindingBytes)
+        shaderInterface.Bindings.reserve(view.Bindings.size());
+        for (usize i = 0; i < view.Bindings.size(); ++i)
         {
-            return std::unexpected(
-                Corrupt(id, "shader: cooked blob smaller than descriptor binding table"));
-        }
-
-        shaderInterface.Bindings.reserve(interfaceHeader.BindingCount);
-        for (u32 i = 0; i < interfaceHeader.BindingCount; ++i)
-        {
-            CookedDescriptorBinding binding;
-            std::memcpy(&binding, cooked.data() + cursor + i * sizeof(CookedDescriptorBinding),
-                        sizeof(binding));
-
+            const CookedDescriptorBinding& binding = view.Bindings[i];
             const optional<Renderer::DescriptorType> type = BridgeDescriptorType(binding.Type);
             const optional<Renderer::ShaderStage> stages = BridgeShaderStageMask(binding.StageMask);
-            if (!type || !stages)
+            const optional<Renderer::MetalBindingKind> metal =
+                BridgeMetalBinding(binding.MetalBinding, binding.MetalIndex);
+            if (!type || !stages || !metal)
             {
                 return std::unexpected(Corrupt(
-                    id,
-                    fmt::format(
-                        "shader: descriptor binding {} has unrecognized type {} or stage mask {}",
-                        i, binding.Type, binding.StageMask)));
+                    id, fmt::format("shader: descriptor binding {} has unrecognized type {}, stage "
+                                    "mask {} or Metal binding {} at {}",
+                                    i, binding.Type, binding.StageMask, binding.MetalBinding,
+                                    binding.MetalIndex)));
             }
 
-            if (binding.Set < 1)
+            if (binding.Set < Renderer::BindlessRegistry::FirstUserSet)
             {
                 return std::unexpected(
-                    Corrupt(id, fmt::format("shader: descriptor binding {} targets set {} (set 0 "
-                                            "is reserved for the bindless registry)",
+                    Corrupt(id, fmt::format("shader: descriptor binding {} targets set {}, one of "
+                                            "the bindless registry's",
                                             i, binding.Set)));
             }
 
@@ -136,25 +152,15 @@ namespace Veng
                 .Type = *type,
                 .Count = binding.Count,
                 .Stages = *stages,
+                .MetalKind = *metal,
+                .MetalIndex = binding.MetalIndex,
             });
         }
-        cursor += bindingBytes;
 
-        const usize pushConstantBytes =
-            static_cast<usize>(interfaceHeader.PushConstantCount) * sizeof(CookedPushConstantBlock);
-        if (cooked.size() < cursor + pushConstantBytes)
+        shaderInterface.PushConstants.reserve(view.PushConstants.size());
+        for (usize i = 0; i < view.PushConstants.size(); ++i)
         {
-            return std::unexpected(
-                Corrupt(id, "shader: cooked blob smaller than push-constant table"));
-        }
-
-        shaderInterface.PushConstants.reserve(interfaceHeader.PushConstantCount);
-        for (u32 i = 0; i < interfaceHeader.PushConstantCount; ++i)
-        {
-            CookedPushConstantBlock pushConstant;
-            std::memcpy(&pushConstant, cooked.data() + cursor + i * sizeof(CookedPushConstantBlock),
-                        sizeof(pushConstant));
-
+            const CookedPushConstantBlock& pushConstant = view.PushConstants[i];
             const optional<Renderer::ShaderStage> stages =
                 BridgeShaderStageMask(pushConstant.StageMask);
             if (!stages)
@@ -171,26 +177,12 @@ namespace Veng
                 .Stages = *stages,
             });
         }
-        cursor += pushConstantBytes;
 
+        const CookedShaderInterfaceHeader& interfaceHeader = view.Interface;
         shaderInterface.VertexLayoutId =
             interfaceHeader.VertexLayoutAssetId != 0
                 ? optional<AssetId>(AssetId{interfaceHeader.VertexLayoutAssetId})
                 : std::nullopt;
-
-        const usize expectedInterfaceBytes = cursor - sizeof(CookedShaderHeader);
-        if (header.InterfaceBytes != expectedInterfaceBytes)
-        {
-            return std::unexpected(Corrupt(
-                id,
-                fmt::format("shader: InterfaceBytes {} does not match reflected interface size {}",
-                            header.InterfaceBytes, expectedInterfaceBytes)));
-        }
-
-        if (cooked.size() < cursor + header.SpirvBytes)
-        {
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than header + SPIR-V"));
-        }
 
         // A missing vertex layout fails the load — catches a missing or corrupt core pack. The
         // shader waits for it, so a material building its pipeline finds it resident.
@@ -201,13 +193,12 @@ namespace Veng
                                            .Id = AssetId{interfaceHeader.VertexLayoutAssetId}});
         }
 
-        // The module itself is created on the main thread; the SPIR-V is copied out of the blob for
+        // The module itself is created on the main thread; the code is copied out of the blob for
         // it, since the completion may run after the archive is gone.
-        auto spirv = CreateRef<vector<u8>>(
-            cooked.begin() + static_cast<std::ptrdiff_t>(cursor),
-            cooked.begin() + static_cast<std::ptrdiff_t>(cursor + header.SpirvBytes));
-        auto parsedInterface = CreateRef<Renderer::ShaderInterface>(std::move(shaderInterface));
-        parsed.Complete = [spirv, parsedInterface, entryPoint = BridgeName(header.EntryPoint),
+        const auto code = CreateRef<vector<u8>>((*section)->Bytes.begin(), (*section)->Bytes.end());
+        const auto parsedInterface =
+            CreateRef<Renderer::ShaderInterface>(std::move(shaderInterface));
+        parsed.Complete = [code, parsedInterface, entryPoint = (*section)->EntryPoint,
                            id](AssetManager& manager,
                                std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
@@ -215,7 +206,8 @@ namespace Veng
             const Ref<Renderer::ShaderModule> shader = Renderer::ShaderModule::Create(
                 manager.GetContext(), {
                                           .Name = fmt::format("Shader {}", id.Value),
-                                          .Binary = *spirv,
+                                          .Binary = *code,
+                                          .Kind = NativeShaderCodeKind,
                                           .EntryPoint = entryPoint,
                                       });
 

@@ -18,5 +18,5 @@ MaterialParams LoadMaterialParams(uint offset)
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    return g_Textures[NonUniformResourceIndex(p.Document)].Load(int3(int2(input.sv_position.xy), 0));
+    return g_Textures[NonUniformIndex(p.Document)].Load(int3(int2(input.sv_position.xy), 0));
 }

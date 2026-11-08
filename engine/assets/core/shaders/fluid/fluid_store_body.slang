@@ -5,9 +5,14 @@
 // A variant defines FLUID_STORE_FORMAT, FLUID_STORE_TYPE and FLUID_STORE_SWIZZLE before
 // including this; the destination format must match the caller's image exactly.
 #include "fluid_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] [format(FLUID_STORE_FORMAT)] RWTexture2D<FLUID_STORE_TYPE> g_Dest;
+struct FluidStoreBodySet3
+{
+    Texture2D<float4> Source;
+    [format(FLUID_STORE_FORMAT)] RWTexture2D<FLUID_STORE_TYPE> Dest;
+};
+VE_DESCRIPTOR_SET(3, FluidStoreBodySet3, g_Set3);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -17,6 +22,6 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
 
     int2 texel = int2(id.xy);
-    float4 value = g_Source.Load(int3(texel, 0)) * g_Fluid.Scale;
-    g_Dest[texel] = value.FLUID_STORE_SWIZZLE;
+    float4 value = g_Set3.Source.Load(int3(texel, 0)) * g_Fluid.Scale;
+    g_Set3.Dest[texel] = value.FLUID_STORE_SWIZZLE;
 }

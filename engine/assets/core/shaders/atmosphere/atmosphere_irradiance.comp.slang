@@ -5,16 +5,21 @@
 // Set 1: the scattering total (sampled 3D) + a shared sampler, and the destination 2D
 // irradiance image (write-only storage). Off the bindless registry.
 #include "atmosphere_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture3D<float4> g_Scattering;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Irradiance;
+struct AtmosphereIrradianceSet3
+{
+    Texture3D<float4> Scattering;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Irradiance;
+};
+VE_DESCRIPTOR_SET(3, AtmosphereIrradianceSet3, g_Set3);
 
 struct PushConstants
 {
     AtmosphereParams Atmosphere;
 };
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -45,10 +50,10 @@ void csMain(uint3 id : SV_DispatchThreadID)
             float3 w = float3(sinT * cos(phi), cosT, sinT * sin(phi));
             float muW = ClampCosine(dot(up, w));
             float3 uvw = ScatteringUvwFromParams(a, r, muW, muS, RayHitsGround(a, r, muW));
-            float3 radiance = g_Scattering.SampleLevel(g_Sampler, uvw, 0.0).rgb;
+            float3 radiance = g_Set3.Scattering.SampleLevel(g_Set3.Sampler, uvw, 0.0).rgb;
             sum += radiance * cosT;
         }
     }
     float3 irradiance = sum * (Pi / float(Phi * Theta)) * a.SunIrradiance;
-    g_Irradiance[id.xy] = float4(irradiance, 1.0);
+    g_Set3.Irradiance[id.xy] = float4(irradiance, 1.0);
 }

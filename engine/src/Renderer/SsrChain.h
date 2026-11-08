@@ -662,7 +662,7 @@ namespace Veng::Renderer
         /// @brief The classifier's set for each frame parity (radiance A and variance B swap).
         std::array<Ref<DescriptorSet>, 2> m_ClassifySets;
         /// @brief The coverage classifier's set for each frame parity: the classifier's, plus the
-        ///        coverage target at binding 10. Built only while the coverage target is held.
+        ///        coverage target at binding 9. Built only while the coverage target is held.
         std::array<Ref<DescriptorSet>, 2> m_CoverageSets;
         /// @brief The blue-noise set.
         Ref<DescriptorSet> m_BlueNoiseSet;

@@ -12,8 +12,7 @@
 // additive pipeline adds it.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 #include "particle_draw.slang"
 #include "Veng/scene_depth.slang"
@@ -47,8 +46,8 @@ struct ParticleShade
 
 ParticleShade ShadeParticle(VSOutput input)
 {
-    GpuParticleDraw draw = g_Draws[input.v_Draw];
-    GpuParticleEmitter emitter = g_Emitters[draw.Emitter];
+    GpuParticleDraw draw = g_Set3.Draws[input.v_Draw];
+    GpuParticleEmitter emitter = g_Set3.Emitters[draw.Emitter];
     float2 tintRg = UnpackHalf2(draw.TintOpacity.x);
     float2 tintBa = UnpackHalf2(draw.TintOpacity.y);
     float3 tint = float3(tintRg, tintBa.x);
@@ -82,13 +81,13 @@ ParticleShade ShadeParticle(VSOutput input)
     {
         bool sixWay = (emitter.Mode.w & ParticleFlagSixWay) != 0u;
         uint blend = ParticleFrameBlendOf(emitter);
-        SamplerState atlasSampler = g_Samplers[NonUniformResourceIndex(emitter.Grid.w)];
+        SamplerState atlasSampler = g_Samplers[NonUniformIndex(emitter.Grid.w)];
         SpriteFramePair pair = ParticleFramePair(emitter, draw);
         SpriteFrameTaps taps =
             SpriteFrameTapsAt(pair, input.v_Quad, dqdx, dqdy, float2(0.0), float2(0.0));
         if (blend == ParticleBlendMotion)
         {
-            Texture2D motion = g_Textures[NonUniformResourceIndex(emitter.Textures.z)];
+            Texture2D motion = g_Textures[NonUniformIndex(emitter.Textures.z)];
             float2 storedN = motion.SampleGrad(atlasSampler, taps.UvN, taps.DxN, taps.DyN).rg;
             float2 storedN1 =
                 motion.SampleGrad(atlasSampler, taps.UvN1, taps.DxN1, taps.DyN1).rg;
@@ -98,7 +97,7 @@ ParticleShade ShadeParticle(VSOutput input)
         }
 
         float4 primary = SampleFrameBlended(
-            g_Textures[NonUniformResourceIndex(emitter.Textures.x)], atlasSampler, taps);
+            g_Textures[NonUniformIndex(emitter.Textures.x)], atlasSampler, taps);
         if (!sixWay)
         {
             shade.Color = ShadeUnlitSprite(primary, emitter.Counts.z, tint, opacity);
@@ -107,9 +106,9 @@ ParticleShade ShadeParticle(VSOutput input)
         else
         {
             float4 lightB = SampleFrameBlended(
-                g_Textures[NonUniformResourceIndex(emitter.Textures.y)], atlasSampler, taps);
+                g_Textures[NonUniformIndex(emitter.Textures.y)], atlasSampler, taps);
             float4 temperature = SampleFrameBlended(
-                g_Textures[NonUniformResourceIndex(emitter.Textures.w)], atlasSampler, taps);
+                g_Textures[NonUniformIndex(emitter.Textures.w)], atlasSampler, taps);
             float stored =
                 (emitter.Mode.w & ParticleFlagTemperatureRed) != 0u ? temperature.r : temperature.a;
             float t = SpriteTemperature(stored, (emitter.Mode.w & ParticleFlagSqrtTemperature) != 0u,

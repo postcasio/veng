@@ -8,8 +8,7 @@
 // texture-wide softening a luma-directed blur (FXAA) applies. The run search is symmetric and
 // length-limited, so a long straight edge blends least in its middle and most at its corners — the
 // morphological anti-aliasing signature.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -19,7 +18,7 @@ struct PushConstants
     float2 RcpFrame;   // 1 / extent, in UV per texel
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -33,8 +32,8 @@ static const int MaxSearchSteps = 16;
 
 float3 ColorAt(float2 uv)
 {
-    return g_Textures[NonUniformResourceIndex(g_PC.ColorTexture)]
-        .SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], uv, 0.0)
+    return g_Textures[NonUniformIndex(g_PC.ColorTexture)]
+        .SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], uv, 0.0)
         .rgb;
 }
 
@@ -42,8 +41,8 @@ float3 ColorAt(float2 uv)
 // so no neighbour bleeds in). R = right edge of that pixel, G = bottom edge.
 float2 EdgeAt(float2 uv)
 {
-    return g_Textures[NonUniformResourceIndex(g_PC.EdgeTexture)]
-        .SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], uv, 0.0)
+    return g_Textures[NonUniformIndex(g_PC.EdgeTexture)]
+        .SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], uv, 0.0)
         .rg;
 }
 

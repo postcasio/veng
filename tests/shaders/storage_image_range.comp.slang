@@ -4,13 +4,19 @@
 // 3; the test's hand-built layout matches this binding. [format("rgba16")] compiles to a
 // SPIR-V Rgba16 image, one of the extended storage-image formats — so this shader is also
 // the probe that the device's shaderStorageImageExtendedFormats support is real.
-[[vk::binding(0, 3)]] [format("rgba16")] RWTexture2D<float4> u_Target;
+
+#include "Veng/binding.slang"
+struct StorageImageRangeSet3
+{
+    [format("rgba16")] RWTexture2D<float4> Target;
+};
+VE_DESCRIPTOR_SET(3, StorageImageRangeSet3, g_Set3);
 
 struct RangePush
 {
     uint2 Extent;
 };
-[[vk::push_constant]] RangePush u_Push;
+VE_PUSH_CONSTANTS(RangePush, u_Push);
 
 [shader("compute")]
 [numthreads(8, 4, 1)]
@@ -21,5 +27,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
     }
     float ramp = float(id.x) / float(max(u_Push.Extent.x - 1u, 1u));
-    u_Target[id.xy] = float4(0.0, 1.0, 0.5, ramp);
+    g_Set3.Target[id.xy] = float4(0.0, 1.0, 0.5, ramp);
 }

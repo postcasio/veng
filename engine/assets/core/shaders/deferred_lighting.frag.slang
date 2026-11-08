@@ -32,9 +32,7 @@
 #include "view_constants.slang"
 #include "Veng/surface_flags.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+#include "Veng/bindless.slang"
 
 // The shared lighting core: the BRDF, the light loop, shadowing, and the ambient arms, read from
 // the per-view light state in the view block — the same evaluation a forward-lit translucent
@@ -58,7 +56,7 @@ struct PushConstants
 #endif
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The shading normal's screen-space variance for specular anti-aliasing (MakeLightingSurface), or
 // zero for a pixel whose 2×2 quad holds a background pixel. The cleared g-buffer's zero normal
@@ -70,8 +68,8 @@ float GBufferNormalVariance(float3 normal, bool hasSurface)
     float surface = hasSurface ? 1.0 : 0.0;
     // Fine derivatives pair a pixel with its row and column neighbours only; a second derivative of
     // that edge reaches the diagonal one, so any background pixel in the quad is seen by all four.
-    float edge = abs(ddx_fine(surface)) + abs(ddy_fine(surface));
-    float quadEdge = edge + abs(ddx_fine(edge)) + abs(ddy_fine(edge));
+    float edge = abs(DdxFine(surface)) + abs(DdyFine(surface));
+    float quadEdge = edge + abs(DdxFine(edge)) + abs(DdyFine(edge));
     float variance = NormalScreenVariance(normal);
     return quadEdge > 0.0 ? 0.0 : variance;
 }
@@ -85,7 +83,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
 
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
@@ -94,10 +92,10 @@ float4 fsMain(VSOutput input) : SV_Target
     // raw logical UV — the view is logically full-screen; only the storage is a sub-rect.
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
 
-    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Sample(samp, sampleUV).rgb;
-    float3 normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, sampleUV).xyz;
-    float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
-    float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
+    float3 albedo = g_Textures[NonUniformIndex(g_PC.AlbedoTexture)].Sample(samp, sampleUV).rgb;
+    float3 normal = g_Textures[NonUniformIndex(g_PC.NormalTexture)].Sample(samp, sampleUV).xyz;
+    float4 orm    = g_Textures[NonUniformIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
+    float depth   = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     float normalLength = length(normal);
     float3 N = normalLength > 1e-4 ? normal / normalLength : float3(0.0, 0.0, 0.0);
@@ -125,7 +123,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // fragment declining environment lighting takes the flat ambient floor in place of the sky's,
     // and one declining the ambient diffuse keeps only the ambient specular.
     float surfaceFlags =
-        LoadSurfaceFlags(g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)], sampleUV);
+        LoadSurfaceFlags(g_Textures[NonUniformIndex(g_PC.OrmTexture)], sampleUV);
     bool declinesShadowMaps = GBufferDeclinesShadowMaps(surfaceFlags);
     bool declinesEnvironmentLighting = GBufferDeclinesEnvironmentLighting(surfaceFlags);
 
@@ -159,7 +157,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // non-SSAO variant uses the baked occlusion (× OcclusionStrength, already folded
     // into ORM.r by the geometry pass's material) alone.
 #if VE_USE_SSAO
-    float ssao = g_Textures[NonUniformResourceIndex(g_PC.SsaoTexture)].Sample(samp, sampleUV).r;
+    float ssao = g_Textures[NonUniformIndex(g_PC.SsaoTexture)].Sample(samp, sampleUV).r;
     float ambientOcclusion = min(occlusion, ssao);
 #else
     float ambientOcclusion = occlusion;
@@ -181,7 +179,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // skybox pass discards foreground pixels and geometry is foreground by definition, so
     // emissive on geometry survives the sky composite identically; the background (depth <= 0.0,
     // returned black above) carries none.
-    float3 emissive = g_Textures[NonUniformResourceIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
+    float3 emissive = g_Textures[NonUniformIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
 
     return float4(GuardLightingOutput(direct.Diffuse + direct.Specular + ambient.Diffuse +
                                       ambient.Specular + emissive),

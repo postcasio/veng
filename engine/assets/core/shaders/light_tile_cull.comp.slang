@@ -29,14 +29,17 @@
 // mask placement through the view block; it writes the mask buffer through its own set 3.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+#include "Veng/bindless.slang"
 
 #include "Veng/light_buffer.slang"
 #include "Veng/light_tiles.slang"
 
 // This frame's region of the renderer's ring of per-tile masks.
-[[vk::binding(0, 3)]] RWByteAddressBuffer g_TileMasks;
+struct LightTileCullSet3
+{
+    RWByteAddressBuffer TileMasks;
+};
+VE_DESCRIPTOR_SET(3, LightTileCullSet3, g_Set3);
 
 struct PushConstants
 {
@@ -44,7 +47,7 @@ struct PushConstants
     uint DepthTexture;       // the g-buffer depth's bindless index
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // The relative growth applied to every light's sphere: far above the float error of reconstructing
 // a world position through a 4x4 inverse projection, and far below any distance worth culling at.
@@ -126,7 +129,7 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
     uint2 pixel = tile.xy * LightTileSize + local.xy;
     if (all(pixel < validExtent))
     {
-        float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Load(int3(pixel, 0)).r;
+        float depth = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Load(int3(pixel, 0)).r;
         if (depth > 0.0)
         {
             InterlockedMax(s_NearDepthBits, asuint(depth));
@@ -245,7 +248,7 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
     if (groupIndex < LightMaskWords)
     {
         uint record = LightTileRecord(vc, tile.xy) - vc.LightTiles.z;
-        g_TileMasks.Store((record + groupIndex) * 4u, s_Mask[groupIndex]);
-        g_TileMasks.Store((record + LightMaskWords + groupIndex) * 4u, s_ForwardMask[groupIndex]);
+        g_Set3.TileMasks.Store((record + groupIndex) * 4u, s_Mask[groupIndex]);
+        g_Set3.TileMasks.Store((record + LightMaskWords + groupIndex) * 4u, s_ForwardMask[groupIndex]);
     }
 }

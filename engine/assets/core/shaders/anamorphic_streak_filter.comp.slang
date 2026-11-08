@@ -15,6 +15,8 @@
 // Set 3 binds the source image, an unused sampler, and the destination (the bloom's down/up set
 // layout).
 
+#include "Veng/binding.slang"
+
 struct PushConstants
 {
     uint2  Extent; // the valid extent, in texels
@@ -22,11 +24,15 @@ struct PushConstants
     float4 Ratio;  // each channel's weight ratio between neighbouring texels; w unused
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+struct AnamorphicStreakFilterSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, AnamorphicStreakFilterSet3, g_Set3);
 
 static const uint GroupSize = 256;
 
@@ -78,7 +84,7 @@ void csMain(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
     float3 backward = float3(0.0, 0.0, 0.0);
     for (int x = begin; x < end; x++)
     {
-        const float3 source = gain * g_Source.Load(int3(x, row, 0)).rgb;
+        const float3 source = gain * g_Set3.Source.Load(int3(x, row, 0)).rgb;
         forward = source + ratio * forward;
         backward += power * source;
         power *= ratio;
@@ -109,16 +115,16 @@ void csMain(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
     forward = forwardIn;
     for (int x = begin; x < end; x++)
     {
-        forward = gain * g_Source.Load(int3(x, row, 0)).rgb + ratio * forward;
-        g_Dest[int2(x, row)] = float4(forward, 1.0);
+        forward = gain * g_Set3.Source.Load(int3(x, row, 0)).rgb + ratio * forward;
+        g_Set3.Dest[int2(x, row)] = float4(forward, 1.0);
     }
 
     backward = backwardIn;
     for (int x = end - 1; x >= begin; x--)
     {
-        const float3 source = g_Source.Load(int3(x, row, 0)).rgb;
+        const float3 source = g_Set3.Source.Load(int3(x, row, 0)).rgb;
         backward = gain * source + ratio * backward;
-        const float3 sum = g_Dest[int2(x, row)].rgb + backward - gain * source;
-        g_Dest[int2(x, row)] = float4(sum / (1.0 + ratio), 1.0);
+        const float3 sum = g_Set3.Dest[int2(x, row)].rgb + backward - gain * source;
+        g_Set3.Dest[int2(x, row)] = float4(sum / (1.0 + ratio), 1.0);
     }
 }

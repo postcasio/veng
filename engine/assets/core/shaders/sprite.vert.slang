@@ -7,8 +7,7 @@
 // of a sprite computes it from identical inputs, and it reaches the fragment stage flat.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 #include "sprite_record.slang"
 #include "Veng/sprite_shading.slang"
@@ -35,14 +34,12 @@ struct VSOutput
     nointerpolation float3 v_Ambient : TEXCOORD13;
 };
 
+// SV_VulkanVertexID includes the draw's firstVertex, which selects the alpha or additive run.
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // The VertexIndex builtin read directly (it includes the draw's firstVertex, which selects the
-    // alpha or additive run); SV_VertexID would pull in the DrawParameters capability.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
     uint spriteIndex = vertexId / 6;
-    GpuSprite sprite = g_Sprites[spriteIndex];
+    GpuSprite sprite = g_Set3.Sprites[spriteIndex];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     // Two-triangle quad corners in [0, 1]^2, (0, 0) the bottom-left.

@@ -546,13 +546,14 @@ The offline shader compile + reflection and `.vmat` validation run in the cooker
 Shaders are a first-class asset authored in **Slang** — a `*.shader.json` names its `.slang`
 source, entry point, and optional vertex-layout `AssetId`. The cooker **always** compiles from
 source (there is no precompiled-inline path) and **reflects the shader offline** into a
-serializable `ShaderInterface`; the engine loads plain **SPIR-V** and gains no Slang dependency.
+serializable `ShaderInterface`; the engine loads the cooked section for its backend (SPIR-V on
+Vulkan), refuses a shader cooked without one by its asset id, and gains no Slang dependency.
 Shaders are Slang only; there is no GLSL path.
 
 **Pure shader functions also compile for the host.** A Slang file of generic functions included
 by GPU shaders can be compiled to C++ as well, through `veng_add_host_shader_module`, so a CPU
 evaluation runs exactly the source the GPU does rather than a hand-kept mirror. That is a build
-tool, not a runtime path: the engine still loads only SPIR-V and links no Slang. See
+tool, not a runtime path: the engine still loads only cooked code and links no Slang. See
 [cooker/CLAUDE.md](../../../cooker/CLAUDE.md#host-shader-modules) and
 [docs/guides/shader-code-on-the-host.md](../../../docs/guides/shader-code-on-the-host.md).
 

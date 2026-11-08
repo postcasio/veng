@@ -27,19 +27,22 @@
 // this chain.
 #include "bloom_bright_pass.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+struct BloomDownKawaseSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, BloomDownKawaseSet3, g_Set3);
 
 // The source is rendered into a dynamic-resolution sub-rect; map the valid-space UV into the
 // source's valid region and clamp so a bilinear tap never bleeds past it (identity at scale 1.0).
 float3 SampleSource(float2 uv)
 {
     float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
-    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+    return g_Set3.Source.SampleLevel(g_Set3.Sampler, physical, 0.0).rgb;
 }
 
 // The bloom mask reaches this dispatch in the same allocation as the colour beside it — promoted
@@ -109,5 +112,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
         result = KawaseAverage(center, tl, tr, bl, br);
     }
 
-    g_Dest[int2(id.xy)] = float4(result, 1.0);
+    g_Set3.Dest[int2(id.xy)] = float4(result, 1.0);
 }

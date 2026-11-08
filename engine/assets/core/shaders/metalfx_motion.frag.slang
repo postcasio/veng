@@ -17,7 +17,7 @@
 // lone spike or a non-finite channel into a saturated pixel the tonemap shows in one hue.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -28,7 +28,7 @@ struct PushConstants
     float FireflyCeiling;    // the luminance the colour is rolled off toward, HDR units
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -45,9 +45,9 @@ struct FSOutput
 float2 Motion(int2 texel, float2 position)
 {
     // Reverse-Z: the cleared depth is zero.
-    if (g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Load(int3(texel, 0)).r > 0.0)
+    if (g_Textures[NonUniformIndex(g_PC.DepthTexture)].Load(int3(texel, 0)).r > 0.0)
     {
-        return g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Load(int3(texel, 0)).rg;
+        return g_Textures[NonUniformIndex(g_PC.VelocityTexture)].Load(int3(texel, 0)).rg;
     }
 
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
@@ -87,7 +87,7 @@ FSOutput fsMain(VSOutput input)
     const int2 texel = int2(input.sv_position.xy);
     FSOutput output;
     output.Motion = float4(Motion(texel, input.sv_position.xy), 0.0, 0.0);
-    const float4 lit = g_Textures[NonUniformResourceIndex(g_PC.LitTexture)].Load(int3(texel, 0));
+    const float4 lit = g_Textures[NonUniformIndex(g_PC.LitTexture)].Load(int3(texel, 0));
     output.Color = float4(Condition(lit.rgb), lit.a);
     return output;
 }

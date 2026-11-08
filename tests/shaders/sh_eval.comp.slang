@@ -6,16 +6,21 @@
 // CPU and GPU fails the consistency test. Sets 0-2 are reserved for the bindless registries, so
 // the buffers bind on set 3, matching the test's hand-built layout.
 #include "Veng/sh.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(0, 3)]] ByteAddressBuffer u_Coefficients; // 9 float4 (xyz coefficient, w pad)
-[[vk::binding(1, 3)]] ByteAddressBuffer u_Normals;      // NormalCount float4 (xyz normal)
-[[vk::binding(2, 3)]] RWStructuredBuffer<float4> u_Results; // per-normal irradiance (xyz)
+struct ShEvalSet3
+{
+    ByteAddressBuffer Coefficients;  // 9 float4 (xyz coefficient, w pad)
+    ByteAddressBuffer Normals;  // NormalCount float4 (xyz normal)
+    RWStructuredBuffer<float4> Results;  // per-normal irradiance (xyz)
+};
+VE_DESCRIPTOR_SET(3, ShEvalSet3, g_Set3);
 
 struct ShEvalPush
 {
     uint NormalCount;
 };
-[[vk::push_constant]] ShEvalPush u_Push;
+VE_PUSH_CONSTANTS(ShEvalPush, u_Push);
 
 [shader("compute")]
 [numthreads(1, 1, 1)]
@@ -29,9 +34,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float4 coefficients[9];
     for (uint i = 0; i < 9; ++i)
     {
-        coefficients[i] = u_Coefficients.Load<float4>(i * 16);
+        coefficients[i] = g_Set3.Coefficients.Load<float4>(i * 16);
     }
 
-    const float3 normal = u_Normals.Load<float4>(id.x * 16).xyz;
-    u_Results[id.x] = float4(ShEvalIrradiance(coefficients, normal), 0.0);
+    const float3 normal = g_Set3.Normals.Load<float4>(id.x * 16).xyz;
+    g_Set3.Results[id.x] = float4(ShEvalIrradiance(coefficients, normal), 0.0);
 }

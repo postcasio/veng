@@ -6,8 +6,7 @@
 //
 // The ramp is normalized against the frame's own MaxCoc budget, so brightness reads as the
 // fraction of the configured budget a texel uses and a shallow budget still fills the ramp.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -16,7 +15,7 @@ struct PushConstants
     float MaxCoc;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -27,8 +26,8 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float coc = g_Textures[NonUniformResourceIndex(g_PC.CocTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).r;
+    float coc = g_Textures[NonUniformIndex(g_PC.CocTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).r;
     // A non-positive authored budget clamps to zero, so the divisor is floored to keep the whole
     // view finite rather than inf/NaN.
     float budget = max(g_PC.MaxCoc, 1e-4);

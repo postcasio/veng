@@ -50,6 +50,9 @@ namespace Veng::Renderer
         : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
           m_Native(CreateUnique<Native>())
     {
+        VE_ASSERT(info.Kind == ShaderCodeKind::SpirV,
+                  "ShaderModule '{}': the Vulkan backend creates modules from SPIR-V only",
+                  info.Name);
         const vk::ShaderModuleCreateInfo createInfo{
             .codeSize = info.Binary.size_bytes(),
             .pCode = reinterpret_cast<const u32*>(info.Binary.data()),

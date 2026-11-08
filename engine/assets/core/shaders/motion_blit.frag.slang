@@ -5,8 +5,7 @@
 // surface under a static camera reads zero and renders black; the cleared background
 // (no geometry wrote it) is likewise black. A debug view of the input the TAA resolve
 // reprojects history through.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -14,7 +13,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -35,8 +34,8 @@ static float3 HueToRgb(float hue)
 float4 fsMain(VSOutput input) : SV_Target
 {
     const float2 velocity =
-        g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Sample(
-            g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV).rg;
+        g_Textures[NonUniformIndex(g_PC.VelocityTexture)].Sample(
+            g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV).rg;
 
     // Velocity is a UV displacement, so its magnitude is tiny (a fast pan is a few
     // percent of the screen). A perceptual gain spreads sub-pixel-to-large motion

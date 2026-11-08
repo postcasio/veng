@@ -18,8 +18,7 @@
 #include "Veng/octahedral.slang"
 #include "Veng/capture_distance.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -29,7 +28,7 @@ struct PushConstants
     float NearOverFar;      // near / far of the face cameras; 0 for an infinite far plane
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -80,7 +79,7 @@ float fsMain(VSOutput input) : SV_Target0
 
     // The 3×2 atlas cell (row-major: faces 0..2 top row, 3..5 bottom). A point sampler and a
     // half-texel inset keep the read on one face's own cell.
-    Texture2D atlas = g_Textures[NonUniformResourceIndex(g_PC.DepthAtlasTexture)];
+    Texture2D atlas = g_Textures[NonUniformIndex(g_PC.DepthAtlasTexture)];
     uint atlasWidth;
     uint atlasHeight;
     atlas.GetDimensions(atlasWidth, atlasHeight);
@@ -92,7 +91,7 @@ float fsMain(VSOutput input) : SV_Target0
                                  (cell + 1.0) * cellScale - halfTexel);
 
     const float depth =
-        atlas.SampleLevel(g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], clamped, 0.0).r;
+        atlas.SampleLevel(g_Samplers[NonUniformIndex(g_PC.Sampler)], clamped, 0.0).r;
 
     // Reverse-Z: the depth buffer clears to 0 at the far plane and a fragment writes 1 at the near
     // plane, so a texel that recorded no geometry (only the cleared far plane, which is the sky) reads

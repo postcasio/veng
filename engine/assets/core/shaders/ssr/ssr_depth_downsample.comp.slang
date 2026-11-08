@@ -34,9 +34,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "../Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] [format("r32f")] RWTexture2D<float> g_DepthHierarchy;
+struct SsrDepthDownsampleSet3
+{
+    [format("r32f")] RWTexture2D<float> DepthHierarchy;
+};
+VE_DESCRIPTOR_SET(3, SsrDepthDownsampleSet3, g_Set3);
 
 struct PushConstants
 {
@@ -46,7 +50,7 @@ struct PushConstants
     uint2 SourceExtent; // the source's extent in texels
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 float LoadSource(int2 coordinate)
 {
@@ -54,7 +58,7 @@ float LoadSource(int2 coordinate)
     {
         return 0.0;
     }
-    return g_Textures[NonUniformResourceIndex(g_PC.SourceTexture)].Load(int3(coordinate, 0)).r;
+    return g_Textures[NonUniformIndex(g_PC.SourceTexture)].Load(int3(coordinate, 0)).r;
 }
 
 float SpdReduce4(float v0, float v1, float v2, float v3)
@@ -74,11 +78,11 @@ void csMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if (g_PC.CopiesSource != 0u)
     {
-        g_DepthHierarchy[pixel] = LoadSource(pixel);
+        g_Set3.DepthHierarchy[pixel] = LoadSource(pixel);
         return;
     }
 
     int2 base = pixel * 2;
-    g_DepthHierarchy[pixel] = SpdReduce4(LoadSource(base), LoadSource(base + int2(1, 0)),
+    g_Set3.DepthHierarchy[pixel] = SpdReduce4(LoadSource(base), LoadSource(base + int2(1, 0)),
                                          LoadSource(base + int2(0, 1)), LoadSource(base + int2(1, 1)));
 }

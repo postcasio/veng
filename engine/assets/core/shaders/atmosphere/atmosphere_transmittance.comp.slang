@@ -6,14 +6,19 @@
 // Output is a 2D storage image bound on set 1 (a closed producer->consumer chain off the
 // bindless registry).
 #include "atmosphere_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Transmittance;
+struct AtmosphereTransmittanceSet3
+{
+    [format("rgba16f")] RWTexture2D<float4> Transmittance;
+};
+VE_DESCRIPTOR_SET(3, AtmosphereTransmittanceSet3, g_Set3);
 
 struct PushConstants
 {
     AtmosphereParams Atmosphere;
 };
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 float3 ComputeOpticalDepth(AtmosphereParams a, float r, float mu)
 {
@@ -45,5 +50,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float mu;
     RMuFromTransmittanceUv(a, uv, r, mu);
     float3 t = exp(-ComputeOpticalDepth(a, r, mu));
-    g_Transmittance[id.xy] = float4(t, 1.0);
+    g_Set3.Transmittance[id.xy] = float4(t, 1.0);
 }

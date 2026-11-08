@@ -21,7 +21,11 @@ struct GpuRibbonSegment
     float4 EndTangent;   // xyz unit direction at the end; w 1 divides the colour by the exposure
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuRibbonSegment> g_Segments;
+struct RibbonSet3
+{
+    StructuredBuffer<GpuRibbonSegment> Segments;
+};
+VE_DESCRIPTOR_SET(3, RibbonSet3, g_Set3);
 
 // The narrowest a ribbon draws, in pixels: thinner and it would alias to a broken, shimmering line.
 static const float MinPixelWidth = 1.5;
@@ -36,7 +40,7 @@ float3 ToView(ViewConstants view, float3 v)
 // a viewport targetHeight pixels tall.
 VSOutput ExpandRecord(uint vertexId, ViewConstants view, float4x4 proj, float targetHeight)
 {
-    GpuRibbonSegment segment = g_Segments[vertexId / 6];
+    GpuRibbonSegment segment = g_Set3.Segments[vertexId / 6];
 
     // Two-triangle quad corners: x runs start (0) to end (1), y runs across the width.
     static const float2 corners[6] = {
@@ -93,23 +97,17 @@ VSOutput ExpandRecord(uint vertexId, ViewConstants view, float4x4 proj, float ta
     return output;
 }
 
-// The VertexIndex builtin read directly (it includes the draw's firstVertex, which selects the
-// alpha or additive run); SV_VertexID would pull in the DrawParameters capability.
-uint LoadVertexIndex()
+// SV_VulkanVertexID includes the draw's firstVertex, which selects the alpha or additive run.
+[shader("vertex")]
+VSOutput vsMain(uint vertexIndex : SV_VulkanVertexID)
 {
-    return uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
+    ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
+    return ExpandRecord(vertexIndex, view, view.Proj, view.ExtentParams.y);
 }
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMainPostResolve(uint vertexIndex : SV_VulkanVertexID)
 {
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
-    return ExpandRecord(LoadVertexIndex(), view, view.Proj, view.ExtentParams.y);
-}
-
-[shader("vertex")]
-VSOutput vsMainPostResolve()
-{
-    ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
-    return ExpandRecord(LoadVertexIndex(), view, g_PC.Proj, g_PC.TargetExtent.y);
+    return ExpandRecord(vertexIndex, view, g_PC.Proj, g_PC.TargetExtent.y);
 }

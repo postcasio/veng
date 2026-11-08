@@ -174,6 +174,11 @@ function(veng_add_project TARGET_NAME)
         # share one) lets an incremental re-cook copy an unchanged asset's final compressed bytes
         # instead of re-encoding it. Each configuration's blobs key separately, so the project's
         # per-platform packs never collide in the shared cache.
+        # The project's shaders cook for the engine tree's targets (VE_SHADER_TARGETS).
+        set(SHADER_TARGET_ARGS)
+        if (VENG_SHADER_TARGETS)
+            set(SHADER_TARGET_ARGS --shader-targets ${VENG_SHADER_TARGETS})
+        endif ()
         add_custom_command(
                 OUTPUT ${CFG_OUTPUTS}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${ARG_OUTPUT_DIR}
@@ -181,6 +186,7 @@ function(veng_add_project TARGET_NAME)
                         --config ${CFG_NAME} --out-dir ${ARG_OUTPUT_DIR}
                         ${MODULE_ARGS} ${REFERENCE_ARGS}
                         --shader-include ${VENG_CORE_SHADER_DIR}
+                        ${SHADER_TARGET_ARGS}
                         --cache-dir ${CMAKE_BINARY_DIR}/vengc-cache --depfile ${PROJ_OUT}.d
                 DEPENDS vengc ${PROJECT_ABS} ${CFG_ABS} ${PACK_MANIFESTS} ${MODULE_DEP}
                 DEPFILE ${PROJ_OUT}.d

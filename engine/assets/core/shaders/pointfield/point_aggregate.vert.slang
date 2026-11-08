@@ -15,7 +15,11 @@ struct GpuAggregateSplat
     float4 Color;      // flux-normalized per-pixel color (rgb), HDR
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuAggregateSplat> g_Splats;
+struct PointAggregateSet3
+{
+    StructuredBuffer<GpuAggregateSplat> Splats;
+};
+VE_DESCRIPTOR_SET(3, PointAggregateSet3, g_Set3);
 
 struct PushConstants
 {
@@ -37,7 +41,7 @@ struct PushConstants
     float JitterNdcY;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -47,16 +51,15 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // The indexed draw sets firstIndex=0 and vertexOffset=0, so the VertexIndex builtin equals the
+    // The indexed draw sets firstIndex=0 and vertexOffset=0, so the vertex index equals the
     // index buffer's value: 4 unique vertices per splat (vertex id = 4*splat + corner), expanded
     // into two triangles by the shared index buffer so the two shared corners hit the cache.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
     uint localId = vertexId / 4;
     uint cornerId = vertexId & 3;
 
-    GpuAggregateSplat splat = g_Splats[localId];
+    GpuAggregateSplat splat = g_Set3.Splats[localId];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     static const float2 corners[4] = {

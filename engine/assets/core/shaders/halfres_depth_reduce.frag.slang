@@ -4,7 +4,7 @@
 // depth-tests against; taking the farthest sample is conservative — a half-res fragment
 // survives wherever any of its four full-res pixels would show it, and the depth-aware
 // composite upsample resolves the edges the conservative test lets through.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -13,7 +13,7 @@ struct PushConstants
     uint ValidY;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -29,7 +29,7 @@ struct FSOutput
 [shader("fragment")]
 FSOutput fsMain(VSOutput input)
 {
-    Texture2D depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)];
+    Texture2D depth = g_Textures[NonUniformIndex(g_PC.DepthTexture)];
     // The viewport covers the half-res valid sub-rect, so sv_position is in half pixels; the
     // 2x2 block it covers starts at twice that, clamped inside the full valid sub-rect (an odd
     // valid extent leaves the last row/column a partial block).

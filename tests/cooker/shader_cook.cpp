@@ -4,7 +4,7 @@
 //   - vertex stage (entry 4001, mesh.vert.slang via mesh.vert.shader.json)
 //   - fragment stage (entry 4002, brick.frag.slang via brick.frag.shader.json)
 //
-// Blob layout: header → bindings → push constants → SPIR-V.
+// The blob is read back through ParseCookedShader, the loader's own parser.
 // Shaders reference their vertex layout by AssetId
 // (CookedShaderInterfaceHeader::VertexLayoutAssetId) rather than embedding a
 // per-shader input table.
@@ -20,6 +20,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/CookedShader.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
@@ -58,37 +59,26 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetTypes::Shader);
 
-    REQUIRE(entry->Blob.size() >= sizeof(CookedShaderHeader));
+    const Result<CookedShaderView> shader = ParseCookedShader(entry->Blob);
+    REQUIRE_MESSAGE(shader.has_value(), shader.error());
 
-    CookedShaderHeader header{};
-    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    // Slang always emits "main" for the SPIR-V OpEntryPoint name, regardless of the source
+    // entry-point name.
+    const Result<const CookedShaderSectionView*> spirv =
+        FindCookedShaderSection(*shader, CookedShaderCode::SpirV, "mesh.vert");
+    REQUIRE(spirv.has_value());
+    CHECK((*spirv)->EntryPoint == "main");
+    CHECK(!(*spirv)->Bytes.empty());
 
-    // Slang always emits "main" for the SPIR-V OpEntryPoint name, regardless
-    // of the source entry-point name (confirmed via the importer's comment).
-    CHECK(std::string_view(header.EntryPoint) == "main");
-    CHECK(header.SpirvBytes > 0);
-
-    usize cursor = sizeof(CookedShaderHeader);
-    REQUIRE(entry->Blob.size() >= cursor + sizeof(CookedShaderInterfaceHeader));
-
-    CookedShaderInterfaceHeader interfaceHeader{};
-    std::memcpy(&interfaceHeader, entry->Blob.data() + cursor, sizeof(interfaceHeader));
-    cursor += sizeof(CookedShaderInterfaceHeader);
-
-    // mesh.vert.slang: no descriptor bindings (no set >= 1 resources —
-    // set 0 is the bindless registry and is excluded), one push-constant
-    // block (PushConstants: float4x4 MVP + float4x4 Model = 128 bytes).
-    // Vertex layout is referenced by AssetId 7001 (canonical.vlayout.json).
-    CHECK(interfaceHeader.BindingCount == 0);
-    CHECK(interfaceHeader.PushConstantCount == 1);
-    CHECK(interfaceHeader.VertexLayoutAssetId == 7001ULL);
-
-    cursor += interfaceHeader.BindingCount * sizeof(CookedDescriptorBinding);
+    // mesh.vert.slang: no descriptor bindings (its only resources are the bindless registry's,
+    // excluded), one push-constant block (PushConstants: float4x4 MVP + float4x4 Model = 128
+    // bytes). Vertex layout is referenced by AssetId 7001 (canonical.vlayout.json).
+    CHECK(shader->Bindings.empty());
+    REQUIRE(shader->PushConstants.size() == 1);
+    CHECK(shader->Interface.VertexLayoutAssetId == 7001ULL);
 
     // Push-constant block: g_PushConstants, 128 bytes, vertex stage (mask 1).
-    REQUIRE(entry->Blob.size() >= cursor + sizeof(CookedPushConstantBlock));
-    CookedPushConstantBlock pushConstant{};
-    std::memcpy(&pushConstant, entry->Blob.data() + cursor, sizeof(pushConstant));
+    const CookedPushConstantBlock& pushConstant = shader->PushConstants[0];
     CHECK(pushConstant.Offset == 0);
     CHECK(pushConstant.Size == 128);
     CHECK(pushConstant.StageMask == 1u); // ShaderStage::Vertex underlying value
@@ -107,35 +97,22 @@ TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflecti
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetTypes::Shader);
 
-    REQUIRE(entry->Blob.size() >= sizeof(CookedShaderHeader));
+    const Result<CookedShaderView> shader = ParseCookedShader(entry->Blob);
+    REQUIRE_MESSAGE(shader.has_value(), shader.error());
 
-    CookedShaderHeader header{};
-    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    const Result<const CookedShaderSectionView*> spirv =
+        FindCookedShaderSection(*shader, CookedShaderCode::SpirV, "brick.frag");
+    REQUIRE(spirv.has_value());
+    CHECK((*spirv)->EntryPoint == "main");
+    CHECK(!(*spirv)->Bytes.empty());
 
-    // Slang always emits "main" for the SPIR-V OpEntryPoint name.
-    CHECK(std::string_view(header.EntryPoint) == "main");
-    CHECK(header.SpirvBytes > 0);
+    // brick.frag.slang: all resources live in the bindless registry's sets (excluded from the
+    // declared interface), so no descriptor bindings; one push-constant block; no vertex layout.
+    CHECK(shader->Bindings.empty());
+    REQUIRE(shader->PushConstants.size() == 1);
+    CHECK(shader->Interface.VertexLayoutAssetId == 0ULL);
 
-    usize cursor = sizeof(CookedShaderHeader);
-    REQUIRE(entry->Blob.size() >= cursor + sizeof(CookedShaderInterfaceHeader));
-
-    CookedShaderInterfaceHeader interfaceHeader{};
-    std::memcpy(&interfaceHeader, entry->Blob.data() + cursor, sizeof(interfaceHeader));
-    cursor += sizeof(CookedShaderInterfaceHeader);
-
-    // brick.frag.slang: all resources live in set 0 (the bindless registry,
-    // excluded from the declared interface), so no descriptor bindings; one
-    // push-constant block (PushConstants); no vertex layout (fragment stage,
-    // vertex_layout omitted → VertexLayoutAssetId 0).
-    CHECK(interfaceHeader.BindingCount == 0);
-    CHECK(interfaceHeader.PushConstantCount == 1);
-    CHECK(interfaceHeader.VertexLayoutAssetId == 0ULL);
-
-    cursor += interfaceHeader.BindingCount * sizeof(CookedDescriptorBinding);
-
-    REQUIRE(entry->Blob.size() >= cursor + sizeof(CookedPushConstantBlock));
-    CookedPushConstantBlock pushConstant{};
-    std::memcpy(&pushConstant, entry->Blob.data() + cursor, sizeof(pushConstant));
+    const CookedPushConstantBlock& pushConstant = shader->PushConstants[0];
     CHECK(pushConstant.Offset == 0);
     CHECK(pushConstant.StageMask == 2u); // ShaderStage::Fragment underlying value
     CHECK(pushConstant.Size > 0);

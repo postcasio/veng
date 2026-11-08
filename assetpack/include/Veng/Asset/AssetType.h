@@ -53,7 +53,7 @@ namespace Veng
         inline constexpr AssetTypeId Texture{0x1AC836A05E01BEABULL};
         /// @brief An interleaved vertex + index mesh (see CookedMeshHeader).
         inline constexpr AssetTypeId Mesh{0x96E37F1AC2F2B897ULL};
-        /// @brief A SPIR-V module with reflected interface (see CookedShaderHeader).
+        /// @brief Compiled code per GPU target with a reflected interface (see CookedShaderHeader).
         inline constexpr AssetTypeId Shader{0xC3F6E9945981B1C3ULL};
         /// @brief A bindless material referencing vertex and fragment shader assets (see CookedMaterialHeader).
         inline constexpr AssetTypeId Material{0x0DBF18D37AA81057ULL};

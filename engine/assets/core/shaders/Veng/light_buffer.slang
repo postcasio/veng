@@ -3,19 +3,19 @@
 // and by any pass that reasons about the view's lights without shading — the light-tile cull reads
 // the same records to bound each light's reach — so the layout is declared once.
 //
-// The includer declares the view block (view_constants.slang) before including this. This file
-// declares the set-0 light and area-vertex buffers (bindings 6 and 7) and nothing else.
+// The includer declares the view block (view_constants.slang) before including this. The set-0
+// light and area-vertex buffers (g_Lights and g_AreaVertices, bindings 6 and 7) come from
+// bindless.slang.
 //
 // PunctualLightFalloff is the one statement of how a point or spot light weakens with distance and
 // angle, shared by the surface light loop and by anything else a punctual light reaches.
 
 #pragma once
 
-[[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
-// The per-view area-light polygon-vertex buffer (Rect/Polygon world-space vertices, one vec4
-// each). A light's Area.y/z give the base/count relative to this view's region; the view block's
-// area-vertex base folds in the region start, exactly as its light base does for the light buffer.
-[[vk::binding(7, 0)]] ByteAddressBuffer g_AreaVertices;
+// The area-vertex buffer holds Rect/Polygon world-space vertices, one vec4 each. A light's Area.y/z
+// give the base/count relative to this view's region; the view block's area-vertex base folds in
+// the region start, exactly as its light base does for the light buffer.
+#include "bindless.slang"
 
 static const uint LightStride = 112;
 static const uint AreaVertexStride = 16;

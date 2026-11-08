@@ -11,9 +11,7 @@
 // frame, whose records are not read — is counted for the CPU's bound on the next frames' sort.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
+#include "Veng/bindless.slang"
 
 #include "particle_compute.slang"
 #include "particle_math.slang"
@@ -40,7 +38,7 @@ float FrameScaleOf(GpuParticleEmitter emitter, uint frame)
     {
         return 1.0;
     }
-    return g_FrameScales[emitter.Counts.w + min(frame, emitter.Grid.z - 1u)];
+    return g_Set3.FrameScales[emitter.Counts.w + min(frame, emitter.Grid.z - 1u)];
 }
 
 [shader("compute")]
@@ -48,38 +46,38 @@ float FrameScaleOf(GpuParticleEmitter emitter, uint frame)
 void csMain(uint3 id : SV_DispatchThreadID)
 {
     uint cur = g_PC.Cur;
-    if (id.x >= g_Counters.Load(LiveCounter(cur)))
+    if (id.x >= g_Set3.Counters.Load(LiveCounter(cur)))
     {
         return;
     }
-    uint slot = g_LiveList[cur * g_PC.Capacity + id.x];
-    GpuParticle particle = g_Particles[slot];
-    GpuParticleInstance instance = g_Instances[particle.Instance & 0xFFFFu];
+    uint slot = g_Set3.LiveList[cur * g_PC.Capacity + id.x];
+    GpuParticle particle = g_Set3.Particles[slot];
+    GpuParticleInstance instance = g_Set3.Instances[particle.Instance & 0xFFFFu];
     float age = instance.Time - particle.SpawnTime;
     bool dead = (instance.Generation & 0xFFFFu) != (particle.Instance >> 16) ||
                 age >= particle.Lifetime;
     if (dead)
     {
         uint free;
-        g_Counters.InterlockedAdd(ParticleCounterDead, 1u, free);
-        g_DeadList[free] = slot;
+        g_Set3.Counters.InterlockedAdd(ParticleCounterDead, 1u, free);
+        g_Set3.DeadList[free] = slot;
         return;
     }
 
     uint o;
-    g_Counters.InterlockedAdd(LiveCounter(1u - cur), 1u, o);
-    g_LiveList[(1u - cur) * g_PC.Capacity + o] = slot;
+    g_Set3.Counters.InterlockedAdd(LiveCounter(1u - cur), 1u, o);
+    g_Set3.LiveList[(1u - cur) * g_PC.Capacity + o] = slot;
     if ((instance.Generation & ParticleInstanceHidden) != 0u)
     {
-        g_Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
+        g_Set3.Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
         return;
     }
 
     uint emitterIndex = instance.EmitterBase + particle.Emitter;
-    GpuParticleEmitter emitter = g_Emitters[emitterIndex];
+    GpuParticleEmitter emitter = g_Set3.Emitters[emitterIndex];
     if (emitter.Mode.y == 0u)
     {
-        g_Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
+        g_Set3.Counters.InterlockedAdd(ParticleCounterAlphaLive, 1u);
     }
     uint key = particle.Random;
     float u = particle.Lifetime > 0.0 ? age / particle.Lifetime : 1.0;
@@ -196,21 +194,21 @@ void csMain(uint3 id : SV_DispatchThreadID)
     draw.TintOpacity = uint2(f32tof16(colour.r) | (f32tof16(colour.g) << 16),
                              f32tof16(colour.b) | (f32tof16(opacity) << 16));
     PackParticleLight(gather, draw.Light0, draw.Light1, draw.Light2);
-    g_Draws[o] = draw;
+    g_Set3.Draws[o] = draw;
 
     if (emitter.Mode.y != 0u)
     {
         uint index;
-        g_Counters.InterlockedAdd(ParticleCounterAdditive, 1u, index);
-        g_AdditiveList[index] = o;
+        g_Set3.Counters.InterlockedAdd(ParticleCounterAdditive, 1u, index);
+        g_Set3.AdditiveList[index] = o;
     }
     else
     {
         uint index;
-        g_Counters.InterlockedAdd(ParticleCounterAlpha, 1u, index);
+        g_Set3.Counters.InterlockedAdd(ParticleCounterAlpha, 1u, index);
         // The complement of a positive float's bits orders the farthest first, and never reaches
         // the sentinel 0xFFFFFFFF.
         float distance = max(length(centre), 1e-30);
-        g_AlphaKeys[index] = uint2(~asuint(distance), o);
+        g_Set3.AlphaKeys[index] = uint2(~asuint(distance), o);
     }
 }

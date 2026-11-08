@@ -3,13 +3,19 @@
 // bindless registries, so the storage image binds on set 3; the test's hand-built
 // layout matches this binding. Drives the 3D storage-image write path (the
 // MoltenVK 3D-storage probe).
-[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture3D<float4> u_Volume;
+
+#include "Veng/binding.slang"
+struct VolumeWriteSet3
+{
+    [format("rgba16f")] RWTexture3D<float4> Volume;
+};
+VE_DESCRIPTOR_SET(3, VolumeWriteSet3, g_Set3);
 
 struct VolumePush
 {
     uint3 Extent;
 };
-[[vk::push_constant]] VolumePush u_Push;
+VE_PUSH_CONSTANTS(VolumePush, u_Push);
 
 [shader("compute")]
 [numthreads(4, 4, 4)]
@@ -19,5 +25,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    u_Volume[id] = float4(float(id.x), float(id.y), float(id.z), 1.0);
+    g_Set3.Volume[id] = float4(float(id.x), float(id.y), float(id.z), 1.0);
 }

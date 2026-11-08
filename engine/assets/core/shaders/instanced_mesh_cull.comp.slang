@@ -12,7 +12,7 @@
 #include "hi_z_occlusion.slang"
 #include "Veng/instanced_mesh_math.slang"
 
-// The frame's shared inputs, at the start of g_Tables.
+// The frame's shared inputs, at the start of g_Set3.Tables.
 struct CullFrame
 {
     float4x4 ReferenceViewProj; // the main camera's unjittered world -> clip (the size band)
@@ -56,8 +56,8 @@ struct CullSet
     float MaxPixels;
     float MinShadowTexels; // a shadow view skips a caster projecting smaller
     int ForcedLod;       // the set's forced level, or -1
-    uint LodMemoryBase;  // the set's first entry in g_LodMemory
-    uint HistoryValid;   // 1 when g_LodMemory holds last frame's levels for this set
+    uint LodMemoryBase;  // the set's first entry in g_Set3.LodMemory
+    uint HistoryValid;   // 1 when g_Set3.LodMemory holds last frame's levels for this set
     uint Pad0;
     uint Pad1;
 };
@@ -91,16 +91,20 @@ struct DrawIndexedIndirectCommand
     uint FirstInstance;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] RWByteAddressBuffer g_Data;
-[[vk::binding(1, 3)]] RWStructuredBuffer<DrawIndexedIndirectCommand> g_Commands;
-[[vk::binding(2, 3)]] RWStructuredBuffer<uint> g_LodMemory;
-[[vk::binding(3, 3)]] ByteAddressBuffer g_Tables;
+struct InstancedMeshCullSet3
+{
+    RWByteAddressBuffer Data;
+    RWStructuredBuffer<DrawIndexedIndirectCommand> Commands;
+    RWStructuredBuffer<uint> LodMemory;
+    ByteAddressBuffer Tables;
+};
+VE_DESCRIPTOR_SET(3, InstancedMeshCullSet3, g_Set3);
 
 struct PushConstants
 {
-    uint JobsOffset;   // byte offset of the job table in g_Tables
+    uint JobsOffset;   // byte offset of the job table in g_Set3.Tables
     uint SetsOffset;   // byte offset of the set table
     uint ViewsOffset;  // byte offset of the view table
     uint JobCount;
@@ -108,7 +112,7 @@ struct PushConstants
     uint RowThreads;   // invocations per dispatch row (groups in x times 64)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const uint CullJobBytes = 32u;
 static const uint CullSetBytes = 176u;
@@ -122,7 +126,7 @@ bool InFrustum(uint viewOffset, float3 boundsMin, float3 boundsMax)
     [unroll]
     for (uint p = 0u; p < 6u; ++p)
     {
-        const float4 plane = g_Tables.Load<float4>(viewOffset + p * 16u);
+        const float4 plane = g_Set3.Tables.Load<float4>(viewOffset + p * 16u);
         const float3 positive = float3(plane.x >= 0.0 ? boundsMax.x : boundsMin.x,
                                        plane.y >= 0.0 ? boundsMax.y : boundsMin.y,
                                        plane.z >= 0.0 ? boundsMax.z : boundsMin.z);
@@ -168,7 +172,7 @@ uint FindJob(uint invocation)
     while (high - low > 1u)
     {
         const uint mid = (low + high) / 2u;
-        const uint base = g_Tables.Load(g_PC.JobsOffset + mid * CullJobBytes);
+        const uint base = g_Set3.Tables.Load(g_PC.JobsOffset + mid * CullJobBytes);
         if (base <= invocation)
         {
             low = mid;
@@ -191,11 +195,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    const CullFrame frame = g_Tables.Load<CullFrame>(0u);
-    const CullJob job = g_Tables.Load<CullJob>(g_PC.JobsOffset + FindJob(invocation) * CullJobBytes);
-    const CullSet set = g_Tables.Load<CullSet>(g_PC.SetsOffset + job.Set * CullSetBytes);
+    const CullFrame frame = g_Set3.Tables.Load<CullFrame>(0u);
+    const CullJob job = g_Set3.Tables.Load<CullJob>(g_PC.JobsOffset + FindJob(invocation) * CullJobBytes);
+    const CullSet set = g_Set3.Tables.Load<CullSet>(g_PC.SetsOffset + job.Set * CullSetBytes);
     const uint viewOffset = g_PC.ViewsOffset + job.View * CullViewBytes;
-    const CullView view = g_Tables.Load<CullView>(viewOffset);
+    const CullView view = g_Set3.Tables.Load<CullView>(viewOffset);
     const uint instance = invocation - job.ThreadBase;
     if (instance >= set.Count)
     {
@@ -203,7 +207,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
 
     const InstanceRecord record =
-        g_Data.Load<InstanceRecord>((set.RecordBase + instance) * InstanceRecordBytes);
+        g_Set3.Data.Load<InstanceRecord>((set.RecordBase + instance) * InstanceRecordBytes);
     const float4x4 model = mul(set.World, InstanceMatrix(record));
     float3 center;
     float radius;
@@ -242,7 +246,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     {
         if (isMain)
         {
-            g_LodMemory[memory] = InstanceNoPreviousLod;
+            g_Set3.LodMemory[memory] = InstanceNoPreviousLod;
         }
         return;
     }
@@ -260,7 +264,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
             uint previous = InstanceNoPreviousLod;
             if (isMain && set.HistoryValid != 0u)
             {
-                previous = g_LodMemory[memory];
+                previous = g_Set3.LodMemory[memory];
                 previous = previous == InstanceNoPreviousLod ? previous
                                                              : min(previous, set.LodCount - 1u);
             }
@@ -274,17 +278,17 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
     if (isMain)
     {
-        g_LodMemory[memory] = lod;
+        g_Set3.LodMemory[memory] = lod;
     }
 
     // Every submesh of a level draws the level's one list, so each counts the survivor; the first
     // one's count hands out the list slot.
     const uint commandBase = job.CommandBase + lod * set.SubMeshCount;
     uint slot = 0u;
-    InterlockedAdd(g_Commands[commandBase].InstanceCount, 1u, slot);
+    InterlockedAdd(g_Set3.Commands[commandBase].InstanceCount, 1u, slot);
     for (uint s = 1u; s < set.SubMeshCount; ++s)
     {
-        InterlockedAdd(g_Commands[commandBase + s].InstanceCount, 1u);
+        InterlockedAdd(g_Set3.Commands[commandBase + s].InstanceCount, 1u);
     }
-    g_Data.Store((job.ListBase + lod * set.Count + slot) * 4u, instance);
+    g_Set3.Data.Store((job.ListBase + lod * set.Count + slot) * 4u, instance);
 }

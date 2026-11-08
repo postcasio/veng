@@ -4,14 +4,21 @@
 // pixels (foreground is discarded) and so a richer sky model can replace it in place.
 //
 // The depth target is sampled through set-0 bindless; the radiance cube + linear sampler
-// ride the renderer's IBL set (set 1 here), the same set the lighting pass binds at set 2.
+// ride the renderer's IBL set (set 3 here), the same set the lighting pass binds at set 4.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] TextureCube g_Radiance;
-[[vk::binding(4, 3)]] SamplerState g_IblSampler;
+struct SkyboxSet3
+{
+    TextureCube Radiance;
+    // The IBL set's lighting maps, which the skybox does not read.
+    TextureCube Irradiance;
+    TextureCube Prefilter;
+    Texture2D BrdfLut;
+    SamplerState IblSampler;
+};
+VE_DESCRIPTOR_SET(3, SkyboxSet3, g_Set3);
 
 struct PushConstants
 {
@@ -25,7 +32,7 @@ struct PushConstants
     uint Pad2;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -41,7 +48,7 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     // The view ray direction through this pixel, reconstructed through the translation-free
@@ -64,7 +71,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // into the valid region before sampling (identity at scale 1.0). The NDC reconstruction
     // above keeps the raw logical UV — the view is logically full-screen.
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
-    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
+    float depth = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     // Geometry already shaded this pixel; leave the lit color untouched. Reverse-Z: the
     // cleared background sits at depth 0, so any drawn pixel has depth > 0.
@@ -73,6 +80,6 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    float3 sky = g_Radiance.SampleGrad(g_IblSampler, dir, dirDx, dirDy).rgb * g_PC.EnvIntensity;
+    float3 sky = g_Set3.Radiance.SampleGrad(g_Set3.IblSampler, dir, dirDx, dirDy).rgb * g_PC.EnvIntensity;
     return float4(sky, 1.0);
 }

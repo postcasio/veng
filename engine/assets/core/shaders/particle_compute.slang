@@ -4,22 +4,26 @@
 #pragma once
 
 #include "particle_types.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(PARTICLE_BINDING_PARTICLES, 3)]] RWStructuredBuffer<GpuParticle> g_Particles;
-[[vk::binding(PARTICLE_BINDING_DEAD_LIST, 3)]] RWStructuredBuffer<uint> g_DeadList;
-[[vk::binding(PARTICLE_BINDING_LIVE_LIST, 3)]] RWStructuredBuffer<uint> g_LiveList;
-[[vk::binding(PARTICLE_BINDING_ADDITIVE_LIST, 3)]] RWStructuredBuffer<uint> g_AdditiveList;
-[[vk::binding(PARTICLE_BINDING_ALPHA_KEYS, 3)]] RWStructuredBuffer<uint2> g_AlphaKeys;
-[[vk::binding(PARTICLE_BINDING_DRAWS, 3)]] RWStructuredBuffer<GpuParticleDraw> g_Draws;
-[[vk::binding(PARTICLE_BINDING_COUNTERS, 3)]] RWByteAddressBuffer g_Counters;
-[[vk::binding(PARTICLE_BINDING_ARGS, 3)]] RWByteAddressBuffer g_Args;
-[[vk::binding(PARTICLE_BINDING_INSTANCES, 3)]] StructuredBuffer<GpuParticleInstance> g_Instances;
-[[vk::binding(PARTICLE_BINDING_EMITTERS, 3)]] StructuredBuffer<GpuParticleEmitter> g_Emitters;
-[[vk::binding(PARTICLE_BINDING_SPAWN_RANGES, 3)]]
-StructuredBuffer<GpuParticleSpawnRange> g_SpawnRanges;
-[[vk::binding(PARTICLE_BINDING_STATS, 3)]] RWStructuredBuffer<uint> g_Stats;
-[[vk::binding(PARTICLE_BINDING_FRAME_SCALES, 3)]] StructuredBuffer<float> g_FrameScales;
-[[vk::binding(PARTICLE_BINDING_FED_SPAWNS, 3)]] StructuredBuffer<GpuParticleFedSpawn> g_FedSpawns;
+struct ParticleComputeSet3
+{
+    RWStructuredBuffer<GpuParticle> Particles;
+    RWStructuredBuffer<uint> DeadList;
+    RWStructuredBuffer<uint> LiveList;
+    RWStructuredBuffer<uint> AdditiveList;
+    RWStructuredBuffer<uint2> AlphaKeys;
+    RWStructuredBuffer<GpuParticleDraw> Draws;
+    RWByteAddressBuffer Counters;
+    RWByteAddressBuffer Args;
+    StructuredBuffer<GpuParticleInstance> Instances;
+    StructuredBuffer<GpuParticleEmitter> Emitters;
+    StructuredBuffer<GpuParticleSpawnRange> SpawnRanges;
+    RWStructuredBuffer<uint> Stats;
+    StructuredBuffer<float> FrameScales;
+    StructuredBuffer<GpuParticleFedSpawn> FedSpawns;
+};
+VE_DESCRIPTOR_SET(3, ParticleComputeSet3, g_Set3);
 
 // Matches ParticleSimulation's ParticleComputePush.
 struct ParticleComputePush
@@ -34,7 +38,7 @@ struct ParticleComputePush
     uint ViewConstantsIndex; // the view block the update lights and sorts against
 };
 
-[[vk::push_constant]] ConstantBuffer<ParticleComputePush> g_PC;
+VE_PUSH_CONSTANTS(ParticleComputePush, g_PC);
 
 // The byte offset of a live-list half's counter.
 uint LiveCounter(uint half)

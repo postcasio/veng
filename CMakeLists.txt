@@ -199,6 +199,30 @@ if (NOT VE_GPU_BACKEND STREQUAL "Vulkan")
             "the accepted value is Vulkan")
 endif ()
 
+# VE_SHADER_TARGETS names the GPU code every shader cooks to: Native (the default) cooks the target
+# of VE_GPU_BACKEND, so a Vulkan tree cooks SPIR-V and never runs the Metal toolchain, and All cooks
+# SPIR-V and Metal for a pack that must carry both. The cooker compiles it in as its default, the
+# vengc rules pass it explicitly, and the exported package records it as VENG_SHADER_TARGETS so a
+# consumer's packs cook for the backend of the engine tree it builds against.
+set(VE_SHADER_TARGETS "Native" CACHE STRING "The GPU targets shaders cook to (Native or All)")
+set_property(CACHE VE_SHADER_TARGETS PROPERTY STRINGS Native All)
+if (NOT VE_SHADER_TARGETS MATCHES "^(Native|All)$")
+    message(FATAL_ERROR "VE_SHADER_TARGETS='${VE_SHADER_TARGETS}' is not Native or All")
+endif ()
+set(VENG_SHADER_TARGETS "${VE_SHADER_TARGETS}")
+if (VE_SHADER_TARGETS STREQUAL "All" OR VE_GPU_BACKEND STREQUAL "Metal")
+    execute_process(COMMAND xcrun -sdk macosx metal --version
+            RESULT_VARIABLE VENG_METAL_TOOLCHAIN_RESULT OUTPUT_QUIET ERROR_QUIET)
+    if (NOT VENG_METAL_TOOLCHAIN_RESULT EQUAL 0)
+        if (VE_GPU_BACKEND STREQUAL "Metal")
+            message(FATAL_ERROR "VE_GPU_BACKEND=Metal cooks Metal shaders, and this host has no "
+                    "Metal toolchain (xcrun metal); install Xcode's Metal toolchain")
+        endif ()
+        message(STATUS "veng: no Metal toolchain (xcrun metal); VE_SHADER_TARGETS=All cooks "
+                "without the Metal section")
+    endif ()
+endif ()
+
 # VENG_TIME_TRACE adds clang's -ftime-trace to veng's own targets, so every translation unit
 # writes a Chrome-Trace profile of its own compilation beside its object file. Declared here,
 # ahead of the ccache block below that reads it and ahead of the subdirectories the flag is
@@ -1102,6 +1126,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_handle_type.cpp
             tests/unit/hex_id.cpp
             tests/unit/cooked_project.cpp
+            tests/unit/cooked_shader.cpp
             tests/unit/cooked_blob_padding.cpp
             tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
@@ -2509,6 +2534,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/audio_clip.cpp
             tests/cooker/import_orientation.cpp
             tests/cooker/shader_cook.cpp
+            tests/cooker/shader_targets.cpp
             tests/cooker/material_cook.cpp
             tests/cooker/material_field_form.cpp
             tests/cooker/material_instance_cook.cpp

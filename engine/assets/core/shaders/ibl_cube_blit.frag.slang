@@ -11,8 +11,12 @@
 // HDR cube reads at the scene's own brightness. Enabled 0 (no cube backs the source) shows black.
 #include "view_constants.slang"
 
-[[vk::binding(0, 3)]] TextureCube g_Cube;
-[[vk::binding(1, 3)]] SamplerState g_CubeSampler;
+struct IblCubeBlitSet3
+{
+    TextureCube Cube;
+    SamplerState CubeSampler;
+};
+VE_DESCRIPTOR_SET(3, IblCubeBlitSet3, g_Set3);
 
 struct PushConstants
 {
@@ -22,7 +26,7 @@ struct PushConstants
     uint Enabled;            // 1 = a cube backs this arm; 0 = show black
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -43,7 +47,7 @@ float4 fsMain(VSOutput input) : SV_Target
     float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
     // Both arms show a cube the lighting reads, so the lighting's lookup orients them.
     float3 radiance =
-        g_Cube.SampleLevel(g_CubeSampler, EnvironmentDirection(vc, dir), g_PC.Lod).rgb *
+        g_Set3.Cube.SampleLevel(g_Set3.CubeSampler, EnvironmentDirection(vc, dir), g_PC.Lod).rgb *
         g_PC.Intensity;
     return float4(radiance, 1.0);
 }

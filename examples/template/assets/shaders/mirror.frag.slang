@@ -54,13 +54,13 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     if (p.Center.w > 0.5)
     {
         sampleDir = CaptureDepthCorrect(worldPos - p.Center.xyz, reflectionDir,
-                                        g_Textures[NonUniformResourceIndex(p.Depth)],
-                                        g_Samplers[NonUniformResourceIndex(p.DepthSampler)]);
+                                        g_Textures[NonUniformIndex(p.Depth)],
+                                        g_Samplers[NonUniformIndex(p.DepthSampler)]);
     }
 
     const float2 uv = OctahedralUV(sampleDir);
-    const float3 color = g_Textures[NonUniformResourceIndex(p.Texture)]
-                             .Sample(g_Samplers[NonUniformResourceIndex(p.Sampler)], uv)
+    const float3 color = g_Textures[NonUniformIndex(p.Texture)]
+                             .Sample(g_Samplers[NonUniformIndex(p.Sampler)], uv)
                              .rgb;
     return float4(color, 1.0);
 }

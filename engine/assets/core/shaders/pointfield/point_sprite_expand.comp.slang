@@ -15,6 +15,8 @@
 // producer→consumer pass binds its point/run/record/args buffers on set 1 and takes all view
 // state through push constants (no view-constants fetch), so it needs no bindless bind.
 
+#include "../Veng/binding.slang"
+
 // One resident field point. Twenty bytes, mirroring the CPU FieldPoint byte-for-byte.
 struct GpuFieldPoint
 {
@@ -57,7 +59,6 @@ struct DrawIndexedIndirectCommand
 // The resident points are a tightly-packed 20-byte stride (float3 + uint + float), matching the CPU
 // FieldPoint byte-for-byte. Read through a ByteAddressBuffer at an explicit 20-byte stride so the
 // element layout cannot drift from the CPU's on a std430 float3-alignment interpretation.
-[[vk::binding(0, 3)]] ByteAddressBuffer g_Points;
 
 static const uint FieldPointStride = 20;
 
@@ -65,24 +66,29 @@ GpuFieldPoint LoadPoint(uint index)
 {
     uint base = index * FieldPointStride;
     GpuFieldPoint p;
-    p.Position = asfloat(g_Points.Load3(base));
-    p.ColorRgba8 = g_Points.Load(base + 12);
-    p.Size = asfloat(g_Points.Load(base + 16));
+    p.Position = asfloat(g_Set3.Points.Load3(base));
+    p.ColorRgba8 = g_Set3.Points.Load(base + 12);
+    p.Size = asfloat(g_Set3.Points.Load(base + 16));
     return p;
 }
-[[vk::binding(1, 3)]] StructuredBuffer<GpuDrawRun> g_Runs;
-[[vk::binding(2, 3)]] RWStructuredBuffer<GpuSpriteRecord> g_Records;
-// The args buffer is byte-addressed so IndexCount (word 0 of the VkDrawIndexedIndirectCommand) can
-// be updated with a scalar atomic — an atomic on a StructuredBuffer struct member is not portable.
-[[vk::binding(3, 3)]] RWByteAddressBuffer g_Args;
-[[vk::binding(4, 3)]] RWStructuredBuffer<uint> g_Cursor; // [0] = survivor append cursor
+struct PointSpriteExpandSet3
+{
+    ByteAddressBuffer Points;
+    StructuredBuffer<GpuDrawRun> Runs;
+    RWStructuredBuffer<GpuSpriteRecord> Records;
+    // The args buffer is byte-addressed so IndexCount (word 0 of the VkDrawIndexedIndirectCommand) can
+    // be updated with a scalar atomic — an atomic on a StructuredBuffer struct member is not portable.
+    RWByteAddressBuffer Args;
+    RWStructuredBuffer<uint> Cursor;  // [0] = survivor append cursor
+};
+VE_DESCRIPTOR_SET(3, PointSpriteExpandSet3, g_Set3);
 
 struct PushConstants
 {
     float4x4 ViewProj; // world → clip (this frame's camera)
     float4 ClipRight;  // ViewProj * float4(camera right, 0) — clip-space corner basis
     float4 ClipUp;     // ViewProj * float4(camera up, 0)
-    uint RunCount;     // number of runs in g_Runs
+    uint RunCount;     // number of runs in g_Set3.Runs
     uint PointTotal;   // sum of every run's Count (the dispatch's thread span)
     float ProjScale;   // |Proj[1][1]| * viewportHeight / 2 — pixels per world at w = 1
     float MinPixels;   // sprite pixel-size clamp lower bound
@@ -91,7 +97,7 @@ struct PushConstants
     float Opacity;     // uniform display fade folded into the record color
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // Packs two floats into a uint as a pair of IEEE-754 half-floats (x in the low 16 bits, y high).
 uint PackHalf2(float2 v)
@@ -114,7 +120,7 @@ uint PointIndexForThread(uint thread)
 {
     for (uint r = 0; r < g_PC.RunCount; ++r)
     {
-        GpuDrawRun run = g_Runs[r];
+        GpuDrawRun run = g_Set3.Runs[r];
         if (thread < run.PointPrefix + run.Count)
         {
             return run.FirstPoint + (thread - run.PointPrefix);
@@ -198,7 +204,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     // z/w skew of a screen-facing sprite's corner is negligible against the shared f16 quantization,
     // so the vertex stage reconstructs position xy per corner and inherits clipCenter's z/w.
     uint slot;
-    InterlockedAdd(g_Cursor[0], 1u, slot);
+    InterlockedAdd(g_Set3.Cursor[0], 1u, slot);
 
     GpuSpriteRecord record;
     record.ClipCenter = clipCenter;
@@ -208,7 +214,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float fade = 1.0;
     record.Color = uint2(PackHalf2(color.rg), PackHalf2(float2(color.b, fade)));
 
-    g_Records[slot] = record;
+    g_Set3.Records[slot] = record;
 
     // Finalize the indirect draw's IndexCount (word 0 of the command) to 6·survivors: this survivor
     // owns record slot `slot`, so slots [0, slot] are all filled and the count is at least
@@ -216,5 +222,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     // independent of thread order. A scalar byte-address atomic — portable where a struct-member
     // atomic is not.
     uint prev;
-    g_Args.InterlockedMax(0, (slot + 1u) * 6u, prev);
+    g_Set3.Args.InterlockedMax(0, (slot + 1u) * 6u, prev);
 }

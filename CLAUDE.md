@@ -789,6 +789,13 @@ conditional on it; it is a PUBLIC compile definition (`VE_GPU_BACKEND_VULKAN`) a
 package records it as `VENG_GPU_BACKEND`. There is no runtime selection and no virtual dispatch:
 each public resource's `Native` struct is defined by the backend compiled in.
 
+**`VE_SHADER_TARGETS`** (`Native`, the default, or `All`) is the GPU code shaders cook to: `Native`
+cooks the backend's own target, so a Vulkan tree cooks SPIR-V and never runs the Metal toolchain,
+and `All` adds Metal. The cooker compiles it in as its default, the exported package records it as
+`VENG_SHADER_TARGETS`, and the vengc rules pass it, so a consumer's packs cook for its engine tree's
+backend. Shaders declare their resources in the portable form of `Veng/binding.slang` — see
+[docs/guides/shader-bindings.md](docs/guides/shader-bindings.md).
+
 **Only `engine/src/Renderer/Backend/<backend>/` names a graphics API.** Code outside it — the
 render graph, the scene renderer and its batteries, the window, capture — works in engine terms:
 the vocabulary enums, the synchronization vocabulary (`SyncStage`/`SyncAccess`, decided

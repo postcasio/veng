@@ -2,8 +2,14 @@
 // weights every mip-0 texel by the exact solid angle it covers and writes the face's sum, so
 // SkyBakeFieldMean (Veng/sky_bake.slang) is the six sums over the sphere's 4π. A box mip chain
 // weights every texel alike, while a cube texel's solid angle varies about fivefold across a face.
-[[vk::binding(0, 3)]] Texture2DArray<float4> g_Field;
-[[vk::binding(1, 3)]] RWStructuredBuffer<float4> g_Sums;
+
+#include "Veng/binding.slang"
+struct SkyBakeFieldSumSet3
+{
+    Texture2DArray<float4> Field;
+    RWStructuredBuffer<float4> Sums;
+};
+VE_DESCRIPTOR_SET(3, SkyBakeFieldSumSet3, g_Set3);
 
 struct PushConstants
 {
@@ -11,7 +17,7 @@ struct PushConstants
     uint OutputBase;  // the first of this target's six sums
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const uint GroupSize = 256;
 
@@ -43,7 +49,7 @@ void csMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         const float y1 = y0 + texel;
         const float solidAngle = CornerSolidAngle(x1, y1) - CornerSolidAngle(x0, y1) -
                                  CornerSolidAngle(x1, y0) + CornerSolidAngle(x0, y0);
-        sum += solidAngle * g_Field.Load(int4(int(x), int(y), int(face), 0));
+        sum += solidAngle * g_Set3.Field.Load(int4(int(x), int(y), int(face), 0));
     }
 
     s_Partial[thread.x] = sum;
@@ -58,6 +64,6 @@ void csMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     }
     if (thread.x == 0)
     {
-        g_Sums[g_PC.OutputBase + face] = s_Partial[0];
+        g_Set3.Sums[g_PC.OutputBase + face] = s_Partial[0];
     }
 }

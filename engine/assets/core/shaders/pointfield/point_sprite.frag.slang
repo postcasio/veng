@@ -12,8 +12,7 @@
 #define VE_POINT_DEPTH_FADE 1
 #endif
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "../Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -31,7 +30,7 @@ struct PushConstants
     float Spikes;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -72,7 +71,7 @@ float4 fsMain(VSOutput input) : SV_Target
 #if VE_POINT_DEPTH_FADE
     // Depth-aware occluded fade: sample the g-buffer depth at the sub-rect UV the vertex stage
     // remapped (v_SampleUV). The push-constant depth/sampler indices are per-draw uniform, so the
-    // descriptor index cannot diverge — no NonUniformResourceIndex.
+    // descriptor index cannot diverge — no NonUniformIndex.
     SamplerState samp = g_Samplers[g_PC.Sampler];
     float sceneDepth = g_Textures[g_PC.DepthTexture].Sample(samp, input.v_SampleUV).r;
     const float bias = 0.00005;

@@ -1,24 +1,29 @@
 // Multiple-scattering iteration: advances the accumulated scattering by one bounce. For each
 // (r, mu, muS) voxel it gathers the light already scattered (the running total so far, read
-// from g_PrevTotal) arriving from a set of directions over the sphere, scatters it once more
+// from g_Set3.PrevTotal) arriving from a set of directions over the sphere, scatters it once more
 // toward the viewer along the marched view ray, and adds that new bounce onto the running
-// total. g_PrevTotal is the sampled source; g_NextTotal is the write-only destination — the
+// total. g_Set3.PrevTotal is the sampled source; g_Set3.NextTotal is the write-only destination — the
 // ping-pong the iteration runs over (never an in-place read-write of one 3D image).
 //
 // Set 1: the running-total scattering (sampled 3D) + the transmittance LUT (sampled 2D) + a
 // shared sampler, and the next-total destination 3D volume (write-only storage). Off bindless.
 #include "atmosphere_common.slang"
+#include "../Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture3D<float4> g_PrevTotal;
-[[vk::binding(1, 3)]] Texture2D<float4> g_Transmittance;
-[[vk::binding(2, 3)]] SamplerState g_Sampler;
-[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture3D<float4> g_NextTotal;
+struct AtmosphereMultipleScatteringSet3
+{
+    Texture3D<float4> PrevTotal;
+    Texture2D<float4> Transmittance;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture3D<float4> NextTotal;
+};
+VE_DESCRIPTOR_SET(3, AtmosphereMultipleScatteringSet3, g_Set3);
 
 struct PushConstants
 {
     AtmosphereParams Atmosphere;
 };
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // Total in-scattered radiance arriving at radius r from direction w, given the sun cosine muS,
 // reconstructed from the order-n table with its phase functions reapplied.
@@ -40,7 +45,7 @@ float3 GatherRadiance(AtmosphereParams a, float r, float3 viewW, float muS, floa
             float3 w = float3(sinT * cos(phi), cosT, sinT * sin(phi));
             float muW = ClampCosine(dot(up, w));
             float3 uvw = ScatteringUvwFromParams(a, r, muW, muS, RayHitsGround(a, r, muW));
-            float4 s = g_PrevTotal.SampleLevel(g_Sampler, uvw, 0.0);
+            float4 s = g_Set3.PrevTotal.SampleLevel(g_Set3.Sampler, uvw, 0.0);
             float nu = dot(w, sunDir);
             float phase = (3.0 / (16.0 * Pi)) * (1.0 + nu * nu);
             sum += s.rgb * phase;
@@ -83,8 +88,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
         float h = ri - a.PlanetRadius;
         float muSi = ClampCosine((r * muS) / ri);
 
-        float3 tView = SampleTransmittanceToTop(a, g_Transmittance, g_Sampler, r, mu) /
-                       max(SampleTransmittanceToTop(a, g_Transmittance, g_Sampler, ri,
+        float3 tView = SampleTransmittanceToTop(a, g_Set3.Transmittance, g_Set3.Sampler, r, mu) /
+                       max(SampleTransmittanceToTop(a, g_Set3.Transmittance, g_Set3.Sampler, ri,
                                                     ClampCosine((r * mu + d) / ri)),
                            float3(1e-6));
         tView = clamp(tView, 0.0, 1.0);
@@ -98,6 +103,6 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     // Add this bounce onto the running total (Rayleigh chroma in RGB, the seeded Mie term in A
     // carried through unchanged — higher-order Mie is negligible).
-    float4 prev = g_PrevTotal[id];
-    g_NextTotal[id] = float4(prev.rgb + rayleigh, prev.a);
+    float4 prev = g_Set3.PrevTotal[id];
+    g_Set3.NextTotal[id] = float4(prev.rgb + rayleigh, prev.a);
 }

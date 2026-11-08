@@ -15,7 +15,11 @@ struct GpuSpriteRecord
     uint2 Color;       // gain·opacity-folded HDR color: rg (2×f16), b + occluded-fade flag (2×f16)
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<GpuSpriteRecord> g_Records;
+struct PointSpriteSet3
+{
+    StructuredBuffer<GpuSpriteRecord> Records;
+};
+VE_DESCRIPTOR_SET(3, PointSpriteSet3, g_Set3);
 
 struct PushConstants
 {
@@ -33,7 +37,7 @@ struct PushConstants
     float Spikes;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -51,12 +55,10 @@ float2 UnpackHalf2(uint packed)
 }
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
 {
-    // Read the VertexIndex builtin directly (not SV_VertexID) to avoid the base-vertex subtract
-    // that pulls in the DrawParameters capability the device does not enable. The indexed draw
-    // sets firstIndex=0 and vertexOffset=0, so the builtin equals the index buffer's value.
-    uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
+    // The indexed draw sets firstIndex=0 and vertexOffset=0, so the vertex index equals the index
+    // buffer\'s value.
 
     // An indexed draw of 4 unique vertices per surviving sprite (vertex id = 4*record + corner):
     // vertexId / 4 selects the record, vertexId & 3 the quad corner. The shared index buffer
@@ -65,7 +67,7 @@ VSOutput vsMain()
     uint recordId = vertexId / 4;
     uint cornerId = vertexId & 3;
 
-    GpuSpriteRecord record = g_Records[recordId];
+    GpuSpriteRecord record = g_Set3.Records[recordId];
 
     // The four quad corners in [-1, 1], indexed by cornerId. The record's half-extents already fold
     // the point's own 0.5 half-size, so the corner sign selects the pre-scaled offset directly.

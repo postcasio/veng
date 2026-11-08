@@ -1,6 +1,8 @@
 // The ribbon stages' shared push block and interpolants. Both placements push the same block; the
 // scene entries read only ViewConstantsIndex, the post-resolve entries the rest as well. Mirrors the
 // CPU RibbonPushConstants byte for byte.
+
+#include "Veng/binding.slang"
 struct PushConstants
 {
     float4x4 Proj;           // post-resolve: the unjittered view -> clip projection
@@ -12,7 +14,7 @@ struct PushConstants
     float2 Pad1;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

@@ -30,22 +30,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-[[vk::binding(0, 3)]] globallycoherent RWStructuredBuffer<uint> g_RayCounter;
-[[vk::binding(1, 3)]] RWStructuredBuffer<uint> g_IntersectionPassIndirectArgs;
+#include "../Veng/binding.slang"
+
+struct SsrPrepareIndirectArgsSet3
+{
+    globallycoherent RWStructuredBuffer<uint> RayCounter;
+    RWStructuredBuffer<uint> IntersectionPassIndirectArgs;
+};
+VE_DESCRIPTOR_SET(3, SsrPrepareIndirectArgsSet3, g_Set3);
 
 uint FFX_SSSR_GetRayCounter(uint index)
 {
-    return g_RayCounter[index];
+    return g_Set3.RayCounter[index];
 }
 
 void FFX_SSSR_WriteRayCounter(uint index, uint data)
 {
-    g_RayCounter[index] = data;
+    g_Set3.RayCounter[index] = data;
 }
 
 void FFX_SSSR_WriteIntersectIndirectArgs(uint index, uint data)
 {
-    g_IntersectionPassIndirectArgs[index] = data;
+    g_Set3.IntersectionPassIndirectArgs[index] = data;
 }
 
 void PrepareIndirectArgs()

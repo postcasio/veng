@@ -17,34 +17,40 @@
 // The kernels are bloom_down/bloom_up's COD 13-tap down and 3x3 tent up, or with Kawase set
 // bloom_down_kawase/bloom_up_kawase's 5-tap down and 8-tap up; the tail never contains level 0, so
 // the bright pass is not here.
+
+#include "Veng/binding.slang"
 #define MAX_TAIL_LEVELS 8
 #define TAIL_CAPACITY 3584
 #define THREADS 256
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-// One storage binding per tail slot (bindings 2..9), the slots past LevelCount bound but unwritten.
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level0;
-[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level1;
-[[vk::binding(4, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level2;
-[[vk::binding(5, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level3;
-[[vk::binding(6, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level4;
-[[vk::binding(7, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level5;
-[[vk::binding(8, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level6;
-[[vk::binding(9, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level7;
+struct BloomTailSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    // One storage binding per tail slot (bindings 2..9), the slots past LevelCount bound but unwritten.
+    [format("rgba16f")] RWTexture2D<float4> Level0;
+    [format("rgba16f")] RWTexture2D<float4> Level1;
+    [format("rgba16f")] RWTexture2D<float4> Level2;
+    [format("rgba16f")] RWTexture2D<float4> Level3;
+    [format("rgba16f")] RWTexture2D<float4> Level4;
+    [format("rgba16f")] RWTexture2D<float4> Level5;
+    [format("rgba16f")] RWTexture2D<float4> Level6;
+    [format("rgba16f")] RWTexture2D<float4> Level7;
+};
+VE_DESCRIPTOR_SET(3, BloomTailSet3, g_Set3);
 
 void StoreLevel(uint slot, uint2 id, float4 value)
 {
     switch (slot)
     {
-    case 0: g_Level0[id] = value; break;
-    case 1: g_Level1[id] = value; break;
-    case 2: g_Level2[id] = value; break;
-    case 3: g_Level3[id] = value; break;
-    case 4: g_Level4[id] = value; break;
-    case 5: g_Level5[id] = value; break;
-    case 6: g_Level6[id] = value; break;
-    default: g_Level7[id] = value; break;
+    case 0: g_Set3.Level0[id] = value; break;
+    case 1: g_Set3.Level1[id] = value; break;
+    case 2: g_Set3.Level2[id] = value; break;
+    case 3: g_Set3.Level3[id] = value; break;
+    case 4: g_Set3.Level4[id] = value; break;
+    case 5: g_Set3.Level5[id] = value; break;
+    case 6: g_Set3.Level6[id] = value; break;
+    default: g_Set3.Level7[id] = value; break;
     }
 }
 
@@ -58,7 +64,7 @@ struct PushConstants
     uint  Kawase;     // 1 = the Dual Kawase kernels, 0 = COD
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 // RGB as three halves in two words: the precision an RGBA16F mip stores.
 groupshared uint2 g_Texels[TAIL_CAPACITY];
@@ -134,7 +140,7 @@ float3 SampleSource(float2 uv)
     uint2 valid = ExtentAt(g_PC.ValidBase, mip);
     uint2 alloc = ExtentAt(g_PC.AllocBase, mip);
     float2 physical = min(uv * (float2(valid) / float2(alloc)), (float2(valid) - 0.5) / float2(alloc));
-    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+    return g_Set3.Source.SampleLevel(g_Set3.Sampler, physical, 0.0).rgb;
 }
 
 float3 SampleAbove(uint index, float2 uv)

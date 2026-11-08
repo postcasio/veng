@@ -6,18 +6,21 @@
 // test shaders do. One dispatch evaluates one mode over its cases, one invocation per case.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 #include "Veng/scene_depth.slang"
 #include "Veng/sprite_shading_core.slang"
 
-[[vk::binding(0, 3)]] ByteAddressBuffer u_Cases;                       // per-mode float4 cases
-[[vk::binding(1, 3)]] RWStructuredBuffer<float4> u_Results;            // per-mode float4 results
-[[vk::binding(2, 3)]] Texture2D u_Atlas;                               // two frames, side by side
-[[vk::binding(3, 3)]] Texture2D u_Motion;                              // their motion sheet
-[[vk::binding(4, 3)]] SamplerState u_Sampler;                          // linear, clamped
-[[vk::binding(5, 3)]] StructuredBuffer<SpriteEmissionRamp> u_Ramp;     // one ramp
+struct SpriteShadingSet3
+{
+    ByteAddressBuffer Cases;  // per-mode float4 cases
+    RWStructuredBuffer<float4> Results;  // per-mode float4 results
+    Texture2D Atlas;  // two frames, side by side
+    Texture2D Motion;  // their motion sheet
+    SamplerState Sampler;  // linear, clamped
+    StructuredBuffer<SpriteEmissionRamp> Ramp;  // one ramp
+};
+VE_DESCRIPTOR_SET(3, SpriteShadingSet3, g_Set3);
 
 // The modes, matching the test's.
 static const uint ModeWeights = 0;     // case xyz a unit direction -> (wA, sum), (wB, 0)
@@ -34,11 +37,11 @@ struct SpriteShadingPush
     float Fraction;
     uint Pad;
 };
-[[vk::push_constant]] SpriteShadingPush u_Push;
+VE_PUSH_CONSTANTS(SpriteShadingPush, u_Push);
 
 float4 LoadCase(uint index)
 {
-    return u_Cases.Load<float4>(index * 16);
+    return g_Set3.Cases.Load<float4>(index * 16);
 }
 
 [shader("compute")]
@@ -56,20 +59,20 @@ void csMain(uint3 id : SV_DispatchThreadID)
         float3 wA;
         float3 wB;
         SixWayWeights(LoadCase(i).xyz, wA, wB);
-        u_Results[2 * i] = float4(wA, dot(wA, float3(1.0)) + dot(wB, float3(1.0)));
-        u_Results[2 * i + 1] = float4(wB, 0.0);
+        g_Set3.Results[2 * i] = float4(wA, dot(wA, float3(1.0)) + dot(wB, float3(1.0)));
+        g_Set3.Results[2 * i + 1] = float4(wB, 0.0);
     }
     else if (u_Push.Mode == ModeTemperature)
     {
         float stored = LoadCase(i).x;
-        u_Results[i] = float4(DecodeTemperature(stored, true), DecodeTemperature(stored, false),
+        g_Set3.Results[i] = float4(DecodeTemperature(stored, true), DecodeTemperature(stored, false),
                               0.0, 0.0);
     }
     else if (u_Push.Mode == ModeRamp)
     {
         float4 c = LoadCase(i);
-        SpriteEmissionRamp ramp = u_Ramp[0];
-        u_Results[i] = float4(EvaluateEmissionRamp(ramp, c.x), IgnitionGate(c.x, ramp.Params.x, c.y));
+        SpriteEmissionRamp ramp = g_Set3.Ramp[0];
+        g_Set3.Results[i] = float4(EvaluateEmissionRamp(ramp, c.x), IgnitionGate(c.x, ramp.Params.x, c.y));
     }
     else if (u_Push.Mode == ModeFrameBlend)
     {
@@ -85,23 +88,23 @@ void csMain(uint3 id : SV_DispatchThreadID)
                                                  float2(0.0), float2(0.0));
         if (c.z > 0.0)
         {
-            float2 storedN = u_Motion.SampleLevel(u_Sampler, taps.UvN, 0.0).rg;
-            float2 storedN1 = u_Motion.SampleLevel(u_Sampler, taps.UvN1, 0.0).rg;
+            float2 storedN = g_Set3.Motion.SampleLevel(g_Set3.Sampler, taps.UvN, 0.0).rg;
+            float2 storedN1 = g_Set3.Motion.SampleLevel(g_Set3.Sampler, taps.UvN1, 0.0).rg;
             taps = SpriteFrameTapsAt(pair, c.xy, float2(0.0), float2(0.0),
                                      DecodeMotion(storedN, c.z), DecodeMotion(storedN1, c.z));
         }
-        u_Results[i] = SampleFrameBlended(u_Atlas, u_Sampler, taps);
+        g_Set3.Results[i] = SampleFrameBlended(g_Set3.Atlas, g_Set3.Sampler, taps);
     }
     else if (u_Push.Mode == ModeSoftFade)
     {
         float4 c = LoadCase(i);
-        u_Results[i] = float4(SoftEdgeFade(c.x, c.y), 0.0, 0.0, 0.0);
+        g_Set3.Results[i] = float4(SoftEdgeFade(c.x, c.y), 0.0, 0.0, 0.0);
     }
     else if (u_Push.Mode == ModeViewDepth)
     {
         float4 row = LoadCase(2 * i);
         float4x4 proj = float4x4(float4(1.0, 0.0, 0.0, 0.0), float4(0.0, 1.0, 0.0, 0.0),
                                  float4(0.0, 0.0, row.x, row.y), float4(0.0, 0.0, row.z, row.w));
-        u_Results[i] = float4(ViewDepthFromProjection(proj, LoadCase(2 * i + 1).x), 0.0, 0.0, 0.0);
+        g_Set3.Results[i] = float4(ViewDepthFromProjection(proj, LoadCase(2 * i + 1).x), 0.0, 0.0, 0.0);
     }
 }

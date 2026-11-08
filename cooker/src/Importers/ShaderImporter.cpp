@@ -15,12 +15,15 @@
 #include <slang/slang-com-ptr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/CookedShader.h>
 #include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Cook/ShaderTargets.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Types.h>
 
 #include "GraphShaderSource.h"
+#include "MetalCompile.h"
 #include "SlangSession.h"
 #include "VertexLayoutSource.h"
 
@@ -31,22 +34,8 @@ namespace Veng::Cook
         using Slang::ComPtr;
 
         // The cooked ShaderInterface stores the underlying-integer ordinals of the
-        // Veng::Renderer::ShaderStage / DescriptorType / Format vocabulary enums.
+        // Veng::Renderer::ShaderStage / Format vocabulary enums.
         constexpr u32 ShaderStageVertex = static_cast<u32>(Renderer::ShaderStage::Vertex);
-        constexpr u32 ShaderStageFragment = static_cast<u32>(Renderer::ShaderStage::Fragment);
-        constexpr u32 ShaderStageCompute = static_cast<u32>(Renderer::ShaderStage::Compute);
-
-        constexpr u32 DescriptorTypeCombinedImageSampler =
-            static_cast<u32>(Renderer::DescriptorType::CombinedImageSampler);
-        constexpr u32 DescriptorTypeSampledImage =
-            static_cast<u32>(Renderer::DescriptorType::SampledImage);
-        constexpr u32 DescriptorTypeStorageImage =
-            static_cast<u32>(Renderer::DescriptorType::StorageImage);
-        constexpr u32 DescriptorTypeUniformBuffer =
-            static_cast<u32>(Renderer::DescriptorType::UniformBuffer);
-        constexpr u32 DescriptorTypeStorageBuffer =
-            static_cast<u32>(Renderer::DescriptorType::StorageBuffer);
-        constexpr u32 DescriptorTypeSampler = static_cast<u32>(Renderer::DescriptorType::Sampler);
 
         // Used for Slang reflection comparison against VertexLayout element formats.
         constexpr u32 FormatR32Sfloat = static_cast<u32>(Renderer::Format::R32Sfloat);
@@ -55,15 +44,6 @@ namespace Veng::Cook
         constexpr u32 FormatRGBA32Sfloat = static_cast<u32>(Renderer::Format::RGBA32Sfloat);
         constexpr u32 FormatRGBA16Uint = static_cast<u32>(Renderer::Format::RGBA16Uint);
         constexpr u32 FormatR32Uint = static_cast<u32>(Renderer::Format::R32Uint);
-
-        // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
-        // truncate rather than fail on an over-long identifier.
-        void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
-        {
-            const usize n = std::min(name.size(), static_cast<usize>(ShaderNameCapacity) - 1);
-            std::memcpy(dest, name.data(), n);
-            dest[n] = '\0';
-        }
 
         string DiagnosticsText(slang::IBlob* diagnostics)
         {
@@ -74,76 +54,6 @@ namespace Veng::Cook
 
             return string(static_cast<const char*>(diagnostics->getBufferPointer()),
                           diagnostics->getBufferSize());
-        }
-
-        optional<u32> MapShaderStage(SlangStage stage)
-        {
-            switch (stage)
-            {
-            case SLANG_STAGE_VERTEX:
-                return ShaderStageVertex;
-            case SLANG_STAGE_FRAGMENT:
-                return ShaderStageFragment;
-            case SLANG_STAGE_COMPUTE:
-                return ShaderStageCompute;
-            default:
-                return std::nullopt;
-            }
-        }
-
-        // Maps a global shader parameter's reflected binding (Texture2D, SamplerState,
-        // Sampler2D, ConstantBuffer<T>, [RW]StructuredBuffer<T>, ...) to a
-        // Renderer::DescriptorType ordinal. Read-only vs. read-write resources
-        // (SampledImage vs. StorageImage) are distinguished via the leaf type's
-        // resource access.
-        Result<u32> MapBindingType(slang::TypeLayoutReflection* typeLayout, const string& paramName,
-                                   const path& sourcePath, const string& entryName)
-        {
-            if (typeLayout->getBindingRangeCount() == 0)
-            {
-                return std::unexpected(fmt::format(
-                    "shader importer: '{}': entry point '{}': parameter '{}' has no binding range",
-                    sourcePath.string(), entryName, paramName));
-            }
-
-            const slang::BindingType bindingType = typeLayout->getBindingRangeType(0);
-            switch (bindingType)
-            {
-            case slang::BindingType::CombinedTextureSampler:
-                return DescriptorTypeCombinedImageSampler;
-
-            case slang::BindingType::Texture:
-            {
-                slang::TypeLayoutReflection* leaf = typeLayout->getBindingRangeLeafTypeLayout(0);
-                const SlangResourceAccess access = leaf->getResourceAccess();
-                return access == SLANG_RESOURCE_ACCESS_READ ? DescriptorTypeSampledImage
-                                                            : DescriptorTypeStorageImage;
-            }
-
-            // RWTexture2D and friends carry the mutable flag, so Slang
-            // reports them as MutableTexture rather than Texture; they are
-            // always read-write storage images.
-            case slang::BindingType::MutableTexture:
-                return DescriptorTypeStorageImage;
-
-            case slang::BindingType::Sampler:
-                return DescriptorTypeSampler;
-
-            case slang::BindingType::ConstantBuffer:
-                return DescriptorTypeUniformBuffer;
-
-            case slang::BindingType::TypedBuffer:
-            case slang::BindingType::RawBuffer:
-            case slang::BindingType::MutableTypedBuffer:
-            case slang::BindingType::MutableRawBuffer:
-                return DescriptorTypeStorageBuffer;
-
-            default:
-                return std::unexpected(fmt::format("shader importer: '{}': entry point '{}': "
-                                                   "parameter '{}' has unsupported binding type {}",
-                                                   sourcePath.string(), entryName, paramName,
-                                                   static_cast<int>(bindingType)));
-            }
         }
 
         // Maps a Slang-reflected vertex input type to a format ordinal, used for
@@ -208,45 +118,11 @@ namespace Veng::Cook
             return unsupported();
         }
 
-        // Assembles the cooked shader blob. The vertex layout is referenced by AssetId
-        // rather than inlined; 0 = no vertex inputs.
-        vector<u8> BuildBlob(const string& entryPoint, std::span<const u8> spirv,
-                             const vector<CookedDescriptorBinding>& bindings,
-                             const vector<CookedPushConstantBlock>& pushConstants,
-                             u64 vertexLayoutAssetId)
-        {
-            CookedShaderInterfaceHeader interfaceHeader{};
-            interfaceHeader.BindingCount = static_cast<u32>(bindings.size());
-            interfaceHeader.PushConstantCount = static_cast<u32>(pushConstants.size());
-            interfaceHeader.VertexLayoutAssetId = vertexLayoutAssetId;
-
-            const usize bindingBytes = bindings.size() * sizeof(CookedDescriptorBinding);
-            const usize pushConstantBytes = pushConstants.size() * sizeof(CookedPushConstantBlock);
-            const usize interfaceBytes =
-                sizeof(CookedShaderInterfaceHeader) + bindingBytes + pushConstantBytes;
-
-            CookedShaderHeader header{};
-            SetName(header.EntryPoint, entryPoint);
-            header.InterfaceBytes = static_cast<u32>(interfaceBytes);
-            header.SpirvBytes = static_cast<u32>(spirv.size());
-
-            vector<u8> blob(sizeof(CookedShaderHeader) + interfaceBytes + spirv.size());
-            usize cursor = 0;
-            std::memcpy(blob.data() + cursor, &header, sizeof(header));
-            cursor += sizeof(header);
-            std::memcpy(blob.data() + cursor, &interfaceHeader, sizeof(interfaceHeader));
-            cursor += sizeof(interfaceHeader);
-            std::memcpy(blob.data() + cursor, bindings.data(), bindingBytes);
-            cursor += bindingBytes;
-            std::memcpy(blob.data() + cursor, pushConstants.data(), pushConstantBytes);
-            cursor += pushConstantBytes;
-            std::memcpy(blob.data() + cursor, spirv.data(), spirv.size());
-
-            return blob;
-        }
-
         // Compiles `entryName` from `moduleSource` (a .slang file or graph-generated text)
-        // to SPIR-V and reflects its interface via Slang's own reflection API. If
+        // for each of the cook's shader targets and reflects its interface via Slang's own
+        // reflection API. SPIR-V is always compiled for reflection, and its code stored only when
+        // the cook asks for it; Metal is reflected and checked against SPIR-V whenever it is
+        // compiled, and stored as a Metal library. If
         // vertex_layout is present (non-zero), reflects the vertex stage's inputs and
         // validates them element-for-element against the referenced layout. If absent, any
         // reflected vertex inputs are discarded (vertex-pulling / no-input semantics).
@@ -261,13 +137,23 @@ namespace Veng::Cook
                 return std::unexpected("shader importer: failed to create Slang global session");
             }
 
-            slang::TargetDesc targetDesc{};
-            targetDesc.format = SLANG_SPIRV;
-            targetDesc.profile = globalSession->findProfile("spirv_1_5");
+            const ShaderTargetSet targets{.Bits = context.ShaderTargets};
+            const bool storeSpirv = targets.Has(ShaderTarget::SpirV);
+            const bool compileMetal = targets.Has(ShaderTarget::Metal);
+            if (!storeSpirv && !compileMetal)
+            {
+                return std::unexpected(fmt::format(
+                    "shader importer: '{}': the cook names no shader target", sourcePath.string()));
+            }
+            constexpr int SpirvTarget = 0;
+            constexpr int MetalTarget = 1;
+            slang::TargetDesc targetDescs[2]{};
+            DescribeSlangTarget(*globalSession, ShaderTarget::SpirV, targetDescs[SpirvTarget]);
+            DescribeSlangTarget(*globalSession, ShaderTarget::Metal, targetDescs[MetalTarget]);
 
             slang::SessionDesc sessionDesc{};
-            sessionDesc.targets = &targetDesc;
-            sessionDesc.targetCount = 1;
+            sessionDesc.targets = targetDescs;
+            sessionDesc.targetCount = compileMetal ? 2 : 1;
             const std::vector<std::string> searchPaths =
                 BuildSlangSearchPaths(sourcePath.parent_path(), context.ShaderIncludeDir);
             std::vector<const char*> searchPathPtrs;
@@ -339,92 +225,28 @@ namespace Veng::Cook
                                 sourcePath.string(), entryName, DiagnosticsText(diagnostics)));
             }
 
-            ComPtr<slang::IBlob> code;
-            diagnostics = nullptr;
-            if (SLANG_FAILED(linkedProgram->getEntryPointCode(0, 0, code.writeRef(),
-                                                              diagnostics.writeRef())))
-            {
-                return std::unexpected(
-                    fmt::format("shader importer: '{}': entry point '{}': codegen failed: {}",
-                                sourcePath.string(), entryName, DiagnosticsText(diagnostics)));
-            }
-
-            slang::ProgramLayout* layout = linkedProgram->getLayout();
-            if (!layout || layout->getEntryPointCount() != 1)
+            slang::ProgramLayout* layout = linkedProgram->getLayout(SpirvTarget);
+            slang::ProgramLayout* metalLayout =
+                compileMetal ? linkedProgram->getLayout(MetalTarget) : nullptr;
+            if (layout == nullptr || layout->getEntryPointCount() != 1 ||
+                (compileMetal && metalLayout == nullptr))
             {
                 return std::unexpected(fmt::format(
                     "shader importer: '{}': entry point '{}': unexpected reflection layout",
                     sourcePath.string(), entryName));
             }
 
+            const string shaderName =
+                fmt::format("{}' entry point '{}", sourcePath.string(), entryName);
+            const Result<ReflectedShaderInterface> reflected =
+                ReflectShaderInterface(*layout, metalLayout, shaderName);
+            if (!reflected)
+            {
+                return std::unexpected(fmt::format("shader importer: {}", reflected.error()));
+            }
+
             slang::EntryPointReflection* entryPointLayout = layout->getEntryPointByIndex(0);
-            const optional<u32> stageMask = MapShaderStage(entryPointLayout->getStage());
-            if (!stageMask)
-            {
-                return std::unexpected(
-                    fmt::format("shader importer: '{}': entry point '{}' has an unsupported stage",
-                                sourcePath.string(), entryName));
-            }
-
-            const bool isVertexStage = *stageMask == ShaderStageVertex;
-
-            vector<CookedDescriptorBinding> bindings;
-            vector<CookedPushConstantBlock> pushConstants;
-
-            for (unsigned i = 0; i < layout->getParameterCount(); ++i)
-            {
-                slang::VariableLayoutReflection* param = layout->getParameterByIndex(i);
-
-                if (param->getCategory() == slang::ParameterCategory::PushConstantBuffer)
-                {
-                    slang::TypeLayoutReflection* elementType =
-                        param->getTypeLayout()->getElementTypeLayout();
-                    const usize size =
-                        elementType ? elementType->getSize(slang::ParameterCategory::Uniform) : 0;
-                    if (size == 0 || size > 128)
-                    {
-                        return std::unexpected(
-                            fmt::format("shader importer: '{}': entry point '{}': push constant "
-                                        "'{}' has invalid size {} (must be 1-128 bytes)",
-                                        sourcePath.string(), entryName, param->getName(), size));
-                    }
-
-                    CookedPushConstantBlock block{};
-                    block.Offset = static_cast<u32>(
-                        param->getOffset(slang::ParameterCategory::PushConstantBuffer));
-                    block.Size = static_cast<u32>(size);
-                    block.StageMask = *stageMask;
-                    SetName(block.Name, param->getName());
-                    pushConstants.push_back(block);
-                    continue;
-                }
-
-                // Sets 0-2 are the typed bindless registries (2D, 3D, cube), prepended to every
-                // pipeline layout — recognized and excluded from the declared interface; author
-                // bindings live in sets >= FirstUserSet. A material that samples g_Volumes reflects
-                // a set-1 binding, which is dropped here so its layout is not double-declared.
-                const u32 set = param->getBindingSpace();
-                if (set < Veng::Renderer::BindlessRegistry::FirstUserSet)
-                {
-                    continue;
-                }
-
-                const Result<u32> descriptorType =
-                    MapBindingType(param->getTypeLayout(), param->getName(), sourcePath, entryName);
-                if (!descriptorType)
-                {
-                    return std::unexpected(descriptorType.error());
-                }
-
-                CookedDescriptorBinding binding{};
-                binding.Set = set;
-                binding.Binding = param->getBindingIndex();
-                binding.Type = *descriptorType;
-                binding.Count = 1;
-                binding.StageMask = *stageMask;
-                SetName(binding.Name, param->getName());
-                bindings.push_back(binding);
-            }
+            const bool isVertexStage = reflected->StageMask == ShaderStageVertex;
 
             // Reflect vertex inputs and validate against the referenced layout (if any).
             if (isVertexStage && vertexLayoutAssetId != 0)
@@ -471,7 +293,9 @@ namespace Veng::Cook
                                 return std::unexpected(format.error());
                             }
                             reflectedInputs.push_back(
-                                {field->getBindingIndex(), *format, field->getName()});
+                                ReflectedInput{.Location = field->getBindingIndex(),
+                                               .Format = *format,
+                                               .Name = field->getName()});
                         }
                     }
                     else
@@ -488,7 +312,9 @@ namespace Veng::Cook
                             return std::unexpected(format.error());
                         }
                         reflectedInputs.push_back(
-                            {param->getBindingIndex(), *format, param->getName()});
+                            ReflectedInput{.Location = param->getBindingIndex(),
+                                           .Format = *format,
+                                           .Name = param->getName()});
                     }
                 }
 
@@ -571,12 +397,70 @@ namespace Veng::Cook
             }
             // vertex_layout absent: reflected vertex inputs are discarded (vertex-pulling).
 
-            // Slang's SPIR-V backend names every entry point "main" regardless of its
-            // source name, so the cooked EntryPoint field is always "main".
-            return BuildBlob(
-                "main",
-                std::span(static_cast<const u8*>(code->getBufferPointer()), code->getBufferSize()),
-                bindings, pushConstants, vertexLayoutAssetId);
+            vector<CookedShaderSectionInput> sections;
+
+            ComPtr<slang::IBlob> spirvCode;
+            if (storeSpirv)
+            {
+                diagnostics = nullptr;
+                if (SLANG_FAILED(linkedProgram->getEntryPointCode(
+                        0, SpirvTarget, spirvCode.writeRef(), diagnostics.writeRef())))
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': SPIR-V codegen failed: {}",
+                        sourcePath.string(), entryName, DiagnosticsText(diagnostics)));
+                }
+                // Slang's SPIR-V backend names every entry point "main" regardless of its source
+                // name.
+                sections.push_back(CookedShaderSectionInput{
+                    .Code = CookedShaderCode::SpirV,
+                    .Bytes = std::span(static_cast<const u8*>(spirvCode->getBufferPointer()),
+                                       spirvCode->getBufferSize()),
+                    .EntryPoint = "main",
+                });
+            }
+
+            vector<u8> metalLibrary;
+            string metalEntryPoint;
+            if (compileMetal)
+            {
+                ComPtr<slang::IBlob> metalSource;
+                diagnostics = nullptr;
+                if (SLANG_FAILED(linkedProgram->getEntryPointCode(
+                        0, MetalTarget, metalSource.writeRef(), diagnostics.writeRef())))
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': Metal codegen failed: {}",
+                        sourcePath.string(), entryName, DiagnosticsText(diagnostics)));
+                }
+                const std::string_view msl(
+                    static_cast<const char*>(metalSource->getBufferPointer()),
+                    metalSource->getBufferSize());
+                const optional<string> entry = FindMetalEntryPoint(msl);
+                if (!entry)
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': the Metal source declares no "
+                        "stage function",
+                        sourcePath.string(), entryName));
+                }
+                metalEntryPoint = *entry;
+                Result<vector<u8>> library = CompileMetalLibrary(msl, shaderName);
+                if (!library)
+                {
+                    return std::unexpected(fmt::format("shader importer: {}", library.error()));
+                }
+                metalLibrary = std::move(*library);
+                sections.push_back(CookedShaderSectionInput{
+                    .Code = CookedShaderCode::MetalLibrary,
+                    .Bytes = metalLibrary,
+                    .EntryPoint = metalEntryPoint,
+                });
+            }
+
+            return BuildCookedShaderBlob(
+                CookedShaderInterfaceHeader{.VertexLayoutAssetId = vertexLayoutAssetId},
+                reflected->Bindings, reflected->PushConstants, sections);
         }
 
     }

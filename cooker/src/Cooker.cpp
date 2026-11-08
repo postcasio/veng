@@ -94,6 +94,13 @@ namespace Veng::Cook
             std::abort();
         }
 
+        // Whether a manifest entry is a shader, whose cached bytes depend on the shader targets.
+        bool IsShaderEntry(const json& entry)
+        {
+            return entry.is_object() && entry.contains("type") && entry["type"].is_string() &&
+                   entry["type"].get<string>() == "Shader";
+        }
+
         // A manifest naming a type nothing registered is what a forgotten --module produces, so the
         // error names the flag rather than leaving the reader to suspect the manifest, and lists
         // the names that did resolve.
@@ -501,7 +508,7 @@ namespace Veng::Cook
     {
         // GCC/Make escaping: a space or '#' in a filename is backslash-escaped,
         // a '$' is doubled. Path separators (incl. Windows '\\') pass through.
-        auto escape = [](const path& p) -> string
+        const auto escape = [](const path& p) -> string
         {
             const string raw = p.string();
             string escaped;
@@ -539,6 +546,38 @@ namespace Veng::Cook
     Cooker::Cooker()
     {
         RegisterBuiltinAssetTypes(m_AssetTypes);
+    }
+
+    Result<std::pair<ShaderTargetSet, string>>
+    Cooker::ResolveHostShaderTargets(const string& label) const
+    {
+        ShaderTargetSet targets = m_ShaderTargets;
+        string fingerprint = FormatShaderTargets(targets);
+        if (targets.Has(ShaderTarget::Metal))
+        {
+            const optional<string>& toolchain = ProbeMetalToolchain();
+            if (toolchain)
+            {
+                fingerprint += fmt::format("@{}", *toolchain);
+            }
+            else
+            {
+                targets = targets.Without(ShaderTarget::Metal);
+                if (targets.IsEmpty())
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: shaders cook for Metal only, and this host has no Metal toolchain "
+                        "(xcrun metal)",
+                        label));
+                }
+                fmt::print(stderr,
+                           "{}: no Metal toolchain (xcrun metal) on this host; shaders cook "
+                           "without their Metal section\n",
+                           label);
+                fingerprint = FormatShaderTargets(targets);
+            }
+        }
+        return std::pair{targets, fingerprint};
     }
 
     void Cooker::Register(Unique<AssetImporter> importer)
@@ -611,6 +650,13 @@ namespace Veng::Cook
         }
 
         const json& pack = *packResult;
+
+        const Result<std::pair<ShaderTargetSet, string>> shaderTargets =
+            ResolveHostShaderTargets(fmt::format("pack '{}'", packJson.string()));
+        if (!shaderTargets)
+        {
+            return std::unexpected(shaderTargets.error());
+        }
 
         const Result<AssetPack> mainPackResult = ParseAssetPack(packJson, m_AssetTypes);
         if (!mainPackResult)
@@ -819,6 +865,7 @@ namespace Veng::Cook
                     .PackDir = keyPackDir,
                     .ConfigFingerprint = configFingerprint,
                     .ShaderIncludeDir = keyShaderIncludeDir,
+                    .ShaderTargets = IsShaderEntry(entry) ? shaderTargets->second : string{},
                     .ConsultsModule =
                         EntryModuleDependence(entry) == ImporterModuleDependence::DependsOnModule,
                 });
@@ -949,6 +996,7 @@ namespace Veng::Cook
                 .ShaderIncludeDir = shaderIncludeDir,
                 .RecordDependency = entryRecord,
                 .ThreadBudget = threadBudget,
+                .ShaderTargets = shaderTargets->first.Bits,
             };
 
             vector<CachedBlob> blobs;
@@ -1168,7 +1216,14 @@ namespace Veng::Cook
             refPacks.push_back(std::move(*refPackResult));
         }
 
-        auto resolve = [&refPacks](AssetId resolveId) -> optional<ResolvedSource>
+        const Result<std::pair<ShaderTargetSet, string>> shaderTargets =
+            ResolveHostShaderTargets(fmt::format("cook '{}'", sourcePath.string()));
+        if (!shaderTargets)
+        {
+            return std::unexpected(shaderTargets.error());
+        }
+
+        const auto resolve = [&refPacks](AssetId resolveId) -> optional<ResolvedSource>
         {
             for (const AssetPack& ref : refPacks)
             {
@@ -1208,6 +1263,7 @@ namespace Veng::Cook
             .SourceCatalog = sourceCatalog,
             .ShaderIncludeDir = shaderIncludeDir,
             .RecordDependency = [](const path&) {},
+            .ShaderTargets = shaderTargets->first.Bits,
         };
 
         json entry;

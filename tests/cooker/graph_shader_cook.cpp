@@ -21,6 +21,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/CookedShader.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -583,31 +584,24 @@ TEST_CASE("Cooker: a GuiFill graph cooks against the gui vertex interface and pu
     // the proof the generated fill rides the real gui vertex interface.
     const optional<ArchiveEntry> vert = reader->Find(AssetId{0x2271});
     REQUIRE(vert.has_value());
-    CookedShaderHeader vertHeader{};
-    std::memcpy(&vertHeader, vert->Blob.data(), sizeof(vertHeader));
-    CookedShaderInterfaceHeader vertInterface{};
-    std::memcpy(&vertInterface, vert->Blob.data() + sizeof(vertHeader), sizeof(vertInterface));
-    CHECK(vertInterface.VertexLayoutAssetId == 0x2270ULL);
+    const Result<CookedShaderView> vertShader = ParseCookedShader(vert->Blob);
+    REQUIRE_MESSAGE(vertShader.has_value(), vertShader.error());
+    CHECK(vertShader->Interface.VertexLayoutAssetId == 0x2270ULL);
 
     // The generated fragment cooked, and its reflected push range covers the material
     // selector at the domain's declared offset — what MaterialLoader's SelectorPushOffsetFor
     // requires before it will build a GuiFill pipeline layout.
     const optional<ArchiveEntry> frag = reader->Find(AssetId{0x2272});
     REQUIRE(frag.has_value());
-    CookedShaderHeader fragHeader{};
-    std::memcpy(&fragHeader, frag->Blob.data(), sizeof(fragHeader));
-    CookedShaderInterfaceHeader fragInterface{};
-    std::memcpy(&fragInterface, frag->Blob.data() + sizeof(fragHeader), sizeof(fragInterface));
-    REQUIRE(fragInterface.PushConstantCount >= 1);
+    const Result<CookedShaderView> fragShader = ParseCookedShader(frag->Blob);
+    REQUIRE_MESSAGE(fragShader.has_value(), fragShader.error());
+    REQUIRE(!fragShader->PushConstants.empty());
 
-    const auto* blocks = reinterpret_cast<const CookedPushConstantBlock*>(
-        frag->Blob.data() + sizeof(fragHeader) + sizeof(fragInterface) +
-        fragInterface.BindingCount * sizeof(CookedDescriptorBinding));
     bool selectorCovered = false;
-    for (u32 i = 0; i < fragInterface.PushConstantCount; ++i)
+    for (const CookedPushConstantBlock& block : fragShader->PushConstants)
     {
-        if (blocks[i].Offset <= GuiFillSelectorPushOffset &&
-            blocks[i].Offset + blocks[i].Size >= GuiFillSelectorPushOffset + sizeof(u32))
+        if (block.Offset <= GuiFillSelectorPushOffset &&
+            block.Offset + block.Size >= GuiFillSelectorPushOffset + sizeof(u32))
         {
             selectorCovered = true;
         }

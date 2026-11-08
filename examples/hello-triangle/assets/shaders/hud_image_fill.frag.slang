@@ -22,8 +22,8 @@ MaterialParams LoadMaterialParams(uint offset)
 float4 fsMain(GuiFillInputs input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 texel = g_Textures[NonUniformResourceIndex(p.Image)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.ImageSampler)], input.v_UV);
+    float4 texel = g_Textures[NonUniformIndex(p.Image)].Sample(
+        g_Samplers[NonUniformIndex(p.ImageSampler)], input.v_UV);
     float2 box = GuiFillBoxCoord(input);
     float wipe = saturate(0.5 + 0.5 * sin(box.y * 4.0 + g_PC.Time * p.Speed));
     float4 fill = float4(lerp(texel.rgb, p.Tint.rgb, wipe), texel.a * p.Tint.a);

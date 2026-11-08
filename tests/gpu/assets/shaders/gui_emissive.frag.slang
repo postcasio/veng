@@ -38,8 +38,8 @@ GBufferOutput fsMain(VSOutput input)
     float3 emissive = float3(0.0);
     if (p.EmissiveTexture != 0u)
     {
-        const float3 texel = g_Textures[NonUniformResourceIndex(p.EmissiveTexture)].Sample(
-                                 g_Samplers[NonUniformResourceIndex(p.EmissiveSampler)], input.v_UV).rgb;
+        const float3 texel = g_Textures[NonUniformIndex(p.EmissiveTexture)].Sample(
+                                 g_Samplers[NonUniformIndex(p.EmissiveSampler)], input.v_UV).rgb;
         emissive = p.EmissiveColor.rgb * texel;
     }
 

@@ -4,14 +4,14 @@
 // (BindlessRegistry::GetCurrentFrameBase()), so the load at index * stride reads
 // this frame's copy of the block. The param sits at byte offset 0 of the block
 // (the test lays out a single float4 there).
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
     uint MaterialOffset;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

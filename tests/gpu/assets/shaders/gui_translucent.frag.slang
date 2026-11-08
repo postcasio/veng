@@ -21,8 +21,8 @@ MaterialParams LoadMaterialParams(uint offset)
 float4 fsMain(SurfaceFragmentInput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
-    float4 texel = g_Textures[NonUniformResourceIndex(p.Texture)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.Sampler)], input.v_UV);
+    float4 texel = g_Textures[NonUniformIndex(p.Texture)].Sample(
+        g_Samplers[NonUniformIndex(p.Sampler)], input.v_UV);
     float3 straight = texel.a > 1e-4 ? texel.rgb / texel.a : float3(0.0);
     return float4(straight, texel.a);
 }

@@ -5,7 +5,7 @@
 // accumulated with every translucent draw's coverage by `over`, an additive draw leaving it as it
 // was. The colour is the subject tonemapped over black, which is already premultiplied by that
 // coverage. Both inputs share the target's extent, so they are loaded, not sampled.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -13,7 +13,7 @@ struct PushConstants
     uint Coverage; // the same render's HDR target, coverage in alpha (bindless index)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -25,7 +25,7 @@ struct VSOutput
 float4 fsMain(VSOutput input) : SV_Target0
 {
     const int3 texel = int3(int2(input.sv_position.xy), 0);
-    const float3 color = g_Textures[NonUniformResourceIndex(g_PC.Color)].Load(texel).rgb;
-    const float coverage = g_Textures[NonUniformResourceIndex(g_PC.Coverage)].Load(texel).a;
+    const float3 color = g_Textures[NonUniformIndex(g_PC.Color)].Load(texel).rgb;
+    const float coverage = g_Textures[NonUniformIndex(g_PC.Coverage)].Load(texel).a;
     return float4(color, saturate(coverage));
 }

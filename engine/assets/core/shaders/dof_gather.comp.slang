@@ -14,10 +14,16 @@
 // view state, and no missed clamp may ever produce an unbounded GPU loop.
 //
 // Set 0 is reserved for the bindless registry; this stage binds its own set 1.
-[[vk::binding(0, 3)]] Texture2D<float4> g_Layer;
-[[vk::binding(1, 3)]] Texture2D<float4> g_Tiles;
-[[vk::binding(2, 3)]] SamplerState g_Sampler;
-[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+
+#include "Veng/binding.slang"
+struct DofGatherSet3
+{
+    Texture2D<float4> Layer;
+    Texture2D<float4> Tiles;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, DofGatherSet3, g_Set3);
 
 static const uint MaxRings = 8;
 static const float Tau = 6.28318530718;
@@ -31,7 +37,7 @@ struct PushConstants
     float Pad0;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -43,13 +49,13 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 texel = 1.0 / float2(g_PC.DestExtent);
     float2 uv = (float2(id.xy) + 0.5) * texel;
 
-    float4 center = g_Layer.SampleLevel(g_Sampler, uv, 0.0);
-    float4 tile = g_Tiles.SampleLevel(g_Sampler, uv, 0.0);
+    float4 center = g_Set3.Layer.SampleLevel(g_Set3.Sampler, uv, 0.0);
+    float4 tile = g_Set3.Tiles.SampleLevel(g_Set3.Sampler, uv, 0.0);
 
     float radius = min(g_PC.NearField != 0 ? tile.y : tile.z, g_PC.MaxCoc);
     if (radius < 0.5)
     {
-        g_Dest[int2(id.xy)] = float4(center.rgb, saturate(center.a));
+        g_Set3.Dest[int2(id.xy)] = float4(center.rgb, saturate(center.a));
         return;
     }
 
@@ -69,7 +75,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
             // successive rings interleave instead of lining up on spokes.
             float angle = (float(s) + 0.5 * float(r)) * (Tau / float(count));
             float2 offset = float2(cos(angle), sin(angle)) * ringRadius;
-            float4 t = g_Layer.SampleLevel(g_Sampler, uv + offset * texel, 0.0);
+            float4 t = g_Set3.Layer.SampleLevel(g_Set3.Sampler, uv + offset * texel, 0.0);
 
             float sampleCoc = t.a;
             if (g_PC.NearField == 0)
@@ -82,5 +88,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
         }
     }
 
-    g_Dest[int2(id.xy)] = float4(sum / weightSum, saturate(coverageSum / weightSum));
+    g_Set3.Dest[int2(id.xy)] = float4(sum / weightSum, saturate(coverageSum / weightSum));
 }

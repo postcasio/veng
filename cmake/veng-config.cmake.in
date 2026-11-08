@@ -28,6 +28,10 @@ set(VENG_PACKAGE_MODE "INSTALL")
 # backend's interop header, or registering tests that only run on one backend, reads it here.
 set(VENG_GPU_BACKEND "@VE_GPU_BACKEND@")
 
+# The GPU targets the engine tree cooks shaders to (VE_SHADER_TARGETS: Native or All). The vengc
+# rules pass it to every cook, so a consumer's packs carry the code its engine's backend loads.
+set(VENG_SHADER_TARGETS "@VE_SHADER_TARGETS@")
+
 # The helper *.cmake modules and the shared config body install beside this config, so both
 # load from the config's own directory.
 set(VENG_CMAKE_HELPER_DIR "${CMAKE_CURRENT_LIST_DIR}")

@@ -92,11 +92,13 @@ namespace Veng::Renderer
         // Set 1 — the shadow system:
         //   0: directional cascade atlas (SampledImage)
         //   1: shared immutable comparison sampler (baked into the layout)
-        //   2: ShadowConstants dynamic uniform (ring-buffered)
-        //   3: PunctualShadowBlock dynamic uniform (ring-buffered)
-        //   4: punctual shadow atlas (SampledImage)
+        //   2: punctual shadow atlas (SampledImage)
+        //   3: ShadowConstants dynamic uniform (ring-buffered)
+        //   4: PunctualShadowBlock dynamic uniform (ring-buffered)
         // The comparison sampler is shared across cascade and punctual tiles; binding 1
-        // is immutable, so descriptor writes supply only bindings 0, 4 and buffers 2, 3.
+        // is immutable, so descriptor writes supply only bindings 0, 2 and buffers 3, 4. The
+        // dynamic buffers come last because a shader declares the set's other bindings as one
+        // parameter block, which must start at binding 0.
         // Visible to every stage that reads a light's visibility: the lighting and translucent
         // fragments, a sprite's vertex-stage light gather, and a compute pass gathering per
         // element.
@@ -117,7 +119,7 @@ namespace Veng::Renderer
                                     .Stages = ConsumerStages,
                                     .ImmutableSamplers = {m_ComparisonSampler}},
                                    {.Binding = 2,
-                                    .Type = DescriptorType::UniformBufferDynamic,
+                                    .Type = DescriptorType::SampledImage,
                                     .Count = 1,
                                     .Stages = ConsumerStages},
                                    {.Binding = 3,
@@ -125,7 +127,7 @@ namespace Veng::Renderer
                                     .Count = 1,
                                     .Stages = ConsumerStages},
                                    {.Binding = 4,
-                                    .Type = DescriptorType::SampledImage,
+                                    .Type = DescriptorType::UniformBufferDynamic,
                                     .Count = 1,
                                     .Stages = ConsumerStages},
                                },
@@ -280,7 +282,7 @@ namespace Veng::Renderer
                                          });
 
         // Clear to depth = 0 (reverse-Z far = full visibility) and transition to
-        // ShaderReadOnly so binding 4 is in a valid sampleable layout before the punctual
+        // ShaderReadOnly so binding 2 is in a valid sampleable layout before the punctual
         // pass runs.
         ClearShadowDepth(m_Context, m_PunctualView, "Clear Punctual Shadow Atlas");
     }
@@ -297,9 +299,9 @@ namespace Veng::Renderer
                                                      .Layout = m_SetLayout,
                                                  });
         m_Set->Write(0, atlasView);
-        m_Set->Write(2, m_ConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
-        m_Set->Write(3, m_PunctualBuffer, 0, sizeof(PunctualShadowBlock));
-        m_Set->Write(4, m_PunctualView);
+        m_Set->Write(2, m_PunctualView);
+        m_Set->Write(3, m_ConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
+        m_Set->Write(4, m_PunctualBuffer, 0, sizeof(PunctualShadowBlock));
 
         m_BlitSet = DescriptorSet::Create(m_Context, {
                                                          .Name = "SceneRenderer Shadow Blit Set",

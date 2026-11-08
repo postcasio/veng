@@ -4,8 +4,13 @@
 // once at renderer construction. The GGX sampler and the image-based Smith term are the lighting
 // core's (Veng/brdf.slang).
 #include "Veng/brdf.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(0, 3)]] [format("rg16f")] RWTexture2D<float2> g_Dest;
+struct IblBrdfLutSet3
+{
+    [format("rg16f")] RWTexture2D<float2> Dest;
+};
+VE_DESCRIPTOR_SET(3, IblBrdfLutSet3, g_Set3);
 
 struct PushConstants
 {
@@ -15,7 +20,7 @@ struct PushConstants
     uint Pad1;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -55,5 +60,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     a /= float(g_PC.SampleCount);
     b /= float(g_PC.SampleCount);
-    g_Dest[int2(id.xy)] = float2(a, b);
+    g_Set3.Dest[int2(id.xy)] = float2(a, b);
 }

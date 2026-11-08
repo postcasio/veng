@@ -18,13 +18,12 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+#include "Veng/bindless.slang"
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    return g_Textures[NonUniformResourceIndex(g_PC.PlacementTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
+    return g_Textures[NonUniformIndex(g_PC.PlacementTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV);
 }

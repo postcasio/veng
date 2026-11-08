@@ -10,21 +10,27 @@
 // an earlier pass wrote, through the chain sampler; every deeper level from the shared copy of the
 // level above it, with the same bilinear taps evaluated by hand. Shared memory holds each level at
 // the precision its mip stores (RGB as halves).
+
+#include "Veng/binding.slang"
 #define TAIL_CAPACITY 3584
 #define THREADS 256
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
 
-// One storage binding per tail slot (bindings 2..9), the slots past LevelCount bound but unwritten.
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level0;
-[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level1;
-[[vk::binding(4, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level2;
-[[vk::binding(5, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level3;
-[[vk::binding(6, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level4;
-[[vk::binding(7, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level5;
-[[vk::binding(8, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level6;
-[[vk::binding(9, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Level7;
+struct SceneColorDownsampleTailSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    // One storage binding per tail slot (bindings 2..9), the slots past LevelCount bound but unwritten.
+    [format("rgba16f")] RWTexture2D<float4> Level0;
+    [format("rgba16f")] RWTexture2D<float4> Level1;
+    [format("rgba16f")] RWTexture2D<float4> Level2;
+    [format("rgba16f")] RWTexture2D<float4> Level3;
+    [format("rgba16f")] RWTexture2D<float4> Level4;
+    [format("rgba16f")] RWTexture2D<float4> Level5;
+    [format("rgba16f")] RWTexture2D<float4> Level6;
+    [format("rgba16f")] RWTexture2D<float4> Level7;
+};
+VE_DESCRIPTOR_SET(3, SceneColorDownsampleTailSet3, g_Set3);
 
 struct PushConstants
 {
@@ -34,7 +40,7 @@ struct PushConstants
     uint  LevelCount;   // levels in the tail (>= 2)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 groupshared uint2 g_Texels[TAIL_CAPACITY];
 
@@ -42,14 +48,14 @@ void StoreLevel(uint slot, uint2 id, float4 value)
 {
     switch (slot)
     {
-    case 0: g_Level0[id] = value; break;
-    case 1: g_Level1[id] = value; break;
-    case 2: g_Level2[id] = value; break;
-    case 3: g_Level3[id] = value; break;
-    case 4: g_Level4[id] = value; break;
-    case 5: g_Level5[id] = value; break;
-    case 6: g_Level6[id] = value; break;
-    default: g_Level7[id] = value; break;
+    case 0: g_Set3.Level0[id] = value; break;
+    case 1: g_Set3.Level1[id] = value; break;
+    case 2: g_Set3.Level2[id] = value; break;
+    case 3: g_Set3.Level3[id] = value; break;
+    case 4: g_Set3.Level4[id] = value; break;
+    case 5: g_Set3.Level5[id] = value; break;
+    case 6: g_Set3.Level6[id] = value; break;
+    default: g_Set3.Level7[id] = value; break;
     }
 }
 
@@ -129,7 +135,7 @@ void csMain(uint3 tid : SV_GroupThreadID)
                 for (int x = -1; x <= 1; x += 2)
                 {
                     float2 uv = min(centre + float2(x, y) * step, maxUV);
-                    sum += index == 0 ? g_Source.SampleLevel(g_Sampler, uv, 0.0).rgb
+                    sum += index == 0 ? g_Set3.Source.SampleLevel(g_Set3.Sampler, uv, 0.0).rgb
                                       : SampleShared(parentOffset, parentValid, parentAlloc, uv);
                 }
             }

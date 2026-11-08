@@ -2,8 +2,14 @@
 // test can check every answer against the operation's definition on whatever subgroup layout the
 // device chose: which invocations share a subgroup, and in which lane, is read back rather than
 // assumed. Set 0 is reserved for the bindless registry, so the buffers bind on set 3.
-[[vk::binding(0, 3)]] RWStructuredBuffer<uint4> u_Lanes;   // (local index, lane, lane count, first lane's local index)
-[[vk::binding(1, 3)]] RWStructuredBuffer<uint4> u_Results; // (active count, prefix count, quad across X, predicate)
+
+#include "Veng/binding.slang"
+struct SubgroupProbeSet3
+{
+    RWStructuredBuffer<uint4> Lanes;  // (local index, lane, lane count, first lane's local index)
+    RWStructuredBuffer<uint4> Results;  // (active count, prefix count, quad across X, predicate)
+};
+VE_DESCRIPTOR_SET(3, SubgroupProbeSet3, g_Set3);
 
 // An irregular predicate, so neither count is a function of the lane alone.
 bool Predicate(uint localIndex)
@@ -16,8 +22,8 @@ bool Predicate(uint localIndex)
 void csMain(uint localIndex : SV_GroupIndex)
 {
     const bool predicate = Predicate(localIndex);
-    u_Lanes[localIndex] =
+    g_Set3.Lanes[localIndex] =
         uint4(localIndex, WaveGetLaneIndex(), WaveGetLaneCount(), WaveReadLaneFirst(localIndex));
-    u_Results[localIndex] = uint4(WaveActiveCountBits(predicate), WavePrefixCountBits(predicate),
+    g_Set3.Results[localIndex] = uint4(WaveActiveCountBits(predicate), WavePrefixCount(predicate),
                                   QuadReadAcrossX(localIndex), predicate ? 1u : 0u);
 }

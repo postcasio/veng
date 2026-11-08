@@ -44,11 +44,11 @@ void ExchangeShared(uint t, uint k, uint j, uint base)
 void csSortLocal(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
 {
     uint base = group.x * SortBlock;
-    uint count = g_Counters.Load(ParticleCounterAlpha);
+    uint count = g_Set3.Counters.Load(ParticleCounterAlpha);
     for (uint i = thread.x; i < SortBlock; i += SortThreads)
     {
         uint index = base + i;
-        s_Keys[i] = index < count ? g_AlphaKeys[index] : uint2(0xFFFFFFFFu, 0xFFFFFFFFu);
+        s_Keys[i] = index < count ? g_Set3.AlphaKeys[index] : uint2(0xFFFFFFFFu, 0xFFFFFFFFu);
     }
     GroupMemoryBarrierWithGroupSync();
     for (uint k = 2u; k <= SortBlock; k <<= 1u)
@@ -61,7 +61,7 @@ void csSortLocal(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     }
     for (uint i = thread.x; i < SortBlock; i += SortThreads)
     {
-        g_AlphaKeys[base + i] = s_Keys[i];
+        g_Set3.AlphaKeys[base + i] = s_Keys[i];
     }
 }
 
@@ -77,11 +77,11 @@ void csSortGlobal(uint3 id : SV_DispatchThreadID)
     uint j = g_PC.SortStep;
     uint i = 2u * t - (t & (j - 1u));
     uint l = i + j;
-    uint2 a = g_AlphaKeys[i];
-    uint2 b = g_AlphaKeys[l];
+    uint2 a = g_Set3.AlphaKeys[i];
+    uint2 b = g_Set3.AlphaKeys[l];
     OrderPair(a, b, (i & g_PC.SortStage) == 0u);
-    g_AlphaKeys[i] = a;
-    g_AlphaKeys[l] = b;
+    g_Set3.AlphaKeys[i] = a;
+    g_Set3.AlphaKeys[l] = b;
 }
 
 [shader("compute")]
@@ -91,7 +91,7 @@ void csSortMergeLocal(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     uint base = group.x * SortBlock;
     for (uint i = thread.x; i < SortBlock; i += SortThreads)
     {
-        s_Keys[i] = g_AlphaKeys[base + i];
+        s_Keys[i] = g_Set3.AlphaKeys[base + i];
     }
     GroupMemoryBarrierWithGroupSync();
     for (uint j = SortBlock >> 1u; j > 0u; j >>= 1u)
@@ -101,6 +101,6 @@ void csSortMergeLocal(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     }
     for (uint i = thread.x; i < SortBlock; i += SortThreads)
     {
-        g_AlphaKeys[base + i] = s_Keys[i];
+        g_Set3.AlphaKeys[base + i] = s_Keys[i];
     }
 }

@@ -5,16 +5,22 @@
 //
 // Set 0 is reserved for the bindless registry; this stage binds the shared sampled-source +
 // sampler + storage-destination set on set 1.
-[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+
+#include "Veng/binding.slang"
+struct DofFillSet3
+{
+    Texture2D<float4> Source;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, DofFillSet3, g_Set3);
 
 struct PushConstants
 {
     uint2 DestExtent;  // half-resolution valid extent in texels
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -33,10 +39,10 @@ void csMain(uint3 id : SV_DispatchThreadID)
         for (int x = -1; x <= 1; ++x)
         {
             float w = (x == 0 && y == 0) ? 4.0 : 1.0;
-            acc += g_Source.SampleLevel(g_Sampler, uv + float2(x, y) * texel, 0.0) * w;
+            acc += g_Set3.Source.SampleLevel(g_Set3.Sampler, uv + float2(x, y) * texel, 0.0) * w;
             weightSum += w;
         }
     }
 
-    g_Dest[int2(id.xy)] = acc / weightSum;
+    g_Set3.Dest[int2(id.xy)] = acc / weightSum;
 }

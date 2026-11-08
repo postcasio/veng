@@ -7,6 +7,8 @@
 // The palette is bound on set 3 (sets 0-2 are the reserved bindless registry slots), matching the
 // renderer's palette descriptor set; the push block adds PaletteBase, the base offset of this
 // instance's bone matrices within the palette.
+
+#include "Veng/binding.slang"
 struct VSInput
 {
     float3 a_Position : POSITION;
@@ -31,20 +33,24 @@ struct DepthNormalSkinnedPushConstants
     float4 NormalColumn0; // world normal matrix, column 0 (xyz)
     float4 NormalColumn1; // column 1
     float4 NormalColumn2; // column 2
-    uint    PaletteBase;  // base offset of this instance's bone matrices in g_Palette
+    uint    PaletteBase;  // base offset of this instance's bone matrices in g_Set3.Palette
 };
 
-[[vk::binding(0, 3)]] StructuredBuffer<float4x4> g_Palette;
-[[vk::push_constant]] ConstantBuffer<DepthNormalSkinnedPushConstants> g_PC;
+struct DepthNormalPrepassSkinnedSet3
+{
+    StructuredBuffer<float4x4> Palette;
+};
+VE_DESCRIPTOR_SET(3, DepthNormalPrepassSkinnedSet3, g_Set3);
+VE_PUSH_CONSTANTS(DepthNormalSkinnedPushConstants, g_PC);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)
 {
     uint base = g_PC.PaletteBase;
-    float4x4 skin = input.a_BoneWeights.x * g_Palette[base + input.a_BoneIndices.x] +
-                    input.a_BoneWeights.y * g_Palette[base + input.a_BoneIndices.y] +
-                    input.a_BoneWeights.z * g_Palette[base + input.a_BoneIndices.z] +
-                    input.a_BoneWeights.w * g_Palette[base + input.a_BoneIndices.w];
+    float4x4 skin = input.a_BoneWeights.x * g_Set3.Palette[base + input.a_BoneIndices.x] +
+                    input.a_BoneWeights.y * g_Set3.Palette[base + input.a_BoneIndices.y] +
+                    input.a_BoneWeights.z * g_Set3.Palette[base + input.a_BoneIndices.z] +
+                    input.a_BoneWeights.w * g_Set3.Palette[base + input.a_BoneIndices.w];
 
     float4 skinnedPos = mul(skin, float4(input.a_Position, 1.0));
     float3 skinnedNormal = mul((float3x3)skin, input.a_Normal);

@@ -27,24 +27,27 @@ namespace
 {
     void PrintUsage()
     {
-        fmt::print(stderr, "usage:\n"
-                           "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
-                           "<pack.json>]... [--module <lib>] [--cook-module <lib>] "
-                           "[--config <file.buildcfg>] "
-                           "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>] "
-                           "[--timing[=<out.csv>]] [--jobs <n>]\n"
-                           "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
-                           "[--reference <pack.json>]... [--module <lib>] [--cook-module <lib>] "
-                           "[--shader-include <dir>] "
-                           "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]] "
-                           "[--jobs <n>]\n"
-                           "  vengc compile-host <module.slang> --name <Name> --out-dir <dir> "
-                           "[--shader-include <dir>] [--depfile <out.d>]\n"
-                           "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
-                           "  vengc generate-type-id [--module <lib>]\n"
-                           "  vengc generate-asset-type [--module <lib>]\n"
-                           "  vengc generate-family-id\n"
-                           "  vengc verify <archive.vengpack> [--module <lib>]\n");
+        fmt::print(stderr,
+                   "usage:\n"
+                   "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
+                   "<pack.json>]... [--module <lib>] [--cook-module <lib>] "
+                   "[--config <file.buildcfg>] "
+                   "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>] "
+                   "[--timing[=<out.csv>]] [--jobs <n>] [--shader-targets <targets>]\n"
+                   "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
+                   "[--reference <pack.json>]... [--module <lib>] [--cook-module <lib>] "
+                   "[--shader-include <dir>] "
+                   "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]] "
+                   "[--jobs <n>] [--shader-targets <targets>]\n"
+                   "  vengc compile-host <module.slang> --name <Name> --out-dir <dir> "
+                   "[--shader-include <dir>] [--depfile <out.d>]\n"
+                   "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
+                   "  vengc generate-type-id [--module <lib>]\n"
+                   "  vengc generate-asset-type [--module <lib>]\n"
+                   "  vengc generate-family-id\n"
+                   "  vengc verify <archive.vengpack> [--module <lib>]\n"
+                   "<targets> is Native (this build's GPU backend), All, or a comma-separated "
+                   "list of spirv and metal\n");
     }
 
     // Opens the cooked-blob cache at `cacheDir`, keyed on the cook tool and — for the entries that
@@ -237,6 +240,7 @@ int main(int argc, char** argv)
         optional<path> cookModulePath;
         optional<path> configPath;
         optional<path> shaderIncludePath;
+        ShaderTargetSet shaderTargets = DefaultShaderTargets();
         optional<path> cacheDirPath;
         optional<path> depfilePath;
         bool timingEnabled = false;
@@ -313,6 +317,22 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 shaderIncludePath = path(args[++i]);
+            }
+            else if (args[i] == "--shader-targets")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --shader-targets requires an argument\n");
+                    return 1;
+                }
+                const Result<ShaderTargetSet> resolved =
+                    ResolveShaderTargets(args[++i], NativeGpuBackend());
+                if (!resolved)
+                {
+                    fmt::print(stderr, "vengc: --shader-targets: {}\n", resolved.error());
+                    return 1;
+                }
+                shaderTargets = *resolved;
             }
             else if (args[i] == "--cache-dir")
             {
@@ -404,6 +424,7 @@ int main(int argc, char** argv)
         timing.ProjectParseSeconds = configWatch.Elapsed();
 
         Cooker cooker;
+        cooker.SetShaderTargets(shaderTargets);
         RegisterBuiltinImporters(cooker);
         // The game module's asset-type names must reach the cooker's registry before the manifest
         // is parsed, or an entry naming a game type resolves to nothing; its importers come from
@@ -467,6 +488,7 @@ int main(int argc, char** argv)
         optional<path> modulePath;
         optional<path> cookModulePath;
         optional<path> shaderIncludePath;
+        ShaderTargetSet shaderTargets = DefaultShaderTargets();
         optional<path> cacheDirPath;
         optional<path> depfilePath;
         vector<path> referencePacks;
@@ -508,6 +530,22 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 outDir = path(args[++i]);
+            }
+            else if (args[i] == "--shader-targets")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --shader-targets requires an argument\n");
+                    return 1;
+                }
+                const Result<ShaderTargetSet> resolved =
+                    ResolveShaderTargets(args[++i], NativeGpuBackend());
+                if (!resolved)
+                {
+                    fmt::print(stderr, "vengc: --shader-targets: {}\n", resolved.error());
+                    return 1;
+                }
+                shaderTargets = *resolved;
             }
             else if (args[i] == "--cache-dir")
             {
@@ -647,6 +685,7 @@ int main(int argc, char** argv)
         timing.ModuleLoadSeconds = moduleWatch.Elapsed();
 
         Cooker cooker;
+        cooker.SetShaderTargets(shaderTargets);
         RegisterBuiltinImporters(cooker);
         if (moduleTypes)
         {

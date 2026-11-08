@@ -2,27 +2,16 @@
 // the persistent particle state, the per-frame instance, emitter and spawn-range tables, and the
 // per-particle draw record the update writes and the draw reads. Bindings are declared by each
 // stage itself (the compute stages read-write, the graphics stages read-only), at the set-3 slots
-// named here.
+// listed here.
 
 #pragma once
 
 #include "Veng/sprite_shading_core.slang"
 
-// The set-3 binding of each buffer, shared by every particle pipeline.
-#define PARTICLE_BINDING_PARTICLES 0
-#define PARTICLE_BINDING_DEAD_LIST 1
-#define PARTICLE_BINDING_LIVE_LIST 2
-#define PARTICLE_BINDING_ADDITIVE_LIST 3
-#define PARTICLE_BINDING_ALPHA_KEYS 4
-#define PARTICLE_BINDING_DRAWS 5
-#define PARTICLE_BINDING_COUNTERS 6
-#define PARTICLE_BINDING_ARGS 7
-#define PARTICLE_BINDING_INSTANCES 8
-#define PARTICLE_BINDING_EMITTERS 9
-#define PARTICLE_BINDING_SPAWN_RANGES 10
-#define PARTICLE_BINDING_STATS 11
-#define PARTICLE_BINDING_FRAME_SCALES 12
-#define PARTICLE_BINDING_FED_SPAWNS 13
+// Every particle pipeline shares one set-3 layout, whose bindings are, in order: 0 the particles,
+// 1 the dead list, 2 the live list, 3 the additive list, 4 the alpha keys, 5 the draws, 6 the
+// counters, 7 the indirect args, 8 the instances, 9 the emitters, 10 the spawn ranges, 11 the stats,
+// 12 the frame scales and 13 the fed spawns. Each stage's block declares them in that order.
 
 // Byte offsets of the counters buffer's words.
 static const uint ParticleCounterDead = 0;

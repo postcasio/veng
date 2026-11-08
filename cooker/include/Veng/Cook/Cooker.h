@@ -5,6 +5,7 @@
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/Importer.h>
+#include <Veng/Cook/ShaderTargets.h>
 
 #include <mutex>
 #include <set>
@@ -144,6 +145,16 @@ namespace Veng::Cook
         /// @brief Returns the asset-type registry for mutation, so a host can add its own types.
         [[nodiscard]] AssetTypeRegistry& GetAssetTypes() { return m_AssetTypes; }
 
+        /// @brief Sets the GPU targets every shader this cooker cooks is compiled for.
+        ///
+        /// Defaults to DefaultShaderTargets(), the build's VE_SHADER_TARGETS. A cook that asks for
+        /// Metal on a host with no Metal toolchain cooks without the Metal section and says so once
+        /// per pack.
+        void SetShaderTargets(ShaderTargetSet targets) { m_ShaderTargets = targets; }
+
+        /// @brief The GPU targets every shader this cooker cooks is compiled for.
+        [[nodiscard]] ShaderTargetSet GetShaderTargets() const { return m_ShaderTargets; }
+
         /// @brief Parses packJson, cooks every entry through its registered importer, and writes the archive.
         ///
         /// `referencePacks` lists additional uncooked pack JSON files whose assets resolve by AssetId
@@ -255,7 +266,15 @@ namespace Veng::Cook
 
         /// @brief Registered importers keyed by AssetTypeId.
         std::unordered_map<AssetTypeId, RegisteredImporter> m_Importers;
+        /// @brief The targets this cooker's targets resolve to on this host, and the fingerprint
+        ///        they key a shader's cache entry with; reports a dropped Metal target once.
+        /// @param label Names the pack (or source) in the report.
+        [[nodiscard]] Result<std::pair<ShaderTargetSet, string>>
+        ResolveHostShaderTargets(const string& label) const;
+
         /// @brief Asset-type identities this cooker recognizes, pre-filled with the engine builtins.
         AssetTypeRegistry m_AssetTypes;
+        /// @brief The GPU targets shaders are compiled for.
+        ShaderTargetSet m_ShaderTargets = DefaultShaderTargets();
     };
 }

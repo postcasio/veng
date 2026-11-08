@@ -6,8 +6,7 @@
 // these map their UV through the dynamic-resolution sub-rect: source and destination share one
 // allocation extent, so the fullscreen triangle's [0,1] UV over the valid-extent viewport is scaled
 // to the source's physical sub-rect (clamped a half texel inside it).
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -19,7 +18,7 @@ struct PushConstants
     float2 MaxUV;       // (validExtent - 0.5) / allocExtent (half-texel inset clamp)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -30,8 +29,8 @@ struct VSOutput
 float4 SampleSource(VSOutput input)
 {
     const float2 uv = min(input.v_UV * g_PC.ScaleUV, g_PC.MaxUV);
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
-    return g_Textures[NonUniformResourceIndex(g_PC.SourceTexture)].Sample(samp, uv);
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
+    return g_Textures[NonUniformIndex(g_PC.SourceTexture)].Sample(samp, uv);
 }
 
 // The lit scene color, unclamped HDR.

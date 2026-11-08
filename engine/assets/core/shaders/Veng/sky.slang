@@ -19,15 +19,8 @@
 
 // The set-0 bindless arrays a sky reads: the g-buffer depth (a sampled image + a sampler),
 // the byte-address storage-buffer array (a sky reads a game-supplied data buffer by handle),
-// and the per-material param block. Mirrors the BindlessRegistry layout.
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-// The 3D sampled-image bindless array (the volume set, set 1): a material samples a volume
-// through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
-// a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
-[[vk::binding(0, 1)]] Texture3D g_Volumes[];
+// and the per-material param block, beside the volume set.
+#include "bindless.slang"
 
 // The Sky fragment's per-draw push block: the material selector at offset 0 (the
 // frame-folded param-block index), plus the g-buffer depth handle, its sampler, and the
@@ -59,8 +52,8 @@ bool SkyIsBackground(SkyPushConstants pc, float2 uv)
 {
     ViewConstants vc = LoadViewConstants(pc.ViewConstantsIndex);
     float2 sampleUV = ScaledSampleUV(uv, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
-    float depth = g_Textures[NonUniformResourceIndex(pc.DepthTexture)]
-                      .Sample(g_Samplers[NonUniformResourceIndex(pc.DepthSampler)], sampleUV)
+    float depth = g_Textures[NonUniformIndex(pc.DepthTexture)]
+                      .Sample(g_Samplers[NonUniformIndex(pc.DepthSampler)], sampleUV)
                       .r;
     return depth <= 0.0;
 }

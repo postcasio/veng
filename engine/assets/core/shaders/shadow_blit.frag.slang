@@ -6,8 +6,14 @@
 // shadow-map debug view. The atlas is off bindless, so it reaches this blit through
 // a dedicated set (set 1): an ordinary (non-comparison) sampler so the raw stored
 // depth is returned, not a compare result.
-[[vk::binding(0, 3)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, 3)]] SamplerState g_ShadowSampler;
+
+#include "Veng/binding.slang"
+struct ShadowBlitSet3
+{
+    Texture2D ShadowAtlas;
+    SamplerState ShadowSampler;
+};
+VE_DESCRIPTOR_SET(3, ShadowBlitSet3, g_Set3);
 
 struct VSOutput
 {
@@ -18,7 +24,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float depth = g_ShadowAtlas.Sample(g_ShadowSampler, input.v_UV).r;
+    float depth = g_Set3.ShadowAtlas.Sample(g_Set3.ShadowSampler, input.v_UV).r;
     float shade = saturate(depth);
     return float4(shade, shade, shade, 1.0);
 }

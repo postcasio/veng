@@ -4,8 +4,7 @@
 // scene. G0 is an sRGB target, so the sample decodes to linear; writing it to an
 // RGBA16F linear output keeps it linear (the swapchain composite handles final
 // display encoding).
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -13,7 +12,7 @@ struct PushConstants
     uint Sampler;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -24,7 +23,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    float4 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
+    float4 albedo = g_Textures[NonUniformIndex(g_PC.AlbedoTexture)].Sample(
+        g_Samplers[NonUniformIndex(g_PC.Sampler)], input.v_UV);
     return float4(albedo.rgb, 1.0);
 }

@@ -5,8 +5,7 @@
 // tonemap and is not hardware depth-tested; the depth sample is the only occlusion test.
 #include "view_constants.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "Veng/bindless.slang"
 
 struct PushConstants
 {
@@ -20,7 +19,7 @@ struct PushConstants
     uint Pad3;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -33,14 +32,14 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     // The g-buffer depth lives in the dynamic-resolution sub-rect of its allocation, so the
     // logical screen UV maps through RenderScaleUV/MaxValidUV before the sample.
     float2 sampleUV = ScaledSampleUV(input.v_ScreenUV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     float sceneDepth =
-        g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
+        g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     float4 color = input.v_Color;
 

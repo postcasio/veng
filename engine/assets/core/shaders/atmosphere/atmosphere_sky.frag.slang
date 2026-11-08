@@ -10,12 +10,15 @@
 #include "../view_constants.slang"
 #include "atmosphere_common.slang"
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+#include "../Veng/bindless.slang"
 
-[[vk::binding(0, 3)]] Texture3D<float4> g_Scattering;
-[[vk::binding(1, 3)]] Texture2D<float4> g_Transmittance;
-[[vk::binding(2, 3)]] SamplerState g_AtmosphereSampler;
+struct AtmosphereSkySet3
+{
+    Texture3D<float4> Scattering;
+    Texture2D<float4> Transmittance;
+    SamplerState AtmosphereSampler;
+};
+VE_DESCRIPTOR_SET(3, AtmosphereSkySet3, g_Set3);
 
 struct PushConstants
 {
@@ -23,11 +26,15 @@ struct PushConstants
     uint Sampler;            // shared sampler bindless index
     uint ViewConstantsIndex; // current frame-in-flight's view-constants region
     uint Enabled;            // 1 = render the atmosphere this frame; 0 = discard all
-    float3 SunDirection;     // normalized direction toward the sun (world up +Y)
-    float Intensity;         // scales the sky radiance + sun disk
+    // xyz the normalized direction toward the sun (world up +Y); w scales the sky radiance and
+    // sun disk. One float4, so the scale sits at the same offset on every target.
+    float4 SunDirectionIntensity;
     AtmosphereParams Atmosphere;
+
+    property float3 SunDirection { get { return SunDirectionIntensity.xyz; } }
+    property float Intensity { get { return SunDirectionIntensity.w; } }
 };
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -46,7 +53,7 @@ float3 SkyRadiance(AtmosphereParams a, float3 viewDir, float3 sunDir, float view
     float nu = dot(viewDir, sunDir);
 
     float3 uvw = ScatteringUvwFromParams(a, r, mu, muS, RayHitsGround(a, r, mu));
-    float4 s = g_Scattering.SampleLevel(g_AtmosphereSampler, uvw, 0.0);
+    float4 s = g_Set3.Scattering.SampleLevel(g_Set3.AtmosphereSampler, uvw, 0.0);
 
     float rayleighPhase = (3.0 / (16.0 * Pi)) * (1.0 + nu * nu);
     float g = a.MieAnisotropy;
@@ -66,11 +73,11 @@ float4 fsMain(VSOutput input) : SV_Target
     }
 
     AtmosphereParams a = g_PC.Atmosphere;
-    SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
+    SamplerState samp = g_Samplers[NonUniformIndex(g_PC.Sampler)];
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
-    float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
+    float depth = g_Textures[NonUniformIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     // Geometry already shaded this pixel; leave the lit color untouched. Reverse-Z: the
     // cleared background sits at depth 0, so any drawn pixel has depth > 0.
@@ -99,7 +106,7 @@ float4 fsMain(VSOutput input) : SV_Target
     {
         float r = a.PlanetRadius + 0.5;
         float mu = ClampCosine(dir.y);
-        float3 t = SampleTransmittanceToTop(a, g_Transmittance, g_AtmosphereSampler, r, mu);
+        float3 t = SampleTransmittanceToTop(a, g_Set3.Transmittance, g_Set3.AtmosphereSampler, r, mu);
         sky += t * a.SunIrradiance * 20.0 * disk;
     }
 

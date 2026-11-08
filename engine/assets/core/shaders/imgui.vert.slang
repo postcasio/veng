@@ -6,6 +6,8 @@
 // The vertex stream is ImGui's own ImDrawVert: a float2 position, a float2 UV, and an RGBA8 colour
 // the input assembler normalizes to float4.
 
+#include "Veng/binding.slang"
+
 struct PushConstants
 {
     float2 Scale;
@@ -14,7 +16,7 @@ struct PushConstants
     uint Sampler; // bindless g_Samplers slot (fragment reads it)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSInput
 {

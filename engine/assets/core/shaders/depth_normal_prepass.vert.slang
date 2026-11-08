@@ -1,4 +1,5 @@
 #include "Veng/depth_caster.slang"
+#include "Veng/binding.slang"
 
 // Camera depth + world-normal prepass vertex stage (static/canonical layout). Rasterizes
 // opaque geometry from the camera view and passes only the clip position and the world-space
@@ -27,7 +28,7 @@ struct DepthNormalPushConstants
     float4x4 ViewProj;  // camera world -> clip
 };
 
-[[vk::push_constant]] ConstantBuffer<DepthNormalPushConstants> g_PC;
+VE_PUSH_CONSTANTS(DepthNormalPushConstants, g_PC);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)

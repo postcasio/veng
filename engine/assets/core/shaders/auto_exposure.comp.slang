@@ -10,11 +10,16 @@
 // SurfaceFlagExcludedFromMetering in the g-buffer is not counted at all. This pass only measures;
 // it applies nothing.
 #include "Veng/surface_flags.slang"
+#include "Veng/binding.slang"
 
-[[vk::binding(0, 3)]] Texture2D<float4> g_Hdr;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] RWStructuredBuffer<uint> g_Histogram;
-[[vk::binding(3, 3)]] Texture2D<float4> g_Orm;
+struct AutoExposureSet3
+{
+    Texture2D<float4> Hdr;
+    SamplerState Sampler;
+    RWStructuredBuffer<uint> Histogram;
+    Texture2D<float4> Orm;
+};
+VE_DESCRIPTOR_SET(3, AutoExposureSet3, g_Set3);
 
 struct PushConstants
 {
@@ -25,10 +30,10 @@ struct PushConstants
     float  MinLogLum;     // log2 lower bound; luminance below it falls in the excluded black bin
     float  MaxLogLum;     // log2 upper bound of bin 255
     uint   HistogramBase; // first element of this frame's ring region (bin 0)
-    uint   ReadsFlags;    // 0 when no g-buffer is bound (g_Orm then stands in for nothing)
+    uint   ReadsFlags;    // 0 when no g-buffer is bound (g_Set3.Orm then stands in for nothing)
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const uint GroupDim = 16;
 static const uint BinCount = GroupDim * GroupDim; // 256 bins == threads per group
@@ -67,11 +72,11 @@ void csMain(uint3 gid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
         // The scene colour may be at the resolved resolution and the g-buffer at the rendered one,
         // so the flag is read at the same place in the frame, mapped into the g-buffer's sub-rect.
         bool metered = g_PC.ReadsFlags == 0u ||
-                       !GBufferExcludedFromMetering(LoadSurfaceFlags(g_Orm, uv * g_PC.OrmScaleUV));
+                       !GBufferExcludedFromMetering(LoadSurfaceFlags(g_Set3.Orm, uv * g_PC.OrmScaleUV));
         if (metered)
         {
             float2 src = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
-            float3 hdr = g_Hdr.SampleLevel(g_Sampler, src, 0.0).rgb;
+            float3 hdr = g_Set3.Hdr.SampleLevel(g_Set3.Sampler, src, 0.0).rgb;
             float lum = dot(hdr, float3(0.2126, 0.7152, 0.0722));
             InterlockedAdd(s_Hist[LuminanceBin(lum)], 1u);
         }
@@ -84,6 +89,6 @@ void csMain(uint3 gid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
     const uint count = s_Hist[groupIndex];
     if (count != 0u)
     {
-        InterlockedAdd(g_Histogram[g_PC.HistogramBase + groupIndex], count);
+        InterlockedAdd(g_Set3.Histogram[g_PC.HistogramBase + groupIndex], count);
     }
 }

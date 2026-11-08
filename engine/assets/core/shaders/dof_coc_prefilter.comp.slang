@@ -11,12 +11,18 @@
 //
 // Set 0 is reserved for the bindless registry; this closed producer->consumer chain binds its
 // own resources on set 1.
-[[vk::binding(0, 3)]] Texture2D<float4> g_Color;
-[[vk::binding(1, 3)]] Texture2D<float> g_Depth;
-[[vk::binding(2, 3)]] SamplerState g_Sampler;
-[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Near;
-[[vk::binding(4, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Far;
-[[vk::binding(5, 3)]] [format("rg16f")] RWTexture2D<float2> g_Coc;
+
+#include "Veng/binding.slang"
+struct DofCocPrefilterSet3
+{
+    Texture2D<float4> Color;
+    Texture2D<float> Depth;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2D<float4> Near;
+    [format("rgba16f")] RWTexture2D<float4> Far;
+    [format("rg16f")] RWTexture2D<float2> Coc;
+};
+VE_DESCRIPTOR_SET(3, DofCocPrefilterSet3, g_Set3);
 
 struct PushConstants
 {
@@ -30,7 +36,7 @@ struct PushConstants
     float MaxCoc;         // radius ceiling in half-resolution pixels
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -44,8 +50,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 logical = (float2(id.xy) + 0.5) / float2(g_PC.DestExtent);
     float2 uv = min(logical * g_PC.ScaleUV, g_PC.MaxUV);
 
-    float3 color = g_Color.SampleLevel(g_Sampler, uv, 0.0).rgb;
-    float rawDepth = g_Depth.SampleLevel(g_Sampler, uv, 0.0).r;
+    float3 color = g_Set3.Color.SampleLevel(g_Set3.Sampler, uv, 0.0).rgb;
+    float rawDepth = g_Set3.Depth.SampleLevel(g_Set3.Sampler, uv, 0.0).r;
     // DepthParams is filled from the actual (reverse-Z) projection's depth row, so the
     // reconstruction inverts whatever it maps; the guard floors the divisor's *magnitude*
     // rather than clamping it to a sign, staying correct as those terms change sign. The floor
@@ -63,7 +69,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     // gather's kernel radius stays inside the tile budget.
     float cocHalf = clamp(coc * 0.5, -g_PC.MaxCoc, g_PC.MaxCoc);
 
-    g_Near[int2(id.xy)] = float4(color, max(-cocHalf, 0.0));
-    g_Far[int2(id.xy)] = float4(color, max(cocHalf, 0.0));
-    g_Coc[int2(id.xy)] = float2(cocHalf, viewDepth);
+    g_Set3.Near[int2(id.xy)] = float4(color, max(-cocHalf, 0.0));
+    g_Set3.Far[int2(id.xy)] = float4(color, max(cocHalf, 0.0));
+    g_Set3.Coc[int2(id.xy)] = float2(cocHalf, viewDepth);
 }

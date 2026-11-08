@@ -4,9 +4,15 @@
 //
 // Source radiance cube and destination irradiance cube both bind on set 3 (a closed
 // producer->consumer chain off the bindless registry).
-[[vk::binding(0, 3)]] TextureCube g_Env;
-[[vk::binding(1, 3)]] SamplerState g_Sampler;
-[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_Dest;
+
+#include "Veng/binding.slang"
+struct IblIrradianceSet3
+{
+    TextureCube Env;
+    SamplerState Sampler;
+    [format("rgba16f")] RWTexture2DArray<float4> Dest;
+};
+VE_DESCRIPTOR_SET(3, IblIrradianceSet3, g_Set3);
 
 struct PushConstants
 {
@@ -16,7 +22,7 @@ struct PushConstants
     uint Pad2;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 static const float Pi = 3.14159265358979323846;
 
@@ -64,11 +70,11 @@ void csMain(uint3 id : SV_DispatchThreadID)
             float3 sampleDir =
                 tangentSample.x * right + tangentSample.y * up + tangentSample.z * normal;
 
-            irradiance += g_Env.SampleLevel(g_Sampler, sampleDir, 0.0).rgb * cos(theta) * sin(theta);
+            irradiance += g_Set3.Env.SampleLevel(g_Set3.Sampler, sampleDir, 0.0).rgb * cos(theta) * sin(theta);
             sampleCount++;
         }
     }
 
     irradiance = Pi * irradiance / float(max(sampleCount, 1u));
-    g_Dest[uint3(id.xy, id.z)] = float4(irradiance, 1.0);
+    g_Set3.Dest[uint3(id.xy, id.z)] = float4(irradiance, 1.0);
 }
