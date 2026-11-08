@@ -155,6 +155,11 @@
       "id": "0x396E60A65194A327",
       "type": "Shader",
       "source": "raster_probe.frag.shader.json"
+    },
+    {
+      "id": "0xBC879E085F4766A8",
+      "type": "Shader",
+      "source": "storage_image_atomic.comp.shader.json"
     }
   ]
 }

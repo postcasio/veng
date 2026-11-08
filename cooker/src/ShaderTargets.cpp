@@ -7,7 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <system_error>
+#include <unordered_map>
 
 #include <fmt/format.h>
 
@@ -734,6 +736,271 @@ namespace Veng::Cook
         }
 
         return reflected;
+    }
+
+    namespace
+    {
+        bool IsIdentifierChar(const char c)
+        {
+            return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+        }
+
+        // The struct definitions of an MSL source, each as its fields' types in declaration order.
+        // A field's type is its declaration with the trailing name (and any attribute) removed.
+        std::unordered_map<string, vector<string>> ParseMetalStructs(const std::string_view source)
+        {
+            std::unordered_map<string, vector<string>> structs;
+            usize at = 0;
+            while ((at = source.find("struct ", at)) != std::string_view::npos)
+            {
+                // Only a declaration at the start of a line, not "struct" inside another token.
+                if (at > 0 && source[at - 1] != '\n')
+                {
+                    at += 7;
+                    continue;
+                }
+                const usize nameBegin = at + 7;
+                usize nameEnd = nameBegin;
+                while (nameEnd < source.size() && IsIdentifierChar(source[nameEnd]))
+                {
+                    ++nameEnd;
+                }
+                const usize open = source.find('{', nameEnd);
+                const usize semicolon = source.find(';', nameEnd);
+                if (nameEnd == nameBegin || open == std::string_view::npos ||
+                    (semicolon != std::string_view::npos && semicolon < open))
+                {
+                    at = nameEnd;
+                    continue;
+                }
+                const usize close = source.find('}', open);
+                if (close == std::string_view::npos)
+                {
+                    break;
+                }
+                vector<string> fields;
+                std::string_view body = source.substr(open + 1, close - open - 1);
+                while (!body.empty())
+                {
+                    const usize end = body.find(';');
+                    const std::string_view field = body.substr(0, end);
+                    body =
+                        end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+                    // Drop #line directives and attributes, then the trailing name.
+                    string text;
+                    for (usize i = 0; i < field.size();)
+                    {
+                        if (field[i] == '#')
+                        {
+                            const usize eol = field.find('\n', i);
+                            i = eol == std::string_view::npos ? field.size() : eol;
+                            continue;
+                        }
+                        if (field.substr(i, 2) == "[[")
+                        {
+                            const usize attrEnd = field.find("]]", i);
+                            i = attrEnd == std::string_view::npos ? field.size() : attrEnd + 2;
+                            continue;
+                        }
+                        text += field[i++];
+                    }
+                    const std::string_view trimmed = Trim(text);
+                    usize nameStart = trimmed.size();
+                    while (nameStart > 0 && IsIdentifierChar(trimmed[nameStart - 1]))
+                    {
+                        --nameStart;
+                    }
+                    const std::string_view type = Trim(trimmed.substr(0, nameStart));
+                    if (!type.empty())
+                    {
+                        fields.emplace_back(type);
+                    }
+                }
+                structs.emplace(string(source.substr(nameBegin, nameEnd - nameBegin)),
+                                std::move(fields));
+                at = close;
+            }
+            return structs;
+        }
+
+        // The argument-buffer elements a field of MSL type @p type occupies: one per resource or
+        // pointer, an array's count times its element's, a struct the sum of its fields'.
+        u32 MetalTypeElements(const std::string_view type,
+                              const std::unordered_map<string, vector<string>>& structs,
+                              const u32 depth = 0)
+        {
+            if (depth > 16 || type.find('*') != std::string_view::npos)
+            {
+                return 1;
+            }
+            if (type.starts_with("array<") && type.ends_with('>'))
+            {
+                const std::string_view inner = type.substr(6, type.size() - 7);
+                // The element count follows the last comma outside any nested template.
+                int nesting = 0;
+                usize comma = std::string_view::npos;
+                for (usize i = 0; i < inner.size(); ++i)
+                {
+                    nesting += inner[i] == '<' ? 1 : inner[i] == '>' ? -1 : 0;
+                    if (inner[i] == ',' && nesting == 0)
+                    {
+                        comma = i;
+                    }
+                }
+                if (comma == std::string_view::npos)
+                {
+                    return 1;
+                }
+                u32 count = 0;
+                for (const char c : inner.substr(comma + 1))
+                {
+                    if (std::isdigit(static_cast<unsigned char>(c)) != 0)
+                    {
+                        count = (count * 10) + static_cast<u32>(c - '0');
+                    }
+                }
+                return count * MetalTypeElements(Trim(inner.substr(0, comma)), structs, depth + 1);
+            }
+            const auto found = structs.find(string(type));
+            if (found == structs.end())
+            {
+                return 1;
+            }
+            u32 total = 0;
+            for (const string& field : found->second)
+            {
+                total += MetalTypeElements(field, structs, depth + 1);
+            }
+            return total;
+        }
+
+        // The struct type of each buffer the stage function takes by pointer, by buffer slot.
+        std::unordered_map<u32, string> MetalStageBuffers(const std::string_view source)
+        {
+            std::unordered_map<u32, string> buffers;
+            for (const std::string_view attribute : {"[[kernel]]", "[[vertex]]", "[[fragment]]"})
+            {
+                const usize at = source.find(attribute);
+                if (at == std::string_view::npos)
+                {
+                    continue;
+                }
+                const usize open = source.find('(', at);
+                if (open == std::string_view::npos)
+                {
+                    return buffers;
+                }
+                // The parameter list, split at its top-level commas.
+                int nesting = 0;
+                usize begin = open + 1;
+                for (usize i = open + 1; i < source.size(); ++i)
+                {
+                    const char c = source[i];
+                    nesting += (c == '(' || c == '<') ? 1 : (c == ')' || c == '>') ? -1 : 0;
+                    if ((c == ',' && nesting == 0) || nesting < 0)
+                    {
+                        const std::string_view param = Trim(source.substr(begin, i - begin));
+                        begin = i + 1;
+                        const usize slotAt = param.find("[[buffer(");
+                        const usize typeEnd = param.find_first_of(" \t*");
+                        if (slotAt != std::string_view::npos && typeEnd != std::string_view::npos &&
+                            param.find('*') != std::string_view::npos)
+                        {
+                            u32 slot = 0;
+                            for (usize d = slotAt + 9;
+                                 d < param.size() &&
+                                 std::isdigit(static_cast<unsigned char>(param[d])) != 0;
+                                 ++d)
+                            {
+                                slot = (slot * 10) + static_cast<u32>(param[d] - '0');
+                            }
+                            buffers.emplace(slot, string(param.substr(0, typeEnd)));
+                        }
+                        if (nesting < 0)
+                        {
+                            break;
+                        }
+                    }
+                }
+                return buffers;
+            }
+            return buffers;
+        }
+    }
+
+    VoidResult VerifyMetalArgumentBuffers(const ReflectedShaderInterface& reflected,
+                                          const std::string_view metalSource,
+                                          const std::string_view shaderName)
+    {
+        // Each user set's argument-buffer bindings, in binding order (their field order).
+        std::map<u32, vector<const CookedDescriptorBinding*>> sets;
+        for (const CookedDescriptorBinding& binding : reflected.Bindings)
+        {
+            if (binding.MetalBinding == static_cast<u32>(CookedMetalBinding::ArgumentBufferElement))
+            {
+                sets[binding.Set].push_back(&binding);
+            }
+        }
+        if (sets.empty())
+        {
+            return {};
+        }
+
+        const auto structs = ParseMetalStructs(metalSource);
+        const auto buffers = MetalStageBuffers(metalSource);
+        for (auto& [set, bindings] : sets)
+        {
+            std::ranges::sort(bindings, {}, &CookedDescriptorBinding::Binding);
+            const auto buffer = buffers.find(MetalBindingSlots::DescriptorSetBase + set);
+            if (buffer == buffers.end())
+            {
+                continue;
+            }
+            const auto block = structs.find(buffer->second);
+            if (block == structs.end())
+            {
+                return std::unexpected(
+                    fmt::format("shader '{}': set {}'s argument buffer type '{}' is not defined in "
+                                "the generated Metal source",
+                                shaderName, set, buffer->second));
+            }
+            const vector<string>& fields = block->second;
+            if (fields.size() != bindings.size())
+            {
+                return std::unexpected(fmt::format(
+                    "shader '{}': set {}'s block has {} fields in the generated Metal source but "
+                    "{} in reflection, so its fields would bind at the wrong argument-buffer "
+                    "elements",
+                    shaderName, set, fields.size(), bindings.size()));
+            }
+            u32 element = 0;
+            for (usize f = 0; f < fields.size(); ++f)
+            {
+                const CookedDescriptorBinding& binding = *bindings[f];
+                const bool combined =
+                    binding.Type ==
+                    static_cast<u32>(Renderer::DescriptorType::CombinedImageSampler);
+                const u32 expected = binding.Count * (combined ? 2u : 1u);
+                const u32 emitted = MetalTypeElements(fields[f], structs);
+                if (element != binding.MetalIndex || emitted != expected)
+                {
+                    const string hint =
+                        combined && emitted == binding.Count
+                            ? "; a combined sampler the stage never samples is emitted as a lone "
+                              "texture on Metal, so declare a Texture and a SamplerState in its "
+                              "place"
+                            : "";
+                    return std::unexpected(fmt::format(
+                        "shader '{}': set {} binding {} '{}' takes {} argument-buffer element(s) "
+                        "from {} in the generated Metal source but {} from {} in reflection, so "
+                        "it and every field after it would bind at the wrong element{}",
+                        shaderName, set, binding.Binding, binding.Name, emitted, element, expected,
+                        binding.MetalIndex, hint));
+                }
+                element += emitted;
+            }
+        }
+        return {};
     }
 
     optional<string> FindMetalEntryPoint(const std::string_view source)

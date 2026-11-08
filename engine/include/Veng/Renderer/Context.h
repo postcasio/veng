@@ -94,8 +94,13 @@ namespace Veng::Renderer
         /// @brief Requested display output mode for the swapchain (a preference; see DisplayMode).
         DisplayMode RequestedDisplayMode = DisplayMode::Auto;
 
-        /// @brief When set, the pipeline cache is seeded from this file at init and written back
-        /// at shutdown. nullopt keeps it in-memory only.
+        /// @brief When set, the pipeline cache is seeded from a file at init and written back at
+        ///        shutdown; nullopt keeps it in-memory only.
+        ///
+        /// Each backend keeps its own file derived from this path, so builds on different backends
+        /// sharing it never read each other's: the Vulkan backend uses the path itself, the Metal
+        /// backend `<stem>.metal<extension>` beside it. A file that is not the backend's own
+        /// format is ignored and the run starts cold.
         optional<path> PipelineCachePath;
 
         /// @brief Whether queue submits return before the driver has encoded the work.

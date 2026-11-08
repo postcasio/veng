@@ -10,7 +10,9 @@
 //   VE_DESCRIPTOR_SET(set, Type, name)
 //       Declares set `set` as ParameterBlock<Type> at binding 0, in Metal buffer slot `set`. A
 //       block must sit at binding 0 of its set, and a [[vk::binding]] on one of its fields is
-//       ignored, so every field of the set belongs in the struct, in binding order.
+//       ignored, so every field of the set belongs in the struct, in binding order. A combined
+//       sampler (Sampler2D) a stage never samples is emitted on Metal as a lone texture and
+//       misplaces every later field, which the cook refuses; declare Texture + SamplerState.
 //   VE_DYNAMIC_UNIFORM_BUFFER(binding, set, ordinal, Type, name)
 //       Declares a uniform buffer bound with a dynamic offset. It stays outside its set's block,
 //       bound by address at the reserved slot for the ordinal-th dynamic buffer of the pipeline

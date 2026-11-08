@@ -445,6 +445,11 @@ namespace Veng::Cook
                         sourcePath.string(), entryName));
                 }
                 metalEntryPoint = *entry;
+                const VoidResult elements = VerifyMetalArgumentBuffers(*reflected, msl, shaderName);
+                if (!elements)
+                {
+                    return std::unexpected(fmt::format("shader importer: {}", elements.error()));
+                }
                 Result<vector<u8>> library = CompileMetalLibrary(msl, shaderName);
                 if (!library)
                 {

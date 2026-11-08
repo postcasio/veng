@@ -1998,6 +1998,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_atomic.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.slang
@@ -2031,6 +2032,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_atomic.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json
@@ -2146,6 +2148,9 @@ if (VENG_BUILD_TESTS)
             # and the readback asserts the quantisation. It also reads the context's own report of
             # the extended storage-image formats rather than trusting the declaration compiled.
             tests/gpu/storage_image_range.cpp
+            # storage_image_atomic.cpp has every invocation of a dispatch add one into a small
+            # R32Uint storage image and reads back that each texel holds its exact count.
+            tests/gpu/storage_image_atomic.cpp
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
             tests/gpu/sprite_pass.cpp
@@ -2521,8 +2526,8 @@ if (VENG_BUILD_TESTS)
             isolation timeline_semaphore frame_retired device_capabilities compute_binding
             bindless_lifecycle indirect_draw graphics_pipeline image_blit pipeline_archive
             image_clear_format bindless_registry bindless_storage_buffer transfer_retire
-            render_graph_skip transient_aliasing storage_image_range volume_texture_3d async_upload
-            async_submit)
+            render_graph_skip transient_aliasing storage_image_range storage_image_atomic
+            volume_texture_3d async_upload async_submit)
     list(TRANSFORM VENG_GPU_BACKEND_CASES REPLACE "^(.*)$" "*/tests/gpu/\\1.*"
             OUTPUT_VARIABLE VENG_GPU_BACKEND_FILES)
     list(JOIN VENG_GPU_BACKEND_FILES "," VENG_GPU_BACKEND_FILTER)

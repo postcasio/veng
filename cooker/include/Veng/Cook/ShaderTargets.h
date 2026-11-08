@@ -135,4 +135,28 @@ namespace Veng::Cook
     [[nodiscard]] VE_COOK_API Result<ReflectedShaderInterface>
     ReflectShaderInterface(slang::ProgramLayout& spirv, slang::ProgramLayout* metal,
                            std::string_view shaderName);
+
+    /// @brief Holds Slang's Metal source to the argument-buffer elements reflection placed.
+    ///
+    /// An argument buffer's elements are positional in the generated source, so a field Slang
+    /// emits with a different element count than its reflection reports moves every field after
+    /// it. The one known case is a combined sampler (`Sampler2D` and kin) inside a set's block that
+    /// the stage never samples: Slang emits it as a lone texture. Every user set the stage's
+    /// function takes is compared field by field against @p reflected's bindings; a set the stage
+    /// does not take is skipped.
+    /// @param reflected  The interface ReflectShaderInterface returned with a Metal layout.
+    /// @param metalSource The MSL text Slang generated for the same entry point.
+    /// @param shaderName The shader's name, which every error leads with.
+    /// @return Success, or an error naming the shader, the set and the field.
+    [[nodiscard]] VE_COOK_API VoidResult
+    VerifyMetalArgumentBuffers(const ReflectedShaderInterface& reflected,
+                               std::string_view metalSource, std::string_view shaderName);
+
+    /// @brief The name of the entry-point function in Slang's Metal output.
+    ///
+    /// Slang renames an entry point whose name Metal reserves (`main` becomes `main_0`), so a
+    /// pipeline built from the source must use the name the source declares.
+    /// @param source The MSL text Slang generated for one entry point.
+    /// @return The function name, or nullopt when the source declares no stage function.
+    [[nodiscard]] VE_COOK_API optional<string> FindMetalEntryPoint(std::string_view source);
 }

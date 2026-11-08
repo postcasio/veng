@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Context.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include <Veng/Task/TaskSystem.h>
 
 #include <filesystem>
+#include <fstream>
 
 #include <Veng/Window.h>
 
@@ -614,9 +616,12 @@ namespace Veng::Renderer
         return IndirectCountEncoder;
     }
 
-    void Context::Native::OpenPipelineArchive(const string& path)
+    void Context::Native::OpenPipelineArchive(const path& cachePath)
     {
-        ArchivePath = path;
+        path archive = cachePath;
+        archive.replace_filename(cachePath.stem().string() + ".metal" +
+                                 cachePath.extension().string());
+        ArchivePath = archive.string();
         ArchiveServed = [NSMutableArray array];
         MTL4PipelineDataSetSerializerDescriptor* const serializer =
             [[MTL4PipelineDataSetSerializerDescriptor alloc] init];
@@ -624,18 +629,42 @@ namespace Veng::Renderer
         Serializer = [Device newPipelineDataSetSerializerWithDescriptor:serializer];
 
         std::error_code exists;
-        if (!std::filesystem::exists(path, exists))
+        if (!std::filesystem::exists(archive, exists))
         {
             return;
         }
-        // A stale, foreign or truncated archive is refused here, and the run starts cold.
+        // Metal does not refuse a file that is not an archive: it faults reading one. So the
+        // header is checked first. An archive is a Mach-O image, thin or universal.
+        constexpr usize MachOHeaderSize = 32;
+        std::array<u8, 4> head{};
+        std::error_code sized;
+        const std::uintmax_t size = std::filesystem::file_size(archive, sized);
+        std::ifstream file(archive, std::ios::binary);
+        if (sized || !file || !file.read(reinterpret_cast<char*>(head.data()), head.size()))
+        {
+            Log::Warn("Pipeline archive '{}' could not be read; building every pipeline",
+                      ArchivePath);
+            return;
+        }
+        const u32 bigEndian =
+            (u32{head[0]} << 24) | (u32{head[1]} << 16) | (u32{head[2]} << 8) | u32{head[3]};
+        // The thin 64-bit magic as it lies on disk, then the universal forms Metal writes.
+        const bool machO = bigEndian == 0xCFFAEDFEu || bigEndian == 0xCAFEBABEu ||
+                           bigEndian == 0xCAFEBABFu || bigEndian == 0xCBFEBABEu;
+        if (size < MachOHeaderSize || !machO)
+        {
+            Log::Warn("Pipeline archive '{}' is not a Metal archive; building every pipeline",
+                      ArchivePath);
+            return;
+        }
+        // A stale or truncated archive is refused here, and the run starts cold.
         NSError* error = nil;
-        Archive = [Device newArchiveWithURL:[NSURL fileURLWithPath:Metal::ToNSString(path)]
+        Archive = [Device newArchiveWithURL:[NSURL fileURLWithPath:Metal::ToNSString(ArchivePath)]
                                       error:&error];
         if (Archive == nil)
         {
-            Log::Warn("Pipeline archive '{}' could not be read; building every pipeline: {}", path,
-                      Metal::Describe(error));
+            Log::Warn("Pipeline archive '{}' could not be read; building every pipeline: {}",
+                      ArchivePath, Metal::Describe(error));
         }
     }
 
@@ -755,7 +784,7 @@ namespace Veng::Renderer
 
         if (info.PipelineCachePath.has_value())
         {
-            native.OpenPipelineArchive(info.PipelineCachePath->string());
+            native.OpenPipelineArchive(*info.PipelineCachePath);
         }
         MTL4CompilerDescriptor* const compiler = [[MTL4CompilerDescriptor alloc] init];
         compiler.label = @"Veng Compiler";

@@ -4,7 +4,10 @@
 // it registers only in a Metal tree.
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include <doctest/doctest.h>
 
@@ -33,6 +36,8 @@ namespace
     {
         u64 Hits = 0;
         u64 Builds = 0;
+        /// The file the backend keeps its archive in.
+        path Archive;
     };
 
     // Brings a context up on @p archive, builds one graphics and one compute pipeline from the
@@ -81,7 +86,9 @@ namespace
             REQUIRE(kernel != nullptr);
         }
         const Context::Native& native = context.GetNative();
-        return {.Hits = native.ArchiveHits, .Builds = native.ArchiveBuilds};
+        return {.Hits = native.ArchiveHits,
+                .Builds = native.ArchiveBuilds,
+                .Archive = native.ArchivePath};
     }
 }
 
@@ -91,12 +98,15 @@ TEST_CASE("pipeline archive: a second context builds its pipelines from the arch
     const path directory = std::filesystem::temp_directory_path() / "veng_pipeline_archive_test";
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
-    const path archive = directory / "pipelines.mtl4a";
+    const path archive = directory / "pipelines.bin";
 
     const ArchiveCounts cold = BuildPipelines(archive);
     CHECK(cold.Hits == 0);
     CHECK(cold.Builds >= 2);
-    REQUIRE(std::filesystem::exists(archive));
+    // The backend keeps a file of its own beside the path, which another backend may also use.
+    CHECK(cold.Archive != archive);
+    CHECK(cold.Archive.parent_path() == archive.parent_path());
+    REQUIRE(std::filesystem::exists(cold.Archive));
 
     // Under shader validation every pipeline is built instrumented, which no archive holds.
     if (std::getenv("MTL_SHADER_VALIDATION") != nullptr)
@@ -108,6 +118,55 @@ TEST_CASE("pipeline archive: a second context builds its pipelines from the arch
     const ArchiveCounts warm = BuildPipelines(archive);
     CHECK(warm.Builds == 0);
     CHECK(warm.Hits == cold.Builds);
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST_CASE("pipeline archive: a file that is not a Metal archive is ignored, not read")
+{
+    const path directory =
+        std::filesystem::temp_directory_path() / "veng_pipeline_archive_foreign_test";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const path cachePath = directory / "pipelines.bin";
+
+    // A pipeline-cache header of the kind another backend writes, then a body, at both the cache
+    // path and the file this backend reads.
+    const vector<u8> foreign = [&]
+    {
+        vector<u8> bytes(256, 0x5A);
+        const u32 header[] = {32, 1, 0x106B, 0x1A05020A};
+        std::memcpy(bytes.data(), header, sizeof(header));
+        return bytes;
+    }();
+    const auto write = [&](const path& file)
+    {
+        std::ofstream out(file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(foreign.data()),
+                  static_cast<std::streamsize>(foreign.size()));
+    };
+    const path backendFile = directory / "pipelines.metal.bin";
+    write(cachePath);
+    write(backendFile);
+
+    const ArchiveCounts counts = BuildPipelines(cachePath);
+    CHECK(counts.Hits == 0);
+    CHECK(counts.Builds >= 2);
+    CHECK(counts.Archive == backendFile);
+
+    // The cache path is never touched.
+    std::ifstream kept(cachePath, std::ios::binary);
+    const vector<u8> keptBytes((std::istreambuf_iterator<char>(kept)),
+                               std::istreambuf_iterator<char>());
+    CHECK(keptBytes == foreign);
+
+    // The backend's own file now holds an archive the next context builds from.
+    if (std::getenv("MTL_SHADER_VALIDATION") == nullptr)
+    {
+        const ArchiveCounts warm = BuildPipelines(cachePath);
+        CHECK(warm.Builds == 0);
+        CHECK(warm.Hits == counts.Builds);
+    }
 
     std::filesystem::remove_all(directory);
 }

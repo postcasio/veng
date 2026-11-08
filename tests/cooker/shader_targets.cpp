@@ -208,3 +208,19 @@ TEST_CASE("ShaderTargets: a layout the two targets disagree on fails the cook, n
     const Result<vector<u8>> agreed = CookShader("layout_agreed.comp.shader.json", Both);
     CHECK_MESSAGE(agreed.has_value(), agreed.error());
 }
+
+TEST_CASE("ShaderTargets: a combined sampler the stage never samples fails the cook, naming it")
+{
+    if (!HasMetalToolchain())
+    {
+        return;
+    }
+    const Result<vector<u8>> bytes = CookShader("combined_unsampled.comp.shader.json", Both);
+    REQUIRE_FALSE(bytes.has_value());
+    CHECK(bytes.error().find("'Unsampled'") != string::npos);
+    CHECK(bytes.error().find("Texture and a SamplerState") != string::npos);
+
+    // The SPIR-V cook has no argument buffer to misplace, so the same shader cooks there.
+    const Result<vector<u8>> spirv = CookShader("combined_unsampled.comp.shader.json", SpirvOnly);
+    CHECK_MESSAGE(spirv.has_value(), spirv.error());
+}

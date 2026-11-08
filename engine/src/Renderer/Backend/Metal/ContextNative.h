@@ -352,9 +352,13 @@ namespace Veng::Renderer
         id<MTLComputePipelineState> CreateComputePipeline(MTL4ComputePipelineDescriptor* descriptor,
                                                           NSError** error);
 
-        /// @brief Opens the pipeline archive at @p path, if one is there, and records what the
-        ///        compiler builds from here on.
-        void OpenPipelineArchive(const string& path);
+        /// @brief Opens the Metal backend's pipeline archive beside @p cachePath, if a Metal
+        ///        archive is there, and records what the compiler builds from here on.
+        ///
+        /// The archive is its own file, `<stem>.metal<extension>` beside the cache path, so a
+        /// backend sharing the path never reads or overwrites this one's. A file there that is not
+        /// a Metal archive, or cannot be read, is logged and ignored, and the run starts cold.
+        void OpenPipelineArchive(const path& cachePath);
 
         /// @brief Writes the pipeline archive, when the context keeps one and this run built a
         ///        pipeline it did not hold.

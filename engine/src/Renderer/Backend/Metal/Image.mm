@@ -24,6 +24,12 @@ namespace Veng::Renderer
             if (HasFlag(usage, ImageUsage::Storage))
             {
                 out |= MTLTextureUsageShaderWrite;
+                // A storage image in a format Metal has texture atomics for may be the target of
+                // one. Without this usage an atomic on it does nothing, and no layer reports it.
+                if (format == Format::R32Uint)
+                {
+                    out |= MTLTextureUsageShaderAtomic;
+                }
             }
             const bool attachment = HasFlag(usage, ImageUsage::ColorAttachment) ||
                                     HasFlag(usage, ImageUsage::DepthAttachment);

@@ -186,8 +186,13 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   holds from it, graphics and compute alike, building only what it lacks; the serializer holds only
   what this run's compiler built, so teardown first rebuilds what the archive served through the
   compiler with the archive as a lookup (cheap) — otherwise the rewritten archive would lose it — and
-  a run that built nothing leaves the file as it is. A stale or foreign file is refused and the run
-  starts cold. `tests/gpu/pipeline_archive.mm` holds a second context to building nothing.
+  a run that built nothing leaves the file as it is. The archive lives at `<stem>.metal<extension>`
+  beside the path (see "Pipeline cache"). Its header is checked before Metal opens it, since Metal
+  faults on a file that is not an archive rather than refusing it: anything that is not a Mach-O
+  image (thin, or the universal form Metal writes), or cannot be read, is logged and ignored, and a
+  stale archive Metal refuses is too, so the run starts cold. `tests/gpu/pipeline_archive.mm` holds a
+  second context to building nothing, and a foreign file at both paths to being ignored, left alone
+  at the cache path and replaced by an archive at the backend's own.
 - **Interop.** `AppleInterop.h` hands out the backend's own objects; an external texture is wrapped
   as an image that holds it and keeps it resident until the image retires.
 
@@ -4939,7 +4944,12 @@ contrast than the un-sharpened control while staying bounded.
 
 ## Pipeline cache
 
-On Metal the cache is the pipeline archive described under "The Metal backend". On Vulkan,
+**Each backend keeps its own file, derived from `PipelineCachePath`.** The Vulkan cache is the path
+itself; the Metal archive is `<stem>.metal<extension>` beside it (`pipeline_cache.bin` →
+`pipeline_cache.metal.bin`). So two builds of one application on different backends never read or
+overwrite each other's file, which matters on Metal: handed a file that is not an archive, Metal
+faults inside its loader rather than returning an error. On Metal the cache is the pipeline archive
+described under "The Metal backend". On Vulkan,
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics
 and compute pipeline factories — every pipeline build in a run reuses it. Persistence is
 **opt-in** via `ApplicationInfo::PipelineCachePath`: set → seed from the file at startup + write

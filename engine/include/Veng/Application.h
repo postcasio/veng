@@ -565,7 +565,8 @@ namespace Veng
         /// @brief Path for pipeline cache persistence; nullopt keeps the cache in-memory only.
         ///
         /// When set, seeds the pipeline cache from this file at startup (if it exists)
-        /// and writes it back at shutdown. veng does not choose the path.
+        /// and writes it back at shutdown. veng does not choose the path. Each backend derives its
+        /// own file from it (see Renderer::ContextInfo::PipelineCachePath).
         optional<path> PipelineCachePath = std::nullopt;
         /// @brief Whether queue submits return before the driver has encoded the frame.
         ///

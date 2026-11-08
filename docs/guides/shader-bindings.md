@@ -115,13 +115,23 @@ reflection:
 |---|---|---|
 | Bindless sets 0/1/2 | One argument buffer each, `constant S*` at `[[buffer(n)]]`; each array sized, at its base plus stride 8 | Yes: the fields take consecutive bindings |
 | Typed set: comparison sampler, storage image, 3D texture | One element each | Yes |
-| Combined image sampler (`Sampler2D`) | Two elements, the texture at +0 and the sampler at +8 | Yes (one SPIR-V binding) |
+| Combined image sampler (`Sampler2D`) | Two elements, the texture at +0 and the sampler at +8 — but only when the stage samples it | Yes (one SPIR-V binding), when sampled |
 | Arrayed binding | A base element plus its count, stride 8 | Yes |
 | Dynamic uniform buffer | `constant T*` at its own pinned `[[buffer(n)]]` | Yes, with its binding after every block field |
 | Push constants | `constant T*` at the pinned push slot | Yes |
 | Vertex input | `[[vk::location(n)]]` becomes `[[attribute(n)]]` under `[[stage_in]]` | Yes |
 | `Wave*` operations | `simd_sum`, `simd_prefix_exclusive_sum`, `simd_broadcast_first`, `simd_ballot`, `simd_any`, `simd_max` | — |
 | `SV_VulkanInstanceID` | `[[instance_id]]`, which on Metal already includes the base instance | — |
+
+**A combined sampler in a set's block that a stage never samples is emitted as a lone texture.** An
+argument buffer's elements are positional in the generated source, so that field takes one element
+where the binding model places two, and every field after it would bind one element early. The cook
+compares each set's generated argument-buffer struct with the elements reflection placed, and fails
+naming the shader, the set and the field. Declare a `Texture` and a `SamplerState` in its place, two
+bindings that each take one element whether sampled or not — the form to prefer in any set a stage
+might not fully read. A run-time compiler makes the same check with `VerifyMetalArgumentBuffers`
+(`Veng/Cook/ShaderTargets.h`), beside `FindMetalEntryPoint`, which gives the name Slang's Metal output
+declares the entry point under (`main` becomes `main_0`).
 
 `precise` is not kept on either target: Slang's Metal target drops the qualifier, and its SPIR-V
 target emits no `NoContraction` for it in the cook's default floating-point mode. Both targets compile
