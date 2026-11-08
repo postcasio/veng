@@ -186,6 +186,19 @@ set(VENG_DEBUG_OPT $<$<AND:$<CONFIG:Debug>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O2>)
 # the engine subdirectory that acts on it.
 option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" OFF)
 
+# VE_GPU_BACKEND names the one graphics API the engine is built against. Every backend-specific
+# source lives under engine/src/Renderer/Backend/<backend>/ and compiles only in a tree configured
+# for that backend; nothing outside that directory names a graphics API. The choice is a
+# compile-time one — each public resource's Native struct is defined by the backend compiled in —
+# so it is a PUBLIC compile definition (VE_GPU_BACKEND_<NAME>) and the exported package records it
+# as VENG_GPU_BACKEND.
+set(VE_GPU_BACKEND "Vulkan" CACHE STRING "The GPU backend the engine is built against (Vulkan)")
+set_property(CACHE VE_GPU_BACKEND PROPERTY STRINGS Vulkan)
+if (NOT VE_GPU_BACKEND STREQUAL "Vulkan")
+    message(FATAL_ERROR "VE_GPU_BACKEND='${VE_GPU_BACKEND}' is not a backend this tree builds; "
+            "the accepted value is Vulkan")
+endif ()
+
 # VENG_TIME_TRACE adds clang's -ftime-trace to veng's own targets, so every translation unit
 # writes a Chrome-Trace profile of its own compilation beside its object file. Declared here,
 # ahead of the ccache block below that reads it and ahead of the subdirectories the flag is
@@ -1060,12 +1073,12 @@ if (VENG_BUILD_TESTS)
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
             tests/unit/parallel_for_pool.cpp
-            tests/unit/type_mapping.cpp
             tests/unit/format_info.cpp
             tests/unit/bindless_slots.cpp
             tests/unit/material_arena.cpp
             tests/unit/sampler_anisotropy.cpp
             tests/unit/barrier_decision.cpp
+            tests/unit/indirect_records.cpp
             tests/unit/render_graph_schedule.cpp
             tests/unit/input_events.cpp
             tests/unit/input_router.cpp
@@ -1332,17 +1345,19 @@ if (VENG_BUILD_TESTS)
     target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-    # The type-mapping (and barrier-decision, plan 04) cases include backend
-    # headers (TypeMapping.h → Backend/Vulkan.h, which also pulls in GLFW + VMA),
-    # so this target needs those *include dirs* — headers only, no run-time
-    # driver dependency, so the pure-logic cases still run with no ICD. This is
-    # allowed: include-hygiene guards *public* headers, not test use of backend
+    # The type-mapping cases test the Vulkan backend's own mapping (TypeMapping.h, SyncMapping.h →
+    # Backend/Vulkan/Vulkan.h, which also pulls in GLFW + VMA), so they compile only in a Vulkan
+    # tree, with those *include dirs* — headers only, no run-time driver dependency, so they still
+    # run with no ICD. Allowed: include-hygiene guards *public* headers, not test use of backend
     # headers.
-    target_link_libraries(veng_test_unit PRIVATE
-            Vulkan::Vulkan
-            glfw
-            GPUOpen::VulkanMemoryAllocator
-    )
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        target_sources(veng_test_unit PRIVATE tests/unit/type_mapping.cpp)
+        target_link_libraries(veng_test_unit PRIVATE
+                Vulkan::Vulkan
+                glfw
+                GPUOpen::VulkanMemoryAllocator
+        )
+    endif ()
 
     # One ctest entry runs the whole binary: per-case discovery costs a process
     # spawn per TEST_CASE, dwarfing the ~1s the full suite takes in one run.
@@ -1363,17 +1378,15 @@ if (VENG_BUILD_TESTS)
     endif ()
 
     # ---- Shared GPU-band support (consumed by the death + GPU bands) --------
-    # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
-    # Links Vulkan PRIVATE; its public header pulls in no Vulkan headers, so
-    # consumers include <support/GpuProbe.h> without the backend include graph.
+    # The device probe (forwarding to the engine's backend-provided Renderer::HasGpuDevice) so a
+    # GPU test can skip (not fail) where the backend finds no device.
     #
-    # GpuContext.cpp (plan 06) adds the shared headless-Context RAII wrapper and
+    # GpuContext.cpp adds the shared headless-Context RAII wrapper and
     # pixel-compare helper used by the one-exe GPU tests; it's written against
     # public veng APIs only, so this target now also links veng::veng.
     add_library(veng_test_support STATIC tests/support/GpuProbe.cpp tests/support/GpuContext.cpp)
     target_include_directories(veng_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(veng_test_support PUBLIC veng::veng)
-    target_link_libraries(veng_test_support PRIVATE Vulkan::Vulkan)
 
     # ---- Death band (VE_ASSERT contract — plans 01 + 05) -------------------
     # VE_ASSERT aborts, which doctest can't trap in-process, so death cases run
@@ -1384,13 +1397,16 @@ if (VENG_BUILD_TESTS)
     # driver probe and use SKIP_RETURN_CODE so they skip (not fail) with no ICD.
     add_executable(veng_test_death tests/death/death_main.cpp)
     target_link_libraries(veng_test_death PRIVATE veng::veng veng_test_support)
-    # tovk_unmapped includes TypeMapping.h (→ Backend/Vulkan.h → GLFW + VMA);
-    # headers only, like veng_test_unit.
-    target_link_libraries(veng_test_death PRIVATE
-            Vulkan::Vulkan
-            glfw
-            GPUOpen::VulkanMemoryAllocator
-    )
+    # tovk_unmapped includes the Vulkan backend's TypeMapping.h (→ Backend/Vulkan/Vulkan.h → GLFW +
+    # VMA); headers only, like veng_test_unit, and only in a Vulkan tree.
+    target_include_directories(veng_test_death PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        target_link_libraries(veng_test_death PRIVATE
+                Vulkan::Vulkan
+                glfw
+                GPUOpen::VulkanMemoryAllocator
+        )
+    endif ()
 
     # Pure-logic death cases (no device; run with no ICD).
     add_test(NAME death.sentinel COMMAND veng_test_death sentinel)
@@ -1401,9 +1417,11 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.vertex_format_unknown PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "Unknown vertex element Format")
 
-    add_test(NAME death.tovk_unmapped COMMAND veng_test_death tovk_unmapped)
-    set_tests_properties(death.tovk_unmapped PROPERTIES LABELS "death;fast"
-            PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        add_test(NAME death.tovk_unmapped COMMAND veng_test_death tovk_unmapped)
+        set_tests_properties(death.tovk_unmapped PROPERTIES LABELS "death;fast"
+                PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
+    endif ()
 
     add_test(NAME death.frame_clock_nonpositive_delta COMMAND veng_test_death frame_clock_nonpositive_delta)
     set_tests_properties(death.frame_clock_nonpositive_delta PROPERTIES LABELS "death;fast"
@@ -1534,6 +1552,8 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_test_include_hygiene PRIVATE veng::veng veng::graph
             veng_editor::veng_editor)
 
+    target_compile_definitions(veng_test_include_hygiene PRIVATE
+            VENG_PUBLIC_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/engine/include")
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
     set_tests_properties(include_hygiene PROPERTIES LABELS fast)
 
@@ -1784,7 +1804,7 @@ if (VENG_BUILD_TESTS)
     add_test(NAME editor_unit COMMAND veng_test_editor_unit)
     set_tests_properties(editor_unit PROPERTIES LABELS "unit;fast")
 
-    # ---- Module ABI + loader (plan 01, driver-free) -------------------------
+    # ---- Module ABI + loader (driver-free) ----------------------------------
     # A real game module and a wrong-version variant, each a SHARED library
     # linking veng::veng and exporting VengModuleRegister + VengModuleAbiVersion.
     # bad_version_module forces a mismatched ABI version so the loader rejects it.
@@ -1844,7 +1864,7 @@ if (VENG_BUILD_TESTS)
     target_include_directories(veng_test_golden_compare PRIVATE ${stb_SOURCE_DIR})
 
     # Headless smoke test: brings up a windowless context, renders off-screen and
-    # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no GPU device.
     add_executable(veng_test_headless_smoke tests/headless_smoke.cpp)
     target_link_libraries(veng_test_headless_smoke PRIVATE veng::veng veng_test_support)
 
@@ -1858,9 +1878,9 @@ if (VENG_BUILD_TESTS)
     add_executable(veng_test_astc_probe tests/astc_probe.cpp)
     target_link_libraries(veng_test_astc_probe PRIVATE veng_test_support)
 
-    # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
+    # Compute dispatch test: headless graphics -> compute -> graphics
     # render graph proving cmd.Dispatch and the storage-image barrier chain.
-    # Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    # Skips (SKIP_RETURN_CODE 77) with no GPU device.
     # Cooks the GPU tests' Slang shaders into a small .vengpack. The tests mount
     # it and LoadSync<ShaderAsset> their modules exactly as an app would — the
     # engine has no runtime Slang compiler, so cooking is the only path to a
@@ -1934,14 +1954,13 @@ if (VENG_BUILD_TESTS)
     add_test(NAME compute_dispatch COMMAND veng_test_compute_dispatch)
     set_tests_properties(compute_dispatch PROPERTIES LABELS "gpu;fast" SKIP_RETURN_CODE 77)
 
-    # ---- In-process multi-case GPU integration suite (plan 05, area 5b) ----
+    # ---- In-process multi-case GPU integration suite ------------------------
     # A single doctest-based executable running many GPU cases, each standing
     # up and tearing down its own Context (GpuFixture, tests/gpu/fixture.h) for
-    # real per-case isolation — something the old Context singleton made
-    # impossible. Ports the focused GPU exercises from planset-3 plan 06
-    # (buffer/typed-buffer roundtrip, image clear+format, descriptor write
-    # paths) plus a new per-case isolation proof. Custom main (tests/gpu/main.cpp)
-    # checks Test::HasVulkanDriver() first and returns 77 with no ICD; one ctest
+    # real per-case isolation: the focused GPU exercises (buffer/typed-buffer
+    # roundtrip, image clear+format, descriptor write paths) plus a per-case
+    # isolation proof. Custom main (tests/gpu/main.cpp) checks
+    # Test::HasGpuDevice() first and returns 77 with no GPU device; one ctest
     # entry, labelled `gpu`, same skip contract as the rest of the band.
     add_executable(veng_test_gpu
             tests/gpu/main.cpp
@@ -1954,14 +1973,12 @@ if (VENG_BUILD_TESTS)
             tests/gpu/image_clear_format.cpp
             tests/gpu/descriptor_write_paths.cpp
             tests/gpu/isolation.cpp
-            tests/gpu/bindless_registry.cpp
             # The byte-address storage-buffer bindless input (set-0 g_Buffers[]) spike +
             # the SetStorageBufferHandle material path: registers a buffer beside a sampler
             # in set 0 and reads it from a fragment shader through a Sky-domain material.
             tests/gpu/bindless_storage_buffer.cpp
             tests/gpu/ring_buffered_material.cpp
             tests/gpu/timeline_semaphore.cpp
-            tests/gpu/transfer_retire.cpp
             # frame_retired.cpp pins the frame-slot retirement notification a consumer reading what
             # a frame wrote depends on: one announcement per slot per cycle, in order, stopping when
             # the handle is released — plus the headless no-op of a swap-chain invalidation.
@@ -1973,7 +1990,6 @@ if (VENG_BUILD_TESTS)
             tests/gpu/async_build.cpp
             tests/gpu/transient_aliasing.cpp
             tests/gpu/render_graph_skip.cpp
-            tests/gpu/indirect_draw.cpp
             # device_capabilities.cpp checks the device readout against the subgroup operations it
             # describes, and an indirect dispatch against the group counts a compute pass wrote.
             tests/gpu/device_capabilities.cpp
@@ -2005,16 +2021,6 @@ if (VENG_BUILD_TESTS)
             tests/gpu/frame_capture.cpp
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
-            tests/gpu/hi_z_pyramid.cpp
-            # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
-            # depth hierarchy's reduction, the classifier's ray and tile lists against the
-            # selection rule, the indirect arguments, the blue-noise tile, the intersection's
-            # environment fallback, reflected hit and quad copies, the denoiser's finite output,
-            # zero early-out, first-frame and accumulated sample counts and variance ping-pong,
-            # the apply composite against its formula, a renderer recording the chain only with
-            # SSR on, with and without TAA, and SSR on drawing SSR off's frame when nothing in view
-            # is glossy and no image-based lighting is bound.
-            tests/gpu/ssr_chain.cpp
             # bloom_bright_pass.cpp drives the bloom down sweep's level 0 on exact texel content for
             # both kernels: invariance across sub-texel offsets, the firefly ceiling's bound, and a
             # non-finite tap seeding nothing.
@@ -2067,8 +2073,6 @@ if (VENG_BUILD_TESTS)
             # anti-aliasing steadies a rippled surface and a minified normal map while leaving flat
             # ones and silhouettes alone.
             tests/gpu/specular_lobe.cpp
-            tests/gpu/environment_ibl.cpp
-            tests/gpu/generated_texture.cpp
             tests/gpu/sphere_terrain.cpp
             tests/gpu/fluid_sim.cpp
             tests/gpu/flow_field.cpp
@@ -2089,12 +2093,6 @@ if (VENG_BUILD_TESTS)
             # per-frame pose, repopulation and the model-only bounds, pool reuse, steady bindless
             # occupancy, and no render for a scene nothing presents.
             tests/gpu/model_portrait.cpp
-            # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
-            # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
-            # a valid IBL source carrying the scene in the right direction, the revision advances only
-            # on a completed six-face sweep, and the self-lit layer is kept by the shared capture
-            # default but dropped when the capture declares the exclusion.
-            tests/gpu/scene_capture_cube.cpp
             # world_slot_budget.cpp drives a headless Application through Run(), opening and closing
             # worlds whose systems hold bindless material instances, and reads BindlessRegistry's
             # free counts across the cycles: a closed world's slots come back, and worlds open at
@@ -2160,15 +2158,6 @@ if (VENG_BUILD_TESTS)
     # host_shader_agreement.cpp compares the fixture's host build with its GPU dispatch.
     target_link_libraries(veng_test_gpu PRIVATE veng_test_gradient_noise_host)
     target_precompile_headers(veng_test_gpu PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
-    # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
-    # public escape hatch) to drive RetireOnTransfer/ReleaseBuffer, so this target
-    # needs the backend headers' *include dirs* (Vulkan + GLFW + VMA). Allowed:
-    # include-hygiene guards public headers, not test use of the Native escape hatch.
-    target_link_libraries(veng_test_gpu PRIVATE
-            Vulkan::Vulkan
-            glfw
-            GPUOpen::VulkanMemoryAllocator
-    )
     # sky_bake.cpp exercises BakedSkyCube directly (reading back the baked cube faces for the
     # seam-continuity oracle) and includes renderer-internal headers (EnvironmentIbl), so this
     # target sees engine/src — the private renderer headers the shared lib exports by default.
@@ -2180,10 +2169,10 @@ if (VENG_BUILD_TESTS)
             TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
 
-    # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
-    # the cooker library and the cooker fixtures' directory.
+    # The cases below (and texture_loader.cpp, registered with the Vulkan-only cases above) cook
+    # fixture packs in-process, so the target needs the cooker library and the cooker fixtures'
+    # directory.
     target_sources(veng_test_gpu PRIVATE
-            tests/gpu/texture_loader.cpp
             # font_loader.cpp cooks the font fixture pack in-process, wires a shared GlyphSource +
             # GlyphAtlas, LoadSyncs the Font, and asserts the face-backed metrics + ShapeRun contract.
             tests/gpu/font_loader.cpp
@@ -2285,25 +2274,10 @@ if (VENG_BUILD_TESTS)
             # cameras in one frame each render through their own view, guarding the
             # per-view slotting of the shared view-constants buffer.
             tests/gpu/multi_viewport_isolation.cpp
-            # The sky cubemap bake: cooks an analytic Sky material, bakes it into the
-            # renderer-internal radiance cube, and asserts twelve-edge seam continuity,
-            # the per-direction analytic radiance, in-place re-bake, and the baked cube
-            # round-tripping the skybox display path (baked ≈ direct through the renderer).
-            tests/gpu/sky_bake.cpp
-            # A layered bake beginning with a field: the later layers read each field target back
-            # bicubically, by mip and by its solid-angle mean; a re-composite over a standing field
-            # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
-            # ticks charge their own layer's cost.
-            tests/gpu/sky_bake_field.cpp
             # A bake into a block-compressed cube against the same bake into a float one: a smooth
             # sky within BC6H's bound, bright texels and speckle kept, the lighting reduction and
             # the mip chain as box reductions of the source, and a cached cube restoring both.
             tests/gpu/sky_bake_compressed.cpp
-            # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
-            # the Sky lights until the first sweep lands, the capture then re-lights once per
-            # completed sweep under a baked, direct, environment or absent Sky, disabling it
-            # restores the Sky's lighting, and the capture's own faces never light from it.
-            tests/gpu/scene_lighting_capture.cpp
             # Instanced mesh sets: the per-instance cull keeps what each view sees and the size
             # band partitions, levels hold their hysteresis, the cull ignores the entity mode, a
             # set stays outside the draw-candidate cap, partial writes land, sets cast shadows,
@@ -2344,6 +2318,57 @@ if (VENG_BUILD_TESTS)
     # engine-internal backend seam under src/, and tests/ carries the shared support headers.
     target_include_directories(veng_test_gpu PRIVATE ${stb_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+    # These cases reach the Vulkan backend directly — through the Native.h interop header or the
+    # backend's private headers under engine/src — so they register only in a Vulkan tree, with the
+    # backend's include dirs (Vulkan + GLFW + VMA; headers only). Allowed: include-hygiene guards
+    # public headers, not test use of the backend.
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        target_sources(veng_test_gpu PRIVATE
+                tests/gpu/bindless_registry.cpp
+                tests/gpu/environment_ibl.cpp
+                tests/gpu/generated_texture.cpp
+                tests/gpu/hi_z_pyramid.cpp
+                tests/gpu/indirect_draw.cpp
+                # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
+                # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
+                # a valid IBL source carrying the scene in the right direction, the revision advances only
+                # on a completed six-face sweep, and the self-lit layer is kept by the shared capture
+                # default but dropped when the capture declares the exclusion.
+                tests/gpu/scene_capture_cube.cpp
+                # A SceneLighting capture surface lighting its scene through a standalone SkyResolver:
+                # the Sky lights until the first sweep lands, the capture then re-lights once per
+                # completed sweep under a baked, direct, environment or absent Sky, disabling it
+                # restores the Sky's lighting, and the capture's own faces never light from it.
+                tests/gpu/scene_lighting_capture.cpp
+                # A layered bake beginning with a field: the later layers read each field target back
+                # bicubically, by mip and by its solid-angle mean; a re-composite over a standing field
+                # runs no field tiles, a supersede mid-field leaves none standing, and each phase's
+                # ticks charge their own layer's cost.
+                tests/gpu/sky_bake_field.cpp
+                # The sky cubemap bake: cooks an analytic Sky material, bakes it into the
+                # renderer-internal radiance cube, and asserts twelve-edge seam continuity,
+                # the per-direction analytic radiance, in-place re-bake, and the baked cube
+                # round-tripping the skybox display path (baked ≈ direct through the renderer).
+                tests/gpu/sky_bake.cpp
+                # ssr_chain.cpp drives the screen-space reflection chain on a synthetic g-buffer: the
+                # depth hierarchy's reduction, the classifier's ray and tile lists against the
+                # selection rule, the indirect arguments, the blue-noise tile, the intersection's
+                # environment fallback, reflected hit and quad copies, the denoiser's finite output,
+                # zero early-out, first-frame and accumulated sample counts and variance ping-pong,
+                # the apply composite against its formula, a renderer recording the chain only with
+                # SSR on, with and without TAA, and SSR on drawing SSR off's frame when nothing in view
+                # is glossy and no image-based lighting is bound.
+                tests/gpu/ssr_chain.cpp
+                tests/gpu/texture_loader.cpp
+                tests/gpu/transfer_retire.cpp
+        )
+        target_link_libraries(veng_test_gpu PRIVATE
+                Vulkan::Vulkan
+                glfw
+                GPUOpen::VulkanMemoryAllocator
+        )
+    endif ()
 
     # Importing an externally-owned platform texture exists only on Apple, so its case is compiled
     # only there — elsewhere the suite is unchanged rather than carrying a permanently-skipped test.
@@ -2396,7 +2421,7 @@ if (VENG_BUILD_TESTS)
     # g-buffer fixture in-process (veng::cook), so it is gated on the editor library. A
     # second viewport-style SceneRenderer is recorded alongside the preview, so the
     # two-renderer cross-graph handoff runs under the validation gate. Skips
-    # (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    # (SKIP_RETURN_CODE 77) with no GPU device.
     if (TARGET veng_editor)
         add_executable(veng_test_material_preview tests/material_preview.cpp)
         target_link_libraries(veng_test_material_preview PRIVATE
@@ -2586,7 +2611,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     )
     set_tests_properties(hello_triangle_launcher_smoke PROPERTIES
         LABELS "gpu;fast"
-        SKIP_REGULAR_EXPRESSION "skipped \\(no Vulkan ICD\\)")
+        SKIP_REGULAR_EXPRESSION "skipped \\(no GPU device\\)")
 
     # ---- MCP conformance smoke (gpu;mcp band) -------------------------------
     # The build-time analogue of the loopback tests, but through the shipping consumer path: it
@@ -2596,7 +2621,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     # the sample scene. It compiles the vendored httplib client into its own TU (exceptions on,
     # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Labelled gpu (it
     # drives the real render path); the harness returns 77 when the launcher itself skipped for
-    # want of a Vulkan ICD, keeping it in the gpu skip band.
+    # want of a GPU device, keeping it in the gpu skip band.
     add_executable(veng_test_mcp_conformance tests/mcp_conformance.cpp)
     target_link_libraries(veng_test_mcp_conformance PRIVATE nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_mcp_conformance PRIVATE JSON_NOEXCEPTION
@@ -2644,7 +2669,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     # paths) as a subprocess, asserting the client's own exit codes and payloads. It parses the
     # payloads with nlohmann/json but needs no httplib (it does not speak the wire itself — the
     # launcher's client does). Labelled gpu; the harness returns 77 when the launcher skipped for
-    # want of a Vulkan ICD, keeping it in the gpu skip band.
+    # want of a GPU device, keeping it in the gpu skip band.
     add_executable(veng_test_mcp_cli_conformance tests/mcp_cli_conformance.cpp)
     target_link_libraries(veng_test_mcp_cli_conformance PRIVATE nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_mcp_cli_conformance PRIVATE JSON_NOEXCEPTION

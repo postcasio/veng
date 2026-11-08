@@ -20,7 +20,7 @@ namespace Veng::Renderer
     }
 
     MetalFxUpscale::MetalFxUpscale(Context& context, AssetManager& assets)
-        : m_Context(context), m_Support(Backend::QueryMetalFxSupport(context))
+        : m_Context(context), m_Support(QueryMetalFxSupport(context))
     {
         // Only a device that runs the temporal scaler ever wires the motion pass.
         if (!m_Support.Temporal)
@@ -107,7 +107,7 @@ namespace Veng::Renderer
             return true;
         }
 
-        m_Temporal = Backend::MetalFxTemporalScaler::Create(
+        m_Temporal = MetalFxTemporalScaler::Create(
             m_Context, {
                            .InputExtent = input,
                            .OutputExtent = output,
@@ -139,12 +139,12 @@ namespace Veng::Renderer
             return true;
         }
 
-        m_Spatial = Backend::MetalFxSpatialScaler::Create(m_Context, {
-                                                                         .InputExtent = input,
-                                                                         .OutputExtent = output,
-                                                                         .ColorFormat = HdrFormat,
-                                                                         .OutputFormat = HdrFormat,
-                                                                     });
+        m_Spatial = MetalFxSpatialScaler::Create(m_Context, {
+                                                                .InputExtent = input,
+                                                                .OutputExtent = output,
+                                                                .ColorFormat = HdrFormat,
+                                                                .OutputFormat = HdrFormat,
+                                                            });
         m_SpatialRefused = m_Spatial == nullptr;
         return !m_SpatialRefused;
     }
@@ -155,7 +155,7 @@ namespace Veng::Renderer
         {
             return 0.0f;
         }
-        const Backend::MetalFxTemporalInfo& info = m_Temporal->GetInfo();
+        const MetalFxTemporalInfo& info = m_Temporal->GetInfo();
         const vec2 floor = vec2(info.OutputExtent) / (vec2(info.InputExtent) * info.MaxScale);
         return glm::max(floor.x, floor.y);
     }

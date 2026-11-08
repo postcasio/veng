@@ -24,7 +24,6 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 
@@ -156,72 +155,45 @@ namespace Veng::Renderer
             return (texels + 3) / 4;
         }
 
-        // Records a memory dependency between two stages of the encode's block buffer.
-        void BufferBarrier(const CommandBuffer& cmd, const vk::PipelineStageFlags srcStage,
-                           const vk::AccessFlags srcAccess, const vk::PipelineStageFlags dstStage,
-                           const vk::AccessFlags dstAccess)
-        {
-            const vk::MemoryBarrier barrier{.srcAccessMask = srcAccess, .dstAccessMask = dstAccess};
-            GetVkCommandBuffer(cmd).pipelineBarrier(srcStage, dstStage, {}, 1, &barrier, 0, nullptr,
-                                                    0, nullptr);
-        }
-
         // A 2x2 box blit from one mip to the next over `layerCount` layers from `baseLayer`.
-        void RecordHalvingBlit(const CommandBuffer& cmd, const Image& image, const u32 dstMip,
+        void RecordHalvingBlit(CommandBuffer& cmd, const Ref<Image>& image, const u32 dstMip,
                                const u32 srcSize, const u32 baseLayer, const u32 layerCount)
         {
-            const u32 half = std::max(1u, srcSize / 2);
-            const vk::ImageBlit blit{
-                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = dstMip - 1,
-                                   .baseArrayLayer = baseLayer,
-                                   .layerCount = layerCount},
-                .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                vk::Offset3D{.x = static_cast<i32>(srcSize),
-                                             .y = static_cast<i32>(srcSize),
-                                             .z = 1}}},
-                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = dstMip,
-                                   .baseArrayLayer = baseLayer,
-                                   .layerCount = layerCount},
-                .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                vk::Offset3D{.x = static_cast<i32>(half),
-                                             .y = static_cast<i32>(half),
-                                             .z = 1}}},
-            };
-            GetVkCommandBuffer(cmd).blitImage(
-                GetVkImage(image), vk::ImageLayout::eTransferSrcOptimal, GetVkImage(image),
-                vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
+            const i32 size = static_cast<i32>(srcSize);
+            const i32 half = static_cast<i32>(std::max(1u, srcSize / 2));
+            cmd.BlitImage({
+                .SourceImage = image,
+                .DestinationImage = image,
+                .SourceMipLevel = dstMip - 1,
+                .DestinationMipLevel = dstMip,
+                .SourceOffset = {0, 0, 0},
+                .DestinationOffset = {0, 0, 0},
+                .SourceExtent = {size, size, 1},
+                .DestinationExtent = {half, half, 1},
+                .SourceBaseLayer = baseLayer,
+                .DestinationBaseLayer = baseLayer,
+                .LayerCount = layerCount,
+            });
         }
 
         // Copies every mip of every layer of one cube into another of the same shape and format.
-        void RecordWholeChainCopy(const CommandBuffer& cmd, const Image& source,
-                                  const Image& destination)
+        void RecordWholeChainCopy(CommandBuffer& cmd, const Ref<Image>& source,
+                                  const Ref<Image>& destination)
         {
-            const u32 faceSize = source.GetExtent().x;
-            vector<vk::ImageCopy> copies;
-            copies.reserve(source.GetMipLevels());
-            for (u32 mip = 0; mip < source.GetMipLevels(); ++mip)
+            const u32 faceSize = source->GetExtent().x;
+            vector<ImageCopyRegion> regions;
+            regions.reserve(source->GetMipLevels());
+            for (u32 mip = 0; mip < source->GetMipLevels(); ++mip)
             {
                 const u32 size = std::max(1u, faceSize >> mip);
-                copies.push_back({
-                    .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                       .mipLevel = mip,
-                                       .baseArrayLayer = 0,
-                                       .layerCount = BakedSkyCube::CubeFaces},
-                    .srcOffset = {.x = 0, .y = 0, .z = 0},
-                    .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                       .mipLevel = mip,
-                                       .baseArrayLayer = 0,
-                                       .layerCount = BakedSkyCube::CubeFaces},
-                    .dstOffset = {.x = 0, .y = 0, .z = 0},
-                    .extent = {.width = size, .height = size, .depth = 1},
+                regions.push_back({
+                    .SourceMipLevel = mip,
+                    .DestinationMipLevel = mip,
+                    .LayerCount = BakedSkyCube::CubeFaces,
+                    .Extent = {size, size, 1},
                 });
             }
-            GetVkCommandBuffer(cmd).copyImage(
-                GetVkImage(source), vk::ImageLayout::eTransferSrcOptimal, GetVkImage(destination),
-                vk::ImageLayout::eTransferDstOptimal, static_cast<u32>(copies.size()),
-                copies.data());
+            cmd.CopyImageRegions(source, destination, regions);
         }
 
         // The default edge length in texels of one amortization tile — the size a bake layer that
@@ -561,31 +533,20 @@ namespace Veng::Renderer
              lightingView = m_LightingView, depthImage = m_DepthImage, depthView = m_DepthView,
              zeroBlocks, mipCount = m_MipCount, faceSize = m_FaceSize](CommandBuffer& cmd)
             {
-                const vk::ClearColorValue black{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
-                const vk::ClearColorValue farPlane{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 0.0f}};
-                const auto clear = [&](const Ref<Image>& image, const Ref<ImageView>& view,
-                                       const vk::ClearColorValue& value)
+                const vec4 black{0.0f, 0.0f, 0.0f, 1.0f};
+                const vec4 farPlane{0.0f, 0.0f, 0.0f, 0.0f};
+                const auto clear =
+                    [&](const Ref<Image>& image, const Ref<ImageView>& view, const vec4 value)
                 {
-                    const vk::ImageSubresourceRange range{.aspectMask =
-                                                              vk::ImageAspectFlagBits::eColor,
-                                                          .baseMipLevel = 0,
-                                                          .levelCount = image->GetMipLevels(),
-                                                          .baseArrayLayer = 0,
-                                                          .layerCount = image->GetLayers()};
                     cmd.PrepareForAccess(view, AccessKind::TransferDst);
-                    GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*image),
-                                                            vk::ImageLayout::eTransferDstOptimal,
-                                                            &value, 1, &range);
+                    cmd.ClearColorImage(image, value);
                     cmd.PrepareForAccess(view, AccessKind::SampleAny);
                 };
                 if (zeroBlocks)
                 {
-                    GetVkCommandBuffer(cmd).fillBuffer(GetVkBuffer(*zeroBlocks), 0, VK_WHOLE_SIZE,
-                                                       0);
-                    BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer,
-                                  vk::AccessFlagBits::eTransferWrite,
-                                  vk::PipelineStageFlagBits::eTransfer,
-                                  vk::AccessFlagBits::eTransferRead);
+                    cmd.FillBuffer(zeroBlocks, 0);
+                    cmd.PrepareForAccess(zeroBlocks, {AccessKind::TransferDst},
+                                         {AccessKind::TransferSrc});
                     // Every subresource reads the same zeroed prefix of the buffer.
                     vector<BufferImageCopyRegion> regions;
                     for (u32 mip = 0; mip < mipCount; ++mip)
@@ -752,28 +713,19 @@ namespace Veng::Renderer
         // promote does not fight it face-by-face.
         cmd.PrepareForAccess(m_CoarseScratchView, AccessKind::TransferSrc);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferDst);
-        const vk::ImageBlit blit{
-            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                            vk::Offset3D{.x = static_cast<i32>(m_CoarseFaceSize),
-                                         .y = static_cast<i32>(m_CoarseFaceSize),
-                                         .z = 1}}},
-            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                            vk::Offset3D{.x = static_cast<i32>(m_FaceSize),
-                                         .y = static_cast<i32>(m_FaceSize),
-                                         .z = 1}}},
-        };
-        GetVkCommandBuffer(cmd).blitImage(
-            GetVkImage(*m_CoarseScratchImage), vk::ImageLayout::eTransferSrcOptimal,
-            GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
-            vk::Filter::eLinear);
+        const i32 coarse = static_cast<i32>(m_CoarseFaceSize);
+        const i32 full = static_cast<i32>(m_FaceSize);
+        cmd.BlitImage({
+            .SourceImage = m_CoarseScratchImage,
+            .DestinationImage = m_ScratchImage,
+            .SourceMipLevel = 0,
+            .DestinationMipLevel = 0,
+            .SourceOffset = {0, 0, 0},
+            .DestinationOffset = {0, 0, 0},
+            .SourceExtent = {coarse, coarse, 1},
+            .DestinationExtent = {full, full, 1},
+            .LayerCount = CubeFaces,
+        });
     }
 
     void BakedSkyCube::EnsureFieldTargets(const u32 faceSize, const u32 count)
@@ -863,7 +815,6 @@ namespace Veng::Renderer
 
     void BakedSkyCube::RecordFieldFinish(CommandBuffer& cmd, const u32 count)
     {
-        const vk::CommandBuffer vkCmd = GetVkCommandBuffer(cmd);
         for (u32 t = 0; t < count; ++t)
         {
             const FieldTarget& target = m_FieldTargets[t];
@@ -874,27 +825,7 @@ namespace Veng::Renderer
                 cmd.PrepareForAccess(target.MipViews[dst - 1], AccessKind::TransferSrc);
                 cmd.PrepareForAccess(target.MipViews[dst], AccessKind::TransferDst);
                 const u32 half = std::max(1u, size / 2);
-                const vk::ImageBlit blit{
-                    .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                       .mipLevel = dst - 1,
-                                       .baseArrayLayer = 0,
-                                       .layerCount = CubeFaces},
-                    .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                    vk::Offset3D{.x = static_cast<i32>(size),
-                                                 .y = static_cast<i32>(size),
-                                                 .z = 1}}},
-                    .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                       .mipLevel = dst,
-                                       .baseArrayLayer = 0,
-                                       .layerCount = CubeFaces},
-                    .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                    vk::Offset3D{.x = static_cast<i32>(half),
-                                                 .y = static_cast<i32>(half),
-                                                 .z = 1}}},
-                };
-                vkCmd.blitImage(GetVkImage(*target.Cube), vk::ImageLayout::eTransferSrcOptimal,
-                                GetVkImage(*target.Cube), vk::ImageLayout::eTransferDstOptimal, 1,
-                                &blit, vk::Filter::eLinear);
+                RecordHalvingBlit(cmd, target.Cube, dst, size, 0, CubeFaces);
                 size = half;
             }
             cmd.PrepareForAccess(target.SumView, AccessKind::SampleCompute);
@@ -902,11 +833,9 @@ namespace Veng::Renderer
 
         // An earlier bake's later layers read the sums in their fragments: order this write after
         // those reads, and this bake's reads after the write.
-        const vk::MemoryBarrier beforeWrite{.srcAccessMask = vk::AccessFlagBits::eShaderRead,
-                                            .dstAccessMask = vk::AccessFlagBits::eShaderWrite};
-        vkCmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader,
-            vk::PipelineStageFlagBits::eComputeShader, {}, 1, &beforeWrite, 0, nullptr, 0, nullptr);
+        cmd.PrepareForAccess(m_FieldSums,
+                             {AccessKind::StorageBufferReadGraphics, AccessKind::StorageBufferRead},
+                             {AccessKind::StorageBufferWrite});
         cmd.BindPipeline(m_FieldSumPipeline);
         m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
         for (u32 t = 0; t < count; ++t)
@@ -923,19 +852,12 @@ namespace Veng::Renderer
             // although it writes only its own six sums.
             if (t + 1 < count)
             {
-                const vk::MemoryBarrier betweenWrites{
-                    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
-                    .dstAccessMask = vk::AccessFlagBits::eShaderWrite};
-                vkCmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                                      vk::PipelineStageFlagBits::eComputeShader, {}, 1,
-                                      &betweenWrites, 0, nullptr, 0, nullptr);
+                cmd.PrepareForAccess(m_FieldSums, {AccessKind::StorageBufferWrite},
+                                     {AccessKind::StorageBufferWrite});
             }
         }
-        const vk::MemoryBarrier afterWrite{.srcAccessMask = vk::AccessFlagBits::eShaderWrite,
-                                           .dstAccessMask = vk::AccessFlagBits::eShaderRead};
-        vkCmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                              vk::PipelineStageFlagBits::eFragmentShader, {}, 1, &afterWrite, 0,
-                              nullptr, 0, nullptr);
+        cmd.PrepareForAccess(m_FieldSums, {AccessKind::StorageBufferWrite},
+                             {AccessKind::StorageBufferReadGraphics});
 
         for (u32 t = 0; t < count; ++t)
         {
@@ -1141,7 +1063,7 @@ namespace Veng::Renderer
         {
             cmd.PrepareForAccess(m_TileMipViews[dst - 1], AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_TileMipViews[dst], AccessKind::TransferDst);
-            RecordHalvingBlit(cmd, *m_TileImage, dst, tilePixels >> (dst - 1), 0, 1);
+            RecordHalvingBlit(cmd, m_TileImage, dst, tilePixels >> (dst - 1), 0, 1);
         }
 
         // The lighting reduction's share: the tile mip at the reduction's scale. The service holds
@@ -1149,30 +1071,18 @@ namespace Veng::Renderer
         const u32 lightingMip = static_cast<u32>(std::countr_zero(m_FaceSize / m_LightingFaceSize));
         cmd.PrepareForAccess(m_TileMipViews[lightingMip], AccessKind::TransferSrc);
         const u32 lightingTile = tilePixels >> lightingMip;
-        const vk::ImageCopy lightingCopy{
-            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = lightingMip,
-                               .baseArrayLayer = 0,
-                               .layerCount = 1},
-            .srcOffset = {.x = 0, .y = 0, .z = 0},
-            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = face,
-                               .layerCount = 1},
-            .dstOffset = {.x = static_cast<i32>(origin.x >> lightingMip),
-                          .y = static_cast<i32>(origin.y >> lightingMip),
-                          .z = 0},
-            .extent = {.width = lightingTile, .height = lightingTile, .depth = 1},
+        const ImageCopyRegion lightingCopy{
+            .SourceMipLevel = lightingMip,
+            .DestinationBaseLayer = face,
+            .DestinationOffset = {origin.x >> lightingMip, origin.y >> lightingMip, 0},
+            .Extent = {lightingTile, lightingTile, 1},
         };
-        GetVkCommandBuffer(cmd).copyImage(GetVkImage(*m_TileImage),
-                                          vk::ImageLayout::eTransferSrcOptimal,
-                                          GetVkImage(*m_LightingScratchImage),
-                                          vk::ImageLayout::eTransferDstOptimal, 1, &lightingCopy);
+        cmd.CopyImageRegions(m_TileImage, m_LightingScratchImage, {&lightingCopy, 1});
 
         // Encode every tile mip of at least one whole block. The block buffer was last read by the
         // previous step's copy.
-        BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer, vk::AccessFlagBits::eTransferRead,
-                      vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderWrite);
+        cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::TransferSrc},
+                             {AccessKind::StorageBufferWrite});
         cmd.BindPipeline(m_EncodePipeline);
         m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
         vector<BufferImageCopyRegion> regions;
@@ -1184,10 +1094,8 @@ namespace Veng::Renderer
             // Each dispatch writes its own blocks, but the set binds the whole buffer.
             if (mip > 0)
             {
-                BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
-                              vk::AccessFlagBits::eShaderWrite,
-                              vk::PipelineStageFlagBits::eComputeShader,
-                              vk::AccessFlagBits::eShaderWrite);
+                cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::StorageBufferWrite},
+                                     {AccessKind::StorageBufferWrite});
             }
             regions.push_back({
                 .BufferOffset = written * EncodeBlockBytes,
@@ -1199,9 +1107,8 @@ namespace Veng::Renderer
             });
             written += RecordEncodeDispatch(cmd, m_TileEncodeSets[mip], size, 1, written);
         }
-        BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
-                      vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eTransfer,
-                      vk::AccessFlagBits::eTransferRead);
+        cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::StorageBufferWrite},
+                             {AccessKind::TransferSrc});
         cmd.CopyBufferToImage(m_EncodeBlocks, m_ScratchImage, regions);
     }
 
@@ -1213,7 +1120,7 @@ namespace Veng::Renderer
         {
             cmd.PrepareForAccess(m_LightingScratchMipViews[dst - 1], AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_LightingScratchMipViews[dst], AccessKind::TransferDst);
-            RecordHalvingBlit(cmd, *m_LightingScratchImage, dst, m_LightingFaceSize >> (dst - 1), 0,
+            RecordHalvingBlit(cmd, m_LightingScratchImage, dst, m_LightingFaceSize >> (dst - 1), 0,
                               CubeFaces);
         }
 
@@ -1221,8 +1128,8 @@ namespace Veng::Renderer
         // size: both are box reductions of the same texels.
         const u32 lightingMip = static_cast<u32>(std::countr_zero(m_FaceSize / m_LightingFaceSize));
         const u32 firstCoarse = static_cast<u32>(m_TileEncodeSets.size());
-        BufferBarrier(cmd, vk::PipelineStageFlagBits::eTransfer, vk::AccessFlagBits::eTransferRead,
-                      vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderWrite);
+        cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::TransferSrc},
+                             {AccessKind::StorageBufferWrite});
         cmd.BindPipeline(m_EncodePipeline);
         m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
         vector<BufferImageCopyRegion> regions;
@@ -1234,10 +1141,8 @@ namespace Veng::Renderer
             cmd.PrepareForAccess(m_LightingScratchMipViews[source], AccessKind::SampleCompute);
             if (mip > firstCoarse)
             {
-                BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
-                              vk::AccessFlagBits::eShaderWrite,
-                              vk::PipelineStageFlagBits::eComputeShader,
-                              vk::AccessFlagBits::eShaderWrite);
+                cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::StorageBufferWrite},
+                                     {AccessKind::StorageBufferWrite});
             }
             regions.push_back({
                 .BufferOffset = written * EncodeBlockBytes,
@@ -1249,9 +1154,8 @@ namespace Veng::Renderer
             written +=
                 RecordEncodeDispatch(cmd, m_LightingEncodeSets[source], size, CubeFaces, written);
         }
-        BufferBarrier(cmd, vk::PipelineStageFlagBits::eComputeShader,
-                      vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eTransfer,
-                      vk::AccessFlagBits::eTransferRead);
+        cmd.PrepareForAccess(m_EncodeBlocks, {AccessKind::StorageBufferWrite},
+                             {AccessKind::TransferSrc});
         cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferDst);
         cmd.CopyBufferToImage(m_EncodeBlocks, m_ScratchImage, regions);
         // One state across the reduction's mips, so the job's completion transition reads it right.
@@ -1267,7 +1171,7 @@ namespace Veng::Renderer
         {
             cmd.PrepareForAccess(m_MipViews[dst - 1], AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_MipViews[dst], AccessKind::TransferDst);
-            RecordHalvingBlit(cmd, *m_CubeImage, dst, std::max(1u, m_FaceSize >> (dst - 1)), 0,
+            RecordHalvingBlit(cmd, m_CubeImage, dst, std::max(1u, m_FaceSize >> (dst - 1)), 0,
                               CubeFaces);
         }
         // Every mip sampled for this frame's readers: the skybox in a fragment, the IBL convolution
@@ -1921,33 +1825,22 @@ namespace Veng::Renderer
         {
             cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_CubeView, AccessKind::TransferDst);
-            RecordWholeChainCopy(cmd, *m_ScratchImage, *m_CubeImage);
+            RecordWholeChainCopy(cmd, m_ScratchImage, m_CubeImage);
             cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
             cmd.PrepareForAccess(m_LightingScratchView, AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_LightingView, AccessKind::TransferDst);
-            RecordWholeChainCopy(cmd, *m_LightingScratchImage, *m_LightingImage);
+            RecordWholeChainCopy(cmd, m_LightingScratchImage, m_LightingImage);
             cmd.PrepareForAccess(m_LightingView, AccessKind::SampleAny);
         }
         else
         {
             cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
             cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
-            const vk::ImageCopy copy{
-                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = 0,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = CubeFaces},
-                .srcOffset = {.x = 0, .y = 0, .z = 0},
-                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                   .mipLevel = 0,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = CubeFaces},
-                .dstOffset = {.x = 0, .y = 0, .z = 0},
-                .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+            const ImageCopyRegion copy{
+                .LayerCount = CubeFaces,
+                .Extent = {m_FaceSize, m_FaceSize, 1},
             };
-            GetVkCommandBuffer(cmd).copyImage(
-                GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferSrcOptimal,
-                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
+            cmd.CopyImageRegions(m_ScratchImage, m_CubeImage, {&copy, 1});
             RecordDisplayMips(cmd);
         }
 

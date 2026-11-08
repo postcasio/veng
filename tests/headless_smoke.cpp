@@ -5,8 +5,8 @@
 // CI-facing proof that renderer code runs without a display.
 //
 // Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
-// SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
-// Test::HasVulkanDriver().
+// SKIP_RETURN_CODE) on a machine with no usable GPU device, via
+// Test::HasGpuDevice().
 
 #include <array>
 #include <cstdio>
@@ -25,7 +25,7 @@ using namespace Veng::Renderer;
 
 int main()
 {
-    if (!Test::HasVulkanDriver())
+    if (!Test::HasGpuDevice())
     {
         return 77;
     }
@@ -45,7 +45,7 @@ int main()
 
     int status = 0;
     {
-        auto image = Image::Create(
+        const auto image = Image::Create(
             context, {
                          .Name = "Headless Target",
                          .Extent = {size, size, 1},

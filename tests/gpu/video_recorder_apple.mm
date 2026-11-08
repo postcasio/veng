@@ -18,7 +18,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <VideoToolbox/VideoToolbox.h>
 
-#include <Veng/Renderer/Backend/MetalInterop.h>
+#include <Renderer/AppleInterop.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
@@ -238,7 +238,7 @@ namespace
             if (!imported)
             {
                 imported =
-                    Backend::ImportExternalTexture(context, taken->Texture, "Capture Buffer");
+                    Apple::ImportExternalTexture(context, taken->Texture, "Capture Buffer");
                 if (!imported)
                 {
                     return false;

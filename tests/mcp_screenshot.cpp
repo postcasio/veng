@@ -9,7 +9,7 @@
 //     viewport's exact dimensions (the full readback → tonemap → PNG → base64 → decode path).
 //   - render.configure (the server allows mutations) applies the debug settings onto the
 //     viewport, reports them back, and refuses an unknown setting or debug view whole.
-// Labelled gpu; returns 77 (skips) with no Vulkan ICD, like the rest of the band.
+// Labelled gpu; returns 77 (skips) with no GPU device, like the rest of the band.
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -101,7 +101,7 @@ namespace
     // Base64-decodes standard (padded) base64 into raw bytes.
     std::vector<u8> Base64Decode(const std::string& text)
     {
-        auto value = [](char c) -> int
+        const auto value = [](char c) -> int
         {
             if (c >= 'A' && c <= 'Z')
             {
@@ -164,9 +164,9 @@ namespace
 
 int main()
 {
-    if (!Test::HasVulkanDriver())
+    if (!Test::HasGpuDevice())
     {
-        std::printf("mcp_screenshot: no Vulkan driver, skipping\n");
+        std::printf("mcp_screenshot: no GPU device, skipping\n");
         return 77;
     }
 

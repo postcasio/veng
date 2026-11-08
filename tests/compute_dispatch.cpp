@@ -15,8 +15,8 @@
 // a compute pass.
 //
 // Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
-// SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
-// Test::HasVulkanDriver().
+// SKIP_RETURN_CODE) on a machine with no usable GPU device, via
+// Test::HasGpuDevice().
 
 #include <array>
 #include <cstdio>
@@ -47,7 +47,7 @@ using namespace Veng::Renderer;
 
 int main()
 {
-    if (!Test::HasVulkanDriver())
+    if (!Test::HasGpuDevice())
     {
         return 77;
     }
@@ -78,7 +78,7 @@ int main()
         const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
         VE_ASSERT(mountResult, "mount test shader pack: {}", mountResult.error());
 
-        auto sourceImage =
+        const auto sourceImage =
             Image::Create(context, {
                                        .Name = "Compute Source",
                                        .Extent = {size, size, 1},
@@ -91,7 +91,7 @@ int main()
                                                          .Image = sourceImage,
                                                      });
 
-        auto derivedImage =
+        const auto derivedImage =
             Image::Create(context, {
                                        .Name = "Compute Derived",
                                        .Extent = {size, size, 1},
@@ -104,7 +104,7 @@ int main()
                                                           .Image = derivedImage,
                                                       });
 
-        auto outputImage = Image::Create(
+        const auto outputImage = Image::Create(
             context, {
                          .Name = "Compute Output",
                          .Extent = {size, size, 1},
@@ -138,7 +138,7 @@ int main()
                                                          },
                                                  });
 
-        auto computeLayout =
+        const auto computeLayout =
             PipelineLayout::Create(context, {
                                                 .Name = "Compute Layout",
                                                 .DescriptorSetLayouts = {computeSetLayout},
@@ -180,7 +180,7 @@ int main()
                              },
                      });
 
-        auto sampleLayout =
+        const auto sampleLayout =
             PipelineLayout::Create(context, {
                                                 .Name = "Sample Layout",
                                                 .DescriptorSetLayouts = {sampleSetLayout},
@@ -200,12 +200,12 @@ int main()
                     },
             });
 
-        auto sampler = Sampler::Create(context, {
-                                                    .Name = "Compute Test Sampler",
-                                                    .AddressModeU = AddressMode::ClampToEdge,
-                                                    .AddressModeV = AddressMode::ClampToEdge,
-                                                    .AddressModeW = AddressMode::ClampToEdge,
-                                                });
+        const auto sampler = Sampler::Create(context, {
+                                                          .Name = "Compute Test Sampler",
+                                                          .AddressModeU = AddressMode::ClampToEdge,
+                                                          .AddressModeV = AddressMode::ClampToEdge,
+                                                          .AddressModeW = AddressMode::ClampToEdge,
+                                                      });
 
         auto sampleSet = DescriptorSet::Create(context, {
                                                             .Name = "Sample Set",

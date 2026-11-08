@@ -8,20 +8,15 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Backend/Barrier.h>
-#include <Veng/Renderer/Backend/BarrierDecision.h>
-#include <Veng/Renderer/Backend/RenderGraphSchedule.h>
-#include <Veng/Renderer/Backend/TransientAllocation.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
+#include "BarrierBatch.h"
+#include "BarrierDecision.h"
+#include "RenderGraphSchedule.h"
+#include "TransientAllocation.h"
 
 #include <algorithm>
 
 namespace Veng::Renderer
 {
-    // Backend::ScopeFor and Backend::DecideBarrier live in Backend/BarrierDecision.h
-    // so they are unit-testable without a device.
-    using Backend::ScopeFor;
-
     ImageView& PassContext::Resolved(const ResourceId id) const
     {
         VE_ASSERT(id.IsValid() && id.Index < m_Resolved.size(),
@@ -268,7 +263,7 @@ namespace Veng::Renderer
         return PassBuilder(*pass);
     }
 
-    // Backend::SubresourceState keeps this out of the public header.
+    // SubresourceState keeps this out of the public header.
     struct CompiledGraph::Native
     {
         // A resolved resource-table slot: transients carry their image/view or buffer
@@ -284,7 +279,7 @@ namespace Veng::Renderer
         };
 
         // The per-pass barrier/transition/attachment schedule is derived device-free by
-        // Backend::DeriveRenderGraphSchedule; the baked pass pairs it with the replay
+        // DeriveRenderGraphSchedule; the baked pass pairs it with the replay
         // state (kind, layers, callback) Compile adds.
         struct Pass
         {
@@ -294,9 +289,9 @@ namespace Veng::Renderer
             RenderGraph::PassType Type = RenderGraph::PassType::Graphics;
             u32 LayerCount = 1;
             u32 ViewMask = 0;
-            vector<Backend::ScheduledTransition> Transitions;
-            vector<Backend::ScheduledBufferBarrier> BufferBarriers;
-            vector<Backend::ScheduledAttachment> Attachments; // graphics passes only
+            vector<ScheduledTransition> Transitions;
+            vector<ScheduledBufferBarrier> BufferBarriers;
+            vector<ScheduledAttachment> Attachments; // graphics passes only
             function<void(PassContext&)> Execute;
             function<bool()> Skip;
             /// @brief Whether the last Execute recorded this pass (false while skipped).
@@ -355,8 +350,8 @@ namespace Veng::Renderer
             // Resource-table slots that are transients, in table order,
             // with their live ranges and size classes.
             vector<u32> transientSlots;
-            vector<Backend::TransientLifetime> lifetimes;
-            vector<Backend::AllocationKey> keys;
+            vector<TransientLifetime> lifetimes;
+            vector<AllocationKey> keys;
             vector<bool> firstWriteSeen; // parallel to transientSlots
 
             // Resource slot -> index into the transient arrays, or ~0u for imports.
@@ -394,8 +389,8 @@ namespace Veng::Renderer
                         continue;
                     }
 
-                    Backend::TransientLifetime& life = lifetimes[ti];
-                    if (Backend::IsWriteAccess(ScopeFor(access.Kind).Access) && !firstWriteSeen[ti])
+                    TransientLifetime& life = lifetimes[ti];
+                    if (IsWriteAccess(ScopeFor(access.Kind).Access) && !firstWriteSeen[ti])
                     {
                         life.FirstUse = passIndex;
                         firstWriteSeen[ti] = true;
@@ -404,7 +399,7 @@ namespace Veng::Renderer
                 }
             }
 
-            const vector<u32> assignment = Backend::AssignTransientSlots(lifetimes, keys);
+            const vector<u32> assignment = AssignTransientSlots(lifetimes, keys);
 
             u32 slotCount = 0;
             for (const u32 slot : assignment)
@@ -444,7 +439,7 @@ namespace Veng::Renderer
         // Derive the per-pass barrier/transition/attachment schedule device-free, then
         // pair each derived pass with the replay state (kind, layers, callback) the
         // derivation does not carry.
-        vector<Backend::ScheduleResource> scheduleResources;
+        vector<ScheduleResource> scheduleResources;
         scheduleResources.reserve(m_Resources.size());
         for (const Resource& resource : m_Resources)
         {
@@ -457,15 +452,15 @@ namespace Veng::Renderer
             });
         }
 
-        vector<Backend::SchedulePass> schedulePasses;
+        vector<SchedulePass> schedulePasses;
         schedulePasses.reserve(m_Passes.size());
         for (const Unique<Pass>& pass : m_Passes)
         {
             schedulePasses.push_back({.Name = pass->Name, .Accesses = pass->Accesses});
         }
 
-        vector<Backend::ScheduledPass> schedule =
-            Backend::DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
+        vector<ScheduledPass> schedule =
+            DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
 
         // A skipped frame must leave every resource as the pass would have, which a clear or a
         // discard would not — unless nothing reads the outputs on such a frame (SkipWhenUnread).
@@ -578,7 +573,7 @@ namespace Veng::Renderer
                       "CompiledGraph::Execute: import '{}' has no supplied binding", resource.Name);
         }
 
-        Backend::BarrierBatch barriers;
+        BarrierBatch barriers;
         for (Native::Pass& pass : native.Passes)
         {
             VE_PROFILE_SCOPE_ID(pass.ProfileName);
@@ -586,7 +581,7 @@ namespace Veng::Renderer
             pass.Recorded = !(pass.Skip && pass.Skip());
             if (!pass.Recorded)
             {
-                for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
+                for (const ScheduledBufferBarrier& barrier : pass.BufferBarriers)
                 {
                     barriers.AddBuffer(*resolvedBuffers[barrier.Slot], barrier.SrcStage,
                                        barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
@@ -603,7 +598,7 @@ namespace Veng::Renderer
             // 1. Replay the baked transitions. The source state and subresource range
             // come from each image's live tracked state, so swapchain and
             // transfer-produced imports stay correct each frame.
-            for (const Backend::ScheduledTransition& transition : pass.Transitions)
+            for (const ScheduledTransition& transition : pass.Transitions)
             {
                 const Ref<ImageView>& view = resolved[transition.Slot];
 
@@ -615,7 +610,7 @@ namespace Veng::Renderer
 
             // 1b. Replay the baked buffer barriers. A buffer carries no tracked state,
             // so both scopes were derived at compile from the producing/consuming passes.
-            for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
+            for (const ScheduledBufferBarrier& barrier : pass.BufferBarriers)
             {
                 barriers.AddBuffer(*resolvedBuffers[barrier.Slot], barrier.SrcStage,
                                    barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
@@ -631,9 +626,9 @@ namespace Veng::Renderer
                 RenderingInfo info;
                 bool extentSet = false;
 
-                for (const Backend::ScheduledAttachment& attachment : pass.Attachments)
+                for (const ScheduledAttachment& attachment : pass.Attachments)
                 {
-                    if (attachment.Slot == Backend::ScheduledAttachment::UnboundSlot)
+                    if (attachment.Slot == ScheduledAttachment::UnboundSlot)
                     {
                         info.ColorAttachments.push_back(
                             {.LoadOp = attachment.Load, .StoreOp = attachment.Store});

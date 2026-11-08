@@ -16,7 +16,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/BindlessRegistry.h>
-#include <Veng/Renderer/Backend/Natives.h>
+#include <Renderer/Backend/Vulkan/Natives.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
@@ -102,7 +102,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Texture Loader Output",
                                    .Extent = {Size, Size, 1},
@@ -248,7 +248,7 @@ TEST_CASE_FIXTURE(
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Mip Cap Sample Output",
                                    .Extent = {Size, Size, 1},
@@ -347,7 +347,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "BC7 Sample Output",
                                    .Extent = {Size, Size, 1},
@@ -463,7 +463,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "BC5 Sample Output",
                                    .Extent = {Size, Size, 1},
@@ -569,7 +569,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "ASTC Sample Output",
                                    .Extent = {Size, Size, 1},
@@ -705,12 +705,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     REQUIRE(handle.IsLoaded());
 
-    auto& image = handle.Get()->GetImage()->GetNative();
+    const auto& image = handle.Get()->GetImage()->GetNative();
     u32 untouched = 0;
     u32 unpending = 0;
     for (const auto& state : image.States)
     {
-        untouched += state.Layout == vk::ImageLayout::eUndefined ? 1U : 0U;
+        untouched += state.Layout == ImageLayout::Undefined ? 1U : 0U;
         unpending += state.PendingTransferValue == 0 ? 1U : 0U;
     }
     CHECK(untouched == 0);
@@ -804,7 +804,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(texture.GetImage()->GetMipLevels() == half.MipLevels);
         CHECK(texture.GetHandle().IsValid());
 
-        auto outputImage = Image::Create(
+        const auto outputImage = Image::Create(
             Context, {
                          .Name = "Half Sample Output",
                          .Extent = {Size, Size, 1},

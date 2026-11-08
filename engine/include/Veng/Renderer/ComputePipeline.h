@@ -18,7 +18,7 @@ namespace Veng::Renderer
         PipelineShaderStageInfo ShaderStage;
     };
 
-    /// @brief A compiled Vulkan compute pipeline.
+    /// @brief A compiled compute pipeline.
     class VE_API ComputePipeline
     {
     public:
@@ -31,7 +31,7 @@ namespace Veng::Renderer
             return Ref<ComputePipeline>(new ComputePipeline(context, info));
         }
 
-        /// @brief Defers destruction of the Vulkan pipeline handle until the GPU is done with it.
+        /// @brief Defers destruction of the backend pipeline until the GPU is done with it.
         ~ComputePipeline();
 
         ComputePipeline(const ComputePipeline&) = delete;
@@ -55,7 +55,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Debug name.
         string m_Name;
-        /// @brief Backend Vulkan compute pipeline.
+        /// @brief Backend compute pipeline.
         Unique<Native> m_Native;
         /// @brief Descriptor-set and push-constant layout.
         Ref<PipelineLayout> m_PipelineLayout;

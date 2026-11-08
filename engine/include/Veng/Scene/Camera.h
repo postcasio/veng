@@ -57,8 +57,8 @@ namespace Veng
     /// The render-ready view-projection the renderer consumes through SceneView, the
     /// resolved side of the recipe→resolved pairing (a Camera component produces a
     /// CameraView). Pure math, no backend handles.
-    /// Projection follows the engine's Vulkan clip conventions: a column-major GLM
-    /// perspective with Y flipped (Vulkan clip space has Y pointing down) and depth
+    /// Projection follows the engine's clip conventions: a column-major GLM
+    /// perspective with Y flipped (the engine's clip space has Y pointing down) and depth
     /// reverse-Z — the near plane maps to NDC z = 1 and the far plane to z = 0, which
     /// spreads a float depth buffer's precision across the near field instead of the far.
     /// Matrices are recomputed on demand from stored parameters.
@@ -84,14 +84,14 @@ namespace Veng
                 const f32 focal = 1.0f / std::tan(fovYRadians * 0.5f);
                 m_Projection = mat4(0.0f);
                 m_Projection[0][0] = focal / aspect;
-                m_Projection[1][1] = -focal; // Vulkan's clip space has Y pointing down.
+                m_Projection[1][1] = -focal; // The engine's clip space has Y pointing down.
                 m_Projection[2][3] = -1.0f;
                 m_Projection[3][2] = near;
             }
             else
             {
                 mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
-                projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
+                projection[1][1] *= -1.0f; // The engine's clip space has Y pointing down.
                 // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
                 m_Projection = ReverseZClip() * projection;
             }
@@ -104,7 +104,7 @@ namespace Veng
         ///
         /// Parallel projection: no perspective foreshortening, so a face directly
         /// facing the camera projects at uniform scale regardless of depth. Follows
-        /// the same Vulkan clip conventions as SetPerspective (Y flipped, reverse-Z depth).
+        /// the same clip conventions as SetPerspective (Y flipped, reverse-Z depth).
         /// @param halfWidth   Half the view volume's width in world units.
         /// @param halfHeight  Half the view volume's height in world units.
         /// @param near        Near clip distance.
@@ -114,7 +114,7 @@ namespace Veng
         {
             VE_ASSERT(std::isfinite(far), "SetOrthographic needs a finite far (got {})", far);
             mat4 projection = glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, near, far);
-            projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
+            projection[1][1] *= -1.0f; // The engine's clip space has Y pointing down.
             // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
             m_Projection = ReverseZClip() * projection;
             m_Near = near;
@@ -202,7 +202,7 @@ namespace Veng
     private:
         /// @brief View matrix (world-to-camera).
         mat4 m_View{1.0f};
-        /// @brief Projection matrix (Y-flipped for Vulkan clip space).
+        /// @brief Projection matrix (Y-flipped for the engine's clip space).
         mat4 m_Projection{1.0f};
         /// @brief Near clip distance, mirroring the value passed to SetPerspective.
         f32 m_Near = 0.1f;
@@ -397,7 +397,7 @@ namespace Veng
     /// @brief Projects a world-space point through a view into top-left-origin screen pixels.
     ///
     /// The inverse direction of an unproject: clip → NDC → pixels over the given extent. The
-    /// engine projection bakes the Vulkan Y flip, so NDC maps to a top-left-origin pixel rect
+    /// engine projection bakes the clip-space Y flip, so NDC maps to a top-left-origin pixel rect
     /// directly — (0,0) is the extent's top-left. A point behind the camera (clip w <= 0)
     /// returns nullopt; a point outside the extent still projects (the caller owns clamping or
     /// rejecting an off-screen result). What the pixels mean — a window, a viewport region, a

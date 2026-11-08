@@ -10,7 +10,7 @@
 //
 // HT_MCP suppresses the launcher's 20-frame auto-exit, so the process stays up for the whole
 // exchange rather than racing its own shutdown. Labelled gpu (it drives the real render path);
-// exits 77 when the launcher itself skipped for want of a Vulkan ICD.
+// exits 77 when the launcher itself skipped for want of a GPU device.
 //
 // The vendored httplib client is the same single header compiled here (this TU builds with
 // exceptions, like the rest of the suite), so it needs no new dependency. VENG_LAUNCHER_BIN is
@@ -77,7 +77,7 @@ int main()
     const int port = VengTest::ReadPort(launched);
     if (port == 0)
     {
-        // No listening line: the launcher most likely skipped for want of a Vulkan ICD (the whole
+        // No listening line: the launcher most likely skipped for want of a GPU device (the whole
         // gpu band's skip contract) or crashed. Reap it and report the gpu-band skip code.
         VengTest::Terminate(launched);
         std::fprintf(stderr,

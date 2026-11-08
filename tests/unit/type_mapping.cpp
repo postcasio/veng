@@ -1,5 +1,6 @@
 // Type-mapping round-trips: lock down the vocabulary-enum
-// ↔ Vulkan switches in Backend/TypeMapping.h. A wrong or missing mapping is
+// ↔ Vulkan switches in Backend/Vulkan/TypeMapping.h and the synchronization mapping in
+// Backend/Vulkan/SyncMapping.h. A wrong or missing mapping is
 // silent UB at the backend boundary; here it becomes a failing case.
 //
 // This TU includes a *backend* header (TypeMapping.h → vk::), which is allowed
@@ -21,7 +22,8 @@
 #include <type_traits>
 
 #include <Veng/Renderer/Types.h>
-#include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Renderer/Backend/Vulkan/SyncMapping.h>
+#include <Renderer/Backend/Vulkan/TypeMapping.h>
 
 using namespace Veng::Renderer;
 
@@ -303,4 +305,112 @@ TEST_CASE("ClearValue composite mapper")
     const vk::ClearValue depth = ToVk(ClearValue{ClearDepth{.Depth = 0.5f, .Stencil = 3}});
     CHECK(depth.depthStencil.depth == doctest::Approx(0.5f));
     CHECK(depth.depthStencil.stencil == 3u);
+}
+
+// --- The synchronization vocabulary ------------------------------------------
+
+TEST_CASE("each synchronization stage and access bit maps to its own Vulkan bit")
+{
+    vk::PipelineStageFlags stages;
+    for (const auto& [engine, vulkan] : StageBitMap)
+    {
+        CHECK(ToVk(engine) == vk::PipelineStageFlags{vulkan});
+        CHECK_FALSE(static_cast<bool>(stages & vulkan));
+        stages |= vulkan;
+    }
+    vk::AccessFlags accesses;
+    for (const auto& [engine, vulkan] : AccessBitMap)
+    {
+        CHECK(ToVk(engine) == vk::AccessFlags{vulkan});
+        CHECK_FALSE(static_cast<bool>(accesses & vulkan));
+        accesses |= vulkan;
+    }
+    CHECK(ToVk(SyncStage::None) == vk::PipelineStageFlags{});
+    CHECK(ToVk(SyncAccess::None) == vk::AccessFlags{});
+    CHECK(ToVk(SyncStage::FragmentShader | SyncStage::ComputeShader) ==
+          (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
+}
+
+TEST_CASE("each access kind's scope lands on the Vulkan layout, stages and access it names")
+{
+    using Stage = vk::PipelineStageFlagBits;
+    using Access = vk::AccessFlagBits;
+    struct Expected
+    {
+        AccessKind Kind;
+        vk::ImageLayout Layout;
+        vk::PipelineStageFlags Stages;
+        vk::AccessFlags Accesses;
+    };
+    const std::array expected{
+        Expected{.Kind = AccessKind::ColorAttachment,
+                 .Layout = vk::ImageLayout::eColorAttachmentOptimal,
+                 .Stages = Stage::eColorAttachmentOutput,
+                 .Accesses = Access::eColorAttachmentWrite | Access::eColorAttachmentRead},
+        Expected{.Kind = AccessKind::DepthAttachment,
+                 .Layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                 .Stages = Stage::eEarlyFragmentTests | Stage::eLateFragmentTests,
+                 .Accesses =
+                     Access::eDepthStencilAttachmentWrite | Access::eDepthStencilAttachmentRead},
+        Expected{.Kind = AccessKind::SampleGraphics,
+                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                 .Stages = Stage::eFragmentShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::SampleCompute,
+                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::SampleAny,
+                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                 .Stages = Stage::eVertexShader | Stage::eFragmentShader | Stage::eComputeShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::SampleVertexFragment,
+                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                 .Stages = Stage::eVertexShader | Stage::eFragmentShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::StorageRead,
+                 .Layout = vk::ImageLayout::eGeneral,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::StorageWrite,
+                 .Layout = vk::ImageLayout::eGeneral,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderWrite},
+        Expected{.Kind = AccessKind::StorageReadWrite,
+                 .Layout = vk::ImageLayout::eGeneral,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderRead | Access::eShaderWrite},
+        Expected{.Kind = AccessKind::TransferSrc,
+                 .Layout = vk::ImageLayout::eTransferSrcOptimal,
+                 .Stages = Stage::eTransfer,
+                 .Accesses = Access::eTransferRead},
+        Expected{.Kind = AccessKind::TransferDst,
+                 .Layout = vk::ImageLayout::eTransferDstOptimal,
+                 .Stages = Stage::eTransfer,
+                 .Accesses = Access::eTransferWrite},
+        Expected{.Kind = AccessKind::IndirectRead,
+                 .Layout = vk::ImageLayout::eUndefined,
+                 .Stages = Stage::eDrawIndirect,
+                 .Accesses = Access::eIndirectCommandRead},
+        Expected{.Kind = AccessKind::StorageBufferRead,
+                 .Layout = vk::ImageLayout::eUndefined,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderRead},
+        Expected{.Kind = AccessKind::StorageBufferWrite,
+                 .Layout = vk::ImageLayout::eUndefined,
+                 .Stages = Stage::eComputeShader,
+                 .Accesses = Access::eShaderWrite},
+        Expected{.Kind = AccessKind::StorageBufferReadGraphics,
+                 .Layout = vk::ImageLayout::eUndefined,
+                 .Stages = Stage::eVertexShader | Stage::eFragmentShader,
+                 .Accesses = Access::eShaderRead},
+    };
+    for (const Expected& e : expected)
+    {
+        CAPTURE(static_cast<int>(e.Kind));
+        const SubresourceState scope = ScopeFor(e.Kind);
+        CHECK(ToVk(scope.Layout) == e.Layout);
+        CHECK(ToVk(scope.Stage) == e.Stages);
+        CHECK(ToVk(scope.Access) == e.Accesses);
+    }
 }

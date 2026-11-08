@@ -1,0 +1,507 @@
+#pragma once
+
+// Out-of-line definition of Context::Native. Kept in its own header (rather
+// than inline in Natives.h) because of its size: it absorbs every vk::/Vma
+// handle the context owns, the deferred-destruction (retire bin) machinery,
+// and the device-selection helpers that only run during Initialize().
+// Internal-only: included by Natives.h.
+#include <mutex>
+
+#include "Vulkan.h"
+#include "CommandPool.h"
+#include "DescriptorPool.h"
+#include "SwapChain.h"
+#include "SwapChainSupport.h"
+#include "../../SynchronizationFrame.h"
+
+#include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Semaphore.h>
+#include <Veng/Renderer/TimelineSemaphore.h>
+
+namespace Veng::Renderer
+{
+    struct VE_API Context::Native
+    {
+        vk::Instance Instance;
+        vk::PhysicalDevice PhysicalDevice;
+        vk::Device Device;
+        vk::Queue GraphicsQueue;
+        vk::Queue PresentQueue;
+        /// @brief Queue transfer uploads submit to.
+        ///
+        /// On MoltenVK this is the same family as (and may be the same handle as)
+        /// GraphicsQueue, so every submit to it serializes through SubmitMutex regardless.
+        vk::Queue TransferQueue;
+        vk::SurfaceKHR Surface;
+        vk::DebugUtilsMessengerEXT DebugMessenger;
+        vk::PipelineCache PipelineCache;
+        /// @brief On-disk pipeline cache path, if persistence is enabled.
+        ///
+        /// When set, the cache is seeded from this file at init and written back at shutdown.
+        /// nullopt keeps it in-memory only.
+        optional<path> PipelineCachePath;
+        VmaAllocator Allocator = nullptr;
+
+        const vector<const char*> ValidationLayers =
+            vector<const char*>({"VK_LAYER_KHRONOS_validation"});
+        /// @brief Device extensions to enable.
+        ///
+        /// Mutable: the swapchain extension is dropped in headless mode (no
+        /// window/surface), so this is finalized during Initialize().
+        ///
+        /// VK_KHR_portability_subset is NOT listed here: the spec requires it be enabled
+        /// iff the device advertises it (a non-conformant implementation like MoltenVK).
+        /// A conformant native driver (Windows/Linux desktop) does not expose it and would
+        /// be wrongly rejected if it were always required, so CreateDevice() appends it
+        /// per-device only when present.
+        vector<const char*> DeviceExtensions = vector<const char*>(
+            {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
+             VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+        vector<const char*> RequiredExtensions;
+
+        /// @brief When true, no window, surface, or swapchain — off-screen rendering only.
+        bool Headless = false;
+
+        Unique<SwapChain> SwapChain;
+        Unique<CommandPool> CommandPool;
+        Unique<DescriptorPool> DescriptorPool;
+        Unique<BindlessRegistry> Bindless;
+
+        /// @brief One transfer command pool per worker, indexed by worker index.
+        ///
+        /// VkCommandPool is not shareable across threads; each worker records its uploads
+        /// into its own pool/buffer and only ever touches the entry at its own index.
+        struct TransferPool
+        {
+            vk::CommandPool Pool;
+            Ref<CommandBuffer> CommandBuffer;
+
+            /// @brief Transfer-timeline value the last upload from this worker signalled.
+            ///
+            /// The command buffer is reused across uploads; a worker must wait this value
+            /// before resetting and re-recording — resetting it earlier corrupts an in-flight
+            /// submit. Zero before the first upload.
+            u64 LastSubmittedValue = 0;
+        };
+
+        vector<TransferPool> TransferPools;
+
+        /// @brief Override pool for CommandBuffer allocation.
+        ///
+        /// When non-null, CommandBuffer's constructor allocates from this pool instead of
+        /// the shared graphics CommandPool. Set transiently while allocating a worker's
+        /// transfer command buffer in InitializeTransferPools.
+        vk::CommandPool AllocationPoolOverride;
+
+        /// @brief Serializes every externally-synchronized queue operation on a shared queue.
+        ///
+        /// A VkQueue is not thread-safe: vkQueueSubmit, vkQueuePresentKHR, and vkDeviceWaitIdle
+        /// (which implicitly uses every queue) all require external synchronization. On MoltenVK
+        /// the transfer, graphics, and present queues share a family and may be one handle, so a
+        /// worker upload submit and a main-thread present or device-wait-idle touch the same queue
+        /// and must serialize through this — not only the submits.
+        std::mutex SubmitMutex;
+
+        /// @brief Transfer timeline semaphore.
+        ///
+        /// Worker upload submits signal a strictly increasing value on it; the graphics frame
+        /// submit and the transfer-keyed retire drain wait/poll it.
+        Unique<TimelineSemaphore> TransferTimeline;
+
+        /// @brief Monotonic counter for transfer-timeline signal values.
+        ///
+        /// A timeline semaphore must signal strictly increasing values, so the next value is
+        /// allocated under SubmitMutex immediately before the submit — never precomputed
+        /// and raced for the lock, which could submit values out of order. Pre-increment
+        /// makes the first signalled value 1 (0 is the timeline's initial value).
+        u64 TransferTimelineValue = 0;
+
+        /// @brief Transfer-timeline waits the next frame submit must fold in.
+        ///
+        /// A resource sampled in a frame after an async upload registers its
+        /// (semaphore, value) here; SubmitFrame chains them onto the submit and clears
+        /// the set. Guarded by SubmitMutex.
+        vector<std::pair<vk::Semaphore, u64>> PendingFrameTransferWaits;
+
+        /// @brief Serializes Retire, RetireOnTransfer, the transfer-retire list, and their drains.
+        ///
+        /// A worker dropping upload scratch (via RetireOnTransfer) must not race the main
+        /// thread's CurrentFrameInFlight read, bin vector reallocation, or the transfer-list drain.
+        std::mutex RetireMutex;
+
+        /// @brief Raw allocations whose GPU lifetime is the transfer timeline, not a frame fence.
+        ///
+        /// Worker-created upload scratch is released into here keyed on the timeline value its
+        /// copy signals; the main thread destroys each entry once TransferTimeline reaches that value.
+        struct TransferRetireEntry
+        {
+            vk::Buffer Buffer;
+            VmaAllocation Allocation;
+            u64 TimelineValue;
+        };
+
+        vector<TransferRetireEntry> TransferRetireList;
+
+        vector<SynchronizationFrame> SynchronizationFrames;
+        /// @brief The per-slot semaphore the swap-chain acquire signals and the slot's first
+        /// submit waits, indexed like SynchronizationFrames.
+        vector<Unique<Semaphore>> ImageAvailableSemaphores;
+        u32 CurrentFrameInFlight = 0;
+        u32 MaxFramesInFlight = 2;
+
+        /// @brief Maximum named GPU timestamp scopes measured per frame-in-flight.
+        ///
+        /// Bounds the per-frame query allocation; scopes opened past this budget go
+        /// unmeasured for that frame. Comfortably above the pass count of a frame driving
+        /// several viewports plus the gather/composite tail.
+        static constexpr u32 MaxGpuScopes = 128;
+
+        /// @brief Timestamp query pool: per frame-in-flight, a (start, end) frame pair followed
+        /// by MaxGpuScopes (start, end) scope pairs.
+        ///
+        /// A slot's run begins at slot·(2 + 2·MaxGpuScopes): queries 0/1 are the frame
+        /// top-of-pipe/bottom-of-pipe pair, and scope i is queries 2+2·i / 3+2·i (both
+        /// bottom-of-pipe). The whole run is reset at BeginFrame and read back when that slot's
+        /// frame next retires. Null when the device reports no timestamp support.
+        vk::QueryPool TimestampPool;
+        /// @brief Nanoseconds per timestamp tick (PhysicalDeviceLimits::timestampPeriod).
+        f32 TimestampPeriodNs = 0.0f;
+        /// @brief Mask of the meaningful low bits of a timestamp (from timestampValidBits).
+        ///
+        /// A device may report fewer than 64 valid bits; the raw query values and their
+        /// difference are masked to this before converting to time.
+        u64 TimestampValidMask = ~0ULL;
+        /// @brief Per-slot flag: true once a slot's query pair has been written at least once.
+        ///
+        /// Guards the readback so a slot is never read before its first frame wrote it.
+        vector<bool> TimestampWritten;
+
+        /// @brief Per-slot pass names recorded into that slot's scope queries on its last frame.
+        ///
+        /// Sized [MaxFramesInFlight]; the count also gives how many scope query pairs to read
+        /// back, since the scope count varies per frame with the graph topology. Indexed by slot.
+        vector<vector<string>> ScopeNames;
+        /// @brief Per-slot nesting depth of each recorded scope, parallel to ScopeNames[slot].
+        ///
+        /// A pass's depth is the number of scopes open when it began, so a consumer reconstructs
+        /// the pass tree the flattened execution order would otherwise lose. Indexed by slot.
+        vector<vector<u32>> ScopeDepths;
+
+        /// @brief Names of the scopes opened during the in-progress recording, in open order.
+        ///
+        /// Moved into ScopeNames[slot] at EndFrame; cleared at the next BeginFrame for the slot.
+        vector<string> CurrentScopeNames;
+
+        /// @brief Nesting depth of each in-progress scope, parallel to CurrentScopeNames.
+        ///
+        /// Moved into ScopeDepths[slot] at EndFrame; cleared at the next BeginFrame for the slot.
+        vector<u32> CurrentScopeDepths;
+        /// @brief Open BeginGpuScope query-pair indices awaiting their EndGpuScope (a nesting stack).
+        ///
+        /// Holds MaxGpuScopes as a sentinel for a scope opened past the per-frame budget, so the
+        /// matching EndGpuScope balances without writing a timestamp.
+        vector<u32> OpenScopeStack;
+
+        /// @brief Timestamp query pool for one-shot command buffers: MaxGpuScopes (start, end)
+        /// scope pairs, scope i at queries 2·i / 2·i+1.
+        ///
+        /// Reset at the head of each ImmediateCommands recording and read back once its submit
+        /// has completed, so it is never shared with the per-frame pool's slots. Null when the
+        /// device reports no timestamp support.
+        vk::QueryPool ImmediateTimestampPool;
+        /// @brief True while an ImmediateCommands callback records with timing, routing
+        /// BeginGpuScope/EndGpuScope into ImmediateTimestampPool rather than the frame's run.
+        bool ImmediateScopeRecording = false;
+        /// @brief Names of the scopes opened during the in-progress one-shot recording.
+        vector<string> ImmediateScopeNames;
+        /// @brief Nesting depth of each scope in ImmediateScopeNames, parallel to it.
+        vector<u32> ImmediateScopeDepths;
+        /// @brief Open one-shot scope indices awaiting their EndGpuScope, with MaxGpuScopes as
+        /// the past-the-budget sentinel exactly as OpenScopeStack holds it.
+        vector<u32> ImmediateOpenScopeStack;
+
+        /// @brief Per-in-flight-frame deferred-destruction bins.
+        ///
+        /// A handle retired while frame i is recording goes into bin i and is protected
+        /// by frame i's fence, destroyed when AcquireNextFrame next waits that fence.
+        /// A handle retired outside a recording frame — between EndFrame and the next
+        /// BeginFrame, where CurrentFrameInFlight already names the slot AcquireNextFrame is
+        /// about to wait-and-drain — instead accumulates in PendingRetire, which the next
+        /// BeginFrame folds into the acquired slot's bin after the drain. Such a handle was
+        /// last referenced by the previously submitted frame's command buffer, so binning it
+        /// against the frame about to record (a strictly later fence) is what keeps it alive
+        /// long enough. A process that never begins a frame drains PendingRetire after each
+        /// ImmediateCommands recording made outside one, once nothing else is in flight (see
+        /// DrainPendingRetiresIfIdle); anything left at shutdown is caught by the drain-all in
+        /// ~Context.
+        struct VE_API RetireBin
+        {
+            /// @brief Returns the number of handles and teardowns the bin holds.
+            [[nodiscard]] usize Size() const;
+
+            /// @brief Moves every entry of @p source to the end of this bin, leaving it empty.
+            void Append(RetireBin& source);
+
+            vector<std::pair<vk::Buffer, VmaAllocation>> Buffers;
+            vector<std::pair<vk::Image, VmaAllocation>> Images;
+            vector<vk::ImageView> ImageViews;
+            vector<vk::Sampler> Samplers;
+            vector<vk::ShaderModule> ShaderModules;
+            vector<vk::Pipeline> Pipelines;
+            vector<vk::PipelineLayout> PipelineLayouts;
+            /// @brief Descriptor set layouts, destroyed after the sets and pipeline layouts above.
+            vector<vk::DescriptorSetLayout> DescriptorSetLayouts;
+            /// @brief Descriptor sets freed back to the descriptor pool.
+            vector<vk::DescriptorSet> DescriptorSets;
+            /// @brief Teardown callbacks run after the bin's handles are destroyed.
+            ///
+            /// The release half of a resource whose backing memory is owned outside Vulkan — an
+            /// imported external texture — which must not run until the VkImage viewing it is gone
+            /// and the GPU is done with the frame that used it.
+            vector<function<void()>> Teardowns;
+        };
+
+        vector<RetireBin> RetireBins;
+        /// @brief Handles retired while no frame is recording.
+        ///
+        /// Folded into the acquired slot's bin by the next BeginFrame so they outlive the last
+        /// submitted frame's command buffer, or destroyed by DrainPendingRetiresIfIdle after an
+        /// ImmediateCommands recording outside a frame finds nothing else in flight.
+        RetireBin PendingRetire;
+        /// @brief True between BeginFrame and EndFrame, so Retire targets the recording slot's
+        /// bin; false otherwise, so Retire targets PendingRetire.
+        bool FrameRecording = false;
+        /// @brief True while the frame's command buffer is begun and accepting commands.
+        ///
+        /// Narrower than FrameRecording, which turns on before BeginFrame begins the buffer:
+        /// RecordSetupCommands records into the frame only while this holds.
+        bool FrameCommandsOpen = false;
+        /// @brief The one-shot buffer an ImmediateCommands callback is recording into, or null.
+        CommandBuffer* ActiveImmediateCommands = nullptr;
+        bool Disposed = false;
+
+        /// @brief Per-slot spare command buffers a split frame resumes recording into.
+        ///
+        /// Indexed by frame slot. Each split swaps the frame command buffer's handle with the
+        /// next spare's, so every handle in a slot's set is reused only once that slot's fence has
+        /// been waited. Grown on demand, never shrunk.
+        vector<vector<Ref<CommandBuffer>>> SplitCommandBuffers;
+        /// @brief How many spares the recording frame has swapped in; reset at BeginFrame.
+        u32 FrameSplitCount = 0;
+        /// @brief Whether the recording frame has submitted a segment yet; reset at BeginFrame.
+        ///
+        /// The first segment carries the swapchain-acquire wait.
+        bool FrameSegmentSubmitted = false;
+        /// @brief The interop-timeline value the frame's next segment submit must wait, if any.
+        optional<u64> PendingInteropWait;
+        /// @brief The interop-timeline value the active one-shot recording's submit must wait.
+        ///
+        /// Kept apart from PendingInteropWait so a split inside an ImmediateCommands recording made
+        /// during a frame never consumes the frame's own wait.
+        optional<u64> ImmediateInteropWait;
+        /// @brief Command buffers a split one-shot recording has already submitted.
+        ///
+        /// Freed once an ImmediateCommands submit's fence is waited, whose first scope covers every
+        /// batch submitted ahead of it.
+        vector<Ref<CommandBuffer>> ImmediateSplitBuffers;
+        /// @brief The timeline semaphore external GPU work and split frames synchronize through.
+        ///
+        /// Created exportable on the first split; null until then.
+        vk::Semaphore InteropTimeline;
+        /// @brief The platform shared event backing InteropTimeline (an MTLSharedEvent), unowned.
+        void* InteropEvent = nullptr;
+        /// @brief The last value allocated on InteropTimeline.
+        u64 InteropValue = 0;
+
+        /// @brief Submits the frame command buffer's recorded work as one segment of the frame.
+        ///
+        /// The first segment waits the swapchain acquire; every segment drains the pending
+        /// transfer waits and waits PendingInteropWait. Only the final segment signals the
+        /// present semaphore and the frame's fence, whose first scope covers every earlier segment.
+        /// @param frame        The recording frame.
+        /// @param final        Whether this is the frame's last segment.
+        /// @param interopValue When set, the InteropTimeline value the segment signals.
+        void SubmitFrameSegment(const SynchronizationFrame& frame, bool final,
+                                optional<u64> interopValue);
+
+        /// @brief Returns the interop-timeline value the rest of a split frame waits on.
+        ///
+        /// The external work's own signal, except where the validation layer is compiled in: it
+        /// cannot see a signal made outside Vulkan, so there the host waits for the external value
+        /// and signals the next one itself, and that is the value returned.
+        /// @param externalValue The value the external work signals.
+        /// @return The value the next segment waits.
+        u64 ResolveExternalSignal(u64 externalValue);
+
+        /// @brief Submits a one-shot recording's work as one segment of it.
+        ///
+        /// Waits every pending transfer wait (leaving them pending) and ImmediateInteropWait.
+        /// @param commandBuffer The one-shot command buffer, ended.
+        /// @param interopValue  When set, the InteropTimeline value the segment signals.
+        /// @param fence         The fence the segment signals, or null.
+        void SubmitImmediateSegment(CommandBuffer& commandBuffer, optional<u64> interopValue,
+                                    vk::Fence fence);
+
+        /// @brief The frame slot whose fence covers every command recorded so far.
+        ///
+        /// The recording slot while a frame records. Outside one — between EndFrame and the next
+        /// BeginFrame, where CurrentFrameInFlight already names the slot about to be waited — the
+        /// slot of the frame submitted last, since that frame may reference whatever is released
+        /// now. A slot-keyed deferral (a bindless slot, a material range) files under this slot so
+        /// it is reclaimed only once that fence has been waited.
+        [[nodiscard]] u32 GetReleaseSlot() const;
+
+        /// @brief Whether a host write into @p slot's per-frame region cannot race the GPU.
+        ///
+        /// True while the slot is the recording frame's (its previous use was fenced at
+        /// BeginFrame), and outside a frame when the slot's fence has signaled. False outside a
+        /// frame while the slot's last frame may still be executing.
+        [[nodiscard]] bool IsSlotWritable(u32 slot) const;
+
+        RetireBin& CurrentRetireBin();
+        void DrainRetireBin(RetireBin& bin);
+        void DrainAllRetireBins();
+        /// @brief Moves PendingRetire's handles into the acquired slot's bin (called by BeginFrame
+        /// after the drain), and marks the frame as recording so subsequent retires bin directly.
+        void AdoptPendingRetires();
+
+        /// @brief Whether every frame slot's in-flight fence has signalled. Does not block.
+        [[nodiscard]] bool AreFramesComplete() const;
+
+        /// @brief Destroys PendingRetire's handles, and reclaims released bindless slots, when no
+        ///        submitted work can still reference them.
+        ///
+        /// Called once an ImmediateCommands recording made outside any frame, and not nested in
+        /// another, has completed. Released bindless slots are reclaimed first
+        /// (BindlessRegistry::ReclaimAllReleased) when every frame slot's fence has signalled, so
+        /// the resources they held retire into the bin this drain then examines. The bin is detached under RetireMutex first, so it holds only
+        /// handles retired before the checks that follow. Those checks do not block: every frame
+        /// slot's in-flight fence must be signaled and the transfer timeline must have reached
+        /// its last submitted value. When both hold the detached handles are destroyed; otherwise
+        /// they return to PendingRetire for the next BeginFrame or a later call. This is what
+        /// bounds the pending bin, the descriptor pool behind it, and the bindless arrays, in a
+        /// process that submits only one-off work and never begins a frame. Upload scratch whose
+        /// transfer value has been reached is freed here too (DrainTransferRetireList), which
+        /// otherwise only a frame acquire does.
+        void DrainPendingRetiresIfIdle();
+
+        /// @brief Defers destruction of a handle into the current frame's retire bin.
+        ///
+        /// The handle is destroyed only after the frame's in-flight fence is waited again
+        /// (see AcquireNextFrame), so dropping a resource mid-frame is always safe.
+        void Retire(vk::Buffer buffer, VmaAllocation allocation);
+        void Retire(vk::Image image, VmaAllocation allocation);
+        void Retire(vk::ImageView imageView);
+        void Retire(vk::Sampler sampler);
+        void Retire(vk::ShaderModule shaderModule);
+        void Retire(vk::Pipeline pipeline);
+        void Retire(vk::PipelineLayout pipelineLayout);
+        void Retire(vk::DescriptorSet descriptorSet);
+        void Retire(vk::DescriptorSetLayout descriptorSetLayout);
+
+        /// @brief Defers a teardown callback into the current frame's retire bin.
+        ///
+        /// Run by the bin's drain after every handle in it has been destroyed, so a release that
+        /// must outlive the Vulkan objects viewing it — an imported external texture's — happens
+        /// last and only once the frame's fence has been waited. The drain holds RetireMutex while
+        /// it runs, so a teardown must not itself retire anything.
+        void Retire(function<void()> teardown);
+
+        /// @brief Takes ownership of a raw allocation whose GPU lifetime is the transfer timeline.
+        ///
+        /// Reclaimed (vmaDestroyBuffer) once TransferTimeline reaches @p timelineValue.
+        /// The caller passes the released raw handle, not a Buffer: routing it through
+        /// Buffer::~Buffer would re-defer it into a frame bin, pinning it to the wrong lifetime.
+        void RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation, u64 timelineValue);
+
+        /// @brief Destroys every transfer-retire entry whose timeline value has been reached.
+        ///
+        /// Holds RetireMutex across the GetValue() read and the erase.
+        void DrainTransferRetireList();
+
+        /// @brief Submits to @p queue under SubmitMutex.
+        ///
+        /// vkQueueSubmit is not thread-safe per VkQueue; every submit (frame, immediate,
+        /// and transfer) funnels through here so worker and main-thread submits to a
+        /// collapsed MoltenVK queue cannot race.
+        void LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo, vk::Fence fence);
+
+        vector<const char*>& GetRequiredExtensions();
+        vk::PhysicalDevice GetPhysicalDevice();
+        bool IsDeviceSuitable(vk::PhysicalDevice device);
+        QueueFamilyIndices& FindQueueFamilies(vk::PhysicalDevice device);
+        [[nodiscard]] SwapChainSupportDetails
+        QuerySwapChainSupport(vk::PhysicalDevice device) const;
+        [[nodiscard]] bool CheckDeviceExtensionSupport(vk::PhysicalDevice device) const;
+        vk::Device CreateDevice();
+
+        QueueFamilyIndices QueueFamilies{};
+
+        /// @brief True when both multiDrawIndirect and drawIndirectFirstInstance were
+        /// enabled at device creation.
+        ///
+        /// The GPU-driven cull path (multiDrawIndirect command buffer + candidate index
+        /// in firstInstance) is available only when both are present; set in CreateDevice.
+        bool GpuDrivenCullingSupported = false;
+
+        /// @brief True when textureCompressionBC was supported and enabled at device creation.
+        ///
+        /// Sampling a BC block-compressed image is legal only with the feature enabled; set in
+        /// CreateDevice from the physical device's reported support.
+        bool BlockCompressionSupported = false;
+
+        /// @brief True when textureCompressionASTC_LDR was supported and enabled at device creation.
+        ///
+        /// Sampling an ASTC LDR block-compressed image is legal only with the feature enabled; set
+        /// in CreateDevice from the physical device's reported support.
+        bool AstcSupported = false;
+
+        /// @brief True when depthClamp was supported and enabled at device creation.
+        ///
+        /// Gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking); set in CreateDevice
+        /// from the physical device's reported support.
+        bool DepthClampSupported = false;
+
+        /// @brief True when shaderStorageImageExtendedFormats was supported and enabled at device
+        /// creation.
+        ///
+        /// The device-wide guarantee that the extended storage-image formats carry
+        /// VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT; set in CreateDevice from the physical device's
+        /// reported support.
+        bool ExtendedStorageImageFormatsSupported = false;
+
+        /// @brief The device readout Context::GetDeviceCapabilities returns; filled in CreateDevice.
+        DeviceCapabilities Capabilities;
+
+        /// @brief True when VK_EXT_metal_objects was advertised and enabled at device creation.
+        ///
+        /// Gates Context::IsExternalTextureImportSupported and the Metal-object export; appended
+        /// per-device in CreateDevice only when present, and never true off Apple.
+        bool MetalObjectsEnabled = false;
+
+        /// @brief The exported MTLDevice as an opaque handle, or null.
+        ///
+        /// Read out of the device once at Initialize when MetalObjectsEnabled; the export is
+        /// unowned (the Vulkan implementation keeps the reference), so nothing releases it.
+        void* MetalDevice = nullptr;
+
+        /// @brief Registered frame-retired callbacks, in registration order, with their handles.
+        ///
+        /// Fired by BeginFrame for the slot whose fence it just waited. Iterated over a copy so a
+        /// callback may register or release one.
+        vector<std::pair<u64, function<void(u32)>>> FrameRetiredCallbacks;
+
+        /// @brief Monotonic source of frame-retired callback handles; pre-incremented, so 0 is
+        /// never issued and names no registration.
+        u64 NextFrameRetiredHandle = 0;
+
+        /// @brief True when VK_EXT_memory_budget was advertised and enabled at device creation.
+        ///
+        /// When set the allocator carries VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT and
+        /// GetGpuMemoryUsage() reports the OS-provided budget; otherwise the budget falls back to
+        /// the heap size. Appended per-device in CreateDevice only when present.
+        bool MemoryBudgetSupported = false;
+    };
+}

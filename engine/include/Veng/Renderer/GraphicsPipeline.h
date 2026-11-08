@@ -58,7 +58,7 @@ namespace Veng::Renderer
         bool DepthClampEnable = false;
     };
 
-    /// @brief A compiled Vulkan graphics pipeline.
+    /// @brief A compiled graphics pipeline.
     class VE_API GraphicsPipeline
     {
     public:
@@ -71,7 +71,7 @@ namespace Veng::Renderer
             return Ref<GraphicsPipeline>(new GraphicsPipeline(context, info));
         }
 
-        /// @brief Defers destruction of the Vulkan pipeline handle until the GPU is done with it.
+        /// @brief Defers destruction of the backend pipeline until the GPU is done with it.
         ~GraphicsPipeline();
 
         GraphicsPipeline(const GraphicsPipeline&) = delete;
@@ -108,7 +108,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Debug name.
         string m_Name;
-        /// @brief Backend Vulkan graphics pipeline.
+        /// @brief Backend graphics pipeline.
         Unique<Native> m_Native;
         /// @brief Descriptor-set and push-constant layout.
         Ref<PipelineLayout> m_PipelineLayout;

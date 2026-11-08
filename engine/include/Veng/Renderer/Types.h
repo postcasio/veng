@@ -5,8 +5,8 @@
 
 /// @brief Engine-owned vocabulary types for the renderer surface.
 ///
-/// Consumers write these instead of vk:: types; the backend maps them to Vulkan in
-/// TypeMapping.h with exhaustive switches. Enumerators are populated on demand — the
+/// Consumers write these instead of any graphics API's types; the backend compiled in maps them
+/// with exhaustive switches. Enumerators are populated on demand — the
 /// backend mapping asserts on unmapped values, so a missing entry is a loud, one-line fix.
 namespace Veng::Renderer
 {
@@ -173,7 +173,8 @@ namespace Veng::Renderer
         Type3D,
     };
 
-    /// @brief Vulkan image layout; used by barrier derivation.
+    /// @brief The state an image subresource is kept in for a class of use; used by barrier
+    ///        derivation.
     enum class ImageLayout : u8
     {
         /// @brief Unknown or discard-on-transition layout.
@@ -245,9 +246,66 @@ namespace Veng::Renderer
         TransferSrc = 1 << 4,
         /// @brief Destination of a copy operation.
         TransferDst = 1 << 5,
-        /// @brief Source of indirect draw/dispatch arguments (vkCmdDrawIndexedIndirect).
+        /// @brief Source of indirect draw/dispatch arguments (DrawIndexedIndirect and its siblings).
         Indirect = 1 << 6,
     };
+
+    /// @brief One indexed draw's arguments as a GPU-resident record, read by
+    /// CommandBuffer::DrawIndexedIndirect.
+    ///
+    /// The layout is the record's contract on every backend: five 4-byte fields, 20 bytes,
+    /// tightly packed, in this order. A shader writing the record declares the same five fields.
+    struct DrawIndexedIndirectCommand
+    {
+        /// @brief Number of indices drawn.
+        u32 IndexCount;
+        /// @brief Number of instances drawn.
+        u32 InstanceCount;
+        /// @brief First index read from the bound index buffer.
+        u32 FirstIndex;
+        /// @brief Value added to each index before the vertex fetch.
+        i32 VertexOffset;
+        /// @brief Instance id of the first instance.
+        u32 FirstInstance;
+    };
+
+    static_assert(sizeof(DrawIndexedIndirectCommand) == 20,
+                  "DrawIndexedIndirectCommand is a 20-byte record");
+
+    /// @brief One non-indexed draw's arguments as a GPU-resident record, read by
+    /// CommandBuffer::DrawIndirect.
+    ///
+    /// Four 4-byte fields, 16 bytes, tightly packed, in this order.
+    struct DrawIndirectCommand
+    {
+        /// @brief Number of vertices drawn.
+        u32 VertexCount;
+        /// @brief Number of instances drawn.
+        u32 InstanceCount;
+        /// @brief Vertex id of the first vertex.
+        u32 FirstVertex;
+        /// @brief Instance id of the first instance.
+        u32 FirstInstance;
+    };
+
+    static_assert(sizeof(DrawIndirectCommand) == 16, "DrawIndirectCommand is a 16-byte record");
+
+    /// @brief One compute dispatch's workgroup counts as a GPU-resident record, read by
+    /// CommandBuffer::DispatchIndirect.
+    ///
+    /// Three 4-byte fields, 12 bytes, tightly packed, in this order.
+    struct DispatchIndirectCommand
+    {
+        /// @brief Workgroups along x.
+        u32 X;
+        /// @brief Workgroups along y.
+        u32 Y;
+        /// @brief Workgroups along z.
+        u32 Z;
+    };
+
+    static_assert(sizeof(DispatchIndirectCommand) == 12,
+                  "DispatchIndirectCommand is a 12-byte record");
 
     /// @brief Bitmask of shader stages.
     enum class ShaderStage : u32
@@ -284,7 +342,7 @@ namespace Veng::Renderer
 
     /// @brief How a resource is used by a pass or operation.
     ///
-    /// Each kind resolves to a (layout, pipeline-stage, access) scope (Backend::ScopeFor)
+    /// Each kind resolves to a (layout, pipeline-stage, access) scope (ScopeFor)
     /// that drives barrier derivation. Declared on RenderGraph passes; also passed to
     /// CommandBuffer::PrepareForAccess for out-of-graph consumers the graph cannot see.
     enum class AccessKind : u8
@@ -497,7 +555,7 @@ namespace Veng::Renderer
         Compute,
     };
 
-    /// @brief Level of a command buffer in the Vulkan command hierarchy.
+    /// @brief Level of a command buffer in the command hierarchy.
     enum class CommandBufferLevel : u8
     {
         /// @brief Submitted directly to a queue.
@@ -515,7 +573,7 @@ namespace Veng::Renderer
         OneTimeSubmit = 1 << 0,
     };
 
-    /// @brief Vulkan descriptor resource type.
+    /// @brief Descriptor resource type.
     enum class DescriptorType : u8
     {
         /// @brief Sampled image combined with a sampler in a single binding.
@@ -532,7 +590,7 @@ namespace Veng::Renderer
         Sampler,
         /// @brief Uniform buffer whose bound region is selected by a dynamic offset at bind time.
         ///
-        /// One buffer holds several regions; the dynamic offset at vkCmdBindDescriptorSets
+        /// One buffer holds several regions; the dynamic offset at BindDescriptorSets
         /// selects the live one. Used for per-frame-constants ring buffers on plain descriptor sets.
         UniformBufferDynamic,
     };

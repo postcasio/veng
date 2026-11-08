@@ -24,6 +24,10 @@ find_dependency(zstd)
 # unset, and the build-tree config sets BUILD_TREE.
 set(VENG_PACKAGE_MODE "INSTALL")
 
+# The GPU backend the engine was built against (VE_GPU_BACKEND). A consumer compiling against a
+# backend's interop header, or registering tests that only run on one backend, reads it here.
+set(VENG_GPU_BACKEND "@VE_GPU_BACKEND@")
+
 # The helper *.cmake modules and the shared config body install beside this config, so both
 # load from the config's own directory.
 set(VENG_CMAKE_HELPER_DIR "${CMAKE_CURRENT_LIST_DIR}")

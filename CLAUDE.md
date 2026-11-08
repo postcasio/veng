@@ -21,8 +21,9 @@ Each library lives in its own root subdirectory; the top-level `CMakeLists.txt` 
 every module is written against; each module's architecture lives in its own `CLAUDE.md`:
 
 - **`engine/`** — `libveng`, the runtime. Links only `assetpack` (loader, no importer deps).
-  Public headers under `engine/include/Veng/`; the Vulkan implementations live under
-  `engine/src/Renderer/Backend/`. **[engine/CLAUDE.md](engine/CLAUDE.md)** covers
+  Public headers under `engine/include/Veng/`; the GPU backend the tree is configured for
+  (`VE_GPU_BACKEND`) lives under `engine/src/Renderer/Backend/<backend>/` — the Vulkan one under
+  `engine/src/Renderer/Backend/Vulkan/` — and is the only code that names a graphics API. **[engine/CLAUDE.md](engine/CLAUDE.md)** covers
   `Application`, game modules, and the project data model, and indexes the per-system docs
   under `engine/src/*/CLAUDE.md` (renderer, scene/gameplay, assets/materials, reflection,
   `Veng::UI`, `Veng::Gui`, networking).
@@ -690,7 +691,7 @@ the default and catches more. Do not build both routinely.
   and what carries the weight instead (the thread sanitiser and `vengc verify`), is in
   [cooker/CLAUDE.md](cooker/CLAUDE.md#what-is-checked-and-what-was-deliberately-not).
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
-  callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
+  callback (`engine/src/Renderer/Backend/Vulkan/Context.cpp`) only `Log::Error`s on
   validation errors — it never aborts. So a green `ctest` under `VE_VALIDATION` only means
   something if the validation gate ran, and **an ordinary `ctest` does not run it**: the gate
   re-runs the whole gpu suite under the layers, doubling the band's GPU time, so it carries
@@ -754,7 +755,8 @@ split is absolute:
 No exceptions anywhere — performance is the reason, and the build enforces it.
 
 vulkan.hpp is configured `VULKAN_HPP_NO_EXCEPTIONS` with
-`VULKAN_HPP_ASSERT_ON_RESULT` → `VE_ASSERT` (in `Backend/Vulkan.h`). So:
+`VULKAN_HPP_ASSERT_ON_RESULT` → `VE_ASSERT` (in `Veng/Renderer/Native.h`, which the backend's
+`Backend/Vulkan/Vulkan.h` builds on). So:
 - Value-returning calls (`device.createX(...)`) return `vk::ResultValue<T>` —
   unwrap with `.value`.
 - Plain `vk::Result` calls → wrap in `VK_ASSERT(call, "msg")`.
@@ -776,8 +778,28 @@ per-TU instantiation bill, not a cached parse.
 
 Renderer code uses engine **vocabulary enums** (`Renderer::Format`, `ImageUsage`,
 `ShaderStage`, …) from `Renderer/Types.h`, never `vk::` enums. The backend maps
-them to Vulkan in `Backend/TypeMapping.h` with exhaustive switches that assert on
+them to Vulkan in `Backend/Vulkan/TypeMapping.h` with exhaustive switches that assert on
 unmapped values — so adding a format is a loud one-line fix, not silent UB.
+
+### One GPU backend per build — only the backend names a graphics API
+
+**`VE_GPU_BACKEND`** (a cache string; `Vulkan` is the only value it accepts) picks the one backend
+a tree compiles. Its sources, its precompiled header and its libraries (`Vulkan::Vulkan`, VMA) are
+conditional on it; it is a PUBLIC compile definition (`VE_GPU_BACKEND_VULKAN`) and the exported
+package records it as `VENG_GPU_BACKEND`. There is no runtime selection and no virtual dispatch:
+each public resource's `Native` struct is defined by the backend compiled in.
+
+**Only `engine/src/Renderer/Backend/<backend>/` names a graphics API.** Code outside it — the
+render graph, the scene renderer and its batteries, the window, capture — works in engine terms:
+the vocabulary enums, the synchronization vocabulary (`SyncStage`/`SyncAccess`, decided
+device-free in `Renderer/BarrierDecision.h`), `CommandBuffer`'s recording calls and
+`PrepareForAccess`, and `DeviceCapabilities` for device limits. A backend implements the seams it
+is handed: `BarrierBatch` (the graph's barrier hook), `CreatePresentationSurface` (`WindowNative.h`),
+`Renderer/AppleInterop.h` (Metal objects for the video recorder and MetalFX), and
+`Renderer::HasGpuDevice` (`Veng/Renderer/DeviceProbe.h`, the GPU test probe). Public doc comments
+state contracts in engine terms too. `include_hygiene` enforces the public half: it fails on any
+public header except `Native.h` that includes a backend header or names a Vulkan/VMA type, comments
+included. The `ImGui` layer still renders through the Vulkan backend's headers.
 
 ### Identifier naming — no Hungarian notation
 
@@ -994,8 +1016,9 @@ behind the handle, which command recording mutates regardless.
 
 `engine/include/Veng/Renderer/Native.h` is the **one** public header that exposes raw
 handles — free `GetVkX(const X&)` accessors (e.g. `GetVkBuffer`, `GetVkDevice`)
-for backend/interop code. Reach for it only when interop genuinely needs the raw
-handle.
+for backend/interop code, defined out of line by the Vulkan backend. It compiles only in a Vulkan
+tree, and a consumer including it supplies the Vulkan and VMA headers. Reach for it only when
+interop genuinely needs the raw handle.
 
 This split is guarded by the **`include_hygiene` test**, which compiles every
 public header while linking only veng's PUBLIC deps. Vulkan, GLFW, VMA, and nfd

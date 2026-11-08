@@ -7,7 +7,6 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
-#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -333,10 +332,8 @@ namespace Veng::Renderer
         const u32 size = m_SortSize;
         const auto barrier = [&]
         {
-            Backend::TransitionBuffer(
-                cmd, *m_AlphaKeys, vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite);
+            cmd.PrepareForAccess(m_AlphaKeys, {AccessKind::StorageBufferWrite},
+                                 {AccessKind::StorageBufferRead, AccessKind::StorageBufferWrite});
         };
         ParticleComputePush push{.Cur = m_Cur, .Capacity = m_Capacity, .SortSize = size};
 

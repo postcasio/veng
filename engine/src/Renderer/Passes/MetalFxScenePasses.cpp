@@ -54,7 +54,7 @@ namespace Veng::Renderer
             .Execute(
                 [this](PassContext& inner)
                 {
-                    Backend::MetalFxTemporalScaler* scaler = m_Upscale.GetTemporal();
+                    MetalFxTemporalScaler* scaler = m_Upscale.GetTemporal();
                     VE_ASSERT(scaler != nullptr,
                               "MetalFX Temporal: the pass is wired with no scaler held");
                     const SceneView& view = Wrap(inner).View();
@@ -86,7 +86,7 @@ namespace Veng::Renderer
             .Execute(
                 [this](PassContext& inner)
                 {
-                    Backend::MetalFxSpatialScaler* scaler = m_Upscale.GetSpatial();
+                    MetalFxSpatialScaler* scaler = m_Upscale.GetSpatial();
                     VE_ASSERT(scaler != nullptr,
                               "MetalFX Spatial: the pass is wired with no scaler held");
                     const SceneView& view = Wrap(inner).View();

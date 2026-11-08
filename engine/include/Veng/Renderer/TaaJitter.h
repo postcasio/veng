@@ -69,7 +69,7 @@ namespace Veng::Renderer
     /// @brief Converts a pixel jitter over a rasterized extent into an NDC translation.
     ///
     /// NDC spans two units across the extent, so a pixel is 2/extent of it. Positive values move
-    /// the image right and down, in the direction pixel coordinates grow under Vulkan's Y-down
+    /// the image right and down, in the direction pixel coordinates grow under the engine's Y-down
     /// clip space.
     /// @param pixelOffset  The jitter in pixels (TaaJitterOffset).
     /// @param extent       The extent the scene rasterizes at; zero components yield zero.

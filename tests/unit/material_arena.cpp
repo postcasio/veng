@@ -4,7 +4,7 @@
 
 #include <doctest/doctest.h>
 
-#include "Renderer/Backend/MaterialArena.h"
+#include "Renderer/MaterialArena.h"
 
 #include <array>
 #include <utility>

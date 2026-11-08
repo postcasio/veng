@@ -53,7 +53,7 @@ namespace Veng::Renderer
     /// @brief Construction parameters for GatherPass.
     struct GatherPassInfo
     {
-        /// @brief Vulkan context for pipeline and resource creation.
+        /// @brief Render context for pipeline and resource creation.
         Context& Context;
 
         /// @brief Asset manager for loading the gather fragment shader from the core pack.

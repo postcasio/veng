@@ -40,11 +40,12 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
+#include <Renderer/Backend/Vulkan/Natives.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/Types.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
+#include <Renderer/Backend/Vulkan/Vulkan.h>
 
 #include <gpu/fixture.h>
 #include <support/GpuContext.h>
@@ -70,7 +71,7 @@ namespace
     // binding 1, location 0. The engine VertexBufferLayout drives only a single
     // per-vertex binding, so the indirect/instance-rate input is assembled directly
     // here. Dynamic rendering, one RGBA8 color target, dynamic viewport/scissor.
-    vk::Pipeline CreateInstancePipeline(Context& context, vk::PipelineLayout layout,
+    vk::Pipeline CreateInstancePipeline(const Context& context, vk::PipelineLayout layout,
                                         vk::ShaderModule vertModule, const char* vertEntry,
                                         vk::ShaderModule fragModule, const char* fragEntry,
                                         vk::Format colorFormat)
@@ -226,7 +227,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     indirectBuffer->UploadSync(
         std::span<const u8>(reinterpret_cast<const u8*>(commands.data()), sizeof(commands)));
 
-    auto target =
+    const auto target =
         Image::Create(Context, {.Name = "Indirect Target",
                                 .Extent = {size, size, 1},
                                 .Format = Format::RGBA8Unorm,
@@ -240,7 +241,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                                             .Type = DescriptorType::StorageBuffer,
                                                             .Count = 1,
                                                             .Stages = ShaderStage::Compute}}});
-    auto cullLayout = PipelineLayout::Create(
+    const auto cullLayout = PipelineLayout::Create(
         Context, {.Name = "Cull Layout", .DescriptorSetLayouts = {cullSetLayout}});
     auto cullPipeline = ComputePipeline::Create(
         Context,
@@ -251,7 +252,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     cullSet->Write(0, indirectBuffer);
 
     // --- Graphics pipeline: instance-rate color, no descriptors. ---
-    auto drawLayout = PipelineLayout::Create(Context, {.Name = "Indirect Draw Layout"});
+    const auto drawLayout = PipelineLayout::Create(Context, {.Name = "Indirect Draw Layout"});
     const vk::Pipeline drawPipeline = CreateInstancePipeline(
         Context, GetVkPipelineLayout(*drawLayout), GetVkShaderModule(*vertShader->Get()->Module),
         vertShader->Get()->Module->GetEntryPoint().c_str(),

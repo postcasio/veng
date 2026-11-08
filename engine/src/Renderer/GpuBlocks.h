@@ -211,19 +211,8 @@ namespace Veng::Renderer
     static_assert(sizeof(GpuCullCandidate) == 48,
                   "GpuCullCandidate must match the shader CullCandidate (48 bytes)");
 
-    // VkDrawIndexedIndirectCommand laid out by hand (20 bytes), the stride the
-    // indirect geometry pass issues over.
-    struct DrawIndexedIndirectCommand
-    {
-        u32 IndexCount;
-        u32 InstanceCount;
-        u32 FirstIndex;
-        i32 VertexOffset;
-        u32 FirstInstance;
-    };
-
-    static_assert(sizeof(DrawIndexedIndirectCommand) == 20,
-                  "DrawIndexedIndirectCommand must match VkDrawIndexedIndirectCommand");
+    // The indirect geometry pass issues over DrawIndexedIndirectCommand records
+    // (Veng/Renderer/Types.h), 20 bytes apart.
 
     // The surface push block (vertex stage), matching surface.slang PushConstants:
     // FrameBase folds the ring-buffered DrawData region into the candidate id; the

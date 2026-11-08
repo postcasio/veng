@@ -1,12 +1,48 @@
 # The renderer — RenderGraph, SceneRenderer, Viewport, bindless
 
-The public renderer API lives under `engine/include/Veng/Renderer/` and its Vulkan backend under
-`engine/src/Renderer/Backend/` (the public class lives in `Veng/Renderer/X.h`; its impl in
-`src/Renderer/Backend/X.cpp`). Project-wide conventions — error policy, the Native idiom, resource
+The public renderer API lives under `engine/include/Veng/Renderer/` and the GPU backend under
+`engine/src/Renderer/Backend/<backend>/` (the public class lives in `Veng/Renderer/X.h`; its Vulkan
+impl in `src/Renderer/Backend/Vulkan/X.cpp`). Project-wide conventions — error policy, the Native idiom, resource
 ownership — live in [the root CLAUDE.md](../../../CLAUDE.md); the runtime overview and the
 `Application` drive in [engine/CLAUDE.md](../../CLAUDE.md); the scene/ECS layer in
 [../Scene/CLAUDE.md](../Scene/CLAUDE.md); materials and shaders in
 [../Asset/CLAUDE.md](../Asset/CLAUDE.md).
+
+## The GPU backend: one per build, behind a compile-time boundary
+
+`VE_GPU_BACKEND` (root `CMakeLists.txt`) chooses the backend a tree compiles; its sources live in
+`Backend/<backend>/` and are the only renderer code naming a graphics API. Everything else is
+engine-typed, and meets the backend at a handful of private seams:
+
+- **Synchronization is decided device-free.** `BarrierDecision.h` holds the hazard rule
+  (`DecideBarrier`, `ScopeFor`, `ScopeForLayout`) in the engine's own vocabulary — `SyncStage` and
+  `SyncAccess` bitmasks and the `ImageLayout` class of use — and `RenderGraphSchedule.h` and
+  `TransientAllocation.h` derive the graph's schedule from it. An image's tracked per-subresource
+  state is that same vocabulary. The Vulkan backend maps a decision onto pipeline stages, access
+  masks and layouts (`Backend/Vulkan/SyncMapping.h`, one Vulkan bit per engine bit) only when it
+  records the barrier.
+- **The graph records barriers through `BarrierBatch.h`**, a device-free declaration the backend
+  implements, so `RenderGraph.cpp` includes no backend header. Out-of-graph work orders itself with
+  `CommandBuffer::PrepareForAccess` — the image overload against the image's tracked state, the
+  buffer overload between two named sets of access kinds — never a raw barrier.
+- **A frame slot is device-free** (`SynchronizationFrame.h`: its fence and command buffer); the
+  acquire semaphore stays with the Vulkan context, since not every backend acquires through one.
+- **The indirect records are engine types** (`DrawIndexedIndirectCommand`, `DrawIndirectCommand`,
+  `DispatchIndirectCommand` in `Types.h`, size-asserted); the Vulkan backend asserts each matches
+  its `Vk*` counterpart field for field.
+- **Device limits come from `DeviceCapabilities`**, the buffer offset alignments among them.
+- **A window's presentation surface** is created by the backend (`CreatePresentationSurface`,
+  `WindowNative.h`) and held by the window as an opaque handle.
+- **Apple objects** reach the video recorder and MetalFX through `AppleInterop.h` (+0 references);
+  the Vulkan backend implements it in `Backend/Vulkan/MetalInterop.mm` through the Metal-object
+  export, and the device and the frame-split shared event already reach a caller through `Context`.
+- **The GPU test probe** is `Renderer::HasGpuDevice` (`Veng/Renderer/DeviceProbe.h`), answered by
+  the backend; a test that includes a backend header or `Native.h` registers only in a tree built
+  against that backend.
+
+`Veng/Renderer/Native.h` is the one public interop header: it compiles only in a Vulkan tree, holds
+the vulkan.hpp configuration the backend builds on, and declares the raw-handle accessors the
+backend defines. The `ImGui` layer still reaches the Vulkan backend's headers directly.
 
 ## RenderGraph: barriers fall out of declared use
 
@@ -39,7 +75,7 @@ changed); per-frame data never recompiles. See `BuildCompositeGraph` (compile) a
 compiled graph held across frames, imports bound per frame, re-compiled on resize.
 
 **A pass's transitions record as one barrier command**, however many resources it declares
-(`Backend::BarrierBatch`): each is still decided against the image's live tracked state; only the
+(`BarrierBatch`): each is still decided against the image's live tracked state; only the
 recording is batched, into one command whose stage masks are the union of its barriers'.
 
 **A read in a new pipeline stage takes a barrier even when the layout already matches.** A barrier
@@ -651,7 +687,7 @@ valid extent), and the bloom mask, which MetalFX does not carry, takes its own "
 pass. The filter does nothing under `TAAU`/`MetalFXTemporal`, and composes with every other mode.
 
 **Both are owned by `MetalFxUpscale`, and both fall back where MetalFX cannot run.** It reads the
-device's support once (`Backend::QueryMetalFxSupport`), holds each scaler only while its mode is
+device's support once (`QueryMetalFxSupport`), holds each scaler only while its mode is
 wired, keeps one across a reconfigure that moved neither allocation, and records a shape MetalFX
 refused. `ClampSettings` runs every request through `ResolveMetalFxSettings`, so on a device without
 MetalFX — any non-Apple platform, a system without the framework, a device the scaler does not
@@ -665,8 +701,9 @@ MetalFX choice is configured, so no other configuration pays for the usage. Each
 `Context::SplitFrame` (see "Splitting a frame for platform GPU work"), and its encoder commits a
 command buffer on the scaler's own `MTLCommandQueue` that waits the split's shared event, encodes the
 scaler, and signals it. The pass's declared accesses (sampled inputs, a storage-written output) place
-the graph's barriers on either side as for any compute pass. `Backend/MetalFx.{h,mm}` is the one
-translation unit that names MetalFX, which is weak-linked; its header is Vulkan- and Metal-free and
+the graph's barriers on either side as for any compute pass. `MetalFx.{h,mm}` is the one
+translation unit that names MetalFX, which is weak-linked; it reaches Metal objects only through
+`AppleInterop.h`, so it is backend-neutral, and its header is free of every graphics API and
 compiles to inert stubs elsewhere. `tests/gpu/taa_stability.cpp` holds the temporal scaler to the
 TAA cases' stillness claims on bounds sized to the scaler's own residual, and the spatial scaler to
 placing a half-scale render where native lies.
@@ -3633,7 +3670,7 @@ its dispatch to several sinks (`tests/gpu/frame_capture.cpp`); that a capture co
 right pixels is a live look.
 
 **An externally-owned platform texture can be the image a sink hands over.**
-`Renderer::Backend::ImportExternalTexture` (`Veng/Renderer/Backend/MetalInterop.h`) wraps one as a
+`Renderer::Apple::ImportExternalTexture` (`src/Renderer/AppleInterop.h`) wraps one as a
 managed `Image` whose texels live in the external memory — the engine renders straight into it and
 never copies out. `Context::IsExternalTextureImportSupported()` answers whether the device has the
 capability (Apple, with the Metal-object extension enabled — headless included, since the import

@@ -23,7 +23,7 @@ namespace Veng::Renderer
         Ref<DescriptorSetLayout> Layout;
     };
 
-    /// @brief A Vulkan descriptor set with typed write helpers and per-binding resource ownership.
+    /// @brief A descriptor set with typed write helpers and per-binding resource ownership.
     class VE_API DescriptorSet
     {
     public:
@@ -36,7 +36,7 @@ namespace Veng::Renderer
             return Ref<DescriptorSet>(new DescriptorSet(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan descriptor set until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU descriptor set until the GPU is done with it.
         ~DescriptorSet();
 
         DescriptorSet(const DescriptorSet&) = delete;

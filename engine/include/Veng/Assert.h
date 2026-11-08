@@ -23,7 +23,7 @@ namespace Veng::Detail
     /// @brief Fatal error handler for unrecoverable conditions.
     ///
     /// Handles anything an application cannot sensibly recover from at runtime —
-    /// API misuse, device loss, OOM, unsupported enum/format, a failed Vulkan
+    /// API misuse, device loss, OOM, unsupported enum/format, a failed GPU API
     /// call. Genuinely recoverable operations (e.g. loading a shader file) return
     /// Veng::Result<T> instead (see Result.h). veng raises no exceptions and
     /// builds with -fno-exceptions.

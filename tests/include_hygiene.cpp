@@ -9,6 +9,12 @@
 // Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
 // escape hatch that exposes raw handles and is expected to need Vulkan headers.
 //
+// Compiling catches an include that fails to resolve; it cannot catch a header naming a backend
+// type it never needs complete, or a backend header reached through a relative path. So the
+// binary also scans every public engine header's text, and fails on a backend include or a
+// Vulkan / VMA name (vk::, Vk*, VK_*, Vma*, vma*) anywhere in it — comments included, since a
+// public doc comment states the contract in engine terms. Native.h is excluded there too.
+//
 // The Veng/Asset/* headers come from libveng_assetpack,
 // linked PUBLIC by veng — this sweep also proves that boundary stays
 // Vulkan-free.
@@ -200,6 +206,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/DeviceProbe.h>
 #include <Veng/Renderer/Fence.h>
 #include <Veng/Renderer/FluidSim.h>
 #include <Veng/Renderer/GBuffer.h>
@@ -237,7 +244,41 @@
 #include <VengGraph/MaterialCatalog.h>
 #include <VengGraph/MaterialCompile.h>
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <regex>
+#include <string>
+
 int main()
 {
-    return 0;
+    namespace fs = std::filesystem;
+    const fs::path root = VENG_PUBLIC_INCLUDE_DIR;
+    const fs::path exempt = root / "Veng" / "Renderer" / "Native.h";
+    const std::regex backendName{
+        R"(\bvk::|\bVk[A-Z]\w*|\bVK_[A-Z]\w*|\bVma[A-Z]\w*|\bvma[A-Z]\w*|vulkan/|vk_mem_alloc|Renderer/Backend/)"};
+
+    int failures = 0;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root))
+    {
+        if (!entry.is_regular_file() || entry.path().extension() != ".h" ||
+            fs::equivalent(entry.path(), exempt))
+        {
+            continue;
+        }
+        std::ifstream file(entry.path());
+        std::string line;
+        int number = 0;
+        while (std::getline(file, line))
+        {
+            ++number;
+            if (std::regex_search(line, backendName))
+            {
+                std::fprintf(stderr, "%s:%d names the GPU backend: %s\n",
+                             entry.path().string().c_str(), number, line.c_str());
+                ++failures;
+            }
+        }
+    }
+    return failures == 0 ? 0 : 1;
 }

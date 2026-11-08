@@ -14,10 +14,10 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Native.h>
-#include <Veng/Renderer/Backend/Barrier.h>
-#include <Veng/Renderer/Backend/DescriptorPool.h>
-#include <Veng/Renderer/Backend/Natives.h>
-#include <Veng/Renderer/Backend/TypeMapping.h>
+#include "../Renderer/Backend/Vulkan/Barrier.h"
+#include "../Renderer/Backend/Vulkan/DescriptorPool.h"
+#include "../Renderer/Backend/Vulkan/Natives.h"
+#include "../Renderer/Backend/Vulkan/TypeMapping.h"
 
 #include <Veng/Vendor/ImGui.h>
 #include <Veng/Vendor/FontAwesome7.h>
@@ -632,6 +632,7 @@ namespace Veng
         // count must cover the frame in flight at queueing time plus the subsequent
         // MaxFramesInFlight cycles — hence MaxFramesInFlight + 1.
         m_PendingTextureRemovals.push_back(
-            {texture.GetNative().Set, m_Context.GetMaxFramesInFlight() + 1});
+            {.Set = texture.GetNative().Set,
+             .FramesRemaining = m_Context.GetMaxFramesInFlight() + 1});
     }
 }

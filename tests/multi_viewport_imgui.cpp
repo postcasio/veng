@@ -24,7 +24,7 @@
 // passthrough of the UI color), standing in for the swapchain composite that a
 // headless run has no surface for.
 //
-// Skips cleanly (exit 77) on a machine with no usable Vulkan ICD.
+// Skips cleanly (exit 77) on a machine with no usable GPU device.
 
 #include <cstdio>
 #include <filesystem>
@@ -256,7 +256,7 @@ namespace
 
 int main()
 {
-    if (!Test::HasVulkanDriver())
+    if (!Test::HasGpuDevice())
     {
         return 77;
     }

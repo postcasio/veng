@@ -116,7 +116,7 @@ int main()
     const int port = VengTest::ReadPort(launched);
     if (port == 0)
     {
-        // No listening line: the editor most likely skipped for want of a Vulkan ICD or a display
+        // No listening line: the editor most likely skipped for want of a GPU device or a display
         // (it opens a real window). Reap it and report the gpu-band skip code.
         VengTest::Terminate(launched);
         std::fprintf(stderr, "editor_mcp_conformance: no 'listening on' line from veng-editor; "

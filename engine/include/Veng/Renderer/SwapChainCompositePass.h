@@ -31,7 +31,7 @@ namespace Veng::Renderer
     /// @brief Construction parameters for SwapChainCompositePass.
     struct SwapChainCompositePassInfo
     {
-        /// @brief Vulkan context for pipeline and resource creation.
+        /// @brief Render context for pipeline and resource creation.
         Context& Context;
         /// @brief ImGui layer supplying the overlay output view, or null for no overlay.
         ///

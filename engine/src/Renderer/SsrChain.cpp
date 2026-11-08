@@ -22,7 +22,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/DeviceCapabilities.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
@@ -485,8 +485,7 @@ namespace Veng::Renderer
                                        });
 
         // The constants ring: one region per frame in flight, each on the uniform offset alignment.
-        const u64 minAlign =
-            GetVkPhysicalDevice(m_Context).getProperties().limits.minUniformBufferOffsetAlignment;
+        const u64 minAlign = m_Context.GetDeviceCapabilities().UniformBufferOffsetAlignment;
         const u64 alignment = std::max<u64>(minAlign, 1);
         m_ConstantsStride =
             static_cast<u32>((sizeof(SsrConstants) + alignment - 1) / alignment * alignment);

@@ -889,7 +889,7 @@ namespace Veng::Renderer
         void RecordFrameHistory(const mat4& viewProj, const dmat4& directionViewProj,
                                 vec2 jitterNdc, const FrameScale& scale);
 
-        /// @brief Vulkan context for all resource creation.
+        /// @brief Render context for all resource creation.
         Context& m_Context;
         /// @brief Asset manager for engine shader loading.
         AssetManager& m_Assets;

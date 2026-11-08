@@ -2,7 +2,7 @@
 
 #include <Veng/Veng.h>
 
-#include "Backend/MetalFx.h"
+#include "MetalFx.h"
 #include "FrameTopology.h"
 
 namespace Veng
@@ -107,13 +107,10 @@ namespace Veng::Renderer
         [[nodiscard]] f32 GetTemporalRenderScaleFloor() const;
 
         /// @brief The temporal scaler; null while not wired.
-        [[nodiscard]] Backend::MetalFxTemporalScaler* GetTemporal() const
-        {
-            return m_Temporal.get();
-        }
+        [[nodiscard]] MetalFxTemporalScaler* GetTemporal() const { return m_Temporal.get(); }
 
         /// @brief The spatial scaler; null while not wired.
-        [[nodiscard]] Backend::MetalFxSpatialScaler* GetSpatial() const { return m_Spatial.get(); }
+        [[nodiscard]] MetalFxSpatialScaler* GetSpatial() const { return m_Spatial.get(); }
 
         /// @brief The motion pass's pipeline, writing the motion target and the conditioned colour.
         [[nodiscard]] const Ref<GraphicsPipeline>& GetMotionPipeline() const
@@ -130,11 +127,11 @@ namespace Veng::Renderer
     private:
         Context& m_Context;
         /// @brief The device's MetalFX support, read at construction.
-        Backend::MetalFxSupport m_Support;
+        MetalFxSupport m_Support;
         /// @brief The temporal scaler, while MetalFXTemporal is wired.
-        Unique<Backend::MetalFxTemporalScaler> m_Temporal;
+        Unique<MetalFxTemporalScaler> m_Temporal;
         /// @brief The spatial scaler, while the MetalFXSpatial promotion is wired.
-        Unique<Backend::MetalFxSpatialScaler> m_Spatial;
+        Unique<MetalFxSpatialScaler> m_Spatial;
         /// @brief MetalFX refused the temporal shape last asked for.
         bool m_TemporalRefused = false;
         /// @brief MetalFX refused the spatial shape last asked for.

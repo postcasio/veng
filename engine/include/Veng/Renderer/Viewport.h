@@ -314,7 +314,7 @@ namespace Veng::Renderer
     /// @brief Construction parameters for Viewport.
     struct ViewportInfo
     {
-        /// @brief The Vulkan context for resource creation.
+        /// @brief The render context for resource creation.
         Context& Context;
         /// @brief Asset manager the owned SceneRenderer loads its engine shaders through.
         ///
@@ -1092,7 +1092,7 @@ namespace Veng::Renderer
         /// when control is disabled or timing is unsupported.
         void UpdateDynamicResolution();
 
-        /// @brief The Vulkan context, for bindless registration.
+        /// @brief The render context, for bindless registration.
         Context& m_Context;
         /// @brief The minted identity, resolved through Context::GetViewportRegistry().
         ViewportId m_Id;

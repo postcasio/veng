@@ -28,8 +28,8 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Texture.h>
-#include <Veng/Renderer/Backend/SynchronizationFrame.h>
-#include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Renderer/SynchronizationFrame.h>
+#include <Renderer/Backend/Vulkan/TypeMapping.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -37,6 +37,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
+#include <Renderer/Backend/Vulkan/Natives.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>

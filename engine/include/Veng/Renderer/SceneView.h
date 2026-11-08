@@ -85,7 +85,7 @@ namespace Veng::Renderer
     /// @brief Construction parameters for SceneRenderer.
     struct SceneRendererInfo
     {
-        /// @brief The Vulkan context for resource creation.
+        /// @brief The render context for resource creation.
         Context& Context;
         /// @brief Asset manager used to load engine shaders (lighting pass, fullscreen blit).
         ///

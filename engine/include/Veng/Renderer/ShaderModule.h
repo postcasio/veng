@@ -43,14 +43,14 @@ namespace Veng::Renderer
         ///
         /// Returns an error Result when the file cannot be opened, so callers can recover
         /// (report and continue, retry on hot-reload) rather than terminate. Invalid SPIR-V
-        /// past the file-open point is fatal via the Vulkan call.
-        /// @param context  Context for Vulkan shader-module creation.
+        /// past the file-open point is fatal via the backend call.
+        /// @param context  Context for shader-module creation.
         /// @param info     File path and entry-point parameters.
         /// @return A shared reference to the new module, or an error string.
         static Result<Ref<ShaderModule>> Create(Context& context, const ShaderModuleInfo& info);
 
         /// @brief Creates a ShaderModule from an in-memory SPIR-V binary.
-        /// @param context  Context for Vulkan shader-module creation.
+        /// @param context  Context for shader-module creation.
         /// @param info     Binary span and entry-point parameters.
         /// @return A shared reference to the new module.
         static Ref<ShaderModule> Create(Context& context, const ShaderModuleBinaryInfo& info)
@@ -58,7 +58,7 @@ namespace Veng::Renderer
             return Ref<ShaderModule>(new ShaderModule(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan shader module until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU shader module until the GPU is done with it.
         ~ShaderModule();
 
         ShaderModule(const ShaderModule&) = delete;
@@ -83,7 +83,7 @@ namespace Veng::Renderer
         string m_Name;
         /// @brief Entry-point name.
         string m_EntryPoint;
-        /// @brief Backend Vulkan shader module.
+        /// @brief Backend shader module.
         Unique<Native> m_Native;
     };
 }

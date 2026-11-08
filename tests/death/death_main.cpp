@@ -23,7 +23,7 @@
 //   - Pure-logic: no Context, run with no ICD (registered `death`).
 //   - GPU-coupled: need a headless Context; registered `gpu;death` with
 //     SKIP_RETURN_CODE so they report *skipped* (not failed) on a machine with
-//     no Vulkan driver, via HasVulkanDriver().
+//     no GPU device, via HasGpuDevice().
 
 #include <csignal>
 #include <cstdlib>
@@ -49,7 +49,9 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/ViewportRegistry.h>
-#include <Veng/Renderer/Backend/TypeMapping.h>
+#ifdef VE_GPU_BACKEND_VULKAN
+#include <Renderer/Backend/Vulkan/TypeMapping.h>
+#endif
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CollisionShape.h>
@@ -117,7 +119,7 @@ VE_SYSTEM(CollideSystemB, 0x4DEAD51D00000001ULL, "CollideSystemB"); // same id â
 
 namespace
 {
-    // Exit code that marks a GPU-coupled case as skipped (no Vulkan driver). Must
+    // Exit code that marks a GPU-coupled case as skipped (no GPU device). Must
     // match SKIP_RETURN_CODE in CMakeLists.txt. CTest's skip detection takes
     // precedence over PASS_REGULAR_EXPRESSION, so a driverless run reports
     // *skipped* rather than failing on a missed message.
@@ -167,6 +169,7 @@ namespace
         (void)layout.GetStride();
     }
 
+#ifdef VE_GPU_BACKEND_VULKAN
     void RunToVkUnmapped()
     {
         // A Format value outside the mapped range hits ToVk's "unmapped" assert.
@@ -174,6 +177,7 @@ namespace
         const vk::Format mapped = ToVk(static_cast<Format>(bad));
         (void)mapped;
     }
+#endif
 
     void RunFrameClockNonPositiveDelta()
     {
@@ -523,7 +527,7 @@ namespace
     template <typename Body>
     [[noreturn]] void InGpuContext(Body&& body)
     {
-        if (!Test::HasVulkanDriver())
+        if (!Test::HasGpuDevice())
         {
             std::_Exit(SkipExitCode);
         }
@@ -693,10 +697,12 @@ int main(int argc, char** argv)
     {
         RunVertexFormatUnknown();
     }
+#ifdef VE_GPU_BACKEND_VULKAN
     else if (name == "tovk_unmapped")
     {
         RunToVkUnmapped();
     }
+#endif
     else if (name == "frame_clock_nonpositive_delta")
     {
         RunFrameClockNonPositiveDelta();

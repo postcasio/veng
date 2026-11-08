@@ -325,7 +325,7 @@ namespace Veng
             return std::nullopt;
         }
 
-        // [0,1] (top-left origin) to NDC. The engine projection bakes the Vulkan Y flip, so a
+        // [0,1] (top-left origin) to NDC. The engine projection bakes the clip-space Y flip, so a
         // top-left fraction maps to NDC directly without a second flip.
         const vec2 fraction = regionPoint / vec2(view.Region.Extent);
         const vec2 ndc = fraction * 2.0f - 1.0f;

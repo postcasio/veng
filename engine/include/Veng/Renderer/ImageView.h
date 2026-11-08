@@ -40,7 +40,7 @@ namespace Veng::Renderer
             return Ref<ImageView>(new ImageView(context, info));
         }
 
-        /// @brief Defers destruction of the Vulkan image view until the GPU is done with it.
+        /// @brief Defers destruction of the GPU image view until the GPU is done with it.
         ///
         /// Swapchain image views are destroyed immediately (the GPU is idle during swapchain teardown).
         ~ImageView();

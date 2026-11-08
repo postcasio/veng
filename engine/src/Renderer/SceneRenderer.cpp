@@ -95,7 +95,6 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/LightPacking.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/TaaJitter.h>

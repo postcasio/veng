@@ -65,7 +65,7 @@ namespace Veng::Renderer
             return Ref<Image>(new Image(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan image until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU image until the GPU is done with it.
         ///
         /// Unmanaged (swapchain) images are not owned by veng and are not destroyed.
         ~Image();
@@ -106,8 +106,8 @@ namespace Veng::Renderer
         /// @brief Returns the image dimensionality.
         [[nodiscard]] ImageType GetType() const { return m_Type; }
 
-        // Per-subresource layout/stage/access tracking lives in Native (it holds vk::
-        // types). The render graph and the engine's transfer paths read and update it
+        // Per-subresource layout/stage/access tracking lives in Native (the backend's own
+        // state). The render graph and the engine's transfer paths read and update it
         // through the backend; callers do not reason about layout directly.
 
         /// @brief Generates a complete mip chain from the base level, recording into `commandBuffer`.
@@ -122,7 +122,7 @@ namespace Veng::Renderer
 
         /// @brief Uploads a precooked mip chain synchronously, one copy region per level.
         ///
-        /// Records one VkBufferImageCopy per region from a single staging buffer and performs no
+        /// Records one copy region per supplied region from a single staging buffer and performs no
         /// GPU mip generation — every level's pixels come precomputed in `span`. Blocks until the
         /// copy completes. Used by the cooked-texture loader; runtime-built single-mip textures
         /// use the GPU-mipgen UploadSync(span) overload instead.
@@ -168,8 +168,8 @@ namespace Veng::Renderer
 
         /// @brief Uploads a precooked mip chain on a worker thread, one copy region per level.
         ///
-        /// The transfer-queue sibling of UploadSync(span, regions): records one VkBufferImageCopy
-        /// per region from a single staging buffer and performs no GPU mip generation. Lifetime
+        /// The transfer-queue sibling of UploadSync(span, regions): records one copy region
+        /// per supplied region from a single staging buffer and performs no GPU mip generation. Lifetime
         /// and queue-handoff semantics match Upload(tasks, data).
         /// @param tasks   The task system to dispatch the upload job on.
         /// @param data    All mip levels' pixels, tightly packed largest-first.
@@ -191,16 +191,16 @@ namespace Veng::Renderer
         /// @brief Opaque backend handle; defined in Image.cpp.
         struct Native;
 
-        /// @brief Adopts an already-created Vulkan image the engine owns and must destroy.
+        /// @brief Adopts an already-created backend image the engine owns and must destroy.
         ///
-        /// The managed sibling of the presentable-image path: the backend has created the VkImage
+        /// The managed sibling of the presentable-image path: the backend has created the image
         /// itself — importing external memory, where the create call takes a chained descriptor
         /// Create() cannot express — so the image retires through the ordinary deferred-destruction
         /// path, teardown callback included, rather than being left alone as a swapchain image is.
         /// Backend-only: Native is an incomplete type to everything else.
         /// @param context The owning context; the image must not outlive it.
         /// @param info    Metadata describing the already-created image (extent, format, usage).
-        /// @param native  Backend native struct holding the created VkImage and any teardown.
+        /// @param native  Backend native struct holding the created image and any teardown.
         /// @return A shared reference to the new image.
         static Ref<Image> CreateImported(Context& context, const ImageInfo& info,
                                          Unique<Native> native);
@@ -211,14 +211,14 @@ namespace Veng::Renderer
     private:
         Image(Context& context, const ImageInfo& info);
 
-        /// @brief Adopting constructor: the Native already wraps an existing vk::Image.
+        /// @brief Adopting constructor: the Native already wraps an existing backend image.
         ///
         /// Sets up the engine-side bookkeeping only; @p managed decides whether the destructor
-        /// retires the handle (an imported image, whose VkImage veng created) or leaves it alone
+        /// retires the handle (an imported image, whose backend image veng created) or leaves it alone
         /// (a presentable swapchain image, which the presentation engine owns).
         /// @param context The owning context.
         /// @param info    Metadata describing the existing image.
-        /// @param native  Backend native struct holding the existing VkImage.
+        /// @param native  Backend native struct holding the existing image.
         /// @param managed Whether the destructor retires the handle and its allocation.
         Image(Context& context, const ImageInfo& info, Unique<Native> native, bool managed);
 

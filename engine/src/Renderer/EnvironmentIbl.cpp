@@ -20,7 +20,6 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 
@@ -445,22 +444,11 @@ namespace Veng::Renderer
             {
                 RecordEquirectToCube(cmd, environment);
                 cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = CubeFaces},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = RadianceCubeSize,
-                                    .height = RadianceCubeSize,
-                                    .depth = 1},
+                const BufferImageCopyRegion region{
+                    .ArrayLayers = CubeFaces,
+                    .Extent = {RadianceCubeSize, RadianceCubeSize, 1},
                 };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_RadianceImage),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*staging), 1, &region);
+                cmd.CopyImageToBuffer(m_RadianceImage, staging, {&region, 1});
                 cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
             });
 

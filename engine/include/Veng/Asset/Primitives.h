@@ -62,7 +62,7 @@ namespace Veng::Primitives
     /// **Camera space is +Y up, but the rect fractions and the UVs are top-left origin, y-down.**
     /// Both conventions are load-bearing and they differ deliberately. A rect fraction of (0,0) is
     /// the window's *top-left* and maps to camera-space +Y, because the engine projection bakes the
-    /// Vulkan Y flip so a top-left fraction maps to NDC directly with no second flip (the same fact
+    /// clip-space Y flip so a top-left fraction maps to NDC directly with no second flip (the same fact
     /// ScreenToWorldRay in Veng/Scene/SceneSystem.h relies on). UV.y runs the same way — 0 at the
     /// rect's top edge — so the shell samples a document in the orientation the document lays out in.
     /// @warning A generator written to "+Y up" without stating which way V runs produces a

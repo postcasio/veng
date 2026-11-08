@@ -14,7 +14,7 @@
 /// declaration order — no culling or reordering. Transients whose format, extent and
 /// usage match and whose lifetimes do not overlap may share one backing image.
 ///
-/// Resources are addressed by a Vulkan-free ResourceId, not a concrete Ref<ImageView>:
+/// Resources are addressed by a backend-free ResourceId, not a concrete Ref<ImageView>:
 /// a transient is graph-owned (declared with CreateTransient, allocated and resolved
 /// by the graph); an import is an external concrete resource (declared with Import,
 /// its view supplied per frame to Execute). A pass callback receives a PassContext
@@ -471,7 +471,7 @@ namespace Veng::Renderer
     private:
         friend class RenderGraph;
 
-        /// @brief The Vulkan schedule and graph-allocated transient images.
+        /// @brief The baked schedule and graph-allocated transient images.
         ///
         /// Defined in RenderGraph.cpp — the public/backend split keeps this header
         /// backend-free (guarded by the include_hygiene test).

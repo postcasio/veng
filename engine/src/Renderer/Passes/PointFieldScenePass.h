@@ -244,7 +244,7 @@ namespace Veng::Renderer
             u64 RunRegionStride = 0;
             /// @brief Host-mapped indirect-args buffer, ringed framesInFlight deep.
             ///
-            /// One VkDrawIndexedIndirectCommand per frame region. The CPU presets the fixed fields
+            /// One DrawIndexedIndirectCommand per frame region. The CPU presets the fixed fields
             /// and zeroes indexCount before the dispatch; the compute pass finalizes indexCount to
             /// 6·survivors. Host-mapped so the CPU reads back the prior frame's index count for the
             /// CompactedPoints stat.

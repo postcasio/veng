@@ -23,7 +23,7 @@ namespace Veng::Renderer
 
     /// @brief Describes the per-vertex attribute layout of a vertex buffer.
     ///
-    /// Used to build the Vulkan vertex-input state for a graphics pipeline. Compute
+    /// Used to build the vertex-input state for a graphics pipeline. Compute
     /// Stride (total vertex size in bytes) and the attribute offset table from a list
     /// of VertexBufferElement descriptors.
     class VE_API VertexBufferLayout

@@ -23,7 +23,7 @@ namespace Veng::Renderer
             return Unique<Fence>(new Fence(context, name, signaled));
         }
 
-        /// @brief Destroys the Vulkan fence immediately (fences are single-owner and frame-synchronized).
+        /// @brief Destroys the GPU fence immediately (fences are single-owner and frame-synchronized).
         ~Fence();
 
         Fence(const Fence&) = delete;
@@ -50,7 +50,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Debug name.
         string m_Name;
-        /// @brief Backend Vulkan fence.
+        /// @brief Backend fence.
         Unique<Native> m_Native;
     };
 }

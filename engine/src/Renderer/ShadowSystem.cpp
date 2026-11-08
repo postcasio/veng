@@ -11,7 +11,7 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/DeviceCapabilities.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -176,17 +176,16 @@ namespace Veng::Renderer
                                                    });
         ClearShadowDepth(m_Context, m_DummyView, "Clear Dummy Shadow");
 
-        // ShadowConstants ring: framesInFlight regions, each aligned to
-        // minUniformBufferOffsetAlignment. Dynamic offset at bind time = frame * stride.
-        const u64 minAlign =
-            GetVkPhysicalDevice(m_Context).getProperties().limits.minUniformBufferOffsetAlignment;
+        // ShadowConstants ring: framesInFlight regions, each aligned to the uniform-buffer
+        // offset alignment. Dynamic offset at bind time = frame * stride.
+        const u64 minAlign = m_Context.GetDeviceCapabilities().UniformBufferOffsetAlignment;
         const u64 blockSize = sizeof(ShadowConstantsBlock);
         const u64 alignment = minAlign == 0 ? 1 : minAlign;
         m_ConstantsRingStride =
             static_cast<u32>(((blockSize + alignment - 1) / alignment) * alignment);
         VE_ASSERT(m_ConstantsRingStride % alignment == 0,
                   "ShadowConstants ring stride {} is not a multiple of "
-                  "minUniformBufferOffsetAlignment {}",
+                  "the uniform-buffer offset alignment {}",
                   m_ConstantsRingStride, alignment);
 
         m_ConstantsBuffer = Buffer::Create(
@@ -208,7 +207,7 @@ namespace Veng::Renderer
             static_cast<u32>(((punctualBlockSize + alignment - 1) / alignment) * alignment);
         VE_ASSERT(m_PunctualRingStride % alignment == 0,
                   "PunctualShadowBlock ring stride {} is not a multiple of "
-                  "minUniformBufferOffsetAlignment {}",
+                  "the uniform-buffer offset alignment {}",
                   m_PunctualRingStride, alignment);
 
         m_PunctualBuffer = Buffer::Create(

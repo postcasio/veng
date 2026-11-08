@@ -43,6 +43,10 @@ endif ()
 # The consumption mode the helper modules resolve their mode-keyed path variables against.
 set(VENG_PACKAGE_MODE "BUILD_TREE")
 
+# The GPU backend the engine was built against (VE_GPU_BACKEND). A consumer compiling against a
+# backend's interop header, or registering tests that only run on one backend, reads it here.
+set(VENG_GPU_BACKEND "@VE_GPU_BACKEND@")
+
 # The helper *.cmake modules load from the live source tree, so a co-development engine-source
 # edit to a helper (or to the config body) is visible to the game on the next configure.
 set(VENG_CMAKE_HELPER_DIR "@CMAKE_CURRENT_SOURCE_DIR@/cmake")

@@ -11,8 +11,8 @@
 // brackets its own output's Sample ↔ ColorAttachment over disjoint targets) is
 // exercised under the validation gate — not just an isolated preview.
 //
-// Skips cleanly (exit 77) on a machine with no usable Vulkan ICD via
-// Test::HasVulkanDriver().
+// Skips cleanly (exit 77) on a machine with no usable GPU device via
+// Test::HasGpuDevice().
 
 #include <cstdio>
 #include <filesystem>
@@ -71,7 +71,7 @@ namespace
 
 int main()
 {
-    if (!Test::HasVulkanDriver())
+    if (!Test::HasGpuDevice())
     {
         return 77;
     }

@@ -124,9 +124,9 @@ namespace Veng::Renderer
         /// @brief Returns what the GPU last reported.
         [[nodiscard]] const ParticleGpuStats& GetStats() const { return m_Stats; }
 
-        /// @brief Byte offset of the alpha draw's VkDrawIndirectCommand.
+        /// @brief Byte offset of the alpha draw's DrawIndirectCommand.
         static constexpr u64 AlphaDrawOffset = 16;
-        /// @brief Byte offset of the additive draw's VkDrawIndirectCommand.
+        /// @brief Byte offset of the additive draw's DrawIndirectCommand.
         static constexpr u64 AdditiveDrawOffset = 32;
 
     private:

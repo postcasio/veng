@@ -6,7 +6,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Capture/UserMedia.h>
 #include <Veng/Log.h>
-#include <Veng/Renderer/Backend/MetalInterop.h>
+#include "../Renderer/AppleInterop.h"
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ViewportCompositor.h>
@@ -328,8 +328,8 @@ namespace Veng::Capture
         Ref<Renderer::Image>& imported = m_Imports[buffer->Surface];
         if (!imported)
         {
-            imported = Renderer::Backend::ImportExternalTexture(m_Context, buffer->Texture,
-                                                                "Video Capture Target");
+            imported = Renderer::Apple::ImportExternalTexture(m_Context, buffer->Texture,
+                                                              "Video Capture Target");
         }
 
         if (!imported)

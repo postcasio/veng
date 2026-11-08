@@ -50,10 +50,6 @@ function(veng_add_docs)
             "VE_COOK_API="
             "VE_EXPORT_MODULE_ABI()=")
 
-    # Exclude the backend-only headers: they expose vk::/VMA types and are not
-    # part of the consumer-facing surface.
-    set(DOXYGEN_EXCLUDE ${CMAKE_SOURCE_DIR}/engine/include/Veng/Renderer/Backend)
-
     doxygen_add_docs(docs
             ${CMAKE_SOURCE_DIR}/engine/include/Veng
             ${CMAKE_SOURCE_DIR}/assetpack/include/Veng

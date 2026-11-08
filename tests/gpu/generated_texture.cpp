@@ -46,7 +46,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
-#include <Veng/Renderer/Backend/Natives.h>
+#include <Renderer/Backend/Vulkan/Natives.h>
 
 #include <gpu/fixture.h>
 #include <support/TempPath.h>
@@ -1017,7 +1017,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 cmd.EndRendering();
             }
         });
-    std::array<vk::ImageLayout, AdoptedLayer> before{};
+    std::array<ImageLayout, AdoptedLayer> before{};
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
     {
         before[layer] = image->GetNative().At(layer, 0).Layout;
@@ -1038,7 +1038,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         CHECK(image->GetNative().At(layer, 0).Layout == before[layer]);
     }
-    CHECK(image->GetNative().At(AdoptedLayer, 0).Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(image->GetNative().At(AdoptedLayer, 0).Layout == ImageLayout::ShaderReadOnly);
 
     const std::array<std::vector<u8>, LayerCount> layers = ReadLayers(Context, image);
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
@@ -1088,7 +1088,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(service.GetStats().RestoredTotal == 1u);
     for (u32 layer = 0; layer < AdoptedLayer; layer++)
     {
-        CHECK(warm->GetNative().At(layer, 0).Layout == vk::ImageLayout::eUndefined);
+        CHECK(warm->GetNative().At(layer, 0).Layout == ImageLayout::Undefined);
     }
     CHECK(LayerIs(ReadLayers(Context, warm)[AdoptedLayer], 7));
 

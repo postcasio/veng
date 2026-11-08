@@ -47,7 +47,7 @@ namespace Veng::Renderer
 
     /// @brief A spot light's single perspective shadow view.
     ///
-    /// ViewProj maps a world point to the light's clip space (Vulkan ZO, Y-flipped to
+    /// ViewProj maps a world point to the light's clip space (zero-to-one depth, Y-flipped to
     /// match Camera); a fragment in the cone projects to z ∈ [0,1], xy ∈ [-1,1].
     /// Near/Far are the clip range the depth pass uses; the lighting pass reconstructs
     /// the same projective sample.
@@ -110,7 +110,7 @@ namespace Veng::Renderer
     ///
     /// Each face is lookAt(position, position + faceForward, faceUp) with a 90°
     /// perspective; the six forwards/ups are the canonical cube basis (the same set a
-    /// Vulkan cube map expects). far = range, near a small fixed fraction of range.
+    /// cube map's face order expects). far = range, near a small fixed fraction of range.
     /// @param position  World-space light position.
     /// @param range     Light falloff radius; used as the far plane.
     /// @pre range > 0 — asserted.

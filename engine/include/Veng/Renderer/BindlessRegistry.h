@@ -915,7 +915,7 @@ namespace Veng::Renderer
         /// maximum; every other description is returned unchanged. This is the one transform the
         /// global override applies, at both AcquireSampler and SetGlobalAnisotropy.
         /// @param authored  The author's description (the cache key).
-        /// @return The description to build the Vulkan sampler from.
+        /// @return The description to build the sampler from.
         [[nodiscard]] SamplerInfo EffectiveSamplerInfo(const SamplerInfo& authored) const;
 
         /// @brief The slot allocator backing one arrayed binding, or null when @p array is unmapped.

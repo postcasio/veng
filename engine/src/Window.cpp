@@ -1,10 +1,11 @@
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
 #include <Veng/InputEvents.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
-#include <Veng/Renderer/Backend/Natives.h>
+#include "WindowNative.h"
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 #include <Veng/Renderer/Context.h>
-#include <Veng/Renderer/Native.h>
 #include <nfd.h>
 
 #include <algorithm>
@@ -218,10 +219,7 @@ namespace Veng
 
     void Window::CreateSurface(const Renderer::Context& context)
     {
-        VkSurfaceKHR surface;
-        VK_RAW_ASSERT(glfwCreateWindowSurface(GetVkInstance(context), m_Handle, nullptr, &surface),
-                      "Failed to create window surface!");
-        m_Native->Surface = surface;
+        m_Native->PresentationSurface = Renderer::CreatePresentationSurface(context, m_Handle);
     }
 
     void Window::CaptureMouse()
@@ -632,7 +630,7 @@ namespace Veng
                            ? FullscreenMode::Exclusive
                            : FullscreenMode::Borderless;
 
-        // The single VkSurfaceKHR (created once in CreateSurface) is not recreated here: the surface
+        // The single presentation surface (created once in CreateSurface) is not recreated here: the surface
         // wraps the window's swapchain-backing layer, which persists across a monitor move, so moving
         // the same window between monitors does not invalidate it. A platform whose surface does not
         // survive a monitor switch would need surface recreation added to this path.

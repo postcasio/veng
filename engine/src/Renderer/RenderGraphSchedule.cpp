@@ -1,0 +1,270 @@
+#include "RenderGraphSchedule.h"
+
+#include <Veng/Assert.h>
+
+#include <fmt/format.h>
+
+#include <algorithm>
+
+namespace Veng::Renderer
+{
+    namespace
+    {
+        // A buffer slot's tracked scope after one more access: a hazard (the prior access wrote,
+        // or this one writes) resets it to the access's own scope, since the barrier it takes
+        // chains every earlier access behind it; a read widens it.
+        [[nodiscard]] SubresourceState AdvanceBufferScope(const SubresourceState& prior,
+                                                          const SubresourceState& scope)
+        {
+            if (prior.Stage != SyncStage::None &&
+                (IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access)))
+            {
+                return {.Stage = scope.Stage, .Access = scope.Access};
+            }
+            return {.Stage = prior.Stage | scope.Stage, .Access = prior.Access | scope.Access};
+        }
+
+        /// @brief One buffer slot's accesses within a pass, folded into one scope.
+        struct PassBufferScope
+        {
+            /// @brief The buffer's slot.
+            u32 Slot = 0;
+            /// @brief Every stage and access the pass declares on it.
+            SubresourceState Scope;
+        };
+
+        // A pass's buffer accesses, one scope per slot in order of first declaration. Every
+        // barrier a pass takes records before it runs, so a read and a write it declares on one
+        // buffer are one access: two barriers chained between them would order nothing, and the
+        // second would carry the read alone as its source, leaving an earlier write unseen by the
+        // pass's own write.
+        [[nodiscard]] vector<PassBufferScope> FoldPassBufferScopes(const SchedulePass& pass)
+        {
+            vector<PassBufferScope> folded;
+            for (const RenderGraph::Access& access : pass.Accesses)
+            {
+                if (!IsBufferAccess(access.Kind))
+                {
+                    continue;
+                }
+                const auto scope = ScopeFor(access.Kind);
+                const auto found =
+                    std::ranges::find(folded, access.Resource.Index, &PassBufferScope::Slot);
+                if (found == folded.end())
+                {
+                    folded.push_back({.Slot = access.Resource.Index,
+                                      .Scope = {.Stage = scope.Stage, .Access = scope.Access}});
+                    continue;
+                }
+                found->Scope.Stage |= scope.Stage;
+                found->Scope.Access |= scope.Access;
+            }
+            return folded;
+        }
+    }
+
+    vector<ScheduledPass>
+    DeriveRenderGraphSchedule(const std::span<const ScheduleResource> resources,
+                              const std::span<const SchedulePass> passes)
+    {
+        vector<ScheduledPass> schedule;
+        schedule.reserve(passes.size());
+
+        // Tracks which slots have been written by a prior pass, to detect a read before any write.
+        vector<bool> written(resources.size(), false);
+
+        // A buffer carries no runtime tracked state, so the graph tracks each buffer
+        // slot's last declared scope and bakes both halves of a buffer barrier.
+        // Default-constructed entries (no stage/access) mean no prior access.
+        //
+        // Each slot starts at the scope the graph leaves it in. A compiled graph replays every
+        // frame, and may replay more than once into one command buffer (one renderer recording two
+        // views), so a buffer's first access in a replay follows its last access in the replay
+        // before; an image gets the same ordering from its live tracked state.
+        vector<SubresourceState> bufferScope(resources.size());
+        for (const SchedulePass& pass : passes)
+        {
+            for (const PassBufferScope& folded : FoldPassBufferScopes(pass))
+            {
+                SubresourceState& tracked = bufferScope[folded.Slot];
+                tracked = AdvanceBufferScope(tracked, folded.Scope);
+            }
+        }
+
+        for (const SchedulePass& pass : passes)
+        {
+            ScheduledPass baked;
+
+            for (const RenderGraph::Access& access : pass.Accesses)
+            {
+                if (!access.Resource.IsValid())
+                {
+                    VE_ASSERT(access.Kind == AccessKind::ColorAttachment,
+                              "RenderGraph::Compile: pass '{}' declares an access on no resource",
+                              pass.Name);
+                    baked.Attachments.push_back({
+                        .Slot = ScheduledAttachment::UnboundSlot,
+                        .IsDepth = false,
+                        .Load = access.Load,
+                        .Store = access.Store,
+                        .Clear = access.Clear,
+                    });
+                    continue;
+                }
+                const u32 slot = access.Resource.Index;
+                const ScheduleResource& source = resources[slot];
+
+                const bool isBufferAccess = IsBufferAccess(access.Kind);
+
+                VE_ASSERT(isBufferAccess == source.IsBuffer,
+                          "RenderGraph::Compile: pass '{}' declares a {} access on '{}', which is "
+                          "a {} resource",
+                          pass.Name, isBufferAccess ? "buffer" : "image", source.Name,
+                          source.IsBuffer ? "buffer" : "image");
+
+                if (isBufferAccess)
+                {
+                    // A transient buffer read before any pass writes it reads undefined contents.
+                    const bool isBufferRead = IsBufferReadAccess(access.Kind);
+                    if (!source.IsImport && isBufferRead)
+                    {
+                        VE_ASSERT(written[slot],
+                                  "RenderGraph::Compile: transient buffer '{}' is read by pass "
+                                  "'{}' before any pass writes it",
+                                  source.Name, pass.Name);
+                    }
+
+                    // A buffer used as indirect args must declare BufferUsage::Indirect;
+                    // a storage-buffer access must declare BufferUsage::Storage.
+                    if (!source.IsImport)
+                    {
+                        if (access.Kind == AccessKind::IndirectRead)
+                        {
+                            VE_ASSERT(HasFlag(source.BufferUsage, BufferUsage::Indirect),
+                                      "RenderGraph::Compile: transient buffer '{}' is read as "
+                                      "indirect args but lacks BufferUsage::Indirect",
+                                      source.Name);
+                        }
+                        else
+                        {
+                            VE_ASSERT(HasFlag(source.BufferUsage, BufferUsage::Storage),
+                                      "RenderGraph::Compile: transient buffer '{}' is a storage "
+                                      "buffer access but lacks BufferUsage::Storage",
+                                      source.Name);
+                        }
+                    }
+
+                    continue;
+                }
+
+                // A transient read before any pass writes it produces undefined contents.
+                const bool isRead = IsSampledAccess(access.Kind) ||
+                                    access.Kind == AccessKind::StorageRead ||
+                                    access.Kind == AccessKind::StorageReadWrite ||
+                                    access.Kind == AccessKind::TransferSrc;
+                if (!source.IsImport && isRead)
+                {
+                    VE_ASSERT(written[slot],
+                              "RenderGraph::Compile: transient '{}' is read by pass '{}' "
+                              "before any pass writes it",
+                              source.Name, pass.Name);
+                }
+
+                // A transient used as an attachment or sampled must declare the matching ImageUsage.
+                if (!source.IsImport)
+                {
+                    if (access.Kind == AccessKind::ColorAttachment)
+                    {
+                        VE_ASSERT(HasFlag(source.ImageUsage, ImageUsage::ColorAttachment),
+                                  "RenderGraph::Compile: transient '{}' is a color attachment "
+                                  "but lacks ImageUsage::ColorAttachment",
+                                  source.Name);
+                    }
+                    else if (access.Kind == AccessKind::DepthAttachment)
+                    {
+                        VE_ASSERT(HasFlag(source.ImageUsage, ImageUsage::DepthAttachment),
+                                  "RenderGraph::Compile: transient '{}' is a depth attachment "
+                                  "but lacks ImageUsage::DepthAttachment",
+                                  source.Name);
+                    }
+                    else if (IsSampledAccess(access.Kind))
+                    {
+                        VE_ASSERT(HasFlag(source.ImageUsage, ImageUsage::Sampled),
+                                  "RenderGraph::Compile: transient '{}' is sampled "
+                                  "but lacks ImageUsage::Sampled",
+                                  source.Name);
+                    }
+                }
+
+                const auto scope = ScopeFor(access.Kind);
+                baked.Transitions.push_back({.Slot = slot, .Dst = scope});
+
+                if (IsWriteAccess(scope.Access))
+                {
+                    written[slot] = true;
+                }
+
+                if (access.Kind == AccessKind::ColorAttachment ||
+                    access.Kind == AccessKind::DepthAttachment)
+                {
+                    baked.Attachments.push_back({
+                        .Slot = slot,
+                        .IsDepth = access.Kind == AccessKind::DepthAttachment,
+                        .Load = access.Load,
+                        .Store = access.Store,
+                        .Clear = access.Clear,
+                    });
+                }
+            }
+
+            for (const PassBufferScope& folded : FoldPassBufferScopes(pass))
+            {
+                const u32 slot = folded.Slot;
+                const SubresourceState& scope = folded.Scope;
+
+                // A barrier is due on a hazard (the prior access wrote, or this pass writes), and
+                // on a read in a stage or access no earlier read named: the barrier that ordered
+                // those reads after the write reaches only its own destination scope, so the new
+                // read chains after it from the earlier readers' stages, as DecideBarrier does for
+                // images. A read inside the tracked read scope needs none. The scope is OR'd
+                // across reads so a later write waits on every prior read.
+                const SubresourceState& prior = bufferScope[slot];
+                const bool hadPriorAccess = prior.Stage != SyncStage::None;
+                const bool hazard = IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access);
+                const bool newReadScope =
+                    !Covers(prior.Stage, scope.Stage) || !Covers(prior.Access, scope.Access);
+
+                if (hadPriorAccess && hazard)
+                {
+                    baked.BufferBarriers.push_back({
+                        .Slot = slot,
+                        .SrcStage = prior.Stage,
+                        .SrcAccess = prior.Access,
+                        .DstStage = scope.Stage,
+                        .DstAccess = scope.Access,
+                    });
+                }
+                else if (hadPriorAccess && newReadScope)
+                {
+                    baked.BufferBarriers.push_back({
+                        .Slot = slot,
+                        .SrcStage = prior.Stage,
+                        .SrcAccess = SyncAccess::None,
+                        .DstStage = scope.Stage,
+                        .DstAccess = scope.Access,
+                    });
+                }
+                bufferScope[slot] = AdvanceBufferScope(prior, scope);
+
+                if (IsWriteAccess(scope.Access))
+                {
+                    written[slot] = true;
+                }
+            }
+
+            schedule.push_back(std::move(baked));
+        }
+
+        return schedule;
+    }
+}

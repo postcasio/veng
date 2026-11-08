@@ -25,7 +25,7 @@ Application::Frame
      CaptureSink::AcquireTarget(slot, extent) ──► VideoRecorder
                                                     RecorderCore::Acquire(slot)
                                                       VideoRecorderBackend::AcquirePixelBuffer()
-                                                    Backend::ImportExternalTexture(texture)
+                                                    Apple::ImportExternalTexture(texture)  
      SwapChainCompositePass  → that imported image, in the sink's colour space
   Context::BeginFrame — slot retired ──► VideoRecorder::OnSlotRetired(slot)
                                             RecorderCore::Retire(slot)

@@ -30,7 +30,7 @@ namespace Veng::Renderer
         /// @brief When false (default), the binding is static: written at setup or between frames,
         /// then bound — no descriptor-indexing flags. When true, the binding is bindless: may
         /// be updated while a set is bound (e.g. WriteArray into a streaming table) — opts into
-        /// UpdateAfterBind/partiallyBound. The engine derives the Vulkan flags from this intent.
+        /// UpdateAfterBind/partiallyBound. The backend derives its flags from this intent.
         bool Bindless = false;
     };
 
@@ -43,7 +43,7 @@ namespace Veng::Renderer
         vector<DescriptorBinding> Bindings;
     };
 
-    /// @brief A Vulkan descriptor set layout describing the shape of a descriptor set.
+    /// @brief A descriptor set layout describing the shape of a descriptor set.
     class VE_API DescriptorSetLayout
     {
     public:
@@ -57,7 +57,7 @@ namespace Veng::Renderer
             return Ref<DescriptorSetLayout>(new DescriptorSetLayout(context, info));
         }
 
-        /// @brief Retires the Vulkan descriptor set layout through the context's frame bins.
+        /// @brief Retires the descriptor set layout through the context's frame bins.
         ~DescriptorSetLayout();
 
         DescriptorSetLayout(const DescriptorSetLayout&) = delete;

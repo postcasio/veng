@@ -258,7 +258,7 @@ namespace Veng::Renderer
         /// default and the fallback where multiDrawIndirect / drawIndirectFirstInstance is
         /// unavailable. GPU keeps the same BVH frustum descent (the upload source) but runs
         /// the hi-Z occlusion test in a compute pass that writes each indirect command's
-        /// instanceCount, then issues the survivors through vkCmdDrawIndexedIndirect. Both
+        /// instanceCount, then issues the survivors through DrawIndexedIndirect. Both
         /// modes drive the same buffer-indexed surface shader — they differ only in
         /// submission and in who writes instanceCount. Nested to avoid the name collision
         /// with Renderer::CullMode (the rasterizer face-cull mode).
@@ -266,7 +266,7 @@ namespace Veng::Renderer
         {
             /// @brief BVH frustum descent + direct per-submesh DrawIndexed.
             CPU,
-            /// @brief BVH frustum descent + GPU hi-Z occlusion + vkCmdDrawIndexedIndirect.
+            /// @brief BVH frustum descent + GPU hi-Z occlusion + DrawIndexedIndirect.
             GPU,
         };
 

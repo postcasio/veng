@@ -2,79 +2,79 @@
 # Library
 # ---------------------------------------------------------------------------
 
-# The Vulkan backend TUs all parse vulkan.hpp (via Veng/Renderer/Backend/Vulkan.h),
-# which dominates their compile time and which the library-wide Veng.h PCH cannot
-# cover without taxing every non-backend TU. They build as their own object library
-# so a second PCH precompiles the Vulkan header for exactly these TUs; the objects
-# are absorbed into veng below via $<TARGET_OBJECTS>, so nothing links this target.
-add_library(veng_backend_objs OBJECT
-        src/Renderer/Backend/Barrier.cpp
-        src/Renderer/Backend/BarrierDecision.cpp
-        src/Renderer/Backend/RenderGraphSchedule.cpp
-        src/Renderer/Backend/BindlessRegistry.cpp
-        src/Renderer/Backend/MaterialArena.cpp
-        src/Renderer/Backend/TransientAllocation.cpp
-        src/Renderer/Backend/Buffer.cpp
-        src/Renderer/Backend/CommandBuffer.cpp
-        src/Renderer/Backend/CommandPool.cpp
-        src/Renderer/Backend/ComputePipeline.cpp
-        src/Renderer/Backend/Context.cpp
-        src/Renderer/Backend/DebugMarkers.cpp
-        src/Renderer/Backend/DescriptorPool.cpp
-        src/Renderer/Backend/DescriptorSet.cpp
-        src/Renderer/Backend/DescriptorSetLayout.cpp
-        src/Renderer/Backend/Fence.cpp
-        src/Renderer/Backend/GraphicsPipeline.cpp
-        src/Renderer/Backend/Image.cpp
-        src/Renderer/Backend/ImageView.cpp
-        src/Renderer/Backend/PipelineLayout.cpp
-        src/Renderer/Backend/Sampler.cpp
-        src/Renderer/Backend/Semaphore.cpp
-        src/Renderer/Backend/ShaderModule.cpp
-        src/Renderer/Backend/SwapChain.cpp
-        src/Renderer/Backend/SynchronizationFrame.cpp
-        src/Renderer/Backend/TimelineSemaphore.cpp
-        src/Renderer/Backend/Utils.cpp
-        src/Renderer/Backend/VertexBufferLayout.cpp
-)
-# The objects land inside the veng shared library, so they must be PIC, carry the
-# VE_API export annotations' build-side define, and compile under the same
-# no-exceptions contract as the rest of the library.
-set_target_properties(veng_backend_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(veng_backend_objs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_definitions(veng_backend_objs PRIVATE VE_BUILD_SHARED)
-target_compile_options(veng_backend_objs PRIVATE -fno-exceptions)
-if (VE_DEBUG)
-    target_compile_definitions(veng_backend_objs PRIVATE VE_DEBUG=1)
+# The GPU backend's sources live under src/Renderer/Backend/<VE_GPU_BACKEND>/ and are the only
+# translation units that name a graphics API. The Vulkan backend's TUs all parse vulkan.hpp (via
+# Backend/Vulkan/Vulkan.h), which dominates their compile time and which the library-wide Veng.h
+# PCH cannot cover without taxing every non-backend TU. They build as their own object library so
+# a second PCH precompiles the Vulkan header for exactly these TUs; the objects are absorbed into
+# veng below via $<TARGET_OBJECTS>, so nothing links this target.
+if (VE_GPU_BACKEND STREQUAL "Vulkan")
+    add_library(veng_backend_objs OBJECT
+        src/Renderer/Backend/Vulkan/Barrier.cpp
+        src/Renderer/Backend/Vulkan/BindlessRegistry.cpp
+        src/Renderer/Backend/Vulkan/Buffer.cpp
+        src/Renderer/Backend/Vulkan/CommandBuffer.cpp
+        src/Renderer/Backend/Vulkan/CommandPool.cpp
+        src/Renderer/Backend/Vulkan/ComputePipeline.cpp
+        src/Renderer/Backend/Vulkan/Context.cpp
+        src/Renderer/Backend/Vulkan/DebugMarkers.cpp
+        src/Renderer/Backend/Vulkan/DescriptorPool.cpp
+        src/Renderer/Backend/Vulkan/DescriptorSet.cpp
+        src/Renderer/Backend/Vulkan/DescriptorSetLayout.cpp
+        src/Renderer/Backend/Vulkan/DeviceProbe.cpp
+        src/Renderer/Backend/Vulkan/Fence.cpp
+        src/Renderer/Backend/Vulkan/GraphicsPipeline.cpp
+        src/Renderer/Backend/Vulkan/Image.cpp
+        src/Renderer/Backend/Vulkan/ImageView.cpp
+        src/Renderer/Backend/Vulkan/Native.cpp
+        src/Renderer/Backend/Vulkan/PipelineLayout.cpp
+        src/Renderer/Backend/Vulkan/Sampler.cpp
+        src/Renderer/Backend/Vulkan/Semaphore.cpp
+        src/Renderer/Backend/Vulkan/ShaderModule.cpp
+        src/Renderer/Backend/Vulkan/SwapChain.cpp
+        src/Renderer/Backend/Vulkan/TimelineSemaphore.cpp
+        src/Renderer/Backend/Vulkan/Utils.cpp
+    )
+    # The objects land inside the veng shared library, so they must be PIC, carry the
+    # VE_API export annotations' build-side define, and compile under the same
+    # no-exceptions contract as the rest of the library.
+    set_target_properties(veng_backend_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(veng_backend_objs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(veng_backend_objs PRIVATE VE_BUILD_SHARED VE_GPU_BACKEND_VULKAN=1)
+    target_compile_options(veng_backend_objs PRIVATE -fno-exceptions)
+    if (VE_DEBUG)
+        target_compile_definitions(veng_backend_objs PRIVATE VE_DEBUG=1)
+    endif ()
+    if (VE_VALIDATION)
+        target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1)
+    endif ()
+    # The backend objects are absorbed into veng via $<TARGET_OBJECTS>, so veng's PUBLIC VE_PROFILE
+    # does not reach them; set it here too, keeping every TU in the library on one VE_PROFILE_*
+    # expansion.
+    if (VE_PROFILE)
+        target_compile_definitions(veng_backend_objs PRIVATE VE_PROFILE=1)
+    endif ()
+    # See the matching veng block below: the dynamic-dispatcher storage lives in
+    # Context.cpp, which compiles here.
+    target_compile_definitions(veng_backend_objs PRIVATE
+            VULKAN_HPP_STORAGE_SHARED VULKAN_HPP_STORAGE_SHARED_EXPORT)
+    # Compile-time usage requirements only — the object library is never installed or
+    # exported, so these links stay out of the SDK export set.
+    target_link_libraries(veng_backend_objs PRIVATE
+            glm::glm
+            fmt::fmt
+            veng::assetpack
+            Vulkan::Vulkan
+            glfw
+            GPUOpen::VulkanMemoryAllocator
+    )
+    target_precompile_headers(veng_backend_objs PRIVATE
+            <Veng/Veng.h> ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderer/Backend/Vulkan/Vulkan.h)
+    # Context.cpp defines VMA_IMPLEMENTATION ahead of its includes; a force-included
+    # PCH would have already pulled the VMA header without it, so it opts out.
+    set_source_files_properties(src/Renderer/Backend/Vulkan/Context.cpp
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif ()
-if (VE_VALIDATION)
-    target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1)
-endif ()
-# The backend objects are absorbed into veng via $<TARGET_OBJECTS>, so veng's PUBLIC VE_PROFILE does
-# not reach them; set it here too, keeping every TU in the library on one VE_PROFILE_* expansion.
-if (VE_PROFILE)
-    target_compile_definitions(veng_backend_objs PRIVATE VE_PROFILE=1)
-endif ()
-# See the matching veng block below: the dynamic-dispatcher storage lives in
-# Context.cpp, which compiles here.
-target_compile_definitions(veng_backend_objs PRIVATE
-        VULKAN_HPP_STORAGE_SHARED VULKAN_HPP_STORAGE_SHARED_EXPORT)
-# Compile-time usage requirements only — the object library is never installed or
-# exported, so these links stay out of the SDK export set.
-target_link_libraries(veng_backend_objs PRIVATE
-        glm::glm
-        fmt::fmt
-        veng::assetpack
-        Vulkan::Vulkan
-        glfw
-        GPUOpen::VulkanMemoryAllocator
-)
-target_precompile_headers(veng_backend_objs PRIVATE
-        <Veng/Veng.h> <Veng/Renderer/Backend/Vulkan.h>)
-# Context.cpp defines VMA_IMPLEMENTATION ahead of its includes; a force-included
-# PCH would have already pulled the VMA header without it, so it opts out.
-set_source_files_properties(src/Renderer/Backend/Context.cpp
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 add_library(veng SHARED
         src/Application.cpp
@@ -347,6 +347,12 @@ add_library(veng SHARED
         src/Renderer/GeneratedTextureQueue.cpp
         src/Renderer/GeneratedTextureService.cpp
         src/Renderer/RenderGraph.cpp
+        src/Renderer/RenderGraphSchedule.cpp
+        src/Renderer/BarrierDecision.cpp
+        src/Renderer/TransientAllocation.cpp
+        src/Renderer/MaterialArena.cpp
+        src/Renderer/VertexBufferLayout.cpp
+        src/Renderer/SynchronizationFrame.cpp
         src/Renderer/SceneCapture.cpp
         src/Renderer/SceneCapturePool.cpp
         src/Render/DisplayResolve.cpp
@@ -419,7 +425,7 @@ add_library(veng SHARED
         src/Renderer/Passes/DofCompositeScenePass.cpp
         src/Renderer/Passes/SsaoScenePass.cpp
         src/Renderer/ShaderInterface.cpp
-        $<TARGET_OBJECTS:veng_backend_objs>
+        $<$<TARGET_EXISTS:veng_backend_objs>:$<TARGET_OBJECTS:veng_backend_objs>>
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/MiniAudio.cpp
@@ -463,7 +469,7 @@ target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
 # fails to start with a dyld "Library not loaded" before main. Pin it explicitly so an installed
 # veng resolves the loader exactly as the build tree does. Unix-only: Windows has no rpath and
 # resolves the loader through the search path.
-if (NOT WIN32 AND Vulkan_LIBRARY)
+if (VE_GPU_BACKEND STREQUAL "Vulkan" AND NOT WIN32 AND Vulkan_LIBRARY)
     get_filename_component(VENG_VULKAN_LIBDIR "${Vulkan_LIBRARY}" DIRECTORY)
     set_target_properties(veng PROPERTIES INSTALL_RPATH "${VENG_VULKAN_LIBDIR}")
 endif ()
@@ -473,8 +479,12 @@ endif ()
 # a data symbol, so sharing it across the image boundary needs explicit export/import
 # under hidden visibility: STORAGE_SHARED everywhere, STORAGE_SHARED_EXPORT only where
 # the storage lives.
-target_compile_definitions(veng PUBLIC VULKAN_HPP_STORAGE_SHARED)
-target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
+# VE_GPU_BACKEND_<NAME> is PUBLIC: a consumer compiling against the backend's interop header, or
+# against code that differs per backend, sees the backend the library was built with.
+if (VE_GPU_BACKEND STREQUAL "Vulkan")
+    target_compile_definitions(veng PUBLIC VE_GPU_BACKEND_VULKAN=1 VULKAN_HPP_STORAGE_SHARED)
+    target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
+endif ()
 if (WIN32)
     # The crash reporter's symbol resolution (Veng/Platform/CrashReport.h); ships with Windows.
     target_link_libraries(veng PRIVATE dbghelp)
@@ -581,12 +591,10 @@ target_link_libraries(veng PUBLIC
 target_compile_definitions(veng PUBLIC JSON_NOEXCEPTION)
 
 target_link_libraries(veng PRIVATE
-        Vulkan::Vulkan
         glfw
         # SDL3 reads the gamepads (GLFW keeps the window, keyboard and mouse). Static and PRIVATE,
         # reached only through engine/src/Platform/GamepadBackend.cpp.
         SDL3::SDL3-static
-        GPUOpen::VulkanMemoryAllocator
         nfd
         ZLIB::ZLIB
         yogacore
@@ -608,6 +616,12 @@ target_link_libraries(veng PRIVATE
 # linking consumer of the static libraries sees, exactly as the cooker sets them for FontImporter.cpp.
 set_source_files_properties(src/Text/GlyphSource.cpp PROPERTIES
         COMPILE_DEFINITIONS "MSDFGEN_PUBLIC=;MSDFGEN_EXTENSIONS")
+
+# The backend's libraries link only into a tree built against that backend. The include path and
+# the ImGui Vulkan renderer's TU (src/Vendor/ImGui.cpp) still need the Vulkan headers.
+if (VE_GPU_BACKEND STREQUAL "Vulkan")
+    target_link_libraries(veng PRIVATE Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+endif ()
 
 # Veng.h is the foundational header every TU includes (std + glm + fmt + house
 # aliases); precompiling it once cuts that front-end cost across the library.
@@ -678,7 +692,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/LightPacking.cpp
         src/Renderer/LodSelection.cpp
         src/Renderer/ShadowCasters.cpp
-        src/Renderer/Backend/CommandBuffer.cpp
+        src/Renderer/Backend/Vulkan/CommandBuffer.cpp
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/DepthNormalPrepassScenePass.cpp
         src/Renderer/Passes/ShadowScenePass.cpp
@@ -740,13 +754,18 @@ if (APPLE)
     set_source_files_properties(src/WindowCocoa.mm PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(veng PRIVATE "-framework Cocoa")
 
-    # The backend names Metal only in its own Objective-C++ TUs beside the Cocoa one: the
-    # MTLTexture import and export, and the MetalFX upscalers. Non-ARC (the default): the Vulkan
-    # implementation hands back unowned references, and both retain and release by hand. MetalFX is
+    # Metal is named only in Objective-C++ TUs beside the Cocoa one: the MetalFX upscalers, which
+    # reach Metal objects through the backend-neutral Renderer/AppleInterop.h, and the Vulkan
+    # backend's implementation of that seam (MTLTexture import and export). Non-ARC (the default):
+    # the seam hands back unowned references, and both retain and release by hand. MetalFX is
     # weak-linked, so a system without it loads the engine and reports the scalers unsupported.
-    target_sources(veng PRIVATE src/Renderer/Backend/MetalInterop.mm src/Renderer/Backend/MetalFx.mm)
-    set_source_files_properties(src/Renderer/Backend/MetalInterop.mm src/Renderer/Backend/MetalFx.mm
-            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_sources(veng PRIVATE src/Renderer/MetalFx.mm)
+    set_source_files_properties(src/Renderer/MetalFx.mm PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        target_sources(veng PRIVATE src/Renderer/Backend/Vulkan/MetalInterop.mm)
+        set_source_files_properties(src/Renderer/Backend/Vulkan/MetalInterop.mm
+                PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    endif ()
     target_link_libraries(veng PRIVATE "-framework Metal" "-weak_framework MetalFX")
 
     # The video recorder's encoder backend: AVAssetWriter over VideoToolbox, writing the frames the

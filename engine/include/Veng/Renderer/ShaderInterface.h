@@ -110,7 +110,7 @@ namespace Veng::Renderer
         /// Declared sets must be a contiguous run starting at FirstUserSet; a gap or a call on an
         /// interface with no bindings is a fatal authoring error (VE_ASSERT), not silent UB.
         /// Returns an empty vector if this interface declares no bindings.
-        /// @param context     Context for Vulkan descriptor-set-layout creation.
+        /// @param context     Context for descriptor-set-layout creation.
         /// @param namePrefix  Prefix prepended to each layout's debug name.
         [[nodiscard]] vector<Ref<DescriptorSetLayout>>
         BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const;

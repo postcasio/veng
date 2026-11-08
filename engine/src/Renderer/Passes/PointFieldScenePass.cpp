@@ -5,7 +5,6 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Math/Frustum.h>
-#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
@@ -13,7 +12,6 @@
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/TaaJitter.h>
@@ -297,7 +295,7 @@ namespace Veng::Renderer
 
         // The expansion compute pipeline. It writes a storage buffer (the records) and a storage
         // buffer used as indirect args — both universally available — and reads points + runs, so
-        // it needs no gated device feature; a single vkCmdDrawIndexedIndirect with one GPU-written
+        // it needs no gated device feature; a single DrawIndexedIndirect with one GPU-written
         // command carries the draw (no drawIndirectCount, no multiDrawIndirect). Its set 1 holds
         // points (0), runs (1), records (2), args (3), and the cursor (4).
         m_ComputeSetLayout = DescriptorSetLayout::Create(
@@ -903,19 +901,15 @@ namespace Veng::Renderer
             cmd.PushConstants(push);
             cmd.Dispatch((static_cast<u32>(runPointTotal) + 63) / 64, 1, 1);
 
-            // Manual compute-write → vertex-read + indirect-read barrier: the sprite draw reads the
-            // records as vertex-stage storage and the args as indirect input. The graph does not
+            // Out-of-graph compute-write → graphics-read + indirect-read ordering: the sprite draw
+            // reads the records as vertex-stage storage and the args as indirect input. The graph does not
             // track these buffers (they are bound off-graph, per field), so order them here; both
             // passes record on the one queue in submission order, so this single buffer barrier
             // reaches the later graphics reads.
-            Backend::TransitionBuffer(
-                cmd, *state.RecordBuffer, vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eVertexShader,
-                vk::AccessFlagBits::eShaderRead);
-            Backend::TransitionBuffer(
-                cmd, *state.ArgsBuffer, vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderWrite, vk::PipelineStageFlagBits::eDrawIndirect,
-                vk::AccessFlagBits::eIndirectCommandRead);
+            cmd.PrepareForAccess(state.RecordBuffer, {AccessKind::StorageBufferWrite},
+                                 {AccessKind::StorageBufferReadGraphics});
+            cmd.PrepareForAccess(state.ArgsBuffer, {AccessKind::StorageBufferWrite},
+                                 {AccessKind::IndirectRead});
 
             state.DrewCompute = true;
         }

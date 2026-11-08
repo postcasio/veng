@@ -78,9 +78,9 @@ namespace Veng::Renderer
 
     struct ContextInfo
     {
-        /// @brief Application name for the Vulkan instance.
+        /// @brief Application name reported to the GPU driver.
         string ApplicationName;
-        /// @brief Engine name for the Vulkan instance.
+        /// @brief Engine name reported to the GPU driver.
         string EngineName = "Veng";
         /// @brief Off-screen render-target extent used only when headless (window == nullptr).
         ///
@@ -108,12 +108,12 @@ namespace Veng::Renderer
         QueueSubmitMode SubmitMode = QueueSubmitMode::Asynchronous;
     };
 
-    /// @brief The Vulkan device context: owns the instance, device, queues, swap chain,
+    /// @brief The GPU device context: owns the device, queues, swap chain,
     /// frame synchronization, transfer pools, and the bindless registry.
     class VE_API Context
     {
     public:
-        /// @brief Constructs a context; call Initialize to set up Vulkan.
+        /// @brief Constructs a context; call Initialize to set up the device.
         Context();
 
         /// @brief Destroys the context, running the full GPU teardown sequence.
@@ -127,7 +127,7 @@ namespace Veng::Renderer
         /// a resource retiring after teardown trips the Disposed assert.
         ~Context();
 
-        /// @brief Initializes the Vulkan instance, device, and swap chain.
+        /// @brief Initializes the GPU device and swap chain.
         ///
         /// The window is borrowed, not owned; it must outlive the context and is created
         /// by the application before the context initializes. Pass window == nullptr for
@@ -138,7 +138,7 @@ namespace Veng::Renderer
 
         /// @brief Creates one transfer command pool per worker, indexed by worker index.
         ///
-        /// VkCommandPool is single-thread, so a worker may only ever touch its own pool;
+        /// A command pool is single-thread, so a worker may only ever touch its own pool;
         /// storing the pools on the Context (not thread_local) ties their lifetime to the
         /// device for clean teardown. Called by Application after the TaskSystem is
         /// constructed and before any upload is submitted; a headless/test Context with no
@@ -165,8 +165,8 @@ namespace Veng::Renderer
         /// @brief Returns true when BC block-compressed formats can be sampled by the device.
         ///
         /// True only when textureCompressionBC was supported by the physical device and was
-        /// therefore enabled at device creation — a core VkPhysicalDeviceFeatures boolean that
-        /// must be enabled for sampling a BC image to be legal, not merely queried. MoltenVK
+        /// therefore enabled at device creation — a core device feature that must be enabled for
+        /// sampling a BC image to be legal, not merely queried. MoltenVK
         /// exposes it on Apple Silicon; an Intel-Mac / non-BC device reports false, and the
         /// texture loader returns AssetError::Unsupported for a BC-cooked texture there.
         [[nodiscard]] bool IsBlockCompressionSupported() const;
@@ -174,8 +174,8 @@ namespace Veng::Renderer
         /// @brief Returns true when ASTC LDR block-compressed formats can be sampled by the device.
         ///
         /// True only when textureCompressionASTC_LDR was supported by the physical device and was
-        /// therefore enabled at device creation — a core VkPhysicalDeviceFeatures boolean that must
-        /// be enabled for sampling an ASTC image to be legal, not merely queried. MoltenVK exposes
+        /// therefore enabled at device creation — a core device feature that must be enabled for
+        /// sampling an ASTC image to be legal, not merely queried. MoltenVK exposes
         /// ASTC broadly on Apple GPUs (the Metal-blessed family, wider support than BC); a device
         /// without it reports false, and the texture loader returns AssetError::Unsupported for an
         /// ASTC-cooked texture there.
@@ -296,7 +296,7 @@ namespace Veng::Renderer
         ///
         /// Summed across the physical device's device-local heaps. UsedBytes is what the engine's
         /// VMA allocator holds from those heaps (the process's own GPU allocations, not the whole
-        /// device); BudgetBytes is the OS-reported budget when VK_EXT_memory_budget is available,
+        /// device); BudgetBytes is the OS-reported budget when the device reports one,
         /// else the heaps' total size. On a unified-memory device (MoltenVK on Apple silicon) the
         /// device-local heap is system RAM, so the budget tracks available RAM rather than a
         /// separate VRAM pool.
@@ -439,7 +439,7 @@ namespace Veng::Renderer
 
         /// @brief The transfer command buffer owned by the given worker's transfer pool.
         ///
-        /// VkCommandPool is single-thread: a worker may call this only with its own index,
+        /// A command pool is single-thread: a worker may call this only with its own index,
         /// and only the owning worker may record into the returned buffer. The buffer is
         /// reused across uploads, so its reuse is timeline-gated — a command buffer
         /// recorded for upload N must not be reset or re-recorded until that upload's
@@ -499,7 +499,7 @@ namespace Veng::Renderer
         ///
         /// The physical device's @c maxSamplerAnisotropy limit — guaranteed at least 16 when the
         /// samplerAnisotropy feature is enabled (which the engine requires). Every anisotropy value
-        /// the engine sends to Vulkan is clamped to this, since a settable value can otherwise
+        /// the engine sends to the device is clamped to this, since a settable value can otherwise
         /// exceed what the device allows.
         /// @return The device's maximum anisotropy sample count.
         [[nodiscard]] f32 GetMaxSamplerAnisotropy() const;
@@ -588,8 +588,8 @@ namespace Veng::Renderer
 
         /// @brief Returns the platform graphics device the backend is rendering on, as an opaque handle.
         ///
-        /// On Apple this is the @c MTLDevice the Vulkan implementation exported at instance
-        /// creation; null elsewhere, and null when the interop extension was unavailable. A
+        /// On Apple this is the @c MTLDevice the backend renders through (the Vulkan backend
+        /// exports it from the driver at instance creation); null elsewhere, and null when the interop extension was unavailable. A
         /// consumer wrapping platform memory as a texture to import must create it on this exact
         /// device — a texture from any other device cannot be imported.
         /// @return The platform device handle, or null where there is none.
@@ -603,7 +603,7 @@ namespace Veng::Renderer
 
         /// @brief Submits the frame recorded so far, runs platform GPU work, then resumes the frame.
         ///
-        /// For work a platform API encodes outside Vulkan — a hardware upscaler reading and
+        /// For work a platform API encodes outside the backend's own command stream — a hardware upscaler reading and
         /// writing the engine's images. The frame's commands up to this point are submitted as
         /// one segment signalling FrameSplitPoint::WaitValue; @p encode then schedules its work
         /// to wait that value and signal FrameSplitPoint::SignalValue; and recording continues in
@@ -681,7 +681,7 @@ namespace Veng::Renderer
         /// @brief Returns the render-domain viewport identity registry.
         ///
         /// The ViewportId -> Viewport map every Viewport mints into at Create and retires from at
-        /// destruction. Standalone-constructible and independent of the Vulkan device, so it is
+        /// destruction. Standalone-constructible and independent of the GPU device, so it is
         /// valid for the whole Context lifetime, not only from the end of Initialize() until the
         /// context is destroyed. See ViewportRegistry.h.
         [[nodiscard]] ViewportRegistry& GetViewportRegistry() { return m_ViewportRegistry; }
@@ -806,7 +806,7 @@ namespace Veng::Renderer
         /// @brief The frame-deferred readback pump, created and released beside the service above.
         Unique<AsyncReadback> m_AsyncReadback;
 
-        /// @brief Backend Vulkan state (instance, device, queues, swapchain, sync frames).
+        /// @brief Backend state (instance, device, queues, swapchain, sync frames).
         Unique<Native> m_Native;
     };
 }

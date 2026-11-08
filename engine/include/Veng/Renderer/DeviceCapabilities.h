@@ -7,7 +7,7 @@ namespace Veng::Renderer
 {
     /// @brief A class of subgroup (wave) operation a shader stage may use.
     ///
-    /// One bit per VkSubgroupFeatureFlagBits class. A shader using an operation of a class the
+    /// One bit per class of subgroup operation the device reports. A shader using an operation of a class the
     /// device does not report for its stage is undefined; check DeviceCapabilities::SupportsSubgroup
     /// before building a pipeline that relies on one.
     enum class SubgroupOperation : u32
@@ -42,14 +42,22 @@ namespace Veng::Renderer
     /// supports, except where a field says it was also enabled.
     struct DeviceCapabilities
     {
-        /// @brief The physical device's name (VkPhysicalDeviceProperties::deviceName).
+        /// @brief The device's name, as the driver reports it.
         string DeviceName;
-        /// @brief The driver's name (VkPhysicalDeviceDriverProperties::driverName).
+        /// @brief The driver's name, as the driver reports it.
         string DriverName;
-        /// @brief The driver's version string (VkPhysicalDeviceDriverProperties::driverInfo).
+        /// @brief The driver's version string, as the driver reports it.
         string DriverInfo;
-        /// @brief The device's Vulkan version, as VK_MAKE_API_VERSION packs it.
+        /// @brief The graphics API version the device supports, packed as variant (3 bits), major
+        ///        (7), minor (10) and patch (12) from the high bit down.
         u32 ApiVersion = 0;
+
+        /// @brief The multiple of bytes a uniform buffer's bound offset must be, static or dynamic.
+        ///
+        /// A buffer ringed per frame or per view binds each region at a stride rounded up to it.
+        u64 UniformBufferOffsetAlignment = 0;
+        /// @brief The multiple of bytes a storage buffer's bound offset must be, static or dynamic.
+        u64 StorageBufferOffsetAlignment = 0;
 
         /// @brief The subgroup size a compute or fragment invocation runs at by default.
         ///
@@ -66,7 +74,8 @@ namespace Veng::Renderer
 
         /// @brief True when subgroup size control was supported and enabled at device creation.
         ///
-        /// Vulkan 1.3's subgroupSizeControl, or VK_EXT_subgroup_size_control on an older device.
+        /// The Vulkan backend reads it as 1.3's subgroupSizeControl, or the subgroup-size-control
+        /// extension on an older device.
         /// MinSubgroupSize, MaxSubgroupSize and MaxComputeWorkgroupSubgroups are meaningful only
         /// when it is true.
         bool SubgroupSizeControl = false;

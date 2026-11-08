@@ -1,0 +1,2692 @@
+#define VMA_IMPLEMENTATION
+#include <Veng/Renderer/Context.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <fstream>
+#include <set>
+#include <utility>
+
+#include <Veng/Diagnostics/Profiler.h>
+#include "Barrier.h"
+#include "DebugMarkers.h"
+#include "Natives.h"
+#include "TypeMapping.h"
+
+#include <Veng/Renderer/AsyncReadback.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
+#include <Veng/Renderer/Native.h>
+#include <Veng/Task/TaskSystem.h>
+#include <Veng/Window.h>
+
+#include "../../MetalFx.h"
+
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
+// #define VE_VIEWPORTS 1
+
+namespace Veng::Renderer
+{
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+    static VKAPI_ATTR VkBool32 VKAPI_CALL
+    DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                  vk::DebugUtilsMessageTypeFlagsEXT messageType,
+                  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+    {
+        // Throwing here would unwind through the Vulkan C ABI, so only log.
+        if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
+        {
+            Log::Error("Vulkan validation: {}", pCallbackData->pMessage);
+        }
+        else if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
+        {
+            Log::Warn("Vulkan validation: {}", pCallbackData->pMessage);
+        }
+
+        return VK_FALSE;
+    }
+#endif
+
+    Context::Context() : m_Native(CreateUnique<Native>()) {}
+
+    Context::~Context()
+    {
+        // Uninitialized-safe: a context that never completed Initialize has no
+        // device and nothing to tear down.
+        if (!m_Native->Device)
+        {
+            return;
+        }
+
+        WaitIdle();
+        ReleaseFrameResources();
+        DestroyDevice();
+    }
+
+    Context::Native& Context::GetNative() const
+    {
+        return *m_Native;
+    }
+
+    vk::PhysicalDevice Context::Native::GetPhysicalDevice()
+    {
+        const auto physicalDevices = Instance.enumeratePhysicalDevices().value;
+
+        for (const auto& device : physicalDevices)
+        {
+            if (IsDeviceSuitable(device))
+            {
+                return device;
+            }
+        }
+
+        VE_ASSERT(false, "Failed to find a suitable GPU!");
+    }
+
+    bool Context::Native::IsDeviceSuitable(vk::PhysicalDevice device)
+    {
+        const QueueFamilyIndices indices = FindQueueFamilies(device);
+
+        const auto supportedFeatures = device.getFeatures();
+
+        const bool extensionsSupported = CheckDeviceExtensionSupport(device);
+
+        // Headless needs neither a present queue nor an adequate swapchain.
+        if (Headless)
+        {
+            return indices.IsComplete() && extensionsSupported &&
+                   supportedFeatures.samplerAnisotropy;
+        }
+
+        bool swapChainAdequate = false;
+        if (extensionsSupported)
+        {
+            const SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(device);
+            swapChainAdequate =
+                !swapChainSupport.Formats.empty() && !swapChainSupport.PresentModes.empty();
+        }
+
+        return indices.IsComplete() && indices.CanPresent() && extensionsSupported &&
+               swapChainAdequate && supportedFeatures.samplerAnisotropy;
+    }
+
+    void Context::Initialize(const ContextInfo& info, Window* window)
+    {
+        const bool headless = (window == nullptr);
+        m_Native->Headless = headless;
+
+        Log::Info(headless ? "Initializing Vulkan context (headless)"
+                           : "Initializing Vulkan context");
+
+        VULKAN_HPP_DEFAULT_DISPATCHER.init();
+
+        m_Window = window;
+
+        if (!headless && glfwVulkanSupported() != GLFW_TRUE)
+        {
+            VE_ASSERT(false, "Vulkan is not supported on this system!");
+        }
+
+        if (headless)
+        {
+            // No surface ⇒ the swapchain device extension isn't needed (or wanted).
+            std::erase_if(m_Native->DeviceExtensions, [](const char* extension)
+                          { return std::strcmp(extension, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; });
+        }
+
+        auto extensions = m_Native->GetRequiredExtensions();
+
+        // VK_EXT_layer_settings carries settings into the layers and the driver at instance
+        // creation. The validation layer reads its struct either way, but MoltenVK honours one only
+        // when the extension is enabled, so it is enabled wherever the loader offers it.
+        const auto availableInstanceExtensions = vk::enumerateInstanceExtensionProperties().value;
+        const bool layerSettingsAvailable =
+            std::ranges::any_of(availableInstanceExtensions,
+                                [](const vk::ExtensionProperties& extension)
+                                {
+                                    return std::strcmp(extension.extensionName,
+                                                       VK_EXT_LAYER_SETTINGS_EXTENSION_NAME) == 0;
+                                });
+        if (layerSettingsAvailable)
+        {
+            extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
+        }
+
+        const vk::ApplicationInfo appInfo{.pApplicationName = info.ApplicationName.c_str(),
+                                          .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+                                          .pEngineName = info.EngineName.c_str(),
+                                          .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+                                          .apiVersion = VK_API_VERSION_1_3};
+
+        vk::InstanceCreateInfo instanceCreateInfo{
+            .pApplicationInfo = &appInfo,
+            .enabledExtensionCount = static_cast<u32>(extensions.size()),
+            .ppEnabledExtensionNames = extensions.data(),
+        };
+
+        // Each struct below is pushed onto the head of the instance create info's chain.
+        const auto chain = [&instanceCreateInfo](auto& link)
+        {
+            link.pNext = instanceCreateInfo.pNext;
+            instanceCreateInfo.pNext = &link;
+        };
+
+        // One settings struct for every layer: MoltenVK reads the last one it finds in the chain.
+        vector<vk::LayerSettingEXT> layerSettings;
+
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        Log::Info("Enabling validation layers");
+        vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{
+            .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+            .pfnUserCallback = DebugCallback};
+        chain(debugCreateInfo);
+
+        // Synchronization validation, with its shader-access analysis on: without it the layer
+        // validates attachments, copies and layout transitions but no access a draw or dispatch
+        // makes through a descriptor. Accesses through the bindless sets (partially bound,
+        // update-after-bind, dynamically indexed) stay unvalidated either way, since the layer
+        // cannot know which elements a shader reaches.
+        constexpr vk::Bool32 syncvalShaderAccesses = vk::True;
+        layerSettings.push_back({
+            .pLayerName = "VK_LAYER_KHRONOS_validation",
+            .pSettingName = "syncval_shader_accesses_heuristic",
+            .type = vk::LayerSettingTypeEXT::eBool32,
+            .valueCount = 1,
+            .pValues = &syncvalShaderAccesses,
+        });
+
+        instanceCreateInfo.enabledLayerCount = static_cast<u32>(m_Native->ValidationLayers.size());
+        instanceCreateInfo.ppEnabledLayerNames = m_Native->ValidationLayers.data();
+#else
+        instanceCreateInfo.enabledLayerCount = 0;
+        instanceCreateInfo.ppEnabledLayerNames = nullptr;
+#endif
+
+#ifdef __APPLE__
+        // MoltenVK reads its environment itself, and a setting passed here would override it, so
+        // the setting is passed only when the user has not chosen through the environment.
+        m_SubmitMode =
+            ResolveQueueSubmitMode(info.SubmitMode, std::getenv(QueueSubmitModeEnvironmentVariable),
+                                   layerSettingsAvailable);
+        const vk::Bool32 synchronousSubmits =
+            m_SubmitMode.Mode == QueueSubmitMode::Synchronous ? vk::True : vk::False;
+        if (m_SubmitMode.ApplySetting)
+        {
+            layerSettings.push_back({
+                .pLayerName = "MoltenVK",
+                .pSettingName = QueueSubmitModeEnvironmentVariable,
+                .type = vk::LayerSettingTypeEXT::eBool32,
+                .valueCount = 1,
+                .pValues = &synchronousSubmits,
+            });
+        }
+
+        // Fast math is requested explicitly (MoltenVK's "always" mode) rather than inherited, so
+        // the precision a shader is written against is the engine's choice; arithmetic that must
+        // hold its rounding marks itself precise. A user's environment variable still wins.
+        constexpr const char* FastMathVariable = "MVK_CONFIG_FAST_MATH_ENABLED";
+        constexpr u32 FastMathAlways = 1;
+        const bool fastMathFromEnvironment = std::getenv(FastMathVariable) != nullptr;
+        if (layerSettingsAvailable && !fastMathFromEnvironment)
+        {
+            layerSettings.push_back({
+                .pLayerName = "MoltenVK",
+                .pSettingName = FastMathVariable,
+                .type = vk::LayerSettingTypeEXT::eUint32,
+                .valueCount = 1,
+                .pValues = &FastMathAlways,
+            });
+        }
+        Log::Info("Shader fast math: {}", fastMathFromEnvironment
+                                              ? "as MVK_CONFIG_FAST_MATH_ENABLED sets it"
+                                              : "always (requested)");
+#else
+        m_SubmitMode = ResolveQueueSubmitMode(info.SubmitMode, nullptr, false);
+#endif
+        Log::Info("Queue submission: {} ({})", QueueSubmitModeName(m_SubmitMode.Mode),
+                  QueueSubmitModeSourceName(m_SubmitMode.Source));
+
+        vk::LayerSettingsCreateInfoEXT layerSettingsInfo{
+            .settingCount = static_cast<u32>(layerSettings.size()),
+            .pSettings = layerSettings.data(),
+        };
+        if (!layerSettings.empty())
+        {
+            chain(layerSettingsInfo);
+        }
+
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
+            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+        };
+        vk::ValidationFeaturesEXT validationFeatures{
+            .enabledValidationFeatureCount = static_cast<u32>(std::size(enabledValidationFeatures)),
+            .pEnabledValidationFeatures = enabledValidationFeatures,
+        };
+        chain(validationFeatures);
+#endif
+
+#ifdef __APPLE__
+        // The Metal device and command queue are exportable only when the request is chained onto
+        // *instance* creation: MoltenVK also accepts the structs on the device create info and
+        // returns the objects anyway, but validation correctly rejects that placement. Instance
+        // creation precedes any physical device, so there is no advertise-check to consult and the
+        // request is made unconditionally; it costs nothing and is inert where the extension later
+        // proves unavailable.
+        vk::ExportMetalObjectCreateInfoEXT exportMetalQueue{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalCommandQueue,
+        };
+        vk::ExportMetalObjectCreateInfoEXT exportMetalDevice{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalDevice,
+        };
+        chain(exportMetalQueue);
+        chain(exportMetalDevice);
+#endif
+
+        instanceCreateInfo.flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
+
+        m_Native->Instance = createInstance(instanceCreateInfo).value;
+
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Instance);
+
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        m_Native->DebugMessenger =
+            m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo).value;
+#endif
+
+        DebugMarkers::Initialize(m_Native->Instance);
+
+        if (!headless)
+        {
+            Log::Info("Initializing surface");
+            window->CreateSurface(*this);
+            m_Native->Surface = GetVkSurface(*window);
+        }
+
+        m_Native->PhysicalDevice = m_Native->GetPhysicalDevice();
+
+        m_Native->Device = m_Native->CreateDevice();
+
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
+
+#ifdef __APPLE__
+        if (m_Native->MetalObjectsEnabled)
+        {
+            // The export is a read-out of objects the implementation already owns, not a transfer
+            // of ownership, so nothing here retains or releases them.
+            vk::ExportMetalDeviceInfoEXT deviceInfo{};
+            vk::ExportMetalObjectsInfoEXT objectsInfo{.pNext = &deviceInfo};
+            m_Native->Device.exportMetalObjectsEXT(objectsInfo);
+            m_Native->MetalDevice = deviceInfo.mtlDevice;
+            Log::Info("Metal object interop enabled (MTLDevice {})",
+                      m_Native->MetalDevice ? "exported" : "unavailable");
+        }
+#endif
+
+        // The platform upscalers are read off the platform device, so only once it is exported.
+        const MetalFxSupport metalFx = QueryMetalFxSupport(*this);
+        m_Native->Capabilities.MetalFxTemporal = metalFx.Temporal;
+        m_Native->Capabilities.MetalFxSpatial = metalFx.Spatial;
+        Log::Info("{}", DescribeDeviceCapabilities(m_Native->Capabilities));
+
+        m_Native->PipelineCachePath = info.PipelineCachePath;
+
+        // Seed the cache from disk when a path is given and the file exists. A
+        // missing file is the first run, not an error; a stale/foreign/truncated
+        // blob is safe — the driver validates the cache header and silently
+        // starts cold on a mismatch. veng never parses or validates the bytes.
+        vector<u8> initial;
+        if (m_Native->PipelineCachePath)
+        {
+            std::ifstream file(*m_Native->PipelineCachePath, std::ios::binary | std::ios::ate);
+            if (file)
+            {
+                const auto size = static_cast<usize>(file.tellg());
+                initial.resize(size);
+                file.seekg(0);
+                file.read(reinterpret_cast<char*>(initial.data()),
+                          static_cast<std::streamsize>(size));
+            }
+        }
+
+        const vk::PipelineCacheCreateInfo cacheInfo{
+            .initialDataSize = initial.size(),
+            .pInitialData = initial.empty() ? nullptr : initial.data(),
+        };
+        m_Native->PipelineCache = m_Native->Device.createPipelineCache(cacheInfo).value;
+
+        const VmaAllocatorCreateInfo allocatorInfo{
+            // The budget bit lets vmaGetHeapBudgets report the OS budget/usage; only legal when the
+            // device extension was enabled above, else the allocator falls back to heap sizes.
+            .flags = m_Native->MemoryBudgetSupported ? VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT
+                                                     : VmaAllocatorCreateFlags{0},
+            .physicalDevice = m_Native->PhysicalDevice,
+            .device = m_Native->Device,
+            .instance = m_Native->Instance,
+            .vulkanApiVersion = VK_API_VERSION_1_3,
+        };
+
+        vmaCreateAllocator(&allocatorInfo, &m_Native->Allocator);
+
+        m_Native->GraphicsQueue =
+            m_Native->Device.getQueue(m_Native->QueueFamilies.GraphicsFamily.value(), 0);
+
+        // Transfer queue. On MoltenVK this resolves to the same family (and
+        // queue index 0) as graphics, so TransferQueue and GraphicsQueue are the
+        // same handle and the submission lock is what keeps them safe.
+        m_Native->TransferQueue =
+            m_Native->Device.getQueue(m_Native->QueueFamilies.TransferFamily.value(), 0);
+
+        Log::Info("Queue families: graphics={0}, transfer={1}{2}",
+                  m_Native->QueueFamilies.GraphicsFamily.value(),
+                  m_Native->QueueFamilies.TransferFamily.value(),
+                  m_Native->QueueFamilies.TransferIsGraphics()
+                      ? " (transfer collapsed onto graphics)"
+                      : " (dedicated transfer family)");
+
+        if (!headless)
+        {
+            m_Native->PresentQueue =
+                m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
+
+            m_Native->SwapChain = SwapChain::Create(*this, {
+                                                               // Triple-buffered: under FIFO a
+                                                               // two-image swapchain half-rate
+                                                               // locks (30 on a 60Hz display) the
+                                                               // moment a frame overruns one
+                                                               // vblank; a spare image lets the
+                                                               // present engine pace at the GPU
+                                                               // rate instead.
+                                                               .MaxImageCount = 3,
+                                                               .Width = window->GetWidth(),
+                                                               .Height = window->GetHeight(),
+                                                               .Mode = info.RequestedDisplayMode,
+                                                           });
+
+            Log::Info("Created {0} swap chain images ({1}x{2})",
+                      m_Native->SwapChain->GetImageCount(), m_Native->SwapChain->GetWidth(),
+                      m_Native->SwapChain->GetHeight());
+
+            // An image acquired again must have finished the encode of its last use, or the
+            // driver's encode thread and this one touch its drawable together. More images than
+            // frames in flight guarantees it: the image handed back is either one whose
+            // presentation completed or the least recently acquired, whose frame was fenced.
+            if (m_SubmitMode.Mode == QueueSubmitMode::Asynchronous &&
+                m_Native->SwapChain->GetImageCount() <= m_Native->MaxFramesInFlight)
+            {
+                Log::Warn(
+                    "Asynchronous queue submission with {} swap chain images and {} frames in "
+                    "flight: an image can be re-acquired before its last frame has encoded",
+                    m_Native->SwapChain->GetImageCount(), m_Native->MaxFramesInFlight);
+            }
+
+            m_RenderExtent = m_Native->SwapChain->GetExtent();
+        }
+        else
+        {
+            // No swapchain to derive an extent from; fall back to the configured
+            // headless extent for GetRenderExtent() consumers.
+            m_RenderExtent = info.HeadlessExtent;
+        }
+
+        m_OutputFormat = info.OutputFormat;
+        m_DepthFormat = info.DepthFormat;
+        Log::Info("Render-target extent: {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
+
+        Log::Info("Creating command pool");
+
+        m_Native->CommandPool = CommandPool::Create(*this);
+
+        // One pool size per DescriptorType, budgeted from the single source
+        // of truth (GetDescriptorTypeInfo) so every type the engine knows
+        // about has a budget — adding a DescriptorType updates the pool too.
+        vector<vk::DescriptorPoolSize> poolSizes;
+        poolSizes.reserve(AllDescriptorTypes.size());
+        for (const auto descriptorType : AllDescriptorTypes)
+        {
+            const auto typeInfo = GetDescriptorTypeInfo(descriptorType);
+            poolSizes.push_back({.type = typeInfo.VkType, .descriptorCount = typeInfo.PoolBudget});
+        }
+
+        m_Native->DescriptorPool = DescriptorPool::Create(
+            *this, {.Name = "Primary Pool",
+                    .MaxSets = 100000,
+                    .PoolSizes = poolSizes,
+                    .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+                             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind});
+
+        m_Native->SynchronizationFrames.reserve(m_Native->MaxFramesInFlight);
+        m_Native->ImageAvailableSemaphores.reserve(m_Native->MaxFramesInFlight);
+        for (u32 i = 0; i < m_Native->MaxFramesInFlight; ++i)
+        {
+            m_Native->ImageAvailableSemaphores.push_back(
+                Semaphore::Create(*this, "ImageAvailableSemaphore"));
+            m_Native->SynchronizationFrames.emplace_back(*this);
+        }
+
+        m_Native->RetireBins.resize(m_Native->MaxFramesInFlight);
+
+        // The single transfer timeline: worker upload submits signal it, the
+        // frame submit and the transfer-keyed retire drain wait/poll it.
+        m_Native->TransferTimeline = TimelineSemaphore::Create(*this);
+
+        m_Native->Bindless = CreateUnique<BindlessRegistry>(*this);
+
+        // The two frame-amortized services. Both record into the frame's command buffer at the
+        // top of BeginFrame and hold engine resources, so they are constructed after the bindless
+        // registry they register into and dropped before it in ReleaseFrameResources.
+        m_GeneratedTextures = CreateUnique<GeneratedTextureService>(*this);
+        m_AsyncReadback = CreateUnique<AsyncReadback>(*this);
+
+        // GPU frame timing: a (start, end) timestamp pair per frame-in-flight. Available only
+        // when the graphics queue family reports valid timestamp bits and the device a non-zero
+        // period; otherwise GetLastGpuFrameTimeMs() stays zero and BeginFrame/EndFrame skip the
+        // writes (so dynamic-resolution control is inert rather than wrong).
+        const f32 timestampPeriod = m_Native->PhysicalDevice.getProperties().limits.timestampPeriod;
+        const u32 graphicsFamily = m_Native->QueueFamilies.GraphicsFamily.value();
+        const u32 validBits =
+            m_Native->PhysicalDevice.getQueueFamilyProperties()[graphicsFamily].timestampValidBits;
+        if (timestampPeriod > 0.0f && validBits > 0)
+        {
+            m_GpuTimingSupported = true;
+            m_Native->TimestampPeriodNs = timestampPeriod;
+            m_Native->TimestampValidMask =
+                validBits >= 64 ? ~0ULL : ((static_cast<u64>(1) << validBits) - 1);
+            m_Native->TimestampWritten.assign(m_Native->MaxFramesInFlight, false);
+            m_Native->ScopeNames.resize(m_Native->MaxFramesInFlight);
+            m_Native->ScopeDepths.resize(m_Native->MaxFramesInFlight);
+
+            // Per frame slot: the frame (start,end) pair plus MaxGpuScopes (start,end) scope pairs.
+            const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
+            m_Native->TimestampPool =
+                m_Native->Device
+                    .createQueryPool({
+                        .queryType = vk::QueryType::eTimestamp,
+                        .queryCount = m_Native->MaxFramesInFlight * queriesPerFrame,
+                    })
+                    .value;
+            m_Native->ImmediateTimestampPool = m_Native->Device
+                                                   .createQueryPool({
+                                                       .queryType = vk::QueryType::eTimestamp,
+                                                       .queryCount = 2 * Native::MaxGpuScopes,
+                                                   })
+                                                   .value;
+        }
+
+        // The setup work the services above recorded while no command buffer was open (the
+        // registry's zero normal-variance image) runs here, so a context hands its first frame or
+        // immediate submit nothing of its own and drops the staging it used.
+        if (!m_PendingSetupCommands.empty())
+        {
+            ImmediateCommands([](CommandBuffer&) {});
+        }
+    }
+
+    void Context::ReleaseFrameResources()
+    {
+        // Pending bindless acquires that never reached a frame retire into the
+        // current bin; the drain below reclaims them while the device is alive.
+        m_PendingBindlessAcquires.clear();
+        // Held setup work holds Refs to what it would have initialized; drop them the same way.
+        m_PendingSetupCommands.clear();
+
+        // Same for the frame-amortized services: their targets, views and staging buffers retire,
+        // and their bindless slots release, so both must go while the registry and bins are alive.
+        m_GeneratedTextures.reset();
+        m_AsyncReadback.reset();
+
+        // The device is idle (~Context waited). Drain all retire bins before the
+        // sync frames and their command buffers go away.
+        m_Native->DrainAllRetireBins();
+
+        // The transfer timeline may have upload scratch that was never reclaimed
+        // by AcquireNextFrame. The GPU is idle, so every value has been reached —
+        // wait the last signalled value and drain the list.
+        m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
+        m_Native->DrainTransferRetireList();
+
+        m_Native->SynchronizationFrames.clear();
+        m_Native->ImageAvailableSemaphores.clear();
+        m_Native->SplitCommandBuffers.clear();
+    }
+
+    void Context::DestroyDevice()
+    {
+        Log::Info("Tearing down rendering context...");
+
+        // Drop bindless first — its destructors retire handles into the bins,
+        // which the drain below cleans up while the device is still alive.
+        m_Native->Bindless.reset();
+
+        // Drain bins and transfer scratch before flipping Disposed, so a late
+        // retire is caught rather than leaked. After this point, any drop is a bug.
+        m_Native->DrainAllRetireBins();
+        m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
+        m_Native->DrainTransferRetireList();
+        m_Native->Disposed = true;
+
+        // Workers have been joined by Application before teardown, so destroying
+        // the per-worker transfer pools here is unraced.
+        for (auto& transferPool : m_Native->TransferPools)
+        {
+            transferPool.CommandBuffer.reset();
+            if (transferPool.Pool)
+            {
+                m_Native->Device.destroyCommandPool(transferPool.Pool);
+            }
+        }
+        m_Native->TransferPools.clear();
+
+        m_Native->TransferTimeline.reset();
+        if (m_Native->InteropTimeline)
+        {
+            m_Native->Device.destroySemaphore(m_Native->InteropTimeline);
+            m_Native->InteropTimeline = nullptr;
+            m_Native->InteropEvent = nullptr;
+        }
+        m_Native->DescriptorPool.reset();
+        m_Native->CommandPool.reset();
+        m_Native->SwapChain.reset();
+        m_Native->PresentQueue = nullptr;
+        m_Native->GraphicsQueue = nullptr;
+        m_Native->TransferQueue = nullptr;
+        vmaDestroyAllocator(m_Native->Allocator);
+
+        // Persist the warm cache before destroying it, when a path is set. The
+        // Vulkan fetch is fatal on failure (the .value unwrap asserts) like any
+        // Vulkan call; the file write is recoverable — a warm cache is an
+        // optimization, not correctness, so a failed write logs and teardown
+        // continues.
+        if (m_Native->PipelineCachePath)
+        {
+            const auto data = m_Native->Device.getPipelineCacheData(m_Native->PipelineCache).value;
+            std::ofstream file(*m_Native->PipelineCachePath, std::ios::binary | std::ios::trunc);
+            if (file)
+            {
+                file.write(reinterpret_cast<const char*>(data.data()),
+                           static_cast<std::streamsize>(data.size()));
+            }
+            else
+            {
+                Log::Warn("pipeline cache write failed: {}", m_Native->PipelineCachePath->string());
+            }
+        }
+
+        if (m_Native->TimestampPool)
+        {
+            m_Native->Device.destroyQueryPool(m_Native->TimestampPool);
+            m_Native->TimestampPool = nullptr;
+        }
+        if (m_Native->ImmediateTimestampPool)
+        {
+            m_Native->Device.destroyQueryPool(m_Native->ImmediateTimestampPool);
+            m_Native->ImmediateTimestampPool = nullptr;
+        }
+
+        m_Native->Device.destroyPipelineCache(m_Native->PipelineCache);
+        m_Native->Device.destroy();
+        if (m_Native->Surface)
+        {
+            m_Native->Instance.destroySurfaceKHR(m_Native->Surface);
+        }
+        m_Native->PhysicalDevice = nullptr;
+        if (m_Native->DebugMessenger)
+        {
+            m_Native->Instance.destroyDebugUtilsMessengerEXT(m_Native->DebugMessenger);
+            m_Native->DebugMessenger = nullptr;
+        }
+        m_Native->Instance.destroy();
+        m_Window = nullptr;
+    }
+
+    void Context::InitializeTransferPools(TaskSystem& taskSystem)
+    {
+        const u32 workerCount = taskSystem.GetWorkerCount();
+        const u32 transferFamily = m_Native->QueueFamilies.TransferFamily.value();
+
+        m_Native->TransferPools.resize(workerCount);
+
+        // Create each pool on the worker that owns it — a VkCommandPool may only be
+        // accessed by one thread at a time, and the creating thread is the one that
+        // later records uploads. Bodies run concurrently with no shared state.
+        taskSystem.ForEachWorker(
+            [this, transferFamily](u32 workerIndex)
+            {
+                m_Native->TransferPools[workerIndex].Pool =
+                    m_Native->Device
+                        .createCommandPool(vk::CommandPoolCreateInfo{
+                            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                            .queueFamilyIndex = transferFamily,
+                        })
+                        .value;
+            });
+
+        // Allocate command buffers serially: AllocationPoolOverride is shared
+        // mutable state and must not be written from concurrent ForEachWorker bodies.
+        for (u32 workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+        {
+            auto& transferPool = m_Native->TransferPools[workerIndex];
+            m_Native->AllocationPoolOverride = transferPool.Pool;
+            transferPool.CommandBuffer = CommandBuffer::Create(*this);
+            m_Native->AllocationPoolOverride = nullptr;
+        }
+
+        // The same pool the generated-texture service creates its targets on, so a large image
+        // allocation costs the frame a submit rather than the allocation itself.
+        m_GeneratedTextures->SetTaskSystem(&taskSystem);
+
+        Log::Info("Created {0} per-worker transfer command pool(s)", workerCount);
+    }
+
+    CommandBuffer& Context::GetTransferCommandBuffer(u32 workerIndex)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "GetTransferCommandBuffer: worker index {} out of range ({} transfer pools) — "
+                  "InitializeTransferPools must run first",
+                  workerIndex, m_Native->TransferPools.size());
+
+        return *m_Native->TransferPools[workerIndex].CommandBuffer;
+    }
+
+    void Context::Native::LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo,
+                                       vk::Fence fence)
+    {
+        const std::scoped_lock lock(SubmitMutex);
+        VK_ASSERT(queue.submit(1, &submitInfo, fence), "failed to submit to queue!");
+    }
+
+    CommandBuffer& Context::BeginTransferRecording(u32 workerIndex)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "BeginTransferRecording: worker index {} out of range ({} transfer pools)",
+                  workerIndex, m_Native->TransferPools.size());
+
+        const auto& pool = m_Native->TransferPools[workerIndex];
+
+        // Reuse is timeline-gated: wait the worker's last upload to finish before
+        // resetting its (single, reused) command buffer.
+        if (pool.LastSubmittedValue != 0)
+        {
+            m_Native->TransferTimeline->Wait(pool.LastSubmittedValue);
+        }
+
+        pool.CommandBuffer->Reset();
+        pool.CommandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
+        return *pool.CommandBuffer;
+    }
+
+    u64 Context::SubmitTransfer(u32 workerIndex, const TimelineSemaphore& timeline)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "SubmitTransfer: worker index {} out of range ({} transfer pools)", workerIndex,
+                  m_Native->TransferPools.size());
+
+        auto& pool = m_Native->TransferPools[workerIndex];
+        pool.CommandBuffer->End();
+
+        const auto vkCommandBuffer = pool.CommandBuffer->GetNative().CommandBuffer;
+        const vk::Semaphore vkTimeline = timeline.GetNative().Semaphore;
+
+        // Allocate the value, build the signal-info, and submit all under one lock:
+        // a timeline must signal strictly increasing values, so value allocation and
+        // submit must be atomic — two workers racing could submit a lower value second.
+        const std::scoped_lock lock(m_Native->SubmitMutex);
+
+        const u64 value = ++m_Native->TransferTimelineValue;
+
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .signalSemaphoreValueCount = 1,
+            .pSignalSemaphoreValues = &value,
+        };
+
+        const vk::SubmitInfo submitInfo{
+            .pNext = &timelineInfo,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &vkCommandBuffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &vkTimeline,
+        };
+
+        VK_ASSERT(m_Native->TransferQueue.submit(1, &submitInfo, VK_NULL_HANDLE),
+                  "failed to submit transfer commands!");
+
+        pool.LastSubmittedValue = value;
+        return value;
+    }
+
+    TimelineSemaphore& Context::GetTransferTimeline() const
+    {
+        return *m_Native->TransferTimeline;
+    }
+
+    bool Context::IsHeadless() const
+    {
+        return m_Native->Headless;
+    }
+
+    const QueueFamilyIndices& Context::GetQueueFamilies() const
+    {
+        return m_Native->QueueFamilies;
+    }
+
+    bool Context::IsGpuDrivenCullingSupported() const
+    {
+        return m_Native->GpuDrivenCullingSupported;
+    }
+
+    bool Context::IsBlockCompressionSupported() const
+    {
+        return m_Native->BlockCompressionSupported;
+    }
+
+    bool Context::IsAstcSupported() const
+    {
+        return m_Native->AstcSupported;
+    }
+
+    bool Context::IsDepthClampSupported() const
+    {
+        return m_Native->DepthClampSupported;
+    }
+
+    bool Context::IsExtendedStorageImageFormatsSupported() const
+    {
+        return m_Native->ExtendedStorageImageFormatsSupported;
+    }
+
+    const DeviceCapabilities& Context::GetDeviceCapabilities() const
+    {
+        return m_Native->Capabilities;
+    }
+
+    bool Context::IsGpuTimingSupported() const
+    {
+        return m_GpuTimingSupported;
+    }
+
+    f32 Context::GetLastGpuFrameTimeMs() const
+    {
+        return m_GpuFrameTimeMs;
+    }
+
+    std::span<const Context::GpuPassTiming> Context::GetLastGpuPassTimings() const
+    {
+        return m_GpuPassTimings;
+    }
+
+    std::span<const Context::GpuPassTiming> Context::GetLastImmediateGpuPassTimings() const
+    {
+        return m_ImmediateGpuPassTimings;
+    }
+
+    Context::GpuMemoryUsage Context::GetGpuMemoryUsage() const
+    {
+        const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
+        vmaGetMemoryProperties(m_Native->Allocator, &memoryProperties);
+
+        std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+        vmaGetHeapBudgets(m_Native->Allocator, budgets.data());
+
+        // Sum the device-local heaps: on a discrete GPU these are the VRAM heaps; on a
+        // unified-memory device (MoltenVK on Apple silicon) the one device-local heap is system RAM.
+        GpuMemoryUsage usage{};
+        for (u32 heap = 0; heap < memoryProperties->memoryHeapCount; ++heap)
+        {
+            if ((memoryProperties->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+            {
+                usage.UsedBytes += budgets[heap].usage;
+                usage.BudgetBytes += budgets[heap].budget;
+            }
+        }
+        return usage;
+    }
+
+    namespace
+    {
+        /// @brief One run of timestamp scopes being recorded: the pool and first query its pairs
+        /// land in, and the names, depths and open stack that pair them back up at readback.
+        struct ScopeRun
+        {
+            vk::QueryPool Pool;
+            u32 FirstQuery = 0;
+            vector<string>& Names;
+            vector<u32>& Depths;
+            vector<u32>& OpenStack;
+        };
+
+        void OpenScope(const CommandBuffer& cmd, const ScopeRun& run, const string_view name)
+        {
+            // Past the budget: still push a sentinel so the matching close balances the stack.
+            if (run.Names.size() >= Context::Native::MaxGpuScopes)
+            {
+                run.OpenStack.push_back(Context::Native::MaxGpuScopes);
+                return;
+            }
+
+            const auto index = static_cast<u32>(run.Names.size());
+
+            // Depth is the number of scopes open before this one, so the flattened span
+            // reconstructs the pass tree its execution order would otherwise lose.
+            const auto depth = static_cast<u32>(run.OpenStack.size());
+
+            run.Names.emplace_back(name);
+            run.Depths.push_back(depth);
+            run.OpenStack.push_back(index);
+            GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                                   run.Pool, run.FirstQuery + (index * 2));
+
+#if defined(VE_DEBUG) && VE_DEBUG
+            // Bracket the pass with a debug-utils label so a RenderDoc or Xcode capture reads as
+            // named regions rather than an unlabelled wall of draws. Emitted only in a debug build;
+            // a shipping build pays no per-pass label cost. A no-op when the instance lacks
+            // VK_EXT_debug_utils.
+            DebugMarkers::BeginLabel(GetVkCommandBuffer(cmd), string(name));
+#endif
+        }
+
+        void CloseScope(const CommandBuffer& cmd, const ScopeRun& run)
+        {
+            VE_ASSERT(!run.OpenStack.empty(),
+                      "Context::EndGpuScope called without a matching BeginGpuScope");
+            const u32 index = run.OpenStack.back();
+            run.OpenStack.pop_back();
+
+            // The sentinel marks a scope opened past the budget — nothing to close.
+            if (index == Context::Native::MaxGpuScopes)
+            {
+                return;
+            }
+
+            GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                                   run.Pool, run.FirstQuery + (index * 2) + 1);
+
+#if defined(VE_DEBUG) && VE_DEBUG
+            // Close the region OpenScope opened. Symmetric: a scope opened past the budget took
+            // the sentinel branch and emitted no BeginLabel, so it emits no EndLabel here either.
+            DebugMarkers::EndLabel(GetVkCommandBuffer(cmd));
+#endif
+        }
+    }
+
+    void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
+    {
+        if (!m_GpuTimingSupported)
+        {
+            return;
+        }
+        if (m_Native->ImmediateScopeRecording)
+        {
+            OpenScope(cmd,
+                      {.Pool = m_Native->ImmediateTimestampPool,
+                       .Names = m_Native->ImmediateScopeNames,
+                       .Depths = m_Native->ImmediateScopeDepths,
+                       .OpenStack = m_Native->ImmediateOpenScopeStack},
+                      name);
+            return;
+        }
+        // Only inside a driven frame are the frame's queries reset and writable; a graph executed
+        // out-of-frame and outside a timed one-shot recording records no scopes.
+        if (!m_GpuScopeRecording)
+        {
+            return;
+        }
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        OpenScope(cmd,
+                  {.Pool = m_Native->TimestampPool,
+                   .FirstQuery = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2,
+                   .Names = m_Native->CurrentScopeNames,
+                   .Depths = m_Native->CurrentScopeDepths,
+                   .OpenStack = m_Native->OpenScopeStack},
+                  name);
+    }
+
+    void Context::EndGpuScope(CommandBuffer& cmd)
+    {
+        // Symmetric with BeginGpuScope: where the matching Begin recorded nothing it pushed
+        // nothing, so the stack stays balanced without a pop here.
+        if (!m_GpuTimingSupported)
+        {
+            return;
+        }
+        if (m_Native->ImmediateScopeRecording)
+        {
+            CloseScope(cmd, {.Pool = m_Native->ImmediateTimestampPool,
+                             .Names = m_Native->ImmediateScopeNames,
+                             .Depths = m_Native->ImmediateScopeDepths,
+                             .OpenStack = m_Native->ImmediateOpenScopeStack});
+            return;
+        }
+        if (!m_GpuScopeRecording)
+        {
+            return;
+        }
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        CloseScope(cmd, {.Pool = m_Native->TimestampPool,
+                         .FirstQuery = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2,
+                         .Names = m_Native->CurrentScopeNames,
+                         .Depths = m_Native->CurrentScopeDepths,
+                         .OpenStack = m_Native->OpenScopeStack});
+    }
+
+    bool Context::IsFormatLinearFilterSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        return static_cast<bool>(props.optimalTilingFeatures &
+                                 vk::FormatFeatureFlagBits::eSampledImageFilterLinear);
+    }
+
+    bool Context::IsFormatColorAttachmentTransferSrcSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        constexpr vk::FormatFeatureFlags required =
+            vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eTransferSrc;
+        return (props.optimalTilingFeatures & required) == required;
+    }
+
+    bool Context::IsFormatStorageImageSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        return static_cast<bool>(props.optimalTilingFeatures &
+                                 vk::FormatFeatureFlagBits::eStorageImage);
+    }
+
+    bool Context::IsRecordingFrame() const
+    {
+        return m_Native->FrameCommandsOpen && m_Native->ActiveImmediateCommands == nullptr;
+    }
+
+    SynchronizationFrame& Context::GetCurrentFrame()
+    {
+        return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
+    }
+
+    CommandBuffer& Context::GetCurrentCommandBuffer()
+    {
+        return *GetCurrentFrame().GetCommandBuffer();
+    }
+
+    CommandBuffer& Context::BeginFrame()
+    {
+        // A minimized window parks here, pumping events, before anything waits on the GPU: a
+        // frame already queued may need a drawable the window system vends only once the window
+        // is visible again, and a restore is only seen while events are pumped. Blocking on that
+        // frame's fence instead would hold the main thread until the drawable request timed out.
+        if (!IsHeadless())
+        {
+            m_Window->WaitUntilPresentable();
+        }
+
+        const auto& frame = AcquireNextFrame();
+        ++m_FrameSerial;
+
+        // AcquireNextFrame drained this slot's bin; fold in any handles retired since the last
+        // EndFrame so they are protected by this frame's fence rather than the one just waited.
+        m_Native->AdoptPendingRetires();
+
+        // The slot's fence has been waited, so everything the frame that last used it wrote is
+        // complete and readable. Announced before anything records, and over a copy so a callback
+        // may register or release one.
+        if (!m_Native->FrameRetiredCallbacks.empty())
+        {
+            const auto callbacks = m_Native->FrameRetiredCallbacks;
+            for (const auto& [handle, callback] : callbacks)
+            {
+                callback(m_Native->CurrentFrameInFlight);
+            }
+        }
+
+        // Headless has no swapchain image to acquire.
+        if (!IsHeadless())
+        {
+            // Reconcile the swapchain to the live framebuffer before acquiring, so no frame is
+            // submitted against a swapchain lagging the resized layer: MoltenVK acquires the
+            // CAMetalDrawable lazily, when it encodes the frame's first use of the image, and a
+            // stale swapchain can wedge that nextDrawable. The device wait drains the frames
+            // already queued for encoding (MoltenVK's waitIdle empties its submission queue
+            // first) before the old swapchain goes. Those frames cannot be waiting on this
+            // thread: each image releases its previous drawable when it is acquired, and the
+            // swapchain holds more images than frames in flight, so a queued encode's drawable
+            // depends only on the window system.
+            if (m_Window->ConsumeFramebufferResized())
+            {
+                m_RenderExtentChanged = true;
+            }
+
+            if (m_RenderExtentChanged)
+            {
+                m_Window->WaitUntilPresentable();
+                WaitIdle();
+                UpdateRenderExtent();
+            }
+
+            VE_PROFILE_SCOPE("Render/Acquire");
+            AcquireNextImage(*m_Native->ImageAvailableSemaphores[m_Native->CurrentFrameInFlight]);
+        }
+
+        frame.GetInFlightFence().Reset();
+        m_Native->FrameSplitCount = 0;
+        m_Native->FrameSegmentSubmitted = false;
+        m_Native->PendingInteropWait.reset();
+
+        const auto commandBuffer = frame.GetCommandBuffer();
+
+        commandBuffer->Reset();
+
+        commandBuffer->Begin();
+
+        // GPU timing: read back the queries this slot wrote on its previous cycle, then reset the
+        // slot's whole query run and write the frame-start timestamp. The slot is read only after
+        // it has been written once. The read never waits: the fence AcquireNextFrame just waited
+        // covers every query the slot wrote, and a result the implementation has not yet published
+        // costs one frame's timings (the previous frame time stands) rather than a stall.
+        if (m_GpuTimingSupported)
+        {
+            VE_PROFILE_SCOPE("Render/TimestampReadback");
+            const u32 slot = m_Native->CurrentFrameInFlight;
+            const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
+            const u32 frameBase = slot * queriesPerFrame;
+            const u32 scopeBase = frameBase + 2;
+            const u64 mask = m_Native->TimestampValidMask;
+            const auto ticksToMs = [this](const u64 ticks)
+            { return static_cast<f32>(ticks) * m_Native->TimestampPeriodNs * 1e-6f; };
+
+            const auto ticksToNanos = [this](const u64 ticks)
+            { return static_cast<u64>(static_cast<f64>(ticks) * m_Native->TimestampPeriodNs); };
+
+            if (m_Native->TimestampWritten[slot])
+            {
+                std::array<u64, 2> frameStamps{};
+                const vk::Result frameResult = m_Native->Device.getQueryPoolResults(
+                    m_Native->TimestampPool, frameBase, 2, sizeof(frameStamps), frameStamps.data(),
+                    sizeof(u64), vk::QueryResultFlagBits::e64);
+                u64 frameStartTick = 0;
+                bool haveFrameStart = false;
+                if (frameResult == vk::Result::eSuccess)
+                {
+                    const u64 ticks = (frameStamps[1] - frameStamps[0]) & mask;
+                    m_GpuFrameTimeMs = ticksToMs(ticks);
+                    frameStartTick = frameStamps[0];
+                    haveFrameStart = true;
+                }
+
+                // The scope names recorded into this slot last cycle give both the count of
+                // scope pairs to read (only the written ones — an unwritten query never becomes
+                // available) and the label for each measured pass.
+                const vector<string>& names = m_Native->ScopeNames[slot];
+                const vector<u32>& depths = m_Native->ScopeDepths[slot];
+                m_GpuPassTimings.clear();
+                if (!names.empty())
+                {
+                    vector<u64> scopeStamps(names.size() * 2);
+                    const vk::Result scopeResult = m_Native->Device.getQueryPoolResults(
+                        m_Native->TimestampPool, scopeBase, static_cast<u32>(scopeStamps.size()),
+                        scopeStamps.size() * sizeof(u64), scopeStamps.data(), sizeof(u64),
+                        vk::QueryResultFlagBits::e64);
+                    if (scopeResult == vk::Result::eSuccess)
+                    {
+                        // Place each pass relative to the frame's GPU start (else the earliest
+                        // scope), so BeginNanos/EndNanos are epoch-free and the GPU bridge anchors
+                        // the whole run against one CPU timestamp.
+                        const u64 base = haveFrameStart ? frameStartTick : scopeStamps[0];
+                        m_GpuPassTimings.reserve(names.size());
+                        for (usize i = 0; i < names.size(); i++)
+                        {
+                            const u64 beginTick = scopeStamps[i * 2];
+                            const u64 endTick = scopeStamps[(i * 2) + 1];
+                            const u64 ticks = (endTick - beginTick) & mask;
+                            m_GpuPassTimings.push_back({
+                                .Name = names[i],
+                                .Milliseconds = ticksToMs(ticks),
+                                .BeginNanos = ticksToNanos((beginTick - base) & mask),
+                                .EndNanos = ticksToNanos((endTick - base) & mask),
+                                .Depth = i < depths.size() ? depths[i] : 0,
+                            });
+                        }
+                    }
+                }
+            }
+
+            const vk::CommandBuffer vkCmd = GetVkCommandBuffer(*commandBuffer);
+            vkCmd.resetQueryPool(m_Native->TimestampPool, frameBase, queriesPerFrame);
+            vkCmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, m_Native->TimestampPool,
+                                 frameBase);
+
+            // Open a fresh recording for this slot's new frame; scopes append as passes record.
+            // The reset above makes the slot's queries writable, so scope writes are now legal.
+            m_Native->CurrentScopeNames.clear();
+            m_Native->CurrentScopeDepths.clear();
+            m_Native->OpenScopeStack.clear();
+            m_GpuScopeRecording = true;
+        }
+
+        // Setup work handed over while no command buffer was open records first, ahead of every
+        // pass that could use what it initializes.
+        m_Native->FrameCommandsOpen = true;
+        VE_PROFILE_SCOPE("Render/FrameSetup");
+        DrainSetupCommands(*commandBuffer);
+
+        // Transition any resources that went resident since last frame into Sample
+        // layout before passes record. The RenderGraph cannot derive this transition
+        // — bindless resources are invisible to it (sampled through set 0).
+        if (!m_PendingBindlessAcquires.empty())
+        {
+            BeginGpuScope(*commandBuffer, "Frame Acquires");
+            DrainBindlessAcquires(*commandBuffer);
+            EndGpuScope(*commandBuffer);
+        }
+
+        // Amortized generation and readback record here, at the top of the frame and ahead of
+        // every pass: a job's result is sampleable by the passes of the frame that finished it,
+        // and a readback staged now is delivered once this frame's fence has been waited again.
+        m_GeneratedTextures->Pump(*commandBuffer);
+        m_AsyncReadback->Pump(*commandBuffer);
+
+        return *commandBuffer;
+    }
+
+    void Context::EndFrame()
+    {
+        const auto& frame = GetCurrentFrame();
+
+        const auto commandBuffer = frame.GetCommandBuffer();
+
+        // Headless has no swapchain image to transition for presentation.
+        if (!IsHeadless())
+        {
+            Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
+                                     ImageLayout::PresentSrc);
+        }
+
+        // GPU frame timing: the frame-end timestamp, capturing the whole command buffer's work.
+        // The scope names recorded this frame travel to the slot so its next readback can pair
+        // each duration with its pass.
+        if (m_GpuTimingSupported)
+        {
+            const u32 slot = m_Native->CurrentFrameInFlight;
+            const u32 frameBase = slot * (2 + 2 * Native::MaxGpuScopes);
+            GetVkCommandBuffer(*commandBuffer)
+                .writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_Native->TimestampPool,
+                                frameBase + 1);
+            m_Native->ScopeNames[slot] = std::move(m_Native->CurrentScopeNames);
+            m_Native->ScopeDepths[slot] = std::move(m_Native->CurrentScopeDepths);
+            m_Native->TimestampWritten[slot] = true;
+            m_GpuScopeRecording = false;
+        }
+
+        m_Native->FrameCommandsOpen = false;
+        commandBuffer->End();
+
+        {
+            VE_PROFILE_SCOPE("Render/Submit");
+            SubmitFrame(frame);
+        }
+        VE_PROFILE_COUNTER("Render/AsyncSubmit",
+                           m_SubmitMode.Mode == QueueSubmitMode::Asynchronous ? 1.0 : 0.0);
+
+        {
+            VE_PROFILE_SCOPE("Render/Present");
+            PresentFrame();
+        }
+
+        // The frame's command buffer is submitted and the slot has advanced. Retires from here
+        // until the next BeginFrame park in PendingRetire, since CurrentFrameInFlight now names
+        // the slot AcquireNextFrame will drain.
+        m_Native->FrameRecording = false;
+    }
+
+    u32 Context::GetMaxFramesInFlight() const
+    {
+        return m_Native->MaxFramesInFlight;
+    }
+    u32 Context::GetCurrentFrameInFlight() const
+    {
+        return m_Native->CurrentFrameInFlight;
+    }
+
+    u32 Context::GetMaxImageDimension2D() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
+    }
+
+    u32 Context::GetMaxImageArrayLayers() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxImageArrayLayers;
+    }
+
+    u32 Context::GetMaxAttachmentDimension2D() const
+    {
+        const vk::PhysicalDeviceLimits limits = m_Native->PhysicalDevice.getProperties().limits;
+        return std::min(
+            {limits.maxImageDimension2D, limits.maxFramebufferWidth, limits.maxFramebufferHeight});
+    }
+
+    f32 Context::GetMaxSamplerAnisotropy() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxSamplerAnisotropy;
+    }
+
+    uvec2 Context::GetSwapChainExtent() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetExtent();
+    }
+    Format Context::GetSwapChainFormat() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetFormat();
+    }
+    DisplayMode Context::GetActiveDisplayMode() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetDisplayMode();
+    }
+    DisplayColorSpace Context::GetActiveDisplayColorSpace() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetDisplayColorSpace();
+    }
+    vector<PresentMode> Context::GetSupportedPresentModes() const
+    {
+        // No surface headless: report the always-available mode so callers get a well-formed list.
+        if (!m_Native->SwapChain)
+        {
+            return {PresentMode::Vsync};
+        }
+
+        const SwapChainSupportDetails support =
+            m_Native->QuerySwapChainSupport(m_Native->PhysicalDevice);
+
+        vector<PresentMode> modes;
+        const auto add = [&](const PresentMode mode)
+        {
+            if (std::ranges::find(modes, mode) == modes.end())
+            {
+                modes.push_back(mode);
+            }
+        };
+        for (const vk::PresentModeKHR mode : support.PresentModes)
+        {
+            switch (mode)
+            {
+            case vk::PresentModeKHR::eFifo:
+                add(PresentMode::Vsync);
+                break;
+            case vk::PresentModeKHR::eImmediate:
+                add(PresentMode::Immediate);
+                break;
+            case vk::PresentModeKHR::eMailbox:
+                add(PresentMode::Mailbox);
+                break;
+            default:
+                break;
+            }
+        }
+        // FIFO is guaranteed by the spec, so Vsync is always offered even if the report omitted it.
+        add(PresentMode::Vsync);
+        return modes;
+    }
+    void Context::SetRequestedPresentMode(const PresentMode mode)
+    {
+        if (!m_Native->SwapChain)
+        {
+            return;
+        }
+        m_Native->SwapChain->SetRequestedPresentMode(mode);
+        // Recreate at the next frame-safe point (BeginFrame), never mid-record.
+        m_RenderExtentChanged = true;
+    }
+    Ref<Image> Context::GetCurrentSwapChainImage() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImage();
+    }
+    Ref<ImageView> Context::GetCurrentSwapChainImageView() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImageView();
+    }
+    u32 Context::GetSwapChainImageCount() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetImageCount();
+    }
+    u32 Context::GetCurrentSwapChainImageIndex() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImageIndex();
+    }
+    void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
+    {
+        // Headless has no swap chain, so nothing can invalidate one; registering is a no-op rather
+        // than a null dereference.
+        if (!m_Native->SwapChain)
+        {
+            return;
+        }
+        m_Native->SwapChain->AddInvalidationCallback(std::move(callback));
+    }
+
+    Context::FrameRetiredHandle
+    Context::AddFrameRetiredCallback(std::function<void(u32 slot)> callback)
+    {
+        const u64 handle = ++m_Native->NextFrameRetiredHandle;
+        m_Native->FrameRetiredCallbacks.emplace_back(handle, std::move(callback));
+        return handle;
+    }
+
+    void Context::RemoveFrameRetiredCallback(const FrameRetiredHandle handle)
+    {
+        std::erase_if(m_Native->FrameRetiredCallbacks,
+                      [handle](const auto& entry) { return entry.first == handle; });
+    }
+
+    bool Context::IsExternalTextureImportSupported() const
+    {
+#ifdef __APPLE__
+        return m_Native->MetalObjectsEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void* Context::GetExternalDevice() const
+    {
+        return m_Native->MetalDevice;
+    }
+
+    bool Context::IsFrameSplitSupported() const
+    {
+#ifdef __APPLE__
+        return m_Native->MetalObjectsEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void Context::SplitFrame(const function<void(const FrameSplitPoint&)>& encode)
+    {
+        VE_ASSERT(IsFrameSplitSupported(),
+                  "SplitFrame: this device has no platform-object interop");
+        VE_ASSERT(
+            m_Native->FrameCommandsOpen || m_Native->ActiveImmediateCommands != nullptr,
+            "SplitFrame: called with neither a frame nor an ImmediateCommands recording open");
+
+#ifdef __APPLE__
+        if (!m_Native->InteropTimeline)
+        {
+            // MoltenVK backs a timeline semaphore with an MTLSharedEvent, which is what lets the
+            // external work wait and signal the same values the frame's submits do.
+            const vk::ExportMetalObjectCreateInfoEXT exportInfo{
+                .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalSharedEvent,
+            };
+            const vk::SemaphoreTypeCreateInfo typeInfo{
+                .pNext = &exportInfo,
+                .semaphoreType = vk::SemaphoreType::eTimeline,
+                .initialValue = 0,
+            };
+            m_Native->InteropTimeline =
+                m_Native->Device.createSemaphore(vk::SemaphoreCreateInfo{.pNext = &typeInfo}).value;
+            DebugMarkers::MarkSemaphore(m_Native->Device, m_Native->InteropTimeline,
+                                        "Frame Split Interop Timeline");
+
+            vk::ExportMetalSharedEventInfoEXT eventInfo{.semaphore = m_Native->InteropTimeline};
+            vk::ExportMetalObjectsInfoEXT objectsInfo{.pNext = &eventInfo};
+            m_Native->Device.exportMetalObjectsEXT(objectsInfo);
+            m_Native->InteropEvent = eventInfo.mtlSharedEvent;
+            VE_ASSERT(m_Native->InteropEvent != nullptr,
+                      "SplitFrame: the interop timeline exported no shared event");
+        }
+#endif
+
+        const FrameSplitPoint point{
+            .SharedEvent = m_Native->InteropEvent,
+            .WaitValue = m_Native->InteropValue + 1,
+            .SignalValue = m_Native->InteropValue + 2,
+        };
+        m_Native->InteropValue = point.SignalValue;
+
+        // A one-shot recording splits the same way, into buffers its own submit's fence frees.
+        if (CommandBuffer* const immediate = m_Native->ActiveImmediateCommands)
+        {
+            immediate->End();
+            m_Native->SubmitImmediateSegment(*immediate, point.WaitValue, vk::Fence{});
+            encode(point);
+            m_Native->ImmediateInteropWait = m_Native->ResolveExternalSignal(point.SignalValue);
+
+            const Ref<CommandBuffer> spare = CommandBuffer::Create(*this);
+            std::swap(immediate->GetNative().CommandBuffer, spare->GetNative().CommandBuffer);
+            m_Native->ImmediateSplitBuffers.push_back(spare);
+            VK_ASSERT(immediate->GetNative().CommandBuffer.begin(
+                          {.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}),
+                      "SplitFrame: failed to begin the resumed one-shot command buffer");
+            return;
+        }
+
+        const SynchronizationFrame& frame = GetCurrentFrame();
+        const Ref<CommandBuffer> commandBuffer = frame.GetCommandBuffer();
+        commandBuffer->End();
+        m_Native->SubmitFrameSegment(frame, false, point.WaitValue);
+        encode(point);
+        m_Native->PendingInteropWait = m_Native->ResolveExternalSignal(point.SignalValue);
+
+        // Resume in a spare: the submitted handle moves into the spare's wrapper, which keeps it
+        // alive until this slot's fence is waited. Begun directly rather than through
+        // CommandBuffer::Begin, which would restart the frame's draw count.
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        if (m_Native->SplitCommandBuffers.size() <= slot)
+        {
+            m_Native->SplitCommandBuffers.resize(m_Native->MaxFramesInFlight);
+        }
+        vector<Ref<CommandBuffer>>& spares = m_Native->SplitCommandBuffers[slot];
+        if (m_Native->FrameSplitCount == spares.size())
+        {
+            spares.push_back(CommandBuffer::Create(*this));
+        }
+        const CommandBuffer& spare = *spares[m_Native->FrameSplitCount++];
+        std::swap(commandBuffer->GetNative().CommandBuffer, spare.GetNative().CommandBuffer);
+        const vk::CommandBuffer resumed = commandBuffer->GetNative().CommandBuffer;
+        VK_ASSERT(resumed.reset(), "SplitFrame: failed to reset the resumed command buffer");
+        // Named explicitly: a bare {} selects begin's pointer overload and passes a null begin info.
+        VK_ASSERT(resumed.begin(vk::CommandBufferBeginInfo{}),
+                  "SplitFrame: failed to begin the resumed command buffer");
+    }
+
+    void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
+    {
+        auto& self = const_cast<Context&>(*this);
+        Native& native = *m_Native;
+        const auto commandBuffer = CommandBuffer::Create(self);
+        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
+
+        // A one-shot command buffer is not the driven frame's and never receives the per-frame
+        // query reset, so its scopes go to a pool of their own, reset here at its head. A frame
+        // left recording (an ImmediateCommands run mid-frame) is paused so none of this work lands
+        // in the frame's queries, and restored after. A nested call records untimed: the outer
+        // recording owns the pool until its own submit has been read back.
+        const bool wasRecording = self.m_GpuScopeRecording;
+        const bool wasImmediate = native.ImmediateScopeRecording;
+        const bool timed = m_GpuTimingSupported && !wasImmediate;
+        self.m_GpuScopeRecording = false;
+        native.ImmediateScopeRecording = timed;
+        if (timed)
+        {
+            native.ImmediateScopeNames.clear();
+            native.ImmediateScopeDepths.clear();
+            native.ImmediateOpenScopeStack.clear();
+            GetVkCommandBuffer(*commandBuffer)
+                .resetQueryPool(native.ImmediateTimestampPool, 0, 2 * Native::MaxGpuScopes);
+        }
+
+        // Outside a frame the current slot's last frame may still read its per-view and material
+        // regions, so its fence is waited before the recording takes them over.
+        CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
+        const bool outsideFrame = !native.FrameRecording && outerImmediate == nullptr;
+        if (outsideFrame && native.Bindless)
+        {
+            native.SynchronizationFrames[native.CurrentFrameInFlight].GetInFlightFence().Wait();
+            native.Bindless->OnImmediateRecordingBegun(native.CurrentFrameInFlight);
+        }
+        native.ActiveImmediateCommands = commandBuffer.get();
+        self.DrainSetupCommands(*commandBuffer);
+        // Outside a frame no BeginFrame may come to record what went resident since, and the
+        // callback may sample it. Inside one they wait for the next frame: an acquire recorded
+        // here would run ahead of commands the frame recorded before it.
+        if (outsideFrame)
+        {
+            self.DrainBindlessAcquires(*commandBuffer);
+        }
+        function(*commandBuffer);
+        native.ActiveImmediateCommands = outerImmediate;
+
+        VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
+                  "ImmediateCommands: {} GPU scope(s) left open by the recording",
+                  native.ImmediateOpenScopeStack.size());
+        native.ImmediateScopeRecording = wasImmediate;
+        self.m_GpuScopeRecording = wasRecording;
+
+        commandBuffer->End();
+        usize foldedWaits = 0;
+        if (outsideFrame)
+        {
+            const std::scoped_lock lock(native.SubmitMutex);
+            foldedWaits = native.PendingFrameTransferWaits.size();
+        }
+        SubmitImmediateCommands(*commandBuffer);
+
+        // What was dropped outside a frame waits in the pending bin, and a released bindless slot
+        // in its frame bucket, for a BeginFrame, which a process submitting only one-off work never
+        // reaches. This submit has completed, so once nothing else is in flight, both are released
+        // here instead. A nested recording is skipped: the outer buffer, not yet submitted, may
+        // still use them.
+        if (outsideFrame)
+        {
+            // The transfer waits this submit took are settled: it has completed, so each value was
+            // reached, and every later submit is made after it. Kept owed, they would grow by one
+            // per upload and be waited by every later immediate submit in a process with no frame
+            // submit to clear them. The count was taken before the submit read the set, and only
+            // this thread removes from it, so the leading entries are exactly those it waited.
+            {
+                const std::scoped_lock lock(native.SubmitMutex);
+                auto& waits = native.PendingFrameTransferWaits;
+                waits.erase(waits.begin(),
+                            waits.begin() + static_cast<std::ptrdiff_t>(foldedWaits));
+            }
+            native.DrainPendingRetiresIfIdle();
+        }
+
+        if (!timed)
+        {
+            return;
+        }
+        // The submit has completed, so every written query is available.
+        self.m_ImmediateGpuPassTimings.clear();
+        const vector<string>& names = native.ImmediateScopeNames;
+        if (names.empty())
+        {
+            return;
+        }
+        vector<u64> stamps(names.size() * 2);
+        const vk::Result result = native.Device.getQueryPoolResults(
+            native.ImmediateTimestampPool, 0, static_cast<u32>(stamps.size()),
+            stamps.size() * sizeof(u64), stamps.data(), sizeof(u64),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+        if (result != vk::Result::eSuccess)
+        {
+            return;
+        }
+        const u64 mask = native.TimestampValidMask;
+        const f64 periodNs = native.TimestampPeriodNs;
+        // Placed against the first scope's begin, the one-shot recording having no frame start.
+        const u64 base = stamps[0];
+        self.m_ImmediateGpuPassTimings.reserve(names.size());
+        for (usize i = 0; i < names.size(); i++)
+        {
+            const u64 beginTick = stamps[i * 2];
+            const u64 endTick = stamps[(i * 2) + 1];
+            const u64 ticks = (endTick - beginTick) & mask;
+            self.m_ImmediateGpuPassTimings.push_back({
+                .Name = names[i],
+                .Milliseconds = static_cast<f32>(static_cast<f64>(ticks) * periodNs * 1e-6),
+                .BeginNanos =
+                    static_cast<u64>(static_cast<f64>((beginTick - base) & mask) * periodNs),
+                .EndNanos = static_cast<u64>(static_cast<f64>((endTick - base) & mask) * periodNs),
+                .Depth = native.ImmediateScopeDepths[i],
+            });
+        }
+    }
+
+    void Context::AcquireNextImage(Semaphore& semaphore)
+    {
+        // On eErrorOutOfDateKHR the semaphore is left unsignaled and no image index
+        // is produced, so the swap chain must be recreated and the image re-acquired
+        // before submit — submitting a frame whose wait is this unsignaled semaphore
+        // deadlocks the queue (its fence never signals, hanging the next frame's wait).
+        auto result = m_Native->SwapChain->AcquireNextImage(semaphore);
+
+        while (result == vk::Result::eErrorOutOfDateKHR)
+        {
+            Log::Warn("Out of date swap chain image!");
+
+            m_Window->WaitUntilPresentable();
+            WaitIdle();
+            UpdateRenderExtent();
+
+            result = m_Native->SwapChain->AcquireNextImage(semaphore);
+        }
+
+        if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+        {
+            VE_ASSERT(false, "failed to acquire swap chain image!");
+        }
+    }
+
+    void Context::WaitIdle() const
+    {
+        // vkDeviceWaitIdle implicitly uses every queue, so it needs the same external
+        // synchronization a submit does — a worker upload submit racing this on the shared
+        // MoltenVK queue is a VkQueue threading error.
+        const std::scoped_lock lock(m_Native->SubmitMutex);
+        VK_ASSERT(m_Native->Device.waitIdle(), "failed to wait for device idle!");
+    }
+
+    BindlessRegistry& Context::GetBindlessRegistry() const
+    {
+        return *m_Native->Bindless;
+    }
+
+    GeneratedTextureService& Context::GetGeneratedTextures() const
+    {
+        return *m_GeneratedTextures;
+    }
+
+    AsyncReadback& Context::GetAsyncReadback() const
+    {
+        return *m_AsyncReadback;
+    }
+
+    void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)
+    {
+        m_PendingBindlessAcquires.push_back(view);
+    }
+
+    void Context::RecordSetupCommands(std::function<void(CommandBuffer&)> commands)
+    {
+        if (m_Native->ActiveImmediateCommands != nullptr)
+        {
+            commands(*m_Native->ActiveImmediateCommands);
+            return;
+        }
+        if (m_Native->FrameCommandsOpen)
+        {
+            commands(GetCurrentCommandBuffer());
+            return;
+        }
+        m_PendingSetupCommands.push_back(std::move(commands));
+    }
+
+    void Context::DrainBindlessAcquires(CommandBuffer& commandBuffer)
+    {
+        for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
+        {
+            commandBuffer.PrepareForAccess(view, AccessKind::SampleAny);
+        }
+        m_PendingBindlessAcquires.clear();
+    }
+
+    void Context::DrainSetupCommands(CommandBuffer& commandBuffer)
+    {
+        if (m_PendingSetupCommands.empty())
+        {
+            return;
+        }
+        // Swapped out first: a recording may itself hand over more setup work, which records
+        // directly now that a buffer is open.
+        vector<std::function<void(CommandBuffer&)>> pending;
+        pending.swap(m_PendingSetupCommands);
+        BeginGpuScope(commandBuffer, "Setup Commands");
+        for (const std::function<void(CommandBuffer&)>& commands : pending)
+        {
+            commands(commandBuffer);
+        }
+        EndGpuScope(commandBuffer);
+    }
+
+    vector<const char*>& Context::Native::GetRequiredExtensions()
+    {
+        if (RequiredExtensions.empty())
+        {
+            // Surface/window-related instance extensions (GLFW's list and the
+            // swapchain colour-space extension) are only needed with a window.
+            if (!Headless)
+            {
+                u32 glfwExtensionCount = 0;
+                const char** glfwExtensions =
+                    glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+                RequiredExtensions =
+                    vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+                RequiredExtensions.emplace_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            }
+
+            RequiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        }
+
+        return RequiredExtensions;
+    }
+
+    QueueFamilyIndices& Context::Native::FindQueueFamilies(vk::PhysicalDevice device)
+    {
+        QueueFamilies = {};
+
+        u32 queueFamilyCount = 0;
+        device.getQueueFamilyProperties(&queueFamilyCount, nullptr);
+
+        vector<vk::QueueFamilyProperties> queueFamilies(queueFamilyCount);
+        device.getQueueFamilyProperties(&queueFamilyCount, queueFamilies.data());
+
+        for (u32 i = 0; i < queueFamilyCount; ++i)
+        {
+            const auto& queueFamily = queueFamilies[i];
+
+            if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)
+            {
+                QueueFamilies.GraphicsFamily = i;
+            }
+
+            // Prefer a transfer-capable family that is NOT also graphics — the
+            // dedicated DMA path on discrete GPUs. The graphics family also
+            // implicitly supports transfer (the spec guarantees it), so it is the
+            // fallback below when no transfer-only family exists.
+            if ((queueFamily.queueFlags & vk::QueueFlagBits::eTransfer) &&
+                !(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics))
+            {
+                QueueFamilies.TransferFamily = i;
+            }
+
+            // Present support is only meaningful when there's a surface.
+            if (Surface && device.getSurfaceSupportKHR(i, Surface).value)
+            {
+                QueueFamilies.PresentFamily = i;
+            }
+        }
+
+        // MoltenVK (and any GPU with no transfer-only family): collapse transfer
+        // onto graphics. This is the primary dev platform and the tested path —
+        // TransferIsGraphics() is true and no cross-queue ownership transfer is
+        // needed; the submission lock alone serializes the shared queue.
+        if (!QueueFamilies.TransferFamily.has_value())
+        {
+            QueueFamilies.TransferFamily = QueueFamilies.GraphicsFamily;
+        }
+
+        return QueueFamilies;
+    }
+
+    SwapChainSupportDetails Context::Native::QuerySwapChainSupport(vk::PhysicalDevice device) const
+    {
+        return SwapChainSupportDetails{
+            .Capabilities = device.getSurfaceCapabilitiesKHR(Surface).value,
+            .Formats = device.getSurfaceFormatsKHR(Surface).value,
+            .PresentModes = device.getSurfacePresentModesKHR(Surface).value};
+    }
+
+    bool Context::Native::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
+    {
+        const auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
+
+        set<string> requiredExtensions(DeviceExtensions.begin(), DeviceExtensions.end());
+
+        for (const auto& extension : availableExtensions)
+        {
+            requiredExtensions.erase(extension.extensionName);
+        }
+
+        return requiredExtensions.empty();
+    }
+
+    vk::Device Context::Native::CreateDevice()
+    {
+        QueueFamilyIndices indices = FindQueueFamilies(PhysicalDevice);
+
+        vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
+        set<u32> uniqueQueueFamilies{indices.GraphicsFamily.value()};
+        if (indices.CanPresent())
+        {
+            uniqueQueueFamilies.insert(indices.PresentFamily.value());
+        }
+        // No-op when transfer collapses onto graphics (MoltenVK); adds the
+        // dedicated transfer family on a discrete GPU.
+        uniqueQueueFamilies.insert(indices.TransferFamily.value());
+
+        const f32 queuePriority = 1.0f;
+        for (const u32 queueFamily : uniqueQueueFamilies)
+        {
+            const vk::DeviceQueueCreateInfo queueCreateInfo{.queueFamilyIndex = queueFamily,
+                                                            .queueCount = 1,
+                                                            .pQueuePriorities = &queuePriority};
+
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
+
+        const vk::PhysicalDeviceFeatures deviceFeatures{.sampleRateShading = VK_TRUE,
+                                                        .samplerAnisotropy = VK_TRUE,
+                                                        .shaderSampledImageArrayDynamicIndexing =
+                                                            VK_TRUE};
+
+        auto deviceExtensions = DeviceExtensions;
+
+        // Subgroup size control is core from Vulkan 1.3 (the instance's version); an older device
+        // carries it as VK_EXT_subgroup_size_control, enabled below when advertised.
+        const u32 deviceApiVersion = PhysicalDevice.getProperties().apiVersion;
+        bool subgroupSizeControlAvailable = deviceApiVersion >= VK_API_VERSION_1_3;
+
+        // VK_KHR_portability_subset must be enabled iff the device advertises it (a
+        // non-conformant implementation such as MoltenVK); a conformant native driver does
+        // not expose it and must not be asked for it. Add it per-device here rather than in
+        // the always-required list so desktop GPUs are not wrongly rejected as unsuitable.
+        // VK_EXT_memory_budget is enabled the same way — optional, per-device — so the allocator
+        // reports the OS memory budget rather than falling back to the heap size.
+        {
+            const auto available = PhysicalDevice.enumerateDeviceExtensionProperties(nullptr).value;
+            for (const auto& extension : available)
+            {
+                if (std::strcmp(extension.extensionName,
+                                VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+                }
+                else if (std::strcmp(extension.extensionName,
+                                     VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                    MemoryBudgetSupported = true;
+                }
+                else if (!subgroupSizeControlAvailable &&
+                         std::strcmp(extension.extensionName,
+                                     VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+                    subgroupSizeControlAvailable = true;
+                }
+#ifdef __APPLE__
+                // VK_EXT_metal_objects exports the Metal device/queue the implementation is
+                // running on and imports an externally-owned MTLTexture as a VkImage. Optional and
+                // per-device like the two above; it carries no feature struct to enable.
+                else if (std::strcmp(extension.extensionName,
+                                     VK_EXT_METAL_OBJECTS_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_METAL_OBJECTS_EXTENSION_NAME);
+                    MetalObjectsEnabled = true;
+                }
+#endif
+            }
+        }
+
+        // A vertex stage that reads SV_VertexID compiles to SPIR-V declaring the DrawParameters
+        // capability: the HLSL semantic is draw-relative, so the translation subtracts BaseVertex
+        // and needs the builtin to read it. Nothing about the shader asks for the feature by name,
+        // which is why its absence surfaces as a validation error at module creation rather than at
+        // compile — enable it wherever the device has it.
+        vk::PhysicalDeviceShaderDrawParametersFeatures shaderDrawParametersFeatures{};
+
+        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
+            .pNext = &shaderDrawParametersFeatures, .dynamicRendering = vk::True};
+
+        vk::PhysicalDeviceFeatures2 features2{.pNext = &dynamicRenderingFeatures,
+                                              .features = deviceFeatures};
+
+        PhysicalDevice.getFeatures2(&features2);
+
+        // getFeatures2 overwrites the chain with what the device reports, so the request is made
+        // after it rather than in the initializer. It is required rather than opportunistic: every
+        // vertex stage reading SV_VertexID needs it, so a device without it cannot run the engine
+        // at all and should fail loudly at device creation rather than silently later.
+        shaderDrawParametersFeatures.shaderDrawParameters = vk::True;
+
+        // The GPU-driven cull issues a multiDrawIndirect command buffer and carries each
+        // candidate's index in the command's firstInstance (read back as an instance-rate
+        // vertex attribute), which needs drawIndirectFirstInstance. Enable the pair only
+        // when both are supported, so a half-supported device never enables one alone;
+        // GpuDrivenCullingSupported gates CullMode::GPU, with the CPU path as the fallback.
+        // MoltenVK lacks drawIndirectCount, so the count-buffer (vkCmdDrawIndexedIndirectCount)
+        // path is out — the buffer holds a fixed candidate maximum and culled slots no-op.
+        const bool gpuDrivenCullingSupported =
+            features2.features.multiDrawIndirect && features2.features.drawIndirectFirstInstance;
+        GpuDrivenCullingSupported = gpuDrivenCullingSupported;
+        features2.features.multiDrawIndirect = gpuDrivenCullingSupported ? vk::True : vk::False;
+        features2.features.drawIndirectFirstInstance =
+            gpuDrivenCullingSupported ? vk::True : vk::False;
+
+        // textureCompressionBC is a core feature that must be enabled (not just queried) for
+        // sampling a BC image to be legal. Enable it only when supported; a BC-cooked texture on
+        // a device without it is rejected by the loader (AssetError::Unsupported), never decoded.
+        // MoltenVK exposes it on Apple Silicon only.
+        const bool blockCompressionSupported = features2.features.textureCompressionBC;
+        BlockCompressionSupported = blockCompressionSupported;
+        features2.features.textureCompressionBC = blockCompressionSupported ? vk::True : vk::False;
+
+        // textureCompressionASTC_LDR is the second compressed-format capability, enabled the same
+        // way: a core feature that must be enabled (not just queried) for sampling an ASTC image to
+        // be legal. MoltenVK exposes ASTC broadly on Apple GPUs (wider than BC), so it is the cook
+        // default; an ASTC-cooked texture on a device without it is rejected by the loader.
+        const bool astcSupported = features2.features.textureCompressionASTC_LDR;
+        AstcSupported = astcSupported;
+        features2.features.textureCompressionASTC_LDR = astcSupported ? vk::True : vk::False;
+
+        // getFeatures2 above filled in every feature the device advertises. robustBufferAccess
+        // is mandatory-advertised, but MoltenVK cannot implement it on Metal and warns per run
+        // when it is enabled; the engine never relies on robust out-of-bounds behavior, so
+        // leave it off everywhere for uniform semantics.
+        features2.features.robustBufferAccess = vk::False;
+
+        // depthClamp gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking). The
+        // queried value already reflects support and is passed through to createDevice
+        // unchanged; record it so IsDepthClampSupported() reports the enabled state.
+        DepthClampSupported = features2.features.depthClamp;
+
+        // shaderStorageImageExtendedFormats is the device-wide guarantee that the extended
+        // storage-image formats (the two-channel and normalized sixteen-bit classes among them)
+        // carry the StorageImage format feature, which is what lets a shader declare one of them
+        // on a read-write image. Requested explicitly rather than left to ride the queried chain,
+        // so the dependency is stated where it is taken; a device without it reports false from
+        // IsFormatStorageImageSupported for those formats instead of storing undefined bytes.
+        const bool extendedStorageImageFormats =
+            features2.features.shaderStorageImageExtendedFormats;
+        ExtendedStorageImageFormatsSupported = extendedStorageImageFormats;
+        features2.features.shaderStorageImageExtendedFormats =
+            extendedStorageImageFormats ? vk::True : vk::False;
+
+        // A workgroup-wide ballot compaction is correct only over full subgroups, and a device may
+        // run a stage narrower than its default size, so subgroup size control is enabled wherever
+        // it is present: a pipeline may then require full subgroups. The rest of the readout is
+        // queried beside it and changes nothing that is enabled.
+        vk::PhysicalDeviceSubgroupSizeControlFeatures supportedSizeControl{};
+        vk::PhysicalDevice16BitStorageFeatures supportedStorage16{};
+        if (subgroupSizeControlAvailable)
+        {
+            supportedStorage16.pNext = &supportedSizeControl;
+        }
+        vk::PhysicalDeviceFeatures2 capabilityFeatures{.pNext = &supportedStorage16};
+        PhysicalDevice.getFeatures2(&capabilityFeatures);
+
+        vk::PhysicalDeviceSubgroupSizeControlProperties sizeControlProperties{};
+        vk::PhysicalDeviceSubgroupProperties subgroupProperties{};
+        if (subgroupSizeControlAvailable)
+        {
+            subgroupProperties.pNext = &sizeControlProperties;
+        }
+        vk::PhysicalDeviceDriverProperties driverProperties{.pNext = &subgroupProperties};
+        vk::PhysicalDeviceProperties2 capabilityProperties{.pNext = &driverProperties};
+        PhysicalDevice.getProperties2(&capabilityProperties);
+
+        vk::PhysicalDeviceSubgroupSizeControlFeatures enabledSizeControl{
+            .subgroupSizeControl = supportedSizeControl.subgroupSizeControl,
+            .computeFullSubgroups = supportedSizeControl.computeFullSubgroups,
+        };
+        if (subgroupSizeControlAvailable)
+        {
+            shaderDrawParametersFeatures.pNext = &enabledSizeControl;
+        }
+
+        DeviceCapabilities& capabilities = Capabilities;
+        capabilities.DeviceName = capabilityProperties.properties.deviceName.data();
+        capabilities.DriverName = driverProperties.driverName.data();
+        capabilities.DriverInfo = driverProperties.driverInfo.data();
+        capabilities.ApiVersion = capabilityProperties.properties.apiVersion;
+        capabilities.UniformBufferOffsetAlignment =
+            capabilityProperties.properties.limits.minUniformBufferOffsetAlignment;
+        capabilities.StorageBufferOffsetAlignment =
+            capabilityProperties.properties.limits.minStorageBufferOffsetAlignment;
+        capabilities.SubgroupSize = subgroupProperties.subgroupSize;
+        for (const auto& [vkStage, stage] : std::array{
+                 std::pair{vk::ShaderStageFlagBits::eVertex, ShaderStage::Vertex},
+                 std::pair{vk::ShaderStageFlagBits::eFragment, ShaderStage::Fragment},
+                 std::pair{vk::ShaderStageFlagBits::eCompute, ShaderStage::Compute},
+             })
+        {
+            if (subgroupProperties.supportedStages & vkStage)
+            {
+                capabilities.SubgroupStages |= stage;
+            }
+        }
+        for (const auto& [vkOperation, operation] : std::array{
+                 std::pair{vk::SubgroupFeatureFlagBits::eBasic, SubgroupOperation::Basic},
+                 std::pair{vk::SubgroupFeatureFlagBits::eVote, SubgroupOperation::Vote},
+                 std::pair{vk::SubgroupFeatureFlagBits::eArithmetic, SubgroupOperation::Arithmetic},
+                 std::pair{vk::SubgroupFeatureFlagBits::eBallot, SubgroupOperation::Ballot},
+                 std::pair{vk::SubgroupFeatureFlagBits::eShuffle, SubgroupOperation::Shuffle},
+                 std::pair{vk::SubgroupFeatureFlagBits::eShuffleRelative,
+                           SubgroupOperation::ShuffleRelative},
+                 std::pair{vk::SubgroupFeatureFlagBits::eClustered, SubgroupOperation::Clustered},
+                 std::pair{vk::SubgroupFeatureFlagBits::eQuad, SubgroupOperation::Quad},
+             })
+        {
+            if (subgroupProperties.supportedOperations & vkOperation)
+            {
+                capabilities.SubgroupOperations |= operation;
+            }
+        }
+        capabilities.QuadOperationsInAllStages = subgroupProperties.quadOperationsInAllStages;
+        capabilities.SubgroupSizeControl = enabledSizeControl.subgroupSizeControl == vk::True;
+        capabilities.ComputeFullSubgroups = enabledSizeControl.computeFullSubgroups == vk::True;
+        if (subgroupSizeControlAvailable)
+        {
+            capabilities.MinSubgroupSize = sizeControlProperties.minSubgroupSize;
+            capabilities.MaxSubgroupSize = sizeControlProperties.maxSubgroupSize;
+            capabilities.MaxComputeWorkgroupSubgroups =
+                sizeControlProperties.maxComputeWorkgroupSubgroups;
+        }
+        capabilities.ShaderInt16 = features2.features.shaderInt16 == vk::True;
+        capabilities.StorageBuffer16BitAccess =
+            supportedStorage16.storageBuffer16BitAccess == vk::True;
+        const auto storageWritable = [&](const Format format)
+        {
+            return static_cast<bool>(
+                PhysicalDevice.getFormatProperties(ToVk(format)).optimalTilingFeatures &
+                vk::FormatFeatureFlagBits::eStorageImage);
+        };
+        capabilities.B10G11R11UfloatStorage = storageWritable(Format::B10G11R11Ufloat);
+        capabilities.RGBA16SfloatStorage = storageWritable(Format::RGBA16Sfloat);
+
+        // Timeline semaphores are required for the async-upload sync channel.
+        // Fatal-assert if the device lacks support before enabling the feature.
+        vk::PhysicalDeviceVulkan12Features supportedVulkan12Features{};
+        vk::PhysicalDeviceFeatures2 supportedFeatures2{.pNext = &supportedVulkan12Features};
+        PhysicalDevice.getFeatures2(&supportedFeatures2);
+        VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
+                  "Physical device does not support timeline semaphores!");
+
+        // The deferred g-buffer writes five color attachments (G0 albedo, G1 normal, G2 ORM,
+        // G3 velocity, G4 emissive). The Vulkan core minimum for maxColorAttachments is 4, so a
+        // minimum-spec device would fail renderpass creation mid-frame; gate it at device init and
+        // fail loudly instead. The target devices report >= 8 (Metal/MoltenVK guarantee 8, the
+        // desktop Vulkan targets report >= 8).
+        const u32 maxColorAttachments = PhysicalDevice.getProperties().limits.maxColorAttachments;
+        VE_ASSERT(maxColorAttachments >= 5,
+                  "Physical device supports only {} color attachments; the deferred g-buffer "
+                  "requires at least 5.",
+                  maxColorAttachments);
+
+        // Several core shaders (the point-field sprite expansion + vertex stage, bloom
+        // downsample, the BRDF-LUT and debug-line shaders) declare the SPIR-V Float16
+        // capability, which vkCreateShaderModule requires be enabled — not merely supported —
+        // or every one is a validation error. Enable it when the device advertises it; MoltenVK
+        // exposes it on Apple GPUs, and a device lacking it cannot run those shaders.
+        const bool shaderFloat16Supported = supportedVulkan12Features.shaderFloat16;
+        Capabilities.ShaderFloat16 = shaderFloat16Supported;
+
+        // Designators must be in declaration order (MSVC enforces the C++ rule; clang is
+        // lenient). shaderFloat16 is declared early (before the descriptor-indexing block);
+        // timelineSemaphore is declared late, after that block and before bufferDeviceAddress.
+        vk::PhysicalDeviceVulkan12Features vulkan12Features{
+            .pNext = &features2,
+            .shaderFloat16 = shaderFloat16Supported ? vk::True : vk::False,
+            .shaderUniformBufferArrayNonUniformIndexing = vk::True,
+            .shaderSampledImageArrayNonUniformIndexing = vk::True,
+            .shaderStorageBufferArrayNonUniformIndexing = vk::True,
+            .descriptorBindingUniformBufferUpdateAfterBind = vk::True,
+            .descriptorBindingSampledImageUpdateAfterBind = vk::True,
+            .descriptorBindingStorageImageUpdateAfterBind = vk::True,
+            .descriptorBindingStorageBufferUpdateAfterBind = vk::True,
+            .descriptorBindingUpdateUnusedWhilePending = vk::True,
+            .descriptorBindingPartiallyBound = vk::True,
+            .runtimeDescriptorArray = vk::True,
+            .timelineSemaphore = vk::True,
+            .bufferDeviceAddress = vk::True,
+            .shaderOutputViewportIndex = vk::True,
+            .shaderOutputLayer = vk::True,
+        };
+
+        const vk::DeviceCreateInfo deviceCreateInfo{
+            .pNext = &vulkan12Features,
+            .queueCreateInfoCount = static_cast<u32>(queueCreateInfos.size()),
+            .pQueueCreateInfos = queueCreateInfos.data(),
+            .enabledExtensionCount = static_cast<u32>(deviceExtensions.size()),
+            .ppEnabledExtensionNames = deviceExtensions.data()};
+
+        return PhysicalDevice.createDevice(deviceCreateInfo, nullptr).value;
+    }
+
+    SynchronizationFrame& Context::AcquireNextFrame()
+    {
+        {
+            VE_PROFILE_SCOPE("Render/FenceWait");
+            m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight]
+                .GetInFlightFence()
+                .Wait();
+        }
+
+        {
+            // Scoped apart from the fence wait: a frame retiring a departed world's resources
+            // destroys them here, and that cost is the frame's own rather than the GPU's.
+            VE_PROFILE_SCOPE("Render/RetireDrain");
+
+            // Fence signalled: GPU finished the work from the last use of this frame
+            // index — everything retired then is safe to destroy now.
+            m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
+
+            // Reclaim upload scratch whose transfer-timeline value the GPU has now reached.
+            m_Native->DrainTransferRetireList();
+        }
+
+        m_Native->Bindless->OnFrameAcquired(m_Native->CurrentFrameInFlight);
+
+        return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
+    }
+
+    u32 Context::Native::GetReleaseSlot() const
+    {
+        if (FrameRecording)
+        {
+            return CurrentFrameInFlight;
+        }
+        return (CurrentFrameInFlight + MaxFramesInFlight - 1) % MaxFramesInFlight;
+    }
+
+    bool Context::Native::IsSlotWritable(const u32 slot) const
+    {
+        if (FrameRecording && slot == CurrentFrameInFlight)
+        {
+            return true;
+        }
+        return SynchronizationFrames[slot].GetInFlightFence().IsSignaled();
+    }
+
+    Context::Native::RetireBin& Context::Native::CurrentRetireBin()
+    {
+        VE_ASSERT(!Disposed,
+                  "Context::Retire after teardown — a resource outlived the rendering context");
+
+        // Between EndFrame and the next BeginFrame's drain, CurrentFrameInFlight already names
+        // the slot about to be waited-and-drained, but the retired handle was last used by the
+        // previous frame's submitted command buffer (a later fence). Binning it directly would
+        // let that drain destroy it in-use, so park it in PendingRetire until BeginFrame folds
+        // it into the acquired slot's bin.
+        if (!FrameRecording)
+        {
+            return PendingRetire;
+        }
+        return RetireBins[CurrentFrameInFlight];
+    }
+
+    // Every Retire overload, RetireOnTransfer, and both drains hold RetireMutex:
+    // a worker dropping upload scratch must not race the main thread's bin reads,
+    // the bin vectors' reallocation, or the transfer-list drain.
+    void Context::Native::Retire(vk::Buffer buffer, VmaAllocation allocation)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Buffers.emplace_back(buffer, allocation);
+    }
+
+    void Context::Native::Retire(vk::Image image, VmaAllocation allocation)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Images.emplace_back(image, allocation);
+    }
+
+    void Context::Native::Retire(vk::ImageView imageView)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().ImageViews.push_back(imageView);
+    }
+    void Context::Native::Retire(vk::Sampler sampler)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Samplers.push_back(sampler);
+    }
+    void Context::Native::Retire(vk::ShaderModule shaderModule)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().ShaderModules.push_back(shaderModule);
+    }
+    void Context::Native::Retire(vk::Pipeline pipeline)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Pipelines.push_back(pipeline);
+    }
+    void Context::Native::Retire(vk::PipelineLayout pipelineLayout)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout);
+    }
+    void Context::Native::Retire(vk::DescriptorSet descriptorSet)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().DescriptorSets.push_back(descriptorSet);
+    }
+    void Context::Native::Retire(vk::DescriptorSetLayout descriptorSetLayout)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().DescriptorSetLayouts.push_back(descriptorSetLayout);
+    }
+
+    void Context::Native::Retire(function<void()> teardown)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Teardowns.push_back(std::move(teardown));
+    }
+
+    void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation,
+                                           u64 timelineValue)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        TransferRetireList.emplace_back(buffer, allocation, timelineValue);
+    }
+
+    void Context::Native::DrainTransferRetireList()
+    {
+        const std::scoped_lock lock(RetireMutex);
+
+        // Hold the lock across the GetValue() read and the erase so a concurrent
+        // RetireOnTransfer cannot append between them and be missed or double-freed.
+        const u64 reached = TransferTimeline->GetValue();
+
+        std::erase_if(TransferRetireList,
+                      [this, reached](const TransferRetireEntry& entry)
+                      {
+                          if (entry.TimelineValue > reached)
+                          {
+                              return false;
+                          }
+
+                          vmaDestroyBuffer(Allocator, entry.Buffer, entry.Allocation);
+                          return true;
+                      });
+    }
+
+    void Context::Native::DrainRetireBin(RetireBin& bin)
+    {
+        const std::scoped_lock lock(RetireMutex);
+
+        // Destroy dependents before the objects they reference: descriptor sets
+        // first, then views, then the images/buffers backing them. Everything in
+        // the bin is already GPU-idle.
+        for (const auto descriptorSet : bin.DescriptorSets)
+        {
+            VK_ASSERT(
+                Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
+                "failed to free descriptor set!");
+        }
+        for (const auto imageView : bin.ImageViews)
+        {
+            Device.destroyImageView(imageView);
+        }
+        for (auto& [image, allocation] : bin.Images)
+        {
+            vmaDestroyImage(Allocator, image, allocation);
+        }
+        for (auto& [buffer, allocation] : bin.Buffers)
+        {
+            vmaDestroyBuffer(Allocator, buffer, allocation);
+        }
+        for (const auto pipeline : bin.Pipelines)
+        {
+            Device.destroyPipeline(pipeline);
+        }
+        for (const auto pipelineLayout : bin.PipelineLayouts)
+        {
+            Device.destroyPipelineLayout(pipelineLayout);
+        }
+        for (const auto descriptorSetLayout : bin.DescriptorSetLayouts)
+        {
+            Device.destroyDescriptorSetLayout(descriptorSetLayout);
+        }
+        for (const auto sampler : bin.Samplers)
+        {
+            Device.destroySampler(sampler);
+        }
+        for (const auto shaderModule : bin.ShaderModules)
+        {
+            Device.destroyShaderModule(shaderModule);
+        }
+        // Last: a teardown releases memory the destroyed handles above were viewing.
+        for (const auto& teardown : bin.Teardowns)
+        {
+            teardown();
+        }
+
+        bin = {};
+    }
+
+    void Context::Native::DrainAllRetireBins()
+    {
+        for (auto& bin : RetireBins)
+        {
+            DrainRetireBin(bin);
+        }
+        DrainRetireBin(PendingRetire);
+    }
+
+    usize Context::Native::RetireBin::Size() const
+    {
+        return Buffers.size() + Images.size() + ImageViews.size() + Samplers.size() +
+               ShaderModules.size() + Pipelines.size() + PipelineLayouts.size() +
+               DescriptorSetLayouts.size() + DescriptorSets.size() + Teardowns.size();
+    }
+
+    void Context::Native::RetireBin::Append(RetireBin& source)
+    {
+        const auto move = [](auto& dst, auto& src)
+        {
+            dst.insert(dst.end(), std::make_move_iterator(src.begin()),
+                       std::make_move_iterator(src.end()));
+            src.clear();
+        };
+        move(Buffers, source.Buffers);
+        move(Images, source.Images);
+        move(ImageViews, source.ImageViews);
+        move(Samplers, source.Samplers);
+        move(ShaderModules, source.ShaderModules);
+        move(Pipelines, source.Pipelines);
+        move(PipelineLayouts, source.PipelineLayouts);
+        move(DescriptorSets, source.DescriptorSets);
+        move(DescriptorSetLayouts, source.DescriptorSetLayouts);
+        move(Teardowns, source.Teardowns);
+    }
+
+    void Context::Native::AdoptPendingRetires()
+    {
+        const std::scoped_lock lock(RetireMutex);
+        RetireBins[CurrentFrameInFlight].Append(PendingRetire);
+        FrameRecording = true;
+    }
+
+    bool Context::Native::AreFramesComplete() const
+    {
+        return std::ranges::all_of(SynchronizationFrames, [](const SynchronizationFrame& frame)
+                                   { return frame.GetInFlightFence().IsSignaled(); });
+    }
+
+    void Context::Native::DrainPendingRetiresIfIdle()
+    {
+        // Released bindless slots first, so the resources their reclaim lets go of retire into the
+        // bin detached below and are destroyed by this same drain. The caller's recording has
+        // completed and no frame is open, so with every frame fence signalled no submitted command
+        // can still read a descriptor in the bindless sets. The transfer queue binds none, so its
+        // timeline does not hold the slots back; what they kept alive retires through the bin,
+        // which it does.
+        if (Bindless && AreFramesComplete())
+        {
+            Bindless->ReclaimAllReleased();
+        }
+
+        // Upload scratch is keyed on the transfer timeline alone, and otherwise drained only by a
+        // frame acquire.
+        DrainTransferRetireList();
+
+        // Detached before anything in flight is examined. A handle is retired only after every
+        // submit using it was made, so whatever the detached bin holds was in use by work
+        // submitted before this point at the latest, and the checks below see all of it. A handle
+        // retired after the detach (a worker dropping upload state) stays pending for a later
+        // drain.
+        RetireBin detached;
+        {
+            const std::scoped_lock lock(RetireMutex);
+            if (PendingRetire.Size() == 0)
+            {
+                return;
+            }
+            detached = std::exchange(PendingRetire, {});
+        }
+
+        u64 transferSubmitted = 0;
+        {
+            const std::scoped_lock lock(SubmitMutex);
+            transferSubmitted = TransferTimelineValue;
+        }
+
+        // Neither check blocks. A frame slot whose fence is unsignaled may still read what was
+        // dropped since its EndFrame, and an unreached transfer value may still be writing an
+        // upload's destination. While either holds, the handles go back to pending, where the next
+        // BeginFrame adopts them or a later immediate submit retries.
+        const bool framesComplete = AreFramesComplete();
+        const bool transferComplete = TransferTimeline->GetValue() >= transferSubmitted;
+        if (framesComplete && transferComplete)
+        {
+            DrainRetireBin(detached);
+            return;
+        }
+
+        const std::scoped_lock lock(RetireMutex);
+        PendingRetire.Append(detached);
+    }
+
+    void Context::AddFrameTransferWait(const TimelineSemaphore& timeline, const u64 value)
+    {
+        const std::scoped_lock lock(m_Native->SubmitMutex);
+        m_Native->PendingFrameTransferWaits.emplace_back(timeline.GetNative().Semaphore, value);
+    }
+
+    void Context::SubmitFrame(const SynchronizationFrame& frame) const
+    {
+        m_Native->SubmitFrameSegment(frame, true, std::nullopt);
+    }
+
+    void Context::Native::SubmitFrameSegment(const SynchronizationFrame& frame, const bool final,
+                                             const optional<u64> interopValue)
+    {
+        const auto commandBuffer = frame.GetCommandBuffer()->GetNative().CommandBuffer;
+
+        // The binary acquire semaphore leads the wait arrays when present; its slot in the
+        // timeline-values array is ignored by the driver but keeps the array lengths equal.
+        vector<vk::Semaphore> waitSemaphores;
+        vector<vk::PipelineStageFlags> waitStages;
+        vector<u64> waitValues;
+        bool hasTimeline = false;
+
+        // The first segment is the frame's first use of the acquired image, so it is the one that
+        // waits for it. Its stage must match SwapChain::AcquireWaitStage.
+        if (!Headless && !FrameSegmentSubmitted)
+        {
+            const auto slot = static_cast<usize>(&frame - SynchronizationFrames.data());
+            waitSemaphores.push_back(ImageAvailableSemaphores[slot]->GetNative().Semaphore);
+            waitStages.push_back(Renderer::SwapChain::AcquireWaitStage);
+            waitValues.push_back(0);
+        }
+
+        // Drain accumulated transfer-timeline waits under SubmitMutex before LockedSubmit
+        // re-takes it. Cleared on drain — a satisfied wait must not re-block a later submit.
+        {
+            const std::scoped_lock lock(SubmitMutex);
+            for (const auto& [semaphore, value] : PendingFrameTransferWaits)
+            {
+                waitSemaphores.push_back(semaphore);
+                // Block the whole graphics submit on the transfer copy. The first
+                // graphics use is not the sample but the acquire pipeline barrier
+                // drained at BeginFrame, whose TransferDst -> ShaderReadOnly layout
+                // transition is a write scoped at eTransfer; a wait at the later
+                // eFragmentShader would leave that transition free to run — and
+                // read the image's still-Undefined layout — before the copy lands.
+                waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+                waitValues.push_back(value);
+                hasTimeline = true;
+            }
+            PendingFrameTransferWaits.clear();
+        }
+
+        // External work scheduled at a split writes images this segment's commands may touch
+        // anywhere, so the wait covers every stage.
+        if (PendingInteropWait)
+        {
+            waitSemaphores.push_back(InteropTimeline);
+            waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+            waitValues.push_back(*PendingInteropWait);
+            PendingInteropWait.reset();
+            hasTimeline = true;
+        }
+
+        vector<vk::Semaphore> signalSemaphores;
+        vector<u64> signalValues;
+        if (final && !Headless)
+        {
+            // Signal the present-wait semaphore owned by the image acquired this frame (not a
+            // per-frame-in-flight one), so the present's hold on it cannot collide with a later
+            // frame reusing the same semaphore.
+            signalSemaphores.push_back(
+                SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore);
+            signalValues.push_back(0);
+        }
+        if (interopValue)
+        {
+            signalSemaphores.push_back(InteropTimeline);
+            signalValues.push_back(*interopValue);
+            hasTimeline = true;
+        }
+
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
+            .pWaitSemaphoreValues = waitValues.data(),
+            .signalSemaphoreValueCount = static_cast<u32>(signalValues.size()),
+            .pSignalSemaphoreValues = signalValues.data(),
+        };
+
+        const vk::SubmitInfo submitInfo{
+            .pNext = hasTimeline ? &timelineInfo : nullptr,
+            .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
+            .pWaitSemaphores = waitSemaphores.data(),
+            .pWaitDstStageMask = waitStages.data(),
+            .commandBufferCount = 1,
+            .pCommandBuffers = &commandBuffer,
+            .signalSemaphoreCount = static_cast<u32>(signalSemaphores.size()),
+            .pSignalSemaphores = signalSemaphores.data(),
+        };
+
+        // The fence's first synchronization scope is every batch submitted to the queue before
+        // it, so fencing only the final segment still covers the whole frame.
+        LockedSubmit(GraphicsQueue, submitInfo,
+                     final ? frame.GetInFlightFence().GetNative().Fence : vk::Fence{});
+        FrameSegmentSubmitted = true;
+    }
+
+    void Context::PresentFrame()
+    {
+        // Headless: nothing to present — just advance to the next in-flight frame.
+        if (m_Native->Headless)
+        {
+            m_Native->CurrentFrameInFlight =
+                (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
+            return;
+        }
+
+        // Wait on the same per-image semaphore the frame submit signalled (image index
+        // unchanged since acquire), the one keyed to this image rather than the frame slot.
+        const auto renderFinishedSemaphore =
+            m_Native->SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore;
+        const auto swapChain = m_Native->SwapChain->GetVkSwapChain();
+        const auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
+
+        const vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
+                                             .pWaitSemaphores = &renderFinishedSemaphore,
+                                             .swapchainCount = 1,
+                                             .pSwapchains = &swapChain,
+                                             .pImageIndices = &imageIndex};
+
+        // vkQueuePresentKHR uses the queue and needs the same external synchronization a submit
+        // does — on MoltenVK the present queue is the shared graphics queue, so a worker upload
+        // submit racing this present is a VkQueue threading error. Scoped so the lock releases
+        // before the resize branch's WaitIdle re-takes it (the mutex is not recursive).
+        vk::Result result{};
+        {
+            const std::scoped_lock lock(m_Native->SubmitMutex);
+            result = m_Native->PresentQueue.presentKHR(presentInfo);
+        }
+
+        if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
+            m_RenderExtentChanged)
+        {
+            m_RenderExtentChanged = false;
+
+            m_Window->WaitUntilPresentable();
+
+            WaitIdle();
+
+            UpdateRenderExtent();
+        }
+        else if (result != vk::Result::eSuccess)
+        {
+            VE_ASSERT(false, "failed to present swap chain image!");
+        }
+
+        m_Native->CurrentFrameInFlight =
+            (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
+    }
+
+    void Context::SubmitImmediateCommands(CommandBuffer& commandBuffer) const
+    {
+        // Block on this submission's own fence, not the whole device: an immediate
+        // submit must outlive only its work, not drain every queue (a device-wide
+        // WaitIdle here stalls in-flight frame and transfer work too).
+        const Unique<Fence> fence = Fence::Create(const_cast<Context&>(*this), "Immediate Submit");
+        m_Native->SubmitImmediateSegment(commandBuffer, std::nullopt, fence->GetNative().Fence);
+        fence->Wait();
+        // The fence's first scope is every batch submitted ahead of it, so any segments a split
+        // submitted are complete too.
+        m_Native->ImmediateSplitBuffers.clear();
+    }
+
+    u64 Context::Native::ResolveExternalSignal(const u64 externalValue)
+    {
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        // The validation layer models only signals made through Vulkan, so a wait on the external
+        // work's signal is one it never sees resolved: it parks every later batch and reports each
+        // present as depending on an unsubmitted signal. Wait for the external work here and signal
+        // the next value from the host instead, a Vulkan signal made before anything waits on it.
+        // That stalls the CPU until the GPU reaches the split, which only a validation build pays.
+        const vk::SemaphoreWaitInfo waitInfo{
+            .semaphoreCount = 1,
+            .pSemaphores = &InteropTimeline,
+            .pValues = &externalValue,
+        };
+        VK_ASSERT(Device.waitSemaphores(waitInfo, std::numeric_limits<u64>::max()),
+                  "SplitFrame: failed to wait for the external work");
+        InteropValue = externalValue + 1;
+        VK_ASSERT(Device.signalSemaphore(
+                      vk::SemaphoreSignalInfo{.semaphore = InteropTimeline, .value = InteropValue}),
+                  "SplitFrame: failed to signal the interop timeline from the host");
+        return InteropValue;
+#else
+        return externalValue;
+#endif
+    }
+
+    void Context::Native::SubmitImmediateSegment(CommandBuffer& commandBuffer,
+                                                 const optional<u64> interopValue,
+                                                 const vk::Fence fence)
+    {
+        const auto commandBufferHandle = commandBuffer.GetNative().CommandBuffer;
+
+        // A one-shot recording can be the first graphics use of an async upload (its acquire
+        // transition registered a transfer wait), so it waits every wait the next frame owes as
+        // well. They stay owed here: inside a frame, the frame's own submit still waits them; an
+        // out-of-frame ImmediateCommands settles the ones it took once this returns.
+        vector<vk::Semaphore> waitSemaphores;
+        vector<vk::PipelineStageFlags> waitStages;
+        vector<u64> waitValues;
+        {
+            const std::scoped_lock lock(SubmitMutex);
+            for (const auto& [semaphore, value] : PendingFrameTransferWaits)
+            {
+                waitSemaphores.push_back(semaphore);
+                waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+                waitValues.push_back(value);
+            }
+        }
+        if (ImmediateInteropWait)
+        {
+            waitSemaphores.push_back(InteropTimeline);
+            waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+            waitValues.push_back(*ImmediateInteropWait);
+            ImmediateInteropWait.reset();
+        }
+
+        const vk::Semaphore signalSemaphore = InteropTimeline;
+        const u64 signalValue = interopValue.value_or(0);
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
+            .pWaitSemaphoreValues = waitValues.data(),
+            .signalSemaphoreValueCount = interopValue ? 1u : 0u,
+            .pSignalSemaphoreValues = interopValue ? &signalValue : nullptr,
+        };
+
+        const vk::SubmitInfo submitInfo = {
+            .pNext = waitSemaphores.empty() && !interopValue ? nullptr : &timelineInfo,
+            .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
+            .pWaitSemaphores = waitSemaphores.data(),
+            .pWaitDstStageMask = waitStages.data(),
+            .commandBufferCount = 1,
+            .pCommandBuffers = &commandBufferHandle,
+            .signalSemaphoreCount = interopValue ? 1u : 0u,
+            .pSignalSemaphores = interopValue ? &signalSemaphore : nullptr,
+        };
+
+        LockedSubmit(GraphicsQueue, submitInfo, fence);
+    }
+
+    void Context::UpdateRenderExtent()
+    {
+        Log::Info("Updating extent {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
+
+        m_Native->SwapChain->RenderExtentChanged();
+
+        m_RenderExtent = m_Native->SwapChain->GetExtent();
+
+        m_Native->SwapChain->Invalidated();
+
+        m_RenderExtentChanged = false;
+    }
+}

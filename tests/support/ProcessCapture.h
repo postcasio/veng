@@ -92,7 +92,7 @@ namespace VengTest
     }
 
     // Reads the child's output until the listening line appears; 0 on timeout or pipe close.
-    inline int ReadPort(Launched& launched)
+    inline int ReadPort(const Launched& launched)
     {
         std::string buffer;
         char chunk[256];
@@ -120,7 +120,7 @@ namespace VengTest
         return 0;
     }
 
-    inline void Terminate(Launched& launched)
+    inline void Terminate(const Launched& launched)
     {
         TerminateProcess(launched.Process.hProcess, 0);
         WaitForSingleObject(launched.Process.hProcess, 5000);
@@ -232,7 +232,7 @@ namespace VengTest
     }
 
     // Reads the child's output until the listening line appears; 0 on timeout or pipe close.
-    inline int ReadPort(Launched& launched)
+    inline int ReadPort(const Launched& launched)
     {
         std::string buffer;
         char chunk[256];
@@ -260,7 +260,7 @@ namespace VengTest
         return 0;
     }
 
-    inline void Terminate(Launched& launched)
+    inline void Terminate(const Launched& launched)
     {
         kill(launched.Pid, SIGTERM);
         int status = 0;

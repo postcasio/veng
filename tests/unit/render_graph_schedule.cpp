@@ -8,11 +8,10 @@
 
 #include <doctest/doctest.h>
 
-#include <Veng/Renderer/Backend/RenderGraphSchedule.h>
+#include <Renderer/RenderGraphSchedule.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
-using namespace Veng::Renderer::Backend;
 
 namespace
 {
@@ -55,7 +54,7 @@ TEST_CASE("Schedule: a color attachment write derives one transition and one att
     REQUIRE(schedule.size() == 1);
     REQUIRE(schedule[0].Transitions.size() == 1);
     CHECK(schedule[0].Transitions[0].Slot == 0);
-    CHECK(schedule[0].Transitions[0].Dst.Layout == vk::ImageLayout::eColorAttachmentOptimal);
+    CHECK(schedule[0].Transitions[0].Dst.Layout == ImageLayout::ColorAttachment);
     CHECK(schedule[0].BufferBarriers.empty());
 
     REQUIRE(schedule[0].Attachments.size() == 1);
@@ -111,12 +110,12 @@ TEST_CASE(
     REQUIRE(schedule.size() == 2);
     // Producer transitions to color-attachment.
     REQUIRE(schedule[0].Transitions.size() == 1);
-    CHECK(schedule[0].Transitions[0].Dst.Layout == vk::ImageLayout::eColorAttachmentOptimal);
+    CHECK(schedule[0].Transitions[0].Dst.Layout == ImageLayout::ColorAttachment);
     // Consumer transitions the same slot to shader-read.
     REQUIRE(schedule[1].Transitions.size() == 1);
     CHECK(schedule[1].Transitions[0].Slot == 0);
-    CHECK(schedule[1].Transitions[0].Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
-    CHECK(schedule[1].Transitions[0].Dst.Access == vk::AccessFlagBits::eShaderRead);
+    CHECK(schedule[1].Transitions[0].Dst.Layout == ImageLayout::ShaderReadOnly);
+    CHECK(schedule[1].Transitions[0].Dst.Access == SyncAccess::ShaderRead);
 }
 
 TEST_CASE("Schedule: a mip chain tracks each level's transition on its own slot")
@@ -150,13 +149,13 @@ TEST_CASE("Schedule: a mip chain tracks each level's transition on its own slot"
     // Reduce 0->1: sample mip 0 (ShaderReadOnly), storage-write mip 1 (General).
     REQUIRE(schedule[1].Transitions.size() == 2);
     CHECK(schedule[1].Transitions[0].Slot == 0);
-    CHECK(schedule[1].Transitions[0].Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(schedule[1].Transitions[0].Dst.Layout == ImageLayout::ShaderReadOnly);
     CHECK(schedule[1].Transitions[1].Slot == 1);
-    CHECK(schedule[1].Transitions[1].Dst.Layout == vk::ImageLayout::eGeneral);
+    CHECK(schedule[1].Transitions[1].Dst.Layout == ImageLayout::General);
     // Reduce 1->2: the read is on slot 1 now, not slot 0 — levels are independent.
     REQUIRE(schedule[2].Transitions.size() == 2);
     CHECK(schedule[2].Transitions[0].Slot == 1);
-    CHECK(schedule[2].Transitions[0].Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(schedule[2].Transitions[0].Dst.Layout == ImageLayout::ShaderReadOnly);
     CHECK(schedule[2].Transitions[1].Slot == 2);
 }
 
@@ -182,10 +181,10 @@ TEST_CASE("Schedule: compute storage-write to graphics indirect-read derives a b
     REQUIRE(schedule[1].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& barrier = schedule[1].BufferBarriers[0];
     CHECK(barrier.Slot == 0);
-    CHECK(barrier.SrcStage == vk::PipelineStageFlagBits::eComputeShader);
-    CHECK(barrier.SrcAccess == vk::AccessFlagBits::eShaderWrite);
-    CHECK(barrier.DstStage == vk::PipelineStageFlagBits::eDrawIndirect);
-    CHECK(barrier.DstAccess == vk::AccessFlagBits::eIndirectCommandRead);
+    CHECK(barrier.SrcStage == SyncStage::ComputeShader);
+    CHECK(barrier.SrcAccess == SyncAccess::ShaderWrite);
+    CHECK(barrier.DstStage == SyncStage::DrawIndirect);
+    CHECK(barrier.DstAccess == SyncAccess::IndirectCommandRead);
 }
 
 TEST_CASE("Schedule: compute storage-write to a graphics storage-buffer read waits at the stages "
@@ -208,16 +207,15 @@ TEST_CASE("Schedule: compute storage-write to a graphics storage-buffer read wai
     REQUIRE(schedule.size() == 3);
     REQUIRE(schedule[1].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& toRead = schedule[1].BufferBarriers[0];
-    CHECK(toRead.SrcStage == vk::PipelineStageFlagBits::eComputeShader);
-    CHECK(toRead.SrcAccess == vk::AccessFlagBits::eShaderWrite);
-    CHECK(toRead.DstStage ==
-          (vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader));
-    CHECK(toRead.DstAccess == vk::AccessFlagBits::eShaderRead);
+    CHECK(toRead.SrcStage == SyncStage::ComputeShader);
+    CHECK(toRead.SrcAccess == SyncAccess::ShaderWrite);
+    CHECK(toRead.DstStage == (SyncStage::VertexShader | SyncStage::FragmentShader));
+    CHECK(toRead.DstAccess == SyncAccess::ShaderRead);
 
     // A later write waits on the graphics read rather than on a compute stage that read nothing.
     REQUIRE(schedule[2].BufferBarriers.size() == 1);
     CHECK(schedule[2].BufferBarriers[0].SrcStage ==
-          (vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader));
+          (SyncStage::VertexShader | SyncStage::FragmentShader));
 }
 
 TEST_CASE("Schedule: a buffer's first access waits on its last, so a replay follows the one before")
@@ -239,12 +237,11 @@ TEST_CASE("Schedule: a buffer's first access waits on its last, so a replay foll
     REQUIRE(schedule.size() == 2);
     REQUIRE(schedule[0].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& wrap = schedule[0].BufferBarriers[0];
-    CHECK(wrap.SrcStage ==
-          (vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader));
-    CHECK(wrap.DstStage == vk::PipelineStageFlagBits::eComputeShader);
-    CHECK(wrap.DstAccess == vk::AccessFlagBits::eShaderWrite);
+    CHECK(wrap.SrcStage == (SyncStage::VertexShader | SyncStage::FragmentShader));
+    CHECK(wrap.DstStage == SyncStage::ComputeShader);
+    CHECK(wrap.DstAccess == SyncAccess::ShaderWrite);
     REQUIRE(schedule[1].BufferBarriers.size() == 1);
-    CHECK(schedule[1].BufferBarriers[0].SrcAccess == vk::AccessFlagBits::eShaderWrite);
+    CHECK(schedule[1].BufferBarriers[0].SrcAccess == SyncAccess::ShaderWrite);
 }
 
 TEST_CASE("Schedule: a same-stage read-after-read on a buffer emits no barrier")
@@ -288,10 +285,10 @@ TEST_CASE("Schedule: a buffer read in a stage outside the tracked read scope der
     REQUIRE(schedule.size() == 5);
     REQUIRE(schedule[2].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& chain = schedule[2].BufferBarriers[0];
-    CHECK((chain.SrcStage & vk::PipelineStageFlagBits::eComputeShader));
+    CHECK(HasFlag(chain.SrcStage, SyncStage::ComputeShader));
     CHECK_FALSE(IsWriteAccess(chain.SrcAccess));
-    CHECK((chain.DstStage & vk::PipelineStageFlagBits::eFragmentShader));
-    CHECK((chain.DstAccess & vk::AccessFlagBits::eShaderRead));
+    CHECK(HasFlag(chain.DstStage, SyncStage::FragmentShader));
+    CHECK(HasFlag(chain.DstAccess, SyncAccess::ShaderRead));
 
     // A read in an already-tracked stage needs nothing.
     CHECK(schedule[3].BufferBarriers.empty());
@@ -299,8 +296,7 @@ TEST_CASE("Schedule: a buffer read in a stage outside the tracked read scope der
     // The tracked scope covers both readers, so the next write waits on each.
     REQUIRE(schedule[4].BufferBarriers.size() == 1);
     CHECK(schedule[4].BufferBarriers[0].SrcStage ==
-          (vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eVertexShader |
-           vk::PipelineStageFlagBits::eFragmentShader));
+          (SyncStage::ComputeShader | SyncStage::VertexShader | SyncStage::FragmentShader));
 }
 
 TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
@@ -326,12 +322,10 @@ TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
     CHECK(schedule[1].BufferBarriers.size() == 1);
     REQUIRE(schedule[2].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& barrier = schedule[2].BufferBarriers[0];
-    CHECK(barrier.SrcStage ==
-          (vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eDrawIndirect));
-    CHECK(barrier.SrcAccess ==
-          (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eIndirectCommandRead));
-    CHECK(barrier.DstStage == vk::PipelineStageFlagBits::eComputeShader);
-    CHECK(barrier.DstAccess == vk::AccessFlagBits::eShaderWrite);
+    CHECK(barrier.SrcStage == (SyncStage::ComputeShader | SyncStage::DrawIndirect));
+    CHECK(barrier.SrcAccess == (SyncAccess::ShaderRead | SyncAccess::IndirectCommandRead));
+    CHECK(barrier.DstStage == SyncStage::ComputeShader);
+    CHECK(barrier.DstAccess == SyncAccess::ShaderWrite);
 }
 
 TEST_CASE("Schedule: a pass reading and writing one buffer takes one barrier from its last write")
@@ -346,14 +340,13 @@ TEST_CASE("Schedule: a pass reading and writing one buffer takes one barrier fro
 
     const auto schedule = DeriveRenderGraphSchedule(resources, passes);
 
-    constexpr vk::AccessFlags ReadWrite =
-        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+    constexpr SyncAccess ReadWrite = SyncAccess::ShaderRead | SyncAccess::ShaderWrite;
     REQUIRE(schedule.size() == 1);
     REQUIRE(schedule[0].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& barrier = schedule[0].BufferBarriers[0];
-    CHECK(barrier.SrcStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(barrier.SrcStage == SyncStage::ComputeShader);
     CHECK(barrier.SrcAccess == ReadWrite);
-    CHECK(barrier.DstStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(barrier.DstStage == SyncStage::ComputeShader);
     CHECK(barrier.DstAccess == ReadWrite);
 }
 
@@ -375,5 +368,5 @@ TEST_CASE("Schedule: a depth attachment is flagged depth and a color attachment 
     CHECK(schedule[0].Attachments[0].Slot == 0);
     CHECK(schedule[0].Attachments[1].IsDepth);
     CHECK(schedule[0].Attachments[1].Slot == 1);
-    CHECK(schedule[0].Transitions[1].Dst.Layout == vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    CHECK(schedule[0].Transitions[1].Dst.Layout == ImageLayout::DepthAttachment);
 }

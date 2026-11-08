@@ -27,7 +27,7 @@ namespace Veng::Renderer
     /// @brief Construction parameters for SceneCapture.
     struct SceneCaptureInfo
     {
-        /// @brief The Vulkan context for resource creation.
+        /// @brief The render context for resource creation.
         Context& Context;
         /// @brief Asset manager the owned SceneRenderer loads its engine shaders through.
         ///

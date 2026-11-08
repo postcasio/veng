@@ -70,7 +70,7 @@ namespace Veng::Renderer
         vector<PushConstantRange> PushConstantRanges;
     };
 
-    /// @brief A compiled Vulkan pipeline layout declaring descriptor sets and push-constant ranges.
+    /// @brief A compiled pipeline layout declaring descriptor sets and push-constant ranges.
     class VE_API PipelineLayout
     {
     public:
@@ -83,7 +83,7 @@ namespace Veng::Renderer
             return Ref<PipelineLayout>(new PipelineLayout(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan pipeline layout until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU pipeline layout until the GPU is done with it.
         ~PipelineLayout();
 
         PipelineLayout(const PipelineLayout&) = delete;

@@ -1,24 +1,18 @@
 #pragma once
 
-// GPU-band test support: probe for a usable Vulkan driver
-// so a GPU test can report *skipped* rather than *failed* on a machine with no
-// ICD. Consumed by the GPU tests; the pure-logic and type-mapping bands
-// never call it.
-//
-// This header pulls in no Vulkan headers — the probe lives in GpuProbe.cpp,
-// which links Vulkan PRIVATE — so consumers stay free of the backend include
-// graph (same discipline as the public/backend split).
+// GPU-band test support: probes for a device the engine's backend can use, so a GPU test can
+// report *skipped* rather than *failed* on a machine with none. Consumed by the GPU tests; the
+// pure-logic bands never call it. Both answers are the backend's own (Veng/Renderer/DeviceProbe.h),
+// so this header names no graphics API.
 
 namespace Veng::Test
 {
-    // True if a minimal Vulkan instance can be created (i.e. a loader + ICD is
-    // present and usable). Creates and immediately destroys a throwaway
-    // instance; cheap enough to call once at the top of a GPU test's main().
-    [[nodiscard]] bool HasVulkanDriver();
+    // True if the backend compiled in finds a usable device. Creates and immediately destroys
+    // whatever it probes with; cheap enough to call once at the top of a GPU test's main().
+    [[nodiscard]] bool HasGpuDevice();
 
-    // True if any present physical device reports textureCompressionASTC_LDR.
-    // Gates a test whose cooked assets are ASTC-compressed: a device without the
-    // codec gets AssetError::Unsupported and samples the fallback, so such a test
-    // must skip rather than fail. Returns false when no usable driver is present.
+    // True if a usable device samples ASTC LDR textures. Gates a test whose cooked assets are
+    // ASTC-compressed: a device without the codec gets AssetError::Unsupported and samples the
+    // fallback, so such a test must skip rather than fail. False when no usable device is present.
     [[nodiscard]] bool HasAstcSupport();
 }

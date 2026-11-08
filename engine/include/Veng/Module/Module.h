@@ -679,10 +679,14 @@ extern "C"
 /// Version 172 gives a sphere terrain a far material: SphereTerrain and SphereTerrainLevelLayer grow
 /// FarMaterial and FarFootprint after NearDistance, mid-struct in SphereTerrain. A module spawns
 /// terrains, so a stale one lays both out short.
+/// Version 173 draws the GPU backend behind a compile-time boundary: DeviceCapabilities grows the
+/// buffer offset alignments mid-struct, BlitImageInfo grows its layer range, Window::Native holds an
+/// opaque surface, and the Native.h accessors become exported functions. A module reads the
+/// capabilities and builds blits, so a stale one reads both at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 172u
+#define VENG_MODULE_ABI_VERSION 173u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

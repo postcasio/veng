@@ -117,7 +117,7 @@ namespace Veng::Renderer
             return Ref<Sampler>(new Sampler(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan sampler until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU sampler until the GPU is done with it.
         ~Sampler();
 
         Sampler(const Sampler&) = delete;
@@ -144,7 +144,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The description the sampler was created from.
         SamplerInfo m_Info;
-        /// @brief Backend Vulkan sampler.
+        /// @brief Backend sampler.
         Unique<Native> m_Native;
     };
 }

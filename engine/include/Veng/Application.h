@@ -526,9 +526,9 @@ namespace Veng
     /// @brief Construction parameters for Application.
     struct ApplicationInfo
     {
-        /// @brief Application name passed to the Vulkan instance.
+        /// @brief Application name reported to the GPU driver.
         string Name = "Veng Application";
-        /// @brief Engine name passed to the Vulkan instance.
+        /// @brief Engine name reported to the GPU driver.
         string EngineName = "Veng";
         /// @brief Off-screen render-target extent used only when Headless.
         ///

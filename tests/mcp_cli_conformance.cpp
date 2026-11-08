@@ -10,7 +10,7 @@
 // natural exit so the asserted exit code is the client's own, never a force-kill.
 //
 // Labelled gpu (it drives the real render path); exits 77 when the launcher itself skipped for
-// want of a Vulkan ICD (the "no listening line" branch). VENG_LAUNCHER_BIN is baked in by CMake
+// want of a GPU device (the "no listening line" branch). VENG_LAUNCHER_BIN is baked in by CMake
 // ($<TARGET_FILE:hello_triangle-launcher>) and is the path for both the server and client roles.
 
 #include <nlohmann/json.hpp>
@@ -67,7 +67,7 @@ int main()
     const int port = VengTest::ReadPort(server);
     if (port == 0)
     {
-        // No listening line: the launcher most likely skipped for want of a Vulkan ICD (the whole
+        // No listening line: the launcher most likely skipped for want of a GPU device (the whole
         // gpu band's skip contract) or crashed. Reap it and report the gpu-band skip code.
         VengTest::Terminate(server);
         std::fprintf(stderr, "mcp_cli_conformance: no 'listening on' line from the launcher; "

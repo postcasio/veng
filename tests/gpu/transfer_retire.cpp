@@ -23,10 +23,10 @@
 #include <algorithm>
 #include <mutex>
 
-#include <Veng/Renderer/Backend/Barrier.h>
-#include <Veng/Renderer/Backend/Natives.h>
-#include <Veng/Renderer/Backend/SynchronizationFrame.h>
-#include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Renderer/Backend/Vulkan/Barrier.h>
+#include <Renderer/Backend/Vulkan/Natives.h>
+#include <Renderer/SynchronizationFrame.h>
+#include <Renderer/Backend/Vulkan/TypeMapping.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -372,7 +372,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     view.reset();
 
     Context.ImmediateCommands([](CommandBuffer&) {});
-    CHECK(state.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(state.Layout == ImageLayout::ShaderReadOnly);
     CHECK(state.PendingTransferValue == 0);
     CHECK(native.PendingFrameTransferWaits.empty());
     CHECK(queued.expired());

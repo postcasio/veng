@@ -22,7 +22,7 @@ namespace Veng::Test
     // Headless Context convenience: Initialize()s in the constructor (off-screen,
     // no window). Teardown is ~Context's own — dropping this wrapper destroys the
     // held Context, which waits the device idle and releases everything. Construct
-    // this *after* checking HasVulkanDriver() — it has no skip path of its own.
+    // this *after* checking HasGpuDevice() — it has no skip path of its own.
     //
     // Context can't be copied or moved (it owns a Unique<Native>), so this
     // wrapper holds it by value and is itself non-movable/non-copyable.

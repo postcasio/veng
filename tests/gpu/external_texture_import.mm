@@ -25,7 +25,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
-#include <Veng/Renderer/Backend/MetalInterop.h>
+#include <Renderer/AppleInterop.h>
 
 #include <gpu/fixture.h>
 
@@ -104,13 +104,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "an imported sRGB external texture sto
     const CFIndex retainedBefore = CFGetRetainCount((CFTypeRef)texture);
 
     // The extent and format are read off the texture; nothing here supplies either.
-    const optional<Backend::ExternalTextureDescription> description =
-        Backend::DescribeExternalTexture(texture);
+    const optional<Apple::ExternalTextureDescription> description =
+        Apple::DescribeExternalTexture(texture);
     REQUIRE(description.has_value());
     CHECK(description->Extent == uvec2{Width, Height});
     CHECK(description->Format == Format::BGRA8Srgb);
 
-    Ref<Image> imported = Backend::ImportExternalTexture(Context, texture, "Imported sRGB");
+    Ref<Image> imported = Apple::ImportExternalTexture(Context, texture, "Imported sRGB");
     REQUIRE(imported != nullptr);
     CHECK(imported->GetFormat() == Format::BGRA8Srgb);
     CHECK(imported->GetExtent() == uvec3{Width, Height, 1});
@@ -187,7 +187,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "an imported sRGB external texture sto
 
     IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, nullptr);
 
-    // Dropping the image retires its VkImage and, behind it, the engine's reference to the texture.
+    // Dropping the image retires its backend image and, behind it, the engine's reference to the texture.
     // The view holds an owning reference of its own, so it goes first; the retire is then
     // fence-deferred, landing once every slot has cycled past the drop.
     importedView.reset();
@@ -215,12 +215,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "an imported ten-bit external texture 
     id<MTLTexture> texture = MakeTexture(device, surface, MTLPixelFormatBGR10A2Unorm);
     REQUIRE(texture != nil);
 
-    const optional<Backend::ExternalTextureDescription> description =
-        Backend::DescribeExternalTexture(texture);
+    const optional<Apple::ExternalTextureDescription> description =
+        Apple::DescribeExternalTexture(texture);
     REQUIRE(description.has_value());
     CHECK(description->Format == Format::A2R10G10B10Unorm);
 
-    const Ref<Image> imported = Backend::ImportExternalTexture(Context, texture, "Imported 10-bit");
+    const Ref<Image> imported = Apple::ImportExternalTexture(Context, texture, "Imported 10-bit");
     REQUIRE(imported != nullptr);
 
     const auto importedView =
@@ -270,10 +270,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "an unmapped external pixel format is 
 
     // No engine format claims this one, and the implementation would accept a mismatched import
     // silently — so the refusal is the only thing standing between a caller and swapped channels.
-    CHECK_FALSE(Backend::DescribeExternalTexture(texture).has_value());
-    CHECK(Backend::ImportExternalTexture(Context, texture, "Unmapped") == nullptr);
+    CHECK_FALSE(Apple::DescribeExternalTexture(texture).has_value());
+    CHECK(Apple::ImportExternalTexture(Context, texture, "Unmapped") == nullptr);
 
-    CHECK_FALSE(Backend::DescribeExternalTexture(nullptr).has_value());
+    CHECK_FALSE(Apple::DescribeExternalTexture(nullptr).has_value());
 
     [texture release];
     CFRelease(surface);

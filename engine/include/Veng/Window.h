@@ -80,14 +80,14 @@ namespace Veng
 
         /// @brief Destroys the native window and terminates GLFW.
         ///
-        /// The Vulkan surface created by CreateSurface is owned by the render context;
+        /// The presentation surface created by CreateSurface is owned by the render context;
         /// the context must be disposed before this destructor runs.
         ~Window();
 
         Window(const Window&) = delete;
         Window& operator=(const Window&) = delete;
 
-        /// @brief Creates the Vulkan surface for this window on the given context.
+        /// @brief Creates the GPU backend's presentation surface for this window on the given context.
         void CreateSurface(const Renderer::Context& context);
 
         /// @brief Blocks, pumping window events, until the window can present a frame.
@@ -255,7 +255,7 @@ namespace Veng
         ///
         /// GLFWwindow* is kept as a direct member rather than inside Native because
         /// GLFW is a free-function API that does not need a Vulkan-style handle wrapper.
-        friend GLFWwindow* GetGlfwWindow(const Window& window);
+        friend VE_API GLFWwindow* GetGlfwWindow(const Window& window);
 
     private:
         bool m_Open = true;

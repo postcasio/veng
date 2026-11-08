@@ -120,6 +120,27 @@ namespace Veng::Renderer
         u32 LayerCount = 1;
     };
 
+    /// @brief One region copied between two images by CommandBuffer::CopyImageRegions.
+    struct ImageCopyRegion
+    {
+        /// @brief The source mip level.
+        u32 SourceMipLevel = 0;
+        /// @brief The first source array layer.
+        u32 SourceBaseLayer = 0;
+        /// @brief The destination mip level.
+        u32 DestinationMipLevel = 0;
+        /// @brief The first destination array layer.
+        u32 DestinationBaseLayer = 0;
+        /// @brief The number of array layers copied.
+        u32 LayerCount = 1;
+        /// @brief The region's first texel in the source (x, y, z).
+        uvec3 SourceOffset = {0, 0, 0};
+        /// @brief The region's first texel in the destination (x, y, z).
+        uvec3 DestinationOffset = {0, 0, 0};
+        /// @brief The region's texel dimensions (width, height, depth).
+        uvec3 Extent = {1, 1, 1};
+    };
+
     /// @brief Parameters for a blit between two images, with explicit mip levels and offsets.
     struct BlitImageInfo
     {
@@ -139,9 +160,15 @@ namespace Veng::Renderer
         ivec3 SourceExtent;
         /// @brief Destination region size.
         ivec3 DestinationExtent;
+        /// @brief First source array layer.
+        u32 SourceBaseLayer = 0;
+        /// @brief First destination array layer.
+        u32 DestinationBaseLayer = 0;
+        /// @brief Number of array layers blitted, each source layer into its destination layer.
+        u32 LayerCount = 1;
     };
 
-    /// @brief Records Vulkan commands on behalf of the render graph and direct callers.
+    /// @brief Records GPU commands on behalf of the render graph and direct callers.
     class VE_API CommandBuffer
     {
     public:
@@ -224,32 +251,34 @@ namespace Veng::Renderer
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
                          u32 firstInstance);
 
-        /// @brief Issues drawCount indexed draws from GPU-resident VkDrawIndexedIndirectCommand records.
+        /// @brief Issues drawCount indexed draws from GPU-resident DrawIndexedIndirectCommand records.
         ///
-        /// Maps to vkCmdDrawIndexedIndirect (multiDrawIndirect). A command with
-        /// instanceCount == 0 executes as a no-op — the compute cull zeroes culled
-        /// candidates rather than compacting, since drawIndirectCount is unavailable on
-        /// MoltenVK (the buffer holds a fixed candidate maximum, one slot per candidate).
-        /// @param buffer    Buffer holding the VkDrawIndexedIndirectCommand records.
+        /// Each record is read when the draw executes, so a compute pass earlier in the frame may
+        /// write it. A command with InstanceCount == 0 executes as a no-op — the compute cull
+        /// zeroes culled candidates rather than compacting, since a count-driven indirect draw is
+        /// unavailable on MoltenVK (the buffer holds a fixed candidate maximum, one slot per
+        /// candidate).
+        /// @param buffer    Buffer holding the DrawIndexedIndirectCommand records.
         /// @param offset    4-byte-aligned byte offset of the first command.
         /// @param drawCount Number of command records to issue.
-        /// @param stride    Byte stride between records (sizeof(VkDrawIndexedIndirectCommand) = 20).
-        /// @pre buffer was created with BufferUsage::Indirect and is barriered for eDrawIndirect.
+        /// @param stride    Byte stride between records (sizeof(DrawIndexedIndirectCommand) = 20).
+        /// @pre buffer was created with BufferUsage::Indirect and is ordered for an indirect read
+        ///      (AccessKind::IndirectRead).
         /// @pre A command with a non-zero firstInstance requires the drawIndirectFirstInstance
         ///      device feature.
         void DrawIndexedIndirect(const Ref<Buffer>& buffer, u64 offset, u32 drawCount, u32 stride);
 
-        /// @brief Issues drawCount non-indexed draws from GPU-resident VkDrawIndirectCommand records.
+        /// @brief Issues drawCount non-indexed draws from GPU-resident DrawIndirectCommand records.
         ///
-        /// Maps to vkCmdDrawIndirect: each record is four u32 — vertexCount, instanceCount,
-        /// firstVertex, firstInstance — read when the draw executes, so a compute pass earlier in
+        /// Each record is a DrawIndirectCommand — four u32: VertexCount, InstanceCount,
+        /// FirstVertex, FirstInstance — read when the draw executes, so a compute pass earlier in
         /// the frame may write them. A record with a vertexCount or instanceCount of 0 draws
         /// nothing. A vertex-pulled primitive list reaches the draw this way without an index buffer
         /// built only to feed DrawIndexedIndirect.
-        /// @param buffer    Buffer holding the VkDrawIndirectCommand records.
+        /// @param buffer    Buffer holding the DrawIndirectCommand records.
         /// @param offset    4-byte-aligned byte offset of the first record.
         /// @param drawCount Number of records to issue; above 1 requires multiDrawIndirect.
-        /// @param stride    Byte stride between records (at least sizeof(VkDrawIndirectCommand) = 16).
+        /// @param stride    Byte stride between records (at least sizeof(DrawIndirectCommand) = 16).
         /// @pre buffer was created with BufferUsage::Indirect, and the pass drawing reads it through
         ///      RenderGraph::PassBuilder::IndirectRead, which orders the read after the writes that
         ///      produced it.
@@ -262,8 +291,8 @@ namespace Veng::Renderer
 
         /// @brief Records a compute dispatch whose group counts are read from a GPU buffer.
         ///
-        /// Maps to vkCmdDispatchIndirect: the record at @p offset is three u32 group counts
-        /// (x, y, z — VkDispatchIndirectCommand), read when the dispatch executes, so a compute
+        /// The record at @p offset is a DispatchIndirectCommand — three u32 group counts (X, Y,
+        /// Z) — read when the dispatch executes, so a compute
         /// pass earlier in the frame may write them. A zero count dispatches nothing. Each count
         /// must not exceed the device's maxComputeWorkGroupCount on its axis.
         /// @param buffer Buffer holding the record.
@@ -295,7 +324,7 @@ namespace Veng::Renderer
         /// @brief Binds consecutive descriptor sets without allocating.
         ///
         /// The recording-path form: the sets are borrowed for the call and no container is built,
-        /// so a pass binding per pipeline or per tile pays only the Vulkan call.
+        /// so a pass binding per pipeline or per tile pays only the backend call.
         /// @param sets           The sets to bind, in set order; at most MaxBoundDescriptorSets.
         /// @param firstSet       Index of the first set in the bound pipeline's layout.
         /// @param bindPoint      Bind point (default Graphics).
@@ -337,7 +366,7 @@ namespace Veng::Renderer
 
         /// @brief Copies a buffer into an image as one region per supplied mip level.
         ///
-        /// Records one VkBufferImageCopy per region — each pulling a level's tightly-packed pixels
+        /// Records one copy region per supplied region — each pulling a level's tightly-packed pixels
         /// from BufferOffset in the staging buffer — so a precooked mip chain uploads in a single
         /// command with no GPU mip generation. Every region targets all array layers.
         /// @param buffer  Staging buffer holding every level's pixels, largest-first.
@@ -352,7 +381,7 @@ namespace Veng::Renderer
         /// @brief Copies an image into a buffer as one region per supplied mip level.
         ///
         /// The image→buffer mirror of CopyBufferToImage(buffer, image, regions): one
-        /// VkBufferImageCopy per region, each writing a level's tightly-packed texels across
+        /// copy region per supplied region, each writing a level's tightly-packed texels across
         /// **every** array layer at BufferOffset, so a whole mip chain reads back into one buffer
         /// in one command rather than one staging buffer per subresource.
         /// @param image   Transfer source; must be in TransferSrc layout.
@@ -363,8 +392,8 @@ namespace Veng::Renderer
 
         /// @brief Copies a rectangular mip-0 region of an image into a buffer, one tightly-packed region.
         ///
-        /// Records a single VkBufferImageCopy of the @p extent texels at @p offset into the buffer
-        /// at byte 0, tightly packed (bufferRowLength = extent.x). The image must be in TransferSrc
+        /// Records a single copy of the @p extent texels at @p offset into the buffer
+        /// at byte 0, tightly packed (a row is extent.x texels). The image must be in TransferSrc
         /// layout. Used by the entity-id picking readback to stage just the search window under the
         /// cursor rather than the whole target.
         /// @param image   Transfer source; only mip 0, array layer 0 is copied.
@@ -388,7 +417,7 @@ namespace Veng::Renderer
 
         /// @brief Copies one image's mip 0 into another's, whole-extent.
         ///
-        /// Records a single vkCmdCopyImage over the full extent of mip 0, array layer 0 — the
+        /// Records a single image copy over the full extent of mip 0, array layer 0 — the
         /// depth axis included, so a Type3D image copies all its z slices. The two images must
         /// share extent and a copy-compatible format. Like the other copy recordings this sets no
         /// barriers: @p source must already be in TransferSrc layout and @p destination in
@@ -400,7 +429,7 @@ namespace Veng::Renderer
 
         /// @brief Copies runs of array layers' mip 0 from one image into another, whole-extent.
         ///
-        /// One vkCmdCopyImage with a region per run, so a pool reallocated at a new layer count
+        /// One image copy with a region per run, so a pool reallocated at a new layer count
         /// moves its live layers — compacted or not — in one recording. The images share extent
         /// and a copy-compatible format; like CopyImage this sets no barriers, so the touched source
         /// layers must be in TransferSrc layout and the destination layers in TransferDst.
@@ -410,8 +439,41 @@ namespace Veng::Renderer
         void CopyImageLayers(const Ref<Image>& source, const Ref<Image>& destination,
                              std::span<const ImageLayerCopy> copies);
 
-        /// @brief Blits one image region into another.
+        /// @brief Copies regions between two images, each at any mip level, layer run and offset.
+        ///
+        /// Records one copy command carrying every region. The images share a copy-compatible
+        /// format; like CopyImage this sets no barriers, so the touched source subresources must
+        /// be in TransferSrc layout and the destination subresources in TransferDst. The source
+        /// and destination may be one image when no region's two subresources overlap.
+        /// @param source       Transfer source.
+        /// @param destination  Transfer destination.
+        /// @param regions      The regions; an empty span records nothing.
+        void CopyImageRegions(const Ref<Image>& source, const Ref<Image>& destination,
+                              std::span<const ImageCopyRegion> regions);
+
+        /// @brief Blits one image region into another, through a linear filter.
+        ///
+        /// Like the copy recordings this sets no barriers: the source subresources must be in
+        /// TransferSrc layout and the destination subresources in TransferDst. The source and
+        /// destination may be one image when the two mip levels differ, which is how a 2x2 box
+        /// reduction down a mip chain is recorded.
+        /// @param info The images, levels, layers and regions.
         void BlitImage(const BlitImageInfo& info);
+
+        /// @brief Clears every mip level and array layer of a colour image to one value.
+        ///
+        /// Sets no barriers: the image must be in TransferDst layout.
+        /// @param image The image; a colour, non-compressed format.
+        /// @param value The clear colour, in the image format's channel order.
+        void ClearColorImage(const Ref<Image>& image, vec4 value);
+
+        /// @brief Fills a whole buffer with a repeated 32-bit value.
+        ///
+        /// Sets no barriers; the fill is a transfer write (PrepareForAccess with
+        /// AccessKind::TransferDst names it).
+        /// @param buffer The buffer, created with BufferUsage::TransferDst.
+        /// @param value  The value written to every 4-byte word.
+        void FillBuffer(const Ref<Buffer>& buffer, u32 value);
 
         /// @brief Transitions a view's image so an out-of-graph consumer can use it as `kind`.
         ///
@@ -425,6 +487,21 @@ namespace Veng::Renderer
         /// @param kind The access kind the image should be prepared for.
         void PrepareForAccess(const Ref<ImageView>& view, AccessKind kind);
 
+        /// @brief Orders an out-of-graph use of a buffer after an earlier one.
+        ///
+        /// The buffer counterpart of the image overload, for work recorded outside a RenderGraph
+        /// between two dispatches or draws that touch one buffer. A buffer carries no tracked
+        /// state, so both sides are named: @p previous is every access the earlier work made,
+        /// @p next every access the later work will make, each folded into one scope. A barrier is
+        /// recorded whatever the two sides are.
+        /// @param buffer   The buffer both uses touch.
+        /// @param previous The buffer access kinds of the earlier use.
+        /// @param next     The buffer access kinds of the later use.
+        /// @pre Every kind is a buffer access kind (IsBufferAccess), or TransferSrc / TransferDst
+        ///      for a copy or fill touching the buffer.
+        void PrepareForAccess(const Ref<Buffer>& buffer, std::initializer_list<AccessKind> previous,
+                              std::initializer_list<AccessKind> next);
+
     private:
         CommandBuffer(Context& context, CommandBufferLevel level);
 
@@ -432,7 +509,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Primary or secondary command buffer level.
         CommandBufferLevel m_Level;
-        /// @brief Backend Vulkan command buffer.
+        /// @brief Backend command buffer.
         Unique<Native> m_Native;
         /// @brief Layout of the most recently bound pipeline; used for typed push-constant lookup.
         Ref<PipelineLayout> m_LastBoundPipelineLayout;

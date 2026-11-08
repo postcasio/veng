@@ -29,10 +29,10 @@ namespace Veng
         /// is unnecessary.
         std::array<vec4, 6> Planes;
 
-        /// @brief Extracts the six frustum planes from a view-projection matrix (Gribb-Hartmann, Vulkan ZO).
+        /// @brief Extracts the six frustum planes from a view-projection matrix (Gribb-Hartmann, zero-to-one depth).
         ///
         /// Each plane is one clip-volume inequality read straight off the matrix rows.
-        /// left/right/bottom/top are row4 ±/+ {row1,row2}; the Vulkan ZO depth-0 plane is the third
+        /// left/right/bottom/top are row4 ±/+ {row1,row2}; the zero-to-one depth-0 plane is the third
         /// clip row alone (clip.z >= 0) and the depth-1 plane is row4 - row3 (not the OpenGL
         /// row4 +/- row3 pair).
         /// The inward orientation is automatic by construction for any ZO projection, including the

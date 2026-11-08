@@ -22,7 +22,7 @@ namespace Veng::Renderer
     /// @brief Creation parameters for a GPU buffer.
     struct BufferInfo
     {
-        /// @brief Debug name used in Vulkan object labels and error messages.
+        /// @brief Debug name used in GPU object labels and error messages.
         string Name;
         /// @brief Byte size of the buffer.
         u64 Size;
@@ -64,7 +64,7 @@ namespace Veng::Renderer
             return Ref<Buffer>(new Buffer(context, info));
         }
 
-        /// @brief Defers destruction of the underlying Vulkan buffer until the GPU is done with it.
+        /// @brief Defers destruction of the underlying GPU buffer until the GPU is done with it.
         ~Buffer();
 
         Buffer(const Buffer&) = delete;

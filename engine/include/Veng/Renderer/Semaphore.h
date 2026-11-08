@@ -23,7 +23,7 @@ namespace Veng::Renderer
             return Unique<Semaphore>(new Semaphore(context, name));
         }
 
-        /// @brief Destroys the underlying Vulkan semaphore immediately.
+        /// @brief Destroys the underlying GPU semaphore immediately.
         ///
         /// Binary semaphores are per-synchronization-frame and are always destroyed after
         /// the frame fence has been waited, so no deferred destruction is needed.
@@ -44,7 +44,7 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Debug name.
         string m_Name;
-        /// @brief Backend Vulkan semaphore.
+        /// @brief Backend semaphore.
         Unique<Native> m_Native;
     };
 }

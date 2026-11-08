@@ -11,7 +11,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
-#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/DeviceCapabilities.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/SceneView.h>
 #include <Veng/Renderer/Types.h>
@@ -102,8 +102,7 @@ namespace Veng::Renderer
         // region stride is therefore a multiple of the storage-buffer offset alignment.
         const u64 gridBytes =
             static_cast<u64>(grid.x) * grid.y * LightTileRecordWords * sizeof(u32);
-        const u64 minAlign =
-            GetVkPhysicalDevice(m_Context).getProperties().limits.minStorageBufferOffsetAlignment;
+        const u64 minAlign = m_Context.GetDeviceCapabilities().StorageBufferOffsetAlignment;
         const u64 alignment = std::max<u64>(minAlign, sizeof(u32));
         const u64 regionBytes = (gridBytes + alignment - 1) / alignment * alignment;
         m_RegionWords = static_cast<u32>(regionBytes / sizeof(u32));
