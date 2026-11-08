@@ -96,33 +96,38 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Application wires up; the bare GpuFixture has neither.
     TaskSystem tasks{TaskSystemInfo{.WorkerCount = 2}};
     Context.InitializeTransferPools(tasks);
+#if defined(VE_GPU_BACKEND_METAL)
+    // The Metal backend gives uploads a queue of their own, so the copy and the sampling frame
+    // are ordered by the transfer timeline alone.
+    CHECK_FALSE(Context.GetQueueFamilies().TransferIsGraphics());
+#endif
 
-    auto sourceImage =
+    const auto sourceImage =
         Image::Create(Context, {
                                    .Name = "Async Upload Source",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                });
-    auto sourceView =
+    const auto sourceView =
         ImageView::Create(Context, {.Name = "Async Upload Source View", .Image = sourceImage});
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Async Upload Output",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Async Upload Output View", .Image = outputImage});
 
-    auto sampler = Sampler::Create(Context, {
-                                                .Name = "Async Upload Sampler",
-                                                .AddressModeU = AddressMode::ClampToEdge,
-                                                .AddressModeV = AddressMode::ClampToEdge,
-                                                .AddressModeW = AddressMode::ClampToEdge,
-                                            });
+    const auto sampler = Sampler::Create(Context, {
+                                                      .Name = "Async Upload Sampler",
+                                                      .AddressModeU = AddressMode::ClampToEdge,
+                                                      .AddressModeV = AddressMode::ClampToEdge,
+                                                      .AddressModeW = AddressMode::ClampToEdge,
+                                                  });
 
     // Upload the source image off the main thread. Blocking on the returned task
     // only waits the *submit*; the GPU copy is gated by the transfer timeline the
@@ -228,7 +233,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     TaskSystem tasks{TaskSystemInfo{.WorkerCount = 2}};
     Context.InitializeTransferPools(tasks);
 
-    auto sourceImage =
+    const auto sourceImage =
         Image::Create(Context, {
                                    .Name = "Bindless Async Source",
                                    .Extent = {Size, Size, 1},
@@ -236,25 +241,25 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                });
-    auto sourceView =
+    const auto sourceView =
         ImageView::Create(Context, {.Name = "Bindless Async Source View", .Image = sourceImage});
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Bindless Async Output",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Bindless Async Output View", .Image = outputImage});
 
-    auto sampler = Sampler::Create(Context, {
-                                                .Name = "Bindless Async Sampler",
-                                                .AddressModeU = AddressMode::ClampToEdge,
-                                                .AddressModeV = AddressMode::ClampToEdge,
-                                                .AddressModeW = AddressMode::ClampToEdge,
-                                            });
+    const auto sampler = Sampler::Create(Context, {
+                                                      .Name = "Bindless Async Sampler",
+                                                      .AddressModeU = AddressMode::ClampToEdge,
+                                                      .AddressModeV = AddressMode::ClampToEdge,
+                                                      .AddressModeW = AddressMode::ClampToEdge,
+                                                  });
 
     // A precooked two-mip chain, both levels the same solid color, tightly packed
     // largest-first: mip 0 is Size*Size texels, mip 1 is (Size/2)*(Size/2).
@@ -351,13 +356,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     constexpr std::array<u8, 4> expected = {0, 200, 0, 255};
 
-    auto image = Image::Create(Context, {
-                                            .Name = "Sync Upload Source",
-                                            .Extent = {Size, Size, 1},
-                                            .Format = Format::RGBA8Unorm,
-                                            .Usage = ImageUsage::Sampled | ImageUsage::TransferDst |
-                                                     ImageUsage::TransferSrc,
-                                        });
+    const auto image =
+        Image::Create(Context, {
+                                   .Name = "Sync Upload Source",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst |
+                                            ImageUsage::TransferSrc,
+                               });
 
     std::vector<u8> texels(static_cast<size_t>(Size) * Size * 4);
     for (size_t pixel = 0; pixel < static_cast<size_t>(Size) * Size; pixel++)

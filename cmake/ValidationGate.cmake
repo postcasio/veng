@@ -123,9 +123,16 @@ endmacro()
 
 # Metal's validation is switched on per process by its environment.
 set(VENG_GATE_BACKEND_ENV "")
+set(VENG_GATE_SCENE_ENV "")
 if (VENG_GATE_BACKEND STREQUAL "Metal")
     set(VENG_GATE_BACKEND_ENV
         "MTL_DEBUG_LAYER=1|MTL_SHADER_VALIDATION=1|MTL_SHADER_VALIDATION_REPORT_TO_STDERR=1")
+    # The scene renderer's mip-tail kernels hold 28 KiB of threadgroup memory, and shader
+    # validation's instrumentation doubles it past the 32 KiB Metal allows, so the binaries that
+    # render a scene run under API validation alone.
+    set(VENG_GATE_SCENE_ENV "MTL_DEBUG_LAYER=1")
+else ()
+    set(VENG_GATE_SCENE_ENV "${VENG_GATE_BACKEND_ENV}")
 endif ()
 
 veng_gate_add("veng_test_headless_smoke" "${VENG_GATE_BIN_HEADLESS_SMOKE}" "${VENG_GATE_BACKEND_ENV}" "")
@@ -135,14 +142,14 @@ veng_gate_add("veng_test_gpu" "${VENG_GATE_BIN_GPU}" "${VENG_GATE_BACKEND_ENV}" 
 # run it display-free like the rest of the band.
 if (NOT "${VENG_GATE_BIN_LAUNCHER}" STREQUAL "")
     set(VENG_GATE_LAUNCHER_ENV "HT_SMOKE=${VENG_GATE_LAUNCHER_CAPTURE}")
-    if (NOT VENG_GATE_BACKEND_ENV STREQUAL "")
-        string(APPEND VENG_GATE_LAUNCHER_ENV "|${VENG_GATE_BACKEND_ENV}")
+    if (NOT VENG_GATE_SCENE_ENV STREQUAL "")
+        string(APPEND VENG_GATE_LAUNCHER_ENV "|${VENG_GATE_SCENE_ENV}")
     endif ()
     veng_gate_add("hello_triangle-launcher" "${VENG_GATE_BIN_LAUNCHER}" "${VENG_GATE_LAUNCHER_ENV}" "")
 endif ()
 # The MaterialPreview GPU target (two live SceneRenderers) is gated on the editor library, so it may
 # not exist in every build.
-veng_gate_add("veng_test_material_preview" "${VENG_GATE_BIN_MATERIAL_PREVIEW}" "${VENG_GATE_BACKEND_ENV}" "")
+veng_gate_add("veng_test_material_preview" "${VENG_GATE_BIN_MATERIAL_PREVIEW}" "${VENG_GATE_SCENE_ENV}" "")
 
 list(LENGTH VENG_GATE_NAMES VENG_GATE_COUNT)
 if (VENG_GATE_COUNT EQUAL 0)

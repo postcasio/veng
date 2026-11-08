@@ -17,6 +17,8 @@
 #include <random>
 #include <string_view>
 
+#include "FixturePack.h"
+
 #include <doctest/doctest.h>
 #include <fmt/format.h>
 
@@ -25,6 +27,7 @@
 #include <Veng/Asset/CookedShader.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/ShaderTargets.h>
 
 using namespace Veng;
 using namespace Veng::Cook;
@@ -41,10 +44,12 @@ namespace
         outArchive =
             Veng::TestSupport::TempDir() / fmt::format("veng_cooker_shader_{:08x}.vengpack", rng());
 
+        // The cases read the SPIR-V section, which a Metal tree's default targets leave out.
         Cooker cooker;
+        cooker.SetShaderTargets(ShaderTargetSet{}.With(ShaderTarget::SpirV));
         RegisterBuiltinImporters(cooker);
 
-        const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+        const VoidResult cookResult = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
         REQUIRE(cookResult.has_value());
 
         return ArchiveReader::Open(outArchive);

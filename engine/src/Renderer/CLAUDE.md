@@ -55,20 +55,22 @@ Objective-C translation unit. No engine source outside `Backend/` includes it or
 
 `VE_GPU_BACKEND=Metal` (the native backend on Apple) builds `Backend/Metal/`, Objective-C++ compiled
 with ARC, against **Metal 4**: a device of the Metal 4 GPU family (Apple silicon on macOS 26) is
-required, and `Context::Initialize` fails naming the device where it is missing. It runs headless
-work: buffers, images, samplers, compute pipelines, descriptor sets, push constants, the bindless
-registry, synchronization and readback. It builds no render pipeline, opens no render pass for
-drawing and presents to no window; those calls assert. Its device-free logic lives in plain C++
-headers beside it (`HeapAllocator.h`, `BindingModel.h`, `PushConstantRing.h`, `BarrierMapping.h`),
-which `tests/unit/metal_backend.cpp` covers.
+required, and `Context::Initialize` fails naming the device where it is missing. It runs the whole
+engine surface below `SceneRenderer`: resources, binding, compute, graphics pipelines and render
+passes, blits, indirect draws, presentation, the pipeline archive and GPU timing. Its device-free
+logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
+`PushConstantRing.h`, `BarrierMapping.h`), which `tests/unit/metal_backend.cpp` covers.
 
-- **One queue.** One `MTL4CommandQueue` carries graphics, transfer and readback, so every queue
-  family is the same (`TransferIsGraphics()`), and `QueueSubmitMode` reports `Asynchronous` and has
-  no effect. Each `CommandBuffer` owns its `MTL4CommandAllocator`, reset when the buffer is begun
-  again — which is after its last recording completed: a frame slot's after its fence, a worker's
-  upload after its timeline value, a one-shot after its wait. Uploads on a worker commit on the same
-  queue, signal the transfer timeline, and the next submission that uses the image waits for it with
-  a queue-level `waitForEvent`.
+- **Two queues.** One `MTL4CommandQueue` carries graphics, readback and presentation; worker uploads
+  run on a second (`ContextInfo::DedicatedTransferQueue`, on by default; off, they share the first),
+  so the transfer family is its own and `TransferIsGraphics()` is false. Both queues hold the
+  residency set. `QueueSubmitMode` reports `Asynchronous` and has no effect. Each `CommandBuffer` owns
+  its `MTL4CommandAllocator`, reset when the buffer is begun again — which is after its last
+  recording completed: a frame slot's after its fence, a worker's upload after its timeline value, a
+  one-shot after its wait. An upload signals the transfer timeline (an `MTLSharedEvent`) on its
+  queue, and the next graphics submission that uses the image waits for it with a queue-level
+  `waitForEvent`; the device-free decision sees the two families differ and records the acquire
+  half, which on Metal orders nothing more. `WaitIdle` signals an event on each queue and waits both.
 - **Memory.** Buffers and images are placed in `MTLHeap`s of the placement type, 64 MiB each, with
   a first-fit sub-allocator over each heap's free ranges; a placement over a quarter of that takes a
   heap of its own, released with it. Every heap, every texture placed in one, and every imported
@@ -85,22 +87,50 @@ which `tests/unit/metal_backend.cpp` covers.
   set. A `DescriptorSet` is a host-mapped argument buffer of 8-byte elements (resource IDs and GPU
   addresses) written in place; `BindDescriptorSets` binds set N's at buffer slot N of the stage's
   argument table, and each dynamic buffer by address plus its dynamic offset at slot 8 plus its
-  position among the layout's dynamic buffers. The argument table is snapshotted at each dispatch.
-  The bindless sets are three such argument buffers, and a registration writes its element in place.
+  position among the layout's dynamic buffers. A bind point keeps its own tables, as on every
+  backend: compute binds into the compute stage's table, graphics into the vertex and fragment
+  stages' tables together. Each table ends at the last slot it binds — the push block's for compute
+  and fragment, the instance buffer's for vertex — since a table spanning all 31 slots with
+  initialized bindings leaves Metal's shader validation reporting nothing. A table is snapshotted at
+  each draw and dispatch. The bindless sets are three such argument buffers, and a registration
+  writes its element in place.
 - **Push constants.** `PushConstants` writes a CPU shadow of the bound layout's block (at most 256
-  bytes), which persists across pipeline binds; before the next dispatch that follows a change the
-  block is copied into the command buffer's linear ring and bound by address at slot 12. The ring's
+  bytes), which persists across pipeline binds; before the next draw or dispatch that follows a change
+  the block is copied into the command buffer's linear ring, and each table that does not hold that
+  copy yet is pointed at it at slot 12. The ring's
   64 KiB chunks come from a context free list, rewind when the buffer is begun again and return to
   the list, through the retire path, when it is destroyed.
 - **Compute.** A compute pipeline's threadgroup size is its module's
   (`ShaderModuleBinaryInfo::ThreadgroupSize`), which the cook records from the shader's
   `[numthreads]`: a Metal dispatch names it, and a compiled library does not report it. Compute work,
   copies and fills share one compute encoder until a barrier ends it; a colour clear is a render
-  pass's load action; an unscaled blit is a copy.
-- **Synchronization.** Metal 4 tracks no resource and orders nothing across submissions, so the first
-  encoder of every recording waits on all earlier queue work, and a barrier is a producer barrier
-  (`barrierAfterStages:beforeQueueStages:`), which orders every later encoder, recorded on the open
-  encoder before it ends. The graph's device-free decision maps onto Metal stages
+  pass's load action.
+- **Rendering.** A `GraphicsPipeline` is a render pipeline state (the vertex descriptor reads vertex
+  buffer binding N from slot 16 + N, binding 1 being the instance candidate id) plus a depth-stencil
+  state, cull mode, fill mode and depth clip mode the command buffer sets beside it; a pipeline
+  culling both faces rasterizes nothing, and `PolygonMode::Point` has no Metal form and is fatal.
+  `BeginRendering` opens a render encoder over the attachment views and sets a viewport and scissor
+  over the render area; a pipeline bound before it is applied to it. **The engine's clip space is
+  Vulkan's** (+Y down the target), and Slang's Metal output carries no flip, so every viewport is
+  set with a negative height from the region's bottom edge, landing clip space where Vulkan does;
+  Metal judges winding before that flip, so the engine's counter-clockwise front face is Metal's
+  clockwise. A scissor is clamped to the render target, which Metal requires and Vulkan does not. A
+  multi-draw indirect is one indirect draw per record at its stride (Metal draws one per call, as
+  MoltenVK does), each carrying its own base instance, so `IsGpuDrivenCullingSupported()` is true;
+  a zero-instance record draws nothing. A direct draw of zero vertices or instances is skipped.
+- **Blits.** A blit between equal extents is a copy. A scaled one is a backend-owned render pass
+  (`Blit.mm`, Metal source compiled at first use, a pipeline per destination format) sampling a
+  two-dimensional array view of the source level with a linear, clamped sampler at each destination
+  texel's centre — Vulkan's linear blit rule, mirrored regions included. A mip chain within one image
+  is `generateMipmaps`.
+- **Synchronization.** Metal 4 tracks no resource and orders nothing across submissions or between
+  encoders. A barrier ends the open compute encoder and is held as pending stages; each encoder opened
+  after it applies it as a **consumer barrier** (`barrierAfterQueueStages:beforeStages:`), which waits
+  on every earlier encoder's work whichever kind it was, for the stages that encoder runs — the rest
+  stay pending for the next encoder that runs them. A producer barrier recorded on a fresh compute
+  encoder could not order an earlier render pass's fragment work. A recording begins as if a barrier
+  from all earlier work to every stage were pending, so its first compute and first render encoder
+  each wait on every earlier submission. The graph's device-free decision maps onto Metal stages
   (`BarrierMapping.h`): there are no layouts, so a read after a read needs nothing whatever layouts
   it names, and a transfer covers the blit stage and the render-pass clear. `Fence`, `Semaphore` and
   `TimelineSemaphore` are `MTLSharedEvent`s; `WaitIdle` signals an event after everything committed
@@ -112,9 +142,33 @@ which `tests/unit/metal_backend.cpp` covers.
   out-of-bounds store reaches no submission's error, only stderr, and the layer suppresses the
   access), and on a process that exits non-zero (API validation aborts on misuse). Metal has no
   synchronization validation, so synchronization correctness rests on the shared decision, which
-  the Vulkan reference tree's gate keeps proving. GPU scopes are debug groups in a debug build.
+  the Vulkan reference tree's gate keeps proving. GPU scopes are debug groups in a debug build, and
+  timed: a timestamp counter heap holds each frame slot's start, end and scope stamps, written into
+  the command buffer between encoders (a scope opened or closed inside a render pass goes untimed)
+  and resolved on the CPU once the slot's fence is waited; a one-shot recording times into a heap of
+  its own, resolved after its submit.
   `DeviceCapabilities` is filled from the device, its family in `DriverInfo`, its SIMD-group width
   as the subgroup size, and the mesh-shading and ray-tracing bits.
+- **Present.** `CreatePresentationSurface` backs the window's content view with a `CAMetalLayer`
+  (`WindowCocoa.mm`), and the `SwapChain` configures it for three drawables and adds the layer's
+  residency set to the graphics queue. The engine addresses swap-chain images by index, so the chain
+  keeps a ring of three image and view wrappers and points the next one at each frame's drawable
+  texture at `BeginFrame`; the frame's commit is preceded by the queue's `waitForDrawable` and
+  followed by `signalDrawable` and `present`, standing in for Vulkan's acquire and render-finished
+  semaphores, and the wrapper lets the texture go once presented. A framebuffer resize sets the
+  layer's drawable size before the next drawable is taken and rebuilds the ring — no device wait,
+  since no drawable is held between frames. `DisplayMode` maps onto the layer: SDR is
+  `BGRA8Unorm_sRGB` in sRGB, HDR10 `RGB10A2Unorm` in BT.2100 PQ, and Auto and ExtendedLinear
+  `RGBA16Float` in extended linear sRGB with extended dynamic range on. `PresentMode::Immediate`
+  turns the layer's display sync off; Mailbox has no Metal form and waits for the refresh.
+- **The pipeline archive.** With `PipelineCachePath` set, the compiler records every pipeline it
+  builds through an `MTL4PipelineDataSetSerializer`, and teardown writes them as an `MTL4Archive`
+  (beside the path, then moved over it). The next run opens the archive and serves each pipeline it
+  holds from it, graphics and compute alike, building only what it lacks; the serializer holds only
+  what this run's compiler built, so teardown first rebuilds what the archive served through the
+  compiler with the archive as a lookup (cheap) — otherwise the rewritten archive would lose it — and
+  a run that built nothing leaves the file as it is. A stale or foreign file is refused and the run
+  starts cold. `tests/gpu/pipeline_archive.mm` holds a second context to building nothing.
 - **Interop.** `AppleInterop.h` hands out the backend's own objects; an external texture is wrapped
   as an image that holds it and keeps it resident until the image retires.
 
@@ -4786,6 +4840,7 @@ contrast than the un-sharpened control while staying bounded.
 
 ## Pipeline cache
 
+On Metal the cache is the pipeline archive described under "The Metal backend". On Vulkan,
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics
 and compute pipeline factories — every pipeline build in a run reuses it. Persistence is
 **opt-in** via `ApplicationInfo::PipelineCachePath`: set → seed from the file at startup + write

@@ -1,3 +1,5 @@
+#include "Veng/binding.slang"
+
 struct VSInput
 {
     float3 a_Position : POSITION;
@@ -19,8 +21,7 @@ struct PushConstants
     float4x4 Model;
 };
 
-[[vk::push_constant]]
-ConstantBuffer<PushConstants> g_PushConstants;
+VE_PUSH_CONSTANTS(PushConstants, g_PushConstants);
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)

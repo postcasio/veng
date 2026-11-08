@@ -10,9 +10,17 @@
 #include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Task/TaskSystem.h>
 
+#include <filesystem>
+
+#include <Veng/Window.h>
+
+#include "../../../WindowCocoa.h"
 #include "../../../WindowNative.h"
 #include "../../MetalFx.h"
+#include "Barrier.h"
 #include "Natives.h"
+#include "Recording.h"
+#include "SwapChain.h"
 #include "TypeMapping.h"
 
 namespace Veng::Renderer
@@ -32,17 +40,120 @@ namespace Veng::Renderer
             return "unknown family";
         }
 
-        [[noreturn]] void NoSwapChain()
+        SwapChain& RequireSwapChain(const Context::Native& native)
         {
-            VE_ASSERT(false, "no swapchain (headless)");
-            std::abort();
+            VE_ASSERT(native.SwapChain != nullptr, "no swapchain (headless)");
+            return *native.SwapChain;
+        }
+
+        // One run of timestamp scopes: the heap and first index its pairs land in, and the names,
+        // depths and open stack that pair them back up at readback.
+        struct ScopeRun
+        {
+            id<MTL4CounterHeap> Heap = nil;
+            u32 FirstIndex = 0;
+            vector<string>& Names;
+            vector<u32>& Depths;
+            vector<u32>& OpenStack;
+        };
+
+        // A timestamp lands between encoders, so an open compute encoder ends first; inside a
+        // render pass none can be written, and the scope goes untimed.
+        bool WriteTimestamp(const CommandBuffer& cmd, const id<MTL4CounterHeap> heap,
+                            const u32 index)
+        {
+            const CommandBuffer::Native& native = cmd.GetNative();
+            if (native.Render != nil)
+            {
+                return false;
+            }
+            Metal::Recording::EndEncoder(cmd);
+            [native.CommandBuffer writeTimestampIntoHeap:heap atIndex:index];
+            return true;
+        }
+
+        void OpenScope(const CommandBuffer& cmd, const ScopeRun& run, const string_view name)
+        {
+            // Past the budget, or where no timestamp can be written, a sentinel keeps the stack
+            // balanced for the matching close.
+            const auto index = static_cast<u32>(run.Names.size());
+            if (index >= Context::Native::MaxGpuScopes ||
+                !WriteTimestamp(cmd, run.Heap, run.FirstIndex + (index * 2)))
+            {
+                run.OpenStack.push_back(Context::Native::MaxGpuScopes);
+                return;
+            }
+            run.Depths.push_back(static_cast<u32>(run.OpenStack.size()));
+            run.Names.emplace_back(name);
+            run.OpenStack.push_back(index);
+        }
+
+        void CloseScope(const CommandBuffer& cmd, const ScopeRun& run)
+        {
+            VE_ASSERT(!run.OpenStack.empty(),
+                      "Context::EndGpuScope called without a matching BeginGpuScope");
+            const u32 index = run.OpenStack.back();
+            run.OpenStack.pop_back();
+            if (index == Context::Native::MaxGpuScopes)
+            {
+                return;
+            }
+            if (!WriteTimestamp(cmd, run.Heap, run.FirstIndex + (index * 2) + 1))
+            {
+                // Closed inside a render pass: the scope reads as ending where it began.
+                run.Names.pop_back();
+                run.Depths.pop_back();
+            }
+        }
+
+        // The timestamps of [first, first + count) in heap ticks.
+        vector<u64> ResolveTimestamps(const id<MTL4CounterHeap> heap, const u32 first,
+                                      const u32 count)
+        {
+            NSData* const data = [heap resolveCounterRange:NSMakeRange(first, count)];
+            vector<u64> ticks(count, 0);
+            if (data != nil && [data length] >= count * sizeof(MTL4TimestampHeapEntry))
+            {
+                const auto* entries = static_cast<const MTL4TimestampHeapEntry*>([data bytes]);
+                for (u32 i = 0; i < count; ++i)
+                {
+                    ticks[i] = entries[i].timestamp;
+                }
+            }
+            return ticks;
+        }
+
+        // Scope timings from resolved ticks, placed against @p base.
+        vector<Context::GpuPassTiming> TimingsOf(const vector<string>& names,
+                                                 const vector<u32>& depths,
+                                                 const vector<u64>& ticks, const u64 base,
+                                                 const f64 periodNs)
+        {
+            vector<Context::GpuPassTiming> timings;
+            timings.reserve(names.size());
+            const auto nanos = [periodNs](const u64 from, const u64 to)
+            { return to > from ? static_cast<u64>(static_cast<f64>(to - from) * periodNs) : 0; };
+            for (usize i = 0; i < names.size(); ++i)
+            {
+                const u64 begin = ticks[i * 2];
+                const u64 end = ticks[(i * 2) + 1];
+                timings.push_back({
+                    .Name = names[i],
+                    .Milliseconds = static_cast<f32>(static_cast<f64>(nanos(begin, end)) * 1e-6),
+                    .BeginNanos = nanos(base, begin),
+                    .EndNanos = nanos(base, end),
+                    .Depth = depths[i],
+                });
+            }
+            return timings;
         }
     }
 
-    u64 CreatePresentationSurface(const Context& /*context*/, GLFWwindow* /*window*/)
+    u64 CreatePresentationSurface(const Context& /*context*/, GLFWwindow* window)
     {
-        VE_ASSERT(false, "the Metal backend runs headless work only; it presents to no window");
-        return 0;
+        void* const layer = AttachMetalLayer(window);
+        VE_ASSERT(layer != nullptr, "the window has no Cocoa view to present through");
+        return reinterpret_cast<u64>(layer);
     }
 
     // ---- Context::Native ---------------------------------------------------------------------
@@ -150,14 +261,18 @@ namespace Veng::Renderer
 
     void Context::Native::Commit(const id<MTL4CommandBuffer> commandBuffer,
                                  const id<MTLSharedEvent> event, const u64 value,
-                                 const bool waitTransfers)
+                                 const bool waitTransfers, id<MTL4CommandQueue> queue)
     {
+        if (queue == nil)
+        {
+            queue = Queue;
+        }
         // A queue wait holds back every later commit, so a transfer value waited once is settled.
         if (waitTransfers)
         {
             for (const auto& [transferEvent, transferValue] : PendingFrameTransferWaits)
             {
-                [Queue waitForEvent:transferEvent value:transferValue];
+                [queue waitForEvent:transferEvent value:transferValue];
             }
             PendingFrameTransferWaits.clear();
         }
@@ -187,10 +302,10 @@ namespace Veng::Renderer
         }];
 
         const id<MTL4CommandBuffer> buffers[] = {commandBuffer};
-        [Queue commit:buffers count:1 options:options];
+        [queue commit:buffers count:1 options:options];
         if (event != nil)
         {
-            [Queue signalEvent:event value:value];
+            [queue signalEvent:event value:value];
         }
     }
 
@@ -397,6 +512,128 @@ namespace Veng::Renderer
         chunks.clear();
     }
 
+    id<MTLRenderPipelineState>
+    Context::Native::CreateRenderPipeline(MTL4RenderPipelineDescriptor* const descriptor,
+                                          NSError** const error)
+    {
+        if (Archive != nil)
+        {
+            const id<MTLRenderPipelineState> served =
+                [Archive newRenderPipelineStateWithDescriptor:descriptor error:nil];
+            if (served != nil)
+            {
+                ++ArchiveHits;
+                [ArchiveServed addObject:[descriptor copy]];
+                return served;
+            }
+        }
+        ArchiveBuilds += Serializer != nil ? 1 : 0;
+        return [Compiler newRenderPipelineStateWithDescriptor:descriptor
+                                          compilerTaskOptions:nil
+                                                        error:error];
+    }
+
+    id<MTLComputePipelineState>
+    Context::Native::CreateComputePipeline(MTL4ComputePipelineDescriptor* const descriptor,
+                                           NSError** const error)
+    {
+        if (Archive != nil)
+        {
+            const id<MTLComputePipelineState> served =
+                [Archive newComputePipelineStateWithDescriptor:descriptor error:nil];
+            if (served != nil)
+            {
+                ++ArchiveHits;
+                [ArchiveServed addObject:[descriptor copy]];
+                return served;
+            }
+        }
+        ArchiveBuilds += Serializer != nil ? 1 : 0;
+        return [Compiler newComputePipelineStateWithDescriptor:descriptor
+                                           compilerTaskOptions:nil
+                                                         error:error];
+    }
+
+    void Context::Native::OpenPipelineArchive(const string& path)
+    {
+        ArchivePath = path;
+        ArchiveServed = [NSMutableArray array];
+        MTL4PipelineDataSetSerializerDescriptor* const serializer =
+            [[MTL4PipelineDataSetSerializerDescriptor alloc] init];
+        serializer.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
+        Serializer = [Device newPipelineDataSetSerializerWithDescriptor:serializer];
+
+        std::error_code exists;
+        if (!std::filesystem::exists(path, exists))
+        {
+            return;
+        }
+        // A stale, foreign or truncated archive is refused here, and the run starts cold.
+        NSError* error = nil;
+        Archive = [Device newArchiveWithURL:[NSURL fileURLWithPath:Metal::ToNSString(path)]
+                                      error:&error];
+        if (Archive == nil)
+        {
+            Log::Warn("Pipeline archive '{}' could not be read; building every pipeline: {}", path,
+                      Metal::Describe(error));
+        }
+    }
+
+    void Context::Native::SavePipelineArchive()
+    {
+        // A run the archive served entirely leaves it as it is; the serializer holds only what
+        // the compiler built.
+        if (Serializer == nil || ArchiveBuilds == 0)
+        {
+            return;
+        }
+        // What the archive served is built again through the compiler, which its binaries make
+        // cheap, so the archive written now keeps it.
+        MTL4CompilerTaskOptions* const options = [[MTL4CompilerTaskOptions alloc] init];
+        if (Archive != nil)
+        {
+            options.lookupArchives = @[ Archive ];
+        }
+        for (MTL4PipelineDescriptor* const descriptor in ArchiveServed)
+        {
+            if ([descriptor isKindOfClass:[MTL4RenderPipelineDescriptor class]])
+            {
+                (void)[Compiler
+                    newRenderPipelineStateWithDescriptor:(MTL4RenderPipelineDescriptor*)descriptor
+                                     compilerTaskOptions:options
+                                                   error:nil];
+            }
+            else if ([descriptor isKindOfClass:[MTL4ComputePipelineDescriptor class]])
+            {
+                (void)[Compiler
+                    newComputePipelineStateWithDescriptor:(MTL4ComputePipelineDescriptor*)descriptor
+                                      compilerTaskOptions:options
+                                                    error:nil];
+            }
+        }
+        Archive = nil;
+        ArchiveServed = nil;
+
+        // Written beside the archive and moved over it, so a failed write leaves the last one.
+        const string staging = ArchivePath + ".incoming";
+        NSError* error = nil;
+        if (![Serializer
+                serializeAsArchiveAndFlushToURL:[NSURL fileURLWithPath:Metal::ToNSString(staging)]
+                                          error:&error])
+        {
+            Log::Warn("Pipeline archive '{}' could not be written: {}", ArchivePath,
+                      Metal::Describe(error));
+            return;
+        }
+        std::error_code renamed;
+        std::filesystem::rename(staging, ArchivePath, renamed);
+        if (renamed)
+        {
+            Log::Warn("Pipeline archive '{}' could not be replaced: {}", ArchivePath,
+                      renamed.message());
+        }
+    }
+
     // ---- Context -----------------------------------------------------------------------------
 
     Context::Context() : m_Native(CreateUnique<Native>()) {}
@@ -420,12 +657,11 @@ namespace Veng::Renderer
 
     void Context::Initialize(const ContextInfo& info, Window* window)
     {
-        VE_ASSERT(window == nullptr,
-                  "Context: the Metal backend runs headless work only; it presents to no window");
-        Log::Info("Initializing Metal context (headless)");
-        m_Window = nullptr;
         Native& native = *m_Native;
-        native.Headless = true;
+        native.Headless = window == nullptr;
+        m_Window = window;
+        Log::Info(native.Headless ? "Initializing Metal context (headless)"
+                                  : "Initializing Metal context");
 
         native.Device = MTLCreateSystemDefaultDevice();
         VE_ASSERT(native.Device != nil, "Context: this system has no Metal device");
@@ -436,6 +672,13 @@ namespace Veng::Renderer
 
         native.Queue = [native.Device newMTL4CommandQueue];
         VE_ASSERT(native.Queue != nil, "Context: failed to create the Metal 4 command queue");
+        native.TransferQueue = native.Queue;
+        if (info.DedicatedTransferQueue)
+        {
+            native.TransferQueue = [native.Device newMTL4CommandQueue];
+            VE_ASSERT(native.TransferQueue != nil,
+                      "Context: failed to create the Metal 4 transfer queue");
+        }
 
         NSError* error = nil;
         MTLResidencySetDescriptor* const residency = [[MTLResidencySetDescriptor alloc] init];
@@ -445,17 +688,32 @@ namespace Veng::Renderer
         VE_ASSERT(native.Residency != nil, "Context: failed to create the residency set: {}",
                   Metal::Describe(error));
         [native.Queue addResidencySet:native.Residency];
+        if (native.TransferQueue != native.Queue)
+        {
+            [native.TransferQueue addResidencySet:native.Residency];
+        }
 
+        if (info.PipelineCachePath.has_value())
+        {
+            native.OpenPipelineArchive(info.PipelineCachePath->string());
+        }
         MTL4CompilerDescriptor* const compiler = [[MTL4CompilerDescriptor alloc] init];
         compiler.label = @"Veng Compiler";
+        compiler.pipelineDataSetSerializer = native.Serializer;
         native.Compiler = [native.Device newCompilerWithDescriptor:compiler error:&error];
         VE_ASSERT(native.Compiler != nil, "Context: failed to create the Metal compiler: {}",
                   Metal::Describe(error));
 
         native.IdleEvent = [native.Device newSharedEvent];
+        native.TransferIdleEvent = [native.Device newSharedEvent];
 
-        // One queue carries everything, so every family is the same one.
-        native.QueueFamilies = {.GraphicsFamily = 0u, .PresentFamily = 0u, .TransferFamily = 0u};
+        // Graphics and presentation share a queue; transfer is a family of its own when it has a
+        // queue of its own.
+        const u32 transferFamily = native.TransferQueue != native.Queue ? 1u : 0u;
+        native.QueueFamilies = {
+            .GraphicsFamily = 0u, .PresentFamily = 0u, .TransferFamily = transferFamily};
+        Log::Info("Queues: graphics and present on one{}",
+                  transferFamily != 0 ? ", transfer on its own" : ", transfer collapsed onto it");
         // The submission mode is a MoltenVK setting; Metal commits asynchronously.
         m_SubmitMode = {.Mode = QueueSubmitMode::Asynchronous,
                         .Source = QueueSubmitModeSource::DriverDefault,
@@ -493,9 +751,52 @@ namespace Veng::Renderer
         capabilities.MetalFxSpatial = metalFx.Spatial;
         Log::Info("{}", DescribeDeviceCapabilities(capabilities));
 
-        m_RenderExtent = info.HeadlessExtent;
+        if (!native.Headless)
+        {
+            window->CreateSurface(*this);
+            auto* const layer = (__bridge CAMetalLayer*)reinterpret_cast<void*>(
+                window->GetNative().PresentationSurface);
+            // Three drawables, one more than frames in flight, so the frame being recorded never
+            // waits on a drawable the display still holds.
+            native.SwapChain = CreateUnique<SwapChain>(
+                *this, layer, uvec2{window->GetWidth(), window->GetHeight()}, 3u,
+                info.RequestedDisplayMode);
+            [native.Queue addResidencySet:[layer residencySet]];
+            m_RenderExtent = native.SwapChain->GetExtent();
+            Log::Info("Swap chain: {} drawables ({}x{}), {}", native.SwapChain->GetImageCount(),
+                      m_RenderExtent.x, m_RenderExtent.y,
+                      FormatName(native.SwapChain->GetSurface().EngineFormat));
+        }
+        else
+        {
+            m_RenderExtent = info.HeadlessExtent;
+        }
         m_OutputFormat = info.OutputFormat;
         m_DepthFormat = info.DepthFormat;
+
+        // GPU timing: per frame slot a start and an end stamp and a begin and end per scope, and a
+        // heap of its own for one-shot recordings.
+        MTL4CounterHeapDescriptor* const heap = [[MTL4CounterHeapDescriptor alloc] init];
+        heap.type = MTL4CounterHeapTypeTimestamp;
+        heap.count = native.MaxFramesInFlight * (2 + (2 * Native::MaxGpuScopes));
+        native.TimestampHeap = [native.Device newCounterHeapWithDescriptor:heap error:&error];
+        heap.count = 2 * Native::MaxGpuScopes;
+        native.ImmediateTimestampHeap = [native.Device newCounterHeapWithDescriptor:heap
+                                                                              error:&error];
+        m_GpuTimingSupported = native.TimestampHeap != nil && native.ImmediateTimestampHeap != nil;
+        if (m_GpuTimingSupported)
+        {
+            native.TimestampPeriodNs =
+                1e9 / static_cast<f64>([native.Device queryTimestampFrequency]);
+            native.TimestampWritten.assign(native.MaxFramesInFlight, false);
+            native.ScopeNames.resize(native.MaxFramesInFlight);
+            native.ScopeDepths.resize(native.MaxFramesInFlight);
+        }
+        else
+        {
+            Log::Warn("GPU timing unavailable: no timestamp counter heap: {}",
+                      Metal::Describe(error));
+        }
 
         native.SynchronizationFrames.reserve(native.MaxFramesInFlight);
         for (u32 i = 0; i < native.MaxFramesInFlight; ++i)
@@ -528,6 +829,7 @@ namespace Veng::Renderer
         m_Native->DrainTransferRetireList();
 
         m_Native->SynchronizationFrames.clear();
+        m_Native->SwapChain.reset();
     }
 
     void Context::DestroyDevice()
@@ -559,11 +861,21 @@ namespace Veng::Renderer
         native.TransferTimeline.reset();
         native.SharedHeaps.clear();
         native.PrivateHeaps.clear();
+        native.SavePipelineArchive();
+        native.Serializer = nil;
+        native.BlitPipelines.clear();
+        native.BlitLibrary = nil;
+        native.BlitSampler = nil;
+        native.TimestampHeap = nil;
+        native.ImmediateTimestampHeap = nil;
         native.Residency = nil;
         native.Compiler = nil;
         native.Queue = nil;
+        native.TransferQueue = nil;
         native.IdleEvent = nil;
+        native.TransferIdleEvent = nil;
         native.Device = nil;
+        m_Window = nullptr;
     }
 
     void Context::InitializeTransferPools(TaskSystem& taskSystem)
@@ -617,7 +929,7 @@ namespace Veng::Renderer
         const std::scoped_lock lock(m_Native->SubmitMutex);
         const u64 value = ++m_Native->TransferTimelineValue;
         m_Native->Commit(pool.CommandBuffer->GetNative().CommandBuffer, timeline.GetNative().Event,
-                         value, false);
+                         value, false, m_Native->TransferQueue);
         pool.LastSubmittedValue = value;
         return value;
     }
@@ -639,7 +951,8 @@ namespace Veng::Renderer
 
     bool Context::IsGpuDrivenCullingSupported() const
     {
-        return false;
+        // A multi-draw indirect is one indirect draw per record, each carrying its base instance.
+        return true;
     }
 
     bool Context::IsBlockCompressionSupported() const
@@ -675,39 +988,85 @@ namespace Veng::Renderer
 
     void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
     {
+        Native& native = *m_Native;
 #if defined(VE_DEBUG) && VE_DEBUG
-        // A named region in a capture; a debug group is pushed between encoders.
-        CommandBuffer::Native& native = cmd.GetNative();
-        if (native.Recording)
+        // A named region in a capture: a debug group on the open render pass, or between encoders.
+        const CommandBuffer::Native& recording = cmd.GetNative();
+        if (recording.Recording)
         {
-            if (native.Compute != nil)
+            if (recording.Render != nil)
             {
-                [native.Compute endEncoding];
-                native.Compute = nil;
+                [recording.Render pushDebugGroup:Metal::ToNSString(name)];
             }
-            [native.CommandBuffer pushDebugGroup:Metal::ToNSString(name)];
+            else
+            {
+                Metal::Recording::EndEncoder(cmd);
+                [recording.CommandBuffer pushDebugGroup:Metal::ToNSString(name)];
+            }
         }
-#else
-        (void)cmd;
-        (void)name;
 #endif
+        if (!m_GpuTimingSupported)
+        {
+            return;
+        }
+        if (native.ImmediateScopeRecording)
+        {
+            OpenScope(cmd,
+                      {.Heap = native.ImmediateTimestampHeap,
+                       .Names = native.ImmediateScopeNames,
+                       .Depths = native.ImmediateScopeDepths,
+                       .OpenStack = native.ImmediateOpenScopeStack},
+                      name);
+            return;
+        }
+        if (!m_GpuScopeRecording)
+        {
+            return;
+        }
+        OpenScope(
+            cmd,
+            {.Heap = native.TimestampHeap,
+             .FirstIndex = (native.CurrentFrameInFlight * (2 + (2 * Native::MaxGpuScopes))) + 2,
+             .Names = native.CurrentScopeNames,
+             .Depths = native.CurrentScopeDepths,
+             .OpenStack = native.OpenScopeStack},
+            name);
     }
 
     void Context::EndGpuScope(CommandBuffer& cmd)
     {
-#if defined(VE_DEBUG) && VE_DEBUG
-        CommandBuffer::Native& native = cmd.GetNative();
-        if (native.Recording)
+        Native& native = *m_Native;
+        if (m_GpuTimingSupported && native.ImmediateScopeRecording)
         {
-            if (native.Compute != nil)
-            {
-                [native.Compute endEncoding];
-                native.Compute = nil;
-            }
-            [native.CommandBuffer popDebugGroup];
+            CloseScope(cmd, {.Heap = native.ImmediateTimestampHeap,
+                             .Names = native.ImmediateScopeNames,
+                             .Depths = native.ImmediateScopeDepths,
+                             .OpenStack = native.ImmediateOpenScopeStack});
         }
-#else
-        (void)cmd;
+        else if (m_GpuTimingSupported && m_GpuScopeRecording)
+        {
+            CloseScope(
+                cmd,
+                {.Heap = native.TimestampHeap,
+                 .FirstIndex = (native.CurrentFrameInFlight * (2 + (2 * Native::MaxGpuScopes))) + 2,
+                 .Names = native.CurrentScopeNames,
+                 .Depths = native.CurrentScopeDepths,
+                 .OpenStack = native.OpenScopeStack});
+        }
+#if defined(VE_DEBUG) && VE_DEBUG
+        const CommandBuffer::Native& recording = cmd.GetNative();
+        if (recording.Recording)
+        {
+            if (recording.Render != nil)
+            {
+                [recording.Render popDebugGroup];
+            }
+            else
+            {
+                Metal::Recording::EndEncoder(cmd);
+                [recording.CommandBuffer popDebugGroup];
+            }
+        }
 #endif
     }
 
@@ -785,6 +1144,12 @@ namespace Veng::Renderer
 
     CommandBuffer& Context::BeginFrame()
     {
+        // A minimized window parks here, pumping events, before anything waits on the GPU.
+        if (!IsHeadless())
+        {
+            m_Window->WaitUntilPresentable();
+        }
+
         const auto& frame = AcquireNextFrame();
         ++m_FrameSerial;
         m_Native->AdoptPendingRetires();
@@ -800,10 +1165,55 @@ namespace Veng::Renderer
             }
         }
 
+        if (!IsHeadless())
+        {
+            // The drawable size follows the framebuffer before the next drawable is taken; nothing
+            // recorded since the last present holds a drawable, so no device wait is needed.
+            if (m_Window->ConsumeFramebufferResized())
+            {
+                m_RenderExtentChanged = true;
+            }
+            if (m_RenderExtentChanged)
+            {
+                m_Window->WaitUntilPresentable();
+                UpdateRenderExtent();
+            }
+            VE_PROFILE_SCOPE("Render/Acquire");
+            m_Native->SwapChain->Acquire(*m_Window);
+        }
+
         frame.GetInFlightFence().Reset();
         const auto commandBuffer = frame.GetCommandBuffer();
         commandBuffer->Reset();
         commandBuffer->Begin();
+
+        if (m_GpuTimingSupported)
+        {
+            VE_PROFILE_SCOPE("Render/TimestampReadback");
+            Native& native = *m_Native;
+            const u32 slot = native.CurrentFrameInFlight;
+            const u32 frameBase = slot * (2 + (2 * Native::MaxGpuScopes));
+            // The fence just waited covers every timestamp the slot's last frame wrote.
+            if (native.TimestampWritten[slot])
+            {
+                const vector<string>& names = native.ScopeNames[slot];
+                const vector<u64> ticks = ResolveTimestamps(native.TimestampHeap, frameBase,
+                                                            2 + static_cast<u32>(names.size() * 2));
+                if (ticks[1] > ticks[0])
+                {
+                    m_GpuFrameTimeMs = static_cast<f32>(static_cast<f64>(ticks[1] - ticks[0]) *
+                                                        native.TimestampPeriodNs * 1e-6);
+                }
+                m_GpuPassTimings = TimingsOf(names, native.ScopeDepths[slot],
+                                             vector<u64>(ticks.begin() + 2, ticks.end()), ticks[0],
+                                             native.TimestampPeriodNs);
+            }
+            WriteTimestamp(*commandBuffer, native.TimestampHeap, frameBase);
+            native.CurrentScopeNames.clear();
+            native.CurrentScopeDepths.clear();
+            native.OpenScopeStack.clear();
+            m_GpuScopeRecording = true;
+        }
 
         m_Native->FrameCommandsOpen = true;
         VE_PROFILE_SCOPE("Render/FrameSetup");
@@ -823,13 +1233,32 @@ namespace Veng::Renderer
     {
         const auto& frame = GetCurrentFrame();
         const auto commandBuffer = frame.GetCommandBuffer();
+        if (!IsHeadless())
+        {
+            Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
+                                     ImageLayout::PresentSrc);
+        }
+        if (m_GpuTimingSupported)
+        {
+            Native& native = *m_Native;
+            const u32 slot = native.CurrentFrameInFlight;
+            WriteTimestamp(*commandBuffer, native.TimestampHeap,
+                           (slot * (2 + (2 * Native::MaxGpuScopes))) + 1);
+            native.ScopeNames[slot] = std::move(native.CurrentScopeNames);
+            native.ScopeDepths[slot] = std::move(native.CurrentScopeDepths);
+            native.TimestampWritten[slot] = true;
+            m_GpuScopeRecording = false;
+        }
         m_Native->FrameCommandsOpen = false;
         commandBuffer->End();
         {
             VE_PROFILE_SCOPE("Render/Submit");
             SubmitFrame(frame);
         }
-        PresentFrame();
+        {
+            VE_PROFILE_SCOPE("Render/Present");
+            PresentFrame();
+        }
         // Retires from here until the next BeginFrame park in the pending bin.
         m_Native->FrameRecording = false;
     }
@@ -838,13 +1267,23 @@ namespace Veng::Renderer
     {
         const Fence::Native& fence = frame.GetInFlightFence().GetNative();
         const std::scoped_lock lock(m_Native->SubmitMutex);
+        // The drawable is handed to the queue before the frame that renders into it commits, and
+        // signalled once that frame's work is done.
+        if (m_Native->SwapChain)
+        {
+            m_Native->SwapChain->WaitForDrawable(m_Native->Queue);
+        }
         m_Native->Commit(frame.GetCommandBuffer()->GetNative().CommandBuffer, fence.Event,
                          fence.Target, true);
+        if (m_Native->SwapChain)
+        {
+            m_Native->SwapChain->Present(m_Native->Queue);
+        }
     }
 
     void Context::PresentFrame()
     {
-        // Headless: nothing to present, only the slot advances.
+        // The drawable was presented with the frame's commit; only the slot advances here.
         m_Native->CurrentFrameInFlight =
             (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
     }
@@ -874,6 +1313,20 @@ namespace Veng::Renderer
         const auto commandBuffer = CommandBuffer::Create(self);
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
+        // A one-shot recording times its scopes into a heap of its own; a frame left recording is
+        // paused so none of this work lands in the frame's stamps. A nested call records untimed.
+        const bool wasRecording = self.m_GpuScopeRecording;
+        const bool wasImmediate = native.ImmediateScopeRecording;
+        const bool timed = m_GpuTimingSupported && !wasImmediate;
+        self.m_GpuScopeRecording = false;
+        native.ImmediateScopeRecording = timed;
+        if (timed)
+        {
+            native.ImmediateScopeNames.clear();
+            native.ImmediateScopeDepths.clear();
+            native.ImmediateOpenScopeStack.clear();
+        }
+
         // Outside a frame the current slot's last frame may still read its per-view and material
         // regions, so its fence is waited before the recording takes them over.
         CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
@@ -894,8 +1347,28 @@ namespace Veng::Renderer
         function(*commandBuffer);
         native.ActiveImmediateCommands = outerImmediate;
 
+        VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
+                  "ImmediateCommands: {} GPU scope(s) left open by the recording",
+                  native.ImmediateOpenScopeStack.size());
+        native.ImmediateScopeRecording = wasImmediate;
+        self.m_GpuScopeRecording = wasRecording;
+
         commandBuffer->End();
         SubmitImmediateCommands(*commandBuffer);
+
+        if (timed)
+        {
+            // The submit has completed, so every written stamp is resolvable.
+            self.m_ImmediateGpuPassTimings.clear();
+            const vector<string>& names = native.ImmediateScopeNames;
+            if (!names.empty())
+            {
+                const vector<u64> ticks = ResolveTimestamps(native.ImmediateTimestampHeap, 0,
+                                                            static_cast<u32>(names.size() * 2));
+                self.m_ImmediateGpuPassTimings = TimingsOf(
+                    names, native.ImmediateScopeDepths, ticks, ticks[0], native.TimestampPeriodNs);
+            }
+        }
 
         // A process submitting only one-off work never reaches a BeginFrame, so what it dropped
         // and released is reclaimed here once nothing else is in flight.
@@ -938,55 +1411,69 @@ namespace Veng::Renderer
 
     uvec2 Context::GetSwapChainExtent() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetExtent();
     }
 
     Format Context::GetSwapChainFormat() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetSurface().EngineFormat;
     }
 
     DisplayMode Context::GetActiveDisplayMode() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetSurface().Mode;
     }
 
     DisplayColorSpace Context::GetActiveDisplayColorSpace() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetSurface().ColorSpace;
     }
 
     vector<PresentMode> Context::GetSupportedPresentModes() const
     {
-        // No surface headless: the always-available mode, so callers get a well-formed list.
-        return {PresentMode::Vsync};
+        // A layer waits for the display's refresh or does not; Mailbox has no Metal form.
+        if (!m_Native->SwapChain)
+        {
+            return {PresentMode::Vsync};
+        }
+        return {PresentMode::Vsync, PresentMode::Immediate};
     }
 
-    void Context::SetRequestedPresentMode(PresentMode /*mode*/) {}
+    void Context::SetRequestedPresentMode(const PresentMode mode)
+    {
+        if (m_Native->SwapChain)
+        {
+            m_Native->SwapChain->SetPresentMode(mode);
+        }
+    }
 
     Ref<Image> Context::GetCurrentSwapChainImage() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetCurrentImage();
     }
 
     Ref<ImageView> Context::GetCurrentSwapChainImageView() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetCurrentImageView();
     }
 
     u32 Context::GetSwapChainImageCount() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetImageCount();
     }
 
     u32 Context::GetCurrentSwapChainImageIndex() const
     {
-        NoSwapChain();
+        return RequireSwapChain(*m_Native).GetCurrentImageIndex();
     }
 
-    void Context::AddSwapChainInvalidationCallback(std::function<void()> /*callback*/)
+    void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
     {
         // Headless has no swap chain, so nothing can invalidate one.
+        if (m_Native->SwapChain)
+        {
+            m_Native->SwapChain->AddInvalidationCallback(std::move(callback));
+        }
     }
 
     Context::FrameRetiredHandle
@@ -1040,7 +1527,8 @@ namespace Veng::Renderer
 
     void Context::AcquireNextImage(Semaphore& /*semaphore*/)
     {
-        NoSwapChain();
+        // A drawable is waited by the queue, not through a semaphore.
+        RequireSwapChain(*m_Native).Acquire(*m_Window);
     }
 
     void Context::WaitIdle() const
@@ -1048,12 +1536,21 @@ namespace Veng::Renderer
         // Metal has no device-wide wait: the queue signals an event after everything committed
         // so far, and the wait covers the completion feedback of those submissions too.
         u64 value = 0;
+        const bool transferQueue = m_Native->TransferQueue != m_Native->Queue;
         {
             const std::scoped_lock lock(m_Native->SubmitMutex);
             value = ++m_Native->IdleValue;
             [m_Native->Queue signalEvent:m_Native->IdleEvent value:value];
+            if (transferQueue)
+            {
+                [m_Native->TransferQueue signalEvent:m_Native->TransferIdleEvent value:value];
+            }
         }
         [m_Native->IdleEvent waitUntilSignaledValue:value timeoutMS:UINT64_MAX];
+        if (transferQueue)
+        {
+            [m_Native->TransferIdleEvent waitUntilSignaledValue:value timeoutMS:UINT64_MAX];
+        }
         m_Native->WaitFeedback();
     }
 
@@ -1064,7 +1561,16 @@ namespace Veng::Renderer
 
     void Context::UpdateRenderExtent()
     {
-        // Headless: the render extent is the configured one and never changes.
         m_RenderExtentChanged = false;
+        // Headless: the render extent is the configured one and never changes.
+        if (!m_Native->SwapChain)
+        {
+            return;
+        }
+        const uvec2 extent{m_Window->GetWidth(), m_Window->GetHeight()};
+        Log::Info("Updating extent {}x{}", extent.x, extent.y);
+        m_Native->SwapChain->Resize(extent);
+        m_RenderExtent = m_Native->SwapChain->GetExtent();
+        m_Native->SwapChain->Invalidated();
     }
 }

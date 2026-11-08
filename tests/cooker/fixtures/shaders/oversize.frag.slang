@@ -4,6 +4,8 @@
 // param members are vectors so the struct reflects cleanly — the failure is the
 // stride bound, not field support.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float4 P0;  float4 P1;  float4 P2;  float4 P3;
@@ -43,10 +45,6 @@ struct MaterialParams
     uint AlbedoSampler;
 };
 
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-
 MaterialParams LoadMaterialParams(uint offset)
 {
     return g_MaterialParams.Load<MaterialParams>(offset);
@@ -71,7 +69,7 @@ struct PushConstants
     float3x3 NormalMatrix;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -84,8 +82,8 @@ struct VSOutput
 GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
+    float4 albedo = g_Textures[NonUniformIndex(p.Albedo)].Sample(
+        g_Samplers[NonUniformIndex(p.AlbedoSampler)], input.v_UV);
 
     GBufferOutput output;
     output.Albedo = albedo * p.P0;

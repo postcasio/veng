@@ -135,6 +135,16 @@
       "id": "0xC1E1ECDAC2BB39DE",
       "type": "Shader",
       "source": "bindless_compute.comp.shader.json"
+    },
+    {
+      "id": "0xB5B397C02C4C929D",
+      "type": "Shader",
+      "source": "raster_probe.vert.shader.json"
+    },
+    {
+      "id": "0x396E60A65194A327",
+      "type": "Shader",
+      "source": "raster_probe.frag.shader.json"
     }
   ]
 }

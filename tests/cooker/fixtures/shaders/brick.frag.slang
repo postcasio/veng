@@ -8,6 +8,8 @@
 // not the engine's PBR material contract. It is the sibling of handles_only.frag /
 // params_only.frag / oversize.frag, which are self-contained the same way.
 
+#include "Veng/bindless.slang"
+
 // MaterialParams is this fixture's whole parameter block — the bindless handle slots
 // (uint members the loader patches with a resolved index) beside the authored Factors
 // tint, laid out by reflection. The cooker reflects this struct to validate a material's
@@ -18,10 +20,6 @@ struct MaterialParams
     uint   Albedo;        // bindless sampled-image index (texture handle)
     uint   AlbedoSampler; // bindless sampler index (sampler handle)
 };
-
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -56,7 +54,7 @@ struct PushConstants
     float3x3 NormalMatrix; // offset 80 (48 bytes) — ends at 128
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -69,8 +67,8 @@ struct VSOutput
 GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
+    float4 albedo = g_Textures[NonUniformIndex(p.Albedo)].Sample(
+        g_Samplers[NonUniformIndex(p.AlbedoSampler)], input.v_UV);
 
     GBufferOutput output;
     output.Albedo = albedo * p.Factors;

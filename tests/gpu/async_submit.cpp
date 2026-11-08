@@ -463,7 +463,12 @@ TEST_CASE("async submit: a context resolves the mode it asks for unless the envi
             {.ApplicationName = "Async Submit Mode", .HeadlessExtent = {4, 4}, .SubmitMode = mode},
             nullptr);
         const ResolvedQueueSubmitMode& resolved = context.GetQueueSubmitMode();
-#ifdef __APPLE__
+#if defined(VE_GPU_BACKEND_METAL)
+        // The mode is MoltenVK's to take; Metal commits asynchronously whatever was asked.
+        (void)environmentChose;
+        CHECK(resolved.Source == QueueSubmitModeSource::DriverDefault);
+        CHECK(resolved.Mode == QueueSubmitMode::Asynchronous);
+#elif defined(__APPLE__)
         if (environmentChose)
         {
             CHECK(resolved.Source == QueueSubmitModeSource::Environment);

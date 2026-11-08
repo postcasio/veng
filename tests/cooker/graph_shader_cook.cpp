@@ -65,9 +65,9 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput vsMain()
+VSOutput vsMain(uint vertexIndex : SV_VulkanVertexID)
 {
-    int vertexID = spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); };
+    int vertexID = int(vertexIndex);
     VSOutput output;
     output.v_UV = float2((vertexID << 1) & 2, vertexID & 2);
     output.sv_position = float4(output.v_UV * 2.0 - 1.0, 0.0, 1.0);

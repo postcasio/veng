@@ -2,16 +2,14 @@
 // PostProcess domain's output contract). Used by the material-cook test to assert
 // a postprocess material cooks and a surface material against this shader fails.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     uint  Hdr;
     uint  HdrSampler;
     float Exposure;
 };
-
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -24,7 +22,7 @@ struct PushConstants
     uint MaterialOffset;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -36,7 +34,7 @@ struct VSOutput
 float4 fsMain(VSOutput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 color = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.HdrSampler)], input.v_UV);
+    float4 color = g_Textures[NonUniformIndex(p.Hdr)].Sample(
+        g_Samplers[NonUniformIndex(p.HdrSampler)], input.v_UV);
     return color * p.Exposure;
 }

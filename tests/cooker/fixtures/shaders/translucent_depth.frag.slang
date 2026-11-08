@@ -4,12 +4,12 @@
 // threading the engine shader include dir. Used to assert that a depth member rides alongside a
 // domain's color targets rather than counting as one of them.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float4 Color; // HDR color + coverage in a
 };
-
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {

@@ -27,6 +27,9 @@ namespace Veng::Renderer::Metal
     /// @brief The stages a compute encoder runs, the only ones an intra-encoder barrier there names.
     inline constexpr MetalStage ComputeEncoderStages = MetalStage::Dispatch | MetalStage::Blit;
 
+    /// @brief The stages a render encoder runs.
+    inline constexpr MetalStage RenderEncoderStages = MetalStage::Vertex | MetalStage::Fragment;
+
     /// @brief The Metal stages an engine stage set covers on one side of a dependency.
     ///
     /// The top and bottom of the pipe follow Vulkan's reading: as the producing side the top waits

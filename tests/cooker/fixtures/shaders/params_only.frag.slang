@@ -3,13 +3,13 @@
 // fields (the handle count is shader-driven, not a fixed engine struct): the
 // field table holds only Kind 0 params and the block carries just the params.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float4 Factors;
     float  Strength;
 };
-
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -35,7 +35,7 @@ struct PushConstants
     float3x3 NormalMatrix;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

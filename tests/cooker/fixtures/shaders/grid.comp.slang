@@ -1,7 +1,13 @@
 // A compute kernel with a distinct size on every axis, so the cooked threadgroup size is checked
 // axis by axis.
 
-[[vk::binding(0, 3)]] RWStructuredBuffer<uint> g_Output;
+#include "Veng/binding.slang"
+struct FixtureSet3
+{
+    RWStructuredBuffer<uint> Output;
+};
+VE_DESCRIPTOR_SET(3, FixtureSet3, g_Set3);
+#define g_Output g_Set3.Output
 
 [shader("compute")]
 [numthreads(8, 4, 2)]

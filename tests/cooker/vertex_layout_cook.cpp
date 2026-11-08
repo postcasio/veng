@@ -8,6 +8,8 @@
 #include "support/TempPath.h"
 #include <string_view>
 
+#include "FixturePack.h"
+
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/Archive.h>
@@ -27,7 +29,7 @@ TEST_CASE("Cooker: cooks a vertex_layout asset and produces correct blob")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+    const VoidResult cookResult = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
@@ -77,7 +79,7 @@ TEST_CASE("Cooker: cooking a shader with mismatched vertex inputs fails")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult r = cooker.CookPack(packJson, outArchive);
+    const VoidResult r = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
     CHECK(!r.has_value());
     // The error should mention the mismatch between reflected inputs and layout.
     if (!r.has_value())
@@ -104,11 +106,11 @@ TEST_CASE("Cooker: a shader resolves a vertex layout declared in a sibling pack"
     RegisterBuiltinImporters(cooker);
 
     // Without the sibling reference the layout id is unresolvable and the shader cook fails.
-    CHECK_FALSE(cooker.CookPack(shaderPack, outArchive).has_value());
+    CHECK_FALSE(Veng::Test::CookFixturePack(cooker, shaderPack, outArchive).has_value());
 
     // With the sibling pack referenced, the cross-pack layout resolves and the shader cooks.
     const path refs[] = {layoutPack};
-    const VoidResult cooked = cooker.CookPack(shaderPack, outArchive, refs);
+    const VoidResult cooked = Veng::Test::CookFixturePack(cooker, shaderPack, outArchive, refs);
     REQUIRE(cooked.has_value());
 
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);

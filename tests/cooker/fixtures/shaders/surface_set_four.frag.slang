@@ -2,9 +2,19 @@
 // fragment's set 3 and its shadow set 5, and refuses set 4 (the skinning palette's, or a sphere
 // terrain's tiles) unless the material declares "sphereTerrain".
 
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-[[vk::binding(0, 3)]] ByteAddressBuffer g_DrawData;
-[[vk::binding(0, 4)]] ByteAddressBuffer g_Extra;
+#include "Veng/bindless.slang"
+struct FixtureSet3
+{
+    ByteAddressBuffer DrawData;
+};
+VE_DESCRIPTOR_SET(3, FixtureSet3, g_Set3);
+#define g_DrawData g_Set3.DrawData
+struct FixtureSet4
+{
+    ByteAddressBuffer Extra;
+};
+VE_DESCRIPTOR_SET(4, FixtureSet4, g_Set4);
+#define g_Extra g_Set4.Extra
 
 struct MaterialParams
 {

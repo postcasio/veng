@@ -249,4 +249,181 @@ namespace Veng::Renderer::Metal
         }
         VE_ASSERT(false, "ToMetal(CompareOp): unmapped op {}", static_cast<u32>(op));
     }
+    /// @brief The vertex attribute format of an engine format.
+    /// @param format The attribute's engine format.
+    /// @return The vertex format.
+    [[nodiscard]] inline MTLVertexFormat ToMetalVertexFormat(const Format format)
+    {
+        switch (format)
+        {
+        case Format::R32Sfloat:
+            return MTLVertexFormatFloat;
+        case Format::RG32Sfloat:
+            return MTLVertexFormatFloat2;
+        case Format::RGB32Sfloat:
+            return MTLVertexFormatFloat3;
+        case Format::RGBA32Sfloat:
+            return MTLVertexFormatFloat4;
+        case Format::R16Sfloat:
+            return MTLVertexFormatHalf;
+        case Format::RG16Sfloat:
+            return MTLVertexFormatHalf2;
+        case Format::RGBA16Sfloat:
+            return MTLVertexFormatHalf4;
+        case Format::R8Unorm:
+            return MTLVertexFormatUCharNormalized;
+        case Format::RG8Unorm:
+            return MTLVertexFormatUChar2Normalized;
+        case Format::RGBA8Unorm:
+            return MTLVertexFormatUChar4Normalized;
+        case Format::RG16Unorm:
+            return MTLVertexFormatUShort2Normalized;
+        case Format::RGBA16Unorm:
+            return MTLVertexFormatUShort4Normalized;
+        case Format::RGBA16Uint:
+            return MTLVertexFormatUShort4;
+        case Format::R32Uint:
+            return MTLVertexFormatUInt;
+        case Format::A2B10G10R10Unorm:
+            return MTLVertexFormatUInt1010102Normalized;
+        default:
+            break;
+        }
+        VE_ASSERT(false, "ToMetalVertexFormat: {} is not a vertex attribute format",
+                  FormatName(format));
+        return MTLVertexFormatInvalid;
+    }
+
+    /// @brief The blend factor.
+    [[nodiscard]] inline MTLBlendFactor ToMetal(const BlendFactor factor)
+    {
+        switch (factor)
+        {
+        case BlendFactor::Zero:
+            return MTLBlendFactorZero;
+        case BlendFactor::One:
+            return MTLBlendFactorOne;
+        case BlendFactor::SrcColor:
+            return MTLBlendFactorSourceColor;
+        case BlendFactor::OneMinusSrcColor:
+            return MTLBlendFactorOneMinusSourceColor;
+        case BlendFactor::SrcAlpha:
+            return MTLBlendFactorSourceAlpha;
+        case BlendFactor::OneMinusSrcAlpha:
+            return MTLBlendFactorOneMinusSourceAlpha;
+        case BlendFactor::DstAlpha:
+            return MTLBlendFactorDestinationAlpha;
+        case BlendFactor::OneMinusDstAlpha:
+            return MTLBlendFactorOneMinusDestinationAlpha;
+        case BlendFactor::ConstantColor:
+            return MTLBlendFactorBlendColor;
+        case BlendFactor::OneMinusConstantColor:
+            return MTLBlendFactorOneMinusBlendColor;
+        }
+        VE_ASSERT(false, "ToMetal(BlendFactor): unmapped factor {}", static_cast<u32>(factor));
+    }
+
+    /// @brief The blend operation.
+    [[nodiscard]] inline MTLBlendOperation ToMetal(const BlendOp op)
+    {
+        switch (op)
+        {
+        case BlendOp::Add:
+            return MTLBlendOperationAdd;
+        case BlendOp::Subtract:
+            return MTLBlendOperationSubtract;
+        case BlendOp::ReverseSubtract:
+            return MTLBlendOperationReverseSubtract;
+        case BlendOp::Min:
+            return MTLBlendOperationMin;
+        case BlendOp::Max:
+            return MTLBlendOperationMax;
+        }
+        VE_ASSERT(false, "ToMetal(BlendOp): unmapped op {}", static_cast<u32>(op));
+    }
+
+    /// @brief The load action.
+    [[nodiscard]] inline MTLLoadAction ToMetal(const LoadOp op)
+    {
+        switch (op)
+        {
+        case LoadOp::Load:
+            return MTLLoadActionLoad;
+        case LoadOp::Clear:
+            return MTLLoadActionClear;
+        case LoadOp::DontCare:
+            return MTLLoadActionDontCare;
+        }
+        VE_ASSERT(false, "ToMetal(LoadOp): unmapped op {}", static_cast<u32>(op));
+    }
+
+    /// @brief The store action.
+    [[nodiscard]] inline MTLStoreAction ToMetal(const StoreOp op)
+    {
+        switch (op)
+        {
+        case StoreOp::Store:
+            return MTLStoreActionStore;
+        case StoreOp::DontCare:
+            return MTLStoreActionDontCare;
+        }
+        VE_ASSERT(false, "ToMetal(StoreOp): unmapped op {}", static_cast<u32>(op));
+    }
+
+    /// @brief The face culling mode; culling both faces is the pipeline's to do by not rasterizing.
+    [[nodiscard]] inline MTLCullMode ToMetal(const CullMode mode)
+    {
+        switch (mode)
+        {
+        case CullMode::None:
+        case CullMode::FrontAndBack:
+            return MTLCullModeNone;
+        case CullMode::Front:
+            return MTLCullModeFront;
+        case CullMode::Back:
+            return MTLCullModeBack;
+        }
+        VE_ASSERT(false, "ToMetal(CullMode): unmapped mode {}", static_cast<u32>(mode));
+    }
+
+    /// @brief The primitive a topology draws.
+    [[nodiscard]] inline MTLPrimitiveType ToMetal(const PrimitiveTopology topology)
+    {
+        switch (topology)
+        {
+        case PrimitiveTopology::TriangleList:
+            return MTLPrimitiveTypeTriangle;
+        case PrimitiveTopology::LineList:
+            return MTLPrimitiveTypeLine;
+        }
+        VE_ASSERT(false, "ToMetal(PrimitiveTopology): unmapped topology {}",
+                  static_cast<u32>(topology));
+    }
+
+    /// @brief The primitive class a topology's pipeline is built for.
+    [[nodiscard]] inline MTLPrimitiveTopologyClass ToMetalClass(const PrimitiveTopology topology)
+    {
+        switch (topology)
+        {
+        case PrimitiveTopology::TriangleList:
+            return MTLPrimitiveTopologyClassTriangle;
+        case PrimitiveTopology::LineList:
+            return MTLPrimitiveTopologyClassLine;
+        }
+        VE_ASSERT(false, "ToMetalClass(PrimitiveTopology): unmapped topology {}",
+                  static_cast<u32>(topology));
+    }
+
+    /// @brief The index type.
+    [[nodiscard]] inline MTLIndexType ToMetal(const IndexType type)
+    {
+        switch (type)
+        {
+        case IndexType::U16:
+            return MTLIndexTypeUInt16;
+        case IndexType::U32:
+            return MTLIndexTypeUInt32;
+        }
+        VE_ASSERT(false, "ToMetal(IndexType): unmapped type {}", static_cast<u32>(type));
+    }
 }

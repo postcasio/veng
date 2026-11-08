@@ -4,15 +4,14 @@
 // to assert a Sky material cooks (domain 2, one target, a storagebuffer field) and that a
 // Sky material against a g-buffer MRT shader fails the radiance contract.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float4 Tint;   // authored param
     uint   Points; // storage-buffer handle (runtime-bound)
     uint   Count;  // authored count
 };
-
-[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -24,7 +23,7 @@ struct PushConstants
     uint MaterialOffset;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

@@ -54,10 +54,7 @@ namespace Veng::Renderer
 #endif
 
         NSError* error = nil;
-        m_Native->State =
-            [context.GetNative().Compiler newComputePipelineStateWithDescriptor:descriptor
-                                                            compilerTaskOptions:nil
-                                                                          error:&error];
+        m_Native->State = context.GetNative().CreateComputePipeline(descriptor, &error);
         VE_ASSERT(m_Native->State != nil, "ComputePipeline '{}': Metal refused '{}' in '{}': {}",
                   m_Name, module.GetEntryPoint(), module.GetName(), Metal::Describe(error));
     }

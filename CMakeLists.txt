@@ -2043,6 +2043,16 @@ if (VENG_BUILD_TESTS)
             tests/gpu/immediate_gpu_timing.cpp
             tests/gpu/typed_buffer_roundtrip.cpp
             tests/gpu/image_clear_format.cpp
+            # indirect_draw.cpp draws three indirect records at a padded stride, two of them culled to
+            # zero instances by a compute pass, and reads back the candidate the survivor's base
+            # instance selected.
+            tests/gpu/indirect_draw.cpp
+            # graphics_pipeline.cpp places one triangle from the push block and reads back where clip
+            # space lands, which winding is the front face, which depth wins and how a loaded
+            # attachment blends; image_blit.cpp reads back the texels a scaled and a mirrored blit's
+            # linear filter determines.
+            tests/gpu/graphics_pipeline.cpp
+            tests/gpu/image_blit.cpp
             tests/gpu/descriptor_write_paths.cpp
             tests/gpu/compute_binding.cpp
             tests/gpu/bindless_lifecycle.cpp
@@ -2407,7 +2417,6 @@ if (VENG_BUILD_TESTS)
                 tests/gpu/environment_ibl.cpp
                 tests/gpu/generated_texture.cpp
                 tests/gpu/hi_z_pyramid.cpp
-                tests/gpu/indirect_draw.cpp
                 # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
                 # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
                 # a valid IBL source carrying the scene in the right direction, the revision advances only
@@ -2468,23 +2477,28 @@ if (VENG_BUILD_TESTS)
                 "-framework VideoToolbox" "-framework CoreFoundation")
     endif ()
 
+    # The pipeline archive's case reads the Metal backend's own counters, so it registers only in a
+    # Metal tree, compiled as the backend's own sources are (Objective-C++ under ARC, no PCH).
+    if (VE_GPU_BACKEND STREQUAL "Metal")
+        target_sources(veng_test_gpu PRIVATE tests/gpu/pipeline_archive.mm)
+        set_source_files_properties(tests/gpu/pipeline_archive.mm PROPERTIES
+                SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
+    endif ()
+
     # The suite is two entries, split by source file with doctest's -sf/-sfe filters. The `backend`
-    # entry holds the cases at the GPU backend's own level — resources, binding, barriers, the
-    # graph's scheduling, indirect draws — which a renderer or backend change also runs against
-    # the Vulkan reference tree (`ctest --test-dir build-debug-vulkan -L backend`). In a Metal tree
-    # it holds the cases the Metal backend runs, and every other case is `metal-pending` (see
-    # VENG_METAL_PENDING_TESTS below).
+    # entry holds the cases at the GPU backend's own level — resources, binding, barriers, graphics
+    # pipelines and render passes, blits, the graph's scheduling, indirect draws, uploads and
+    # present — which a renderer or backend change also runs against the Vulkan reference tree
+    # (`ctest --test-dir build-debug-vulkan -L backend`). Both backends run the same list; a case
+    # compiled for one backend only matches nothing in the other's tree.
     set(VENG_GPU_BACKEND_CASES
             buffer_roundtrip typed_buffer_roundtrip texture_readback descriptor_write_paths
             isolation timeline_semaphore frame_retired device_capabilities compute_binding
-            bindless_lifecycle)
-    if (VE_GPU_BACKEND STREQUAL "Vulkan")
-        list(APPEND VENG_GPU_BACKEND_CASES
-                image_clear_format bindless_registry bindless_storage_buffer indirect_draw
-                transfer_retire render_graph_skip transient_aliasing storage_image_range
-                volume_texture_3d async_upload async_submit)
-    endif ()
-    list(TRANSFORM VENG_GPU_BACKEND_CASES REPLACE "^(.*)$" "*/tests/gpu/\\1.cpp"
+            bindless_lifecycle indirect_draw graphics_pipeline image_blit pipeline_archive
+            image_clear_format bindless_registry bindless_storage_buffer transfer_retire
+            render_graph_skip transient_aliasing storage_image_range volume_texture_3d async_upload
+            async_submit)
+    list(TRANSFORM VENG_GPU_BACKEND_CASES REPLACE "^(.*)$" "*/tests/gpu/\\1.*"
             OUTPUT_VARIABLE VENG_GPU_BACKEND_FILES)
     list(JOIN VENG_GPU_BACKEND_FILES "," VENG_GPU_BACKEND_FILTER)
 
@@ -2840,14 +2854,25 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         )
         set_tests_properties(validation_gate PROPERTIES LABELS validation)
     elseif (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Metal")
-        # On Metal the gate runs the gpu cases the backend runs (the `backend` entry's), under
+        # On Metal the gate runs what the backend runs — the headless smoke, the compute dispatch,
+        # the `backend` entry's gpu cases, the example launcher and the material preview — under
         # Metal's API and shader validation.
+        set(VENG_GATE_MATERIAL_PREVIEW_ARG)
+        if (TARGET veng_test_material_preview)
+            set(VENG_GATE_MATERIAL_PREVIEW_ARG
+                -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_test_material_preview>)
+        endif ()
         add_test(NAME validation_gate
             CONFIGURATIONS Validation
             COMMAND ${CMAKE_COMMAND}
                 -D VENG_GATE_BACKEND=Metal
+                -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
+                -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
                 -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
                 "-DVENG_GATE_GPU_ARGS=-sf=${VENG_GPU_BACKEND_FILTER}"
+                -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
+                ${VENG_GATE_MATERIAL_PREVIEW_ARG}
+                -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
         )
         set_tests_properties(validation_gate PROPERTIES LABELS validation)
@@ -3083,9 +3108,8 @@ configure_file(
 
 # In a Metal tree the GPU work the Metal backend does not run yet is `metal-pending`: every test
 # labelled gpu except those in VENG_METAL_RUNS takes the label and is disabled, so the tree's
-# default band passes, and so does the cooker suite, whose fixture shaders use the declaration form
-# a Metal cook refuses and whose cases read the SPIR-V section. VENG_RUN_METAL_PENDING runs them
-# anyway, for a backend under development. Placed after every test is registered.
+# default band passes. VENG_RUN_METAL_PENDING runs them anyway, for a backend under development.
+# Placed after every test is registered.
 if (VENG_BUILD_TESTS AND VE_GPU_BACKEND STREQUAL "Metal")
     option(VENG_RUN_METAL_PENDING "Run the gpu tests the Metal backend does not run yet" OFF)
     set(VENG_METAL_RUNS
@@ -3094,12 +3118,26 @@ if (VENG_BUILD_TESTS AND VE_GPU_BACKEND STREQUAL "Metal")
             death.material_block_overruns_allocation
             death.material_range_overruns_block
             death.descriptor_type_mismatch
+            death.index_u16_into_u32
+            death.index_u32_into_u16
+            headless_smoke
+            compute_dispatch
+            mcp_screenshot
+            veng_test_material_preview
+            veng_test_multi_viewport_imgui
+            smoke_golden
+            hello_triangle_launcher_smoke
+            mcp_conformance
+            editor_mcp_conformance
+            mcp_cli_conformance
+            editor_mcp_cli_conformance
+            sdk_conformance_install
+            sdk_conformance_buildtree
     )
     get_property(VENG_ALL_TESTS DIRECTORY PROPERTY TESTS)
     foreach (VENG_TEST IN LISTS VENG_ALL_TESTS)
         get_test_property(${VENG_TEST} LABELS VENG_TEST_LABELS)
-        if (("gpu" IN_LIST VENG_TEST_LABELS OR VENG_TEST STREQUAL "cooker")
-                AND NOT VENG_TEST IN_LIST VENG_METAL_RUNS)
+        if ("gpu" IN_LIST VENG_TEST_LABELS AND NOT VENG_TEST IN_LIST VENG_METAL_RUNS)
             list(APPEND VENG_TEST_LABELS metal-pending)
             set_tests_properties(${VENG_TEST} PROPERTIES LABELS "${VENG_TEST_LABELS}")
             if (NOT VENG_RUN_METAL_PENDING)

@@ -5,12 +5,15 @@
 #include <GLFW/glfw3native.h>
 
 #import <Cocoa/Cocoa.h>
+#ifdef VE_GPU_BACKEND_METAL
+#import <QuartzCore/CAMetalLayer.h>
+#endif
 
 namespace Veng
 {
     void SetNativeFullscreen(GLFWwindow* handle, bool fullscreen)
     {
-        NSWindow* window = glfwGetCocoaWindow(handle);
+        NSWindow* const window = glfwGetCocoaWindow(handle);
         if (window == nil)
         {
             return;
@@ -39,11 +42,32 @@ namespace Veng
 
     bool IsNativeFullscreen(GLFWwindow* handle)
     {
-        NSWindow* window = glfwGetCocoaWindow(handle);
+        NSWindow* const window = glfwGetCocoaWindow(handle);
         if (window == nil)
         {
             return false;
         }
         return (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    }
+
+    void* AttachMetalLayer(GLFWwindow* handle)
+    {
+#ifdef VE_GPU_BACKEND_METAL
+        NSWindow* const window = glfwGetCocoaWindow(handle);
+        if (window == nil)
+        {
+            return nullptr;
+        }
+        NSView* const view = [window contentView];
+        CAMetalLayer* const layer = [CAMetalLayer layer];
+        layer.contentsScale = [window backingScaleFactor];
+        [view setLayer:layer];
+        [view setWantsLayer:YES];
+        return layer;
+#else
+        // Only the Metal backend presents through a layer of its own making.
+        (void)handle;
+        return nullptr;
+#endif
     }
 }

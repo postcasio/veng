@@ -7,6 +7,8 @@
 #include <filesystem>
 #include "support/TempPath.h"
 
+#include "FixturePack.h"
+
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/Archive.h>
@@ -26,7 +28,7 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+    const VoidResult cookResult = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);

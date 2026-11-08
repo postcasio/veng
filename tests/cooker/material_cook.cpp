@@ -20,6 +20,8 @@
 #include "support/TempPath.h"
 #include <string_view>
 
+#include "FixturePack.h"
+
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/Archive.h>
@@ -39,7 +41,7 @@ namespace
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
-        const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+        const VoidResult cookResult = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
         if (!cookResult.has_value())
         {
             return std::unexpected(cookResult.error());
@@ -146,7 +148,7 @@ TEST_CASE("Cooker: material cook fails when a params key has no matching Materia
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     CHECK(!result.has_value());
     // The error message must name the bad key.
@@ -165,7 +167,7 @@ TEST_CASE("Cooker: material cook fails when a textures key has no matching Mater
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     CHECK(!result.has_value());
     REQUIRE(!result.has_value());
@@ -193,7 +195,7 @@ TEST_CASE("Cooker: material cook fails when the shader declares a field the mate
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     // The error names the member left undeclared, which is the whole of what an author needs.
@@ -567,7 +569,7 @@ TEST_CASE("Cooker: a sky material whose fragment writes the MRT is a located coo
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("sky material must write a single float4 SV_Target0") !=
@@ -587,7 +589,7 @@ TEST_CASE("Cooker: a sky field material writes exactly its declared targets")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("declaring 'fieldTargets' 3") != string::npos);
@@ -677,7 +679,7 @@ TEST_CASE("Cooker: 'resolution: half' outside the Translucent domain is a locate
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("requires the Translucent domain") != string::npos);
@@ -707,9 +709,9 @@ TEST_CASE("Cooker: a post-resolve translucent material cooks with its layer; the
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
-        const VoidResult result =
-            cooker.CookPack(FixtureDir / pack,
-                            Veng::TestSupport::TempDir() / "veng_cooker_material_pr_err.vengpack");
+        const VoidResult result = Veng::Test::CookFixturePack(
+            cooker, FixtureDir / pack,
+            Veng::TestSupport::TempDir() / "veng_cooker_material_pr_err.vengpack");
         REQUIRE_FALSE(result.has_value());
         return result.error();
     };
@@ -738,9 +740,9 @@ TEST_CASE(
     // Only the translucent pass has a blend to choose, so a Surface material asking is refused.
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult surface =
-        cooker.CookPack(FixtureDir / "material_surface_additive_pack.json",
-                        Veng::TestSupport::TempDir() / "veng_cooker_material_surface_add.vengpack");
+    const VoidResult surface = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_surface_additive_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_surface_add.vengpack");
     REQUIRE_FALSE(surface.has_value());
     CHECK(surface.error().find("'blend' requires the Translucent domain") != string::npos);
 }
@@ -763,8 +765,8 @@ TEST_CASE("Cooker: a scene-colour-reading translucent material cooks with the fl
     // refused.
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult surface = cooker.CookPack(
-        FixtureDir / "material_surface_scene_color_pack.json",
+    const VoidResult surface = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_surface_scene_color_pack.json",
         Veng::TestSupport::TempDir() / "veng_cooker_material_surface_scene_color.vengpack");
     REQUIRE_FALSE(surface.has_value());
     CHECK(surface.error().find("'readsSceneColor' requires the Translucent domain") !=
@@ -788,8 +790,8 @@ TEST_CASE("Cooker: a Surface material declaring instanced sets cooks with the fl
     // A set draws through the g-buffer contract alone, so a Translucent material asking is refused.
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult translucent = cooker.CookPack(
-        FixtureDir / "material_translucent_instanced_sets_pack.json",
+    const VoidResult translucent = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_translucent_instanced_sets_pack.json",
         Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_instanced.vengpack");
     REQUIRE_FALSE(translucent.has_value());
     CHECK(translucent.error().find("'instancedSets' requires the Surface domain") != string::npos);
@@ -803,14 +805,14 @@ TEST_CASE("Cooker: a sphere-terrain material must name the core terrain vertex s
     // serve instanced sets.
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult vertex = cooker.CookPack(
-        FixtureDir / "material_sphere_terrain_wrong_vertex_pack.json",
+    const VoidResult vertex = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_sphere_terrain_wrong_vertex_pack.json",
         Veng::TestSupport::TempDir() / "veng_cooker_material_terrain_vertex.vengpack");
     REQUIRE_FALSE(vertex.has_value());
     CHECK(vertex.error().find("'sphereTerrain' requires the core sphere-terrain vertex stage") !=
           string::npos);
-    const VoidResult instanced = cooker.CookPack(
-        FixtureDir / "material_sphere_terrain_instanced_pack.json",
+    const VoidResult instanced = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_sphere_terrain_instanced_pack.json",
         Veng::TestSupport::TempDir() / "veng_cooker_material_terrain_instanced.vengpack");
     REQUIRE_FALSE(instanced.has_value());
     CHECK(instanced.error().find("'sphereTerrain' is exclusive with 'instancedSets'") !=
@@ -879,9 +881,9 @@ TEST_CASE("Cooker: a Surface fragment may declare the shadow set; set 4 is refus
     // Set 4 is the skinning palette's in the Surface domain, so a fragment declaring it is refused.
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult setFour =
-        cooker.CookPack(FixtureDir / "material_surface_set_four_pack.json",
-                        Veng::TestSupport::TempDir() / "veng_cooker_material_set_four.vengpack");
+    const VoidResult setFour = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_surface_set_four_pack.json",
+        Veng::TestSupport::TempDir() / "veng_cooker_material_set_four.vengpack");
     REQUIRE_FALSE(setFour.has_value());
     CHECK(setFour.error().find("a Surface fragment declares set 4") != string::npos);
 }
@@ -907,9 +909,9 @@ TEST_CASE("Cooker: a reactive translucent material cooks with the flag set; the 
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
-        const VoidResult result =
-            cooker.CookPack(FixtureDir / pack, Veng::TestSupport::TempDir() /
-                                                   "veng_cooker_material_reactive_err.vengpack");
+        const VoidResult result = Veng::Test::CookFixturePack(
+            cooker, FixtureDir / pack,
+            Veng::TestSupport::TempDir() / "veng_cooker_material_reactive_err.vengpack");
         REQUIRE_FALSE(result.has_value());
         return result.error();
     };
@@ -946,9 +948,9 @@ TEST_CASE("Cooker: a translucent material excluded from metering cooks with the 
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
-        const VoidResult result =
-            cooker.CookPack(FixtureDir / pack, Veng::TestSupport::TempDir() /
-                                                   "veng_cooker_material_metering_err.vengpack");
+        const VoidResult result = Veng::Test::CookFixturePack(
+            cooker, FixtureDir / pack,
+            Veng::TestSupport::TempDir() / "veng_cooker_material_metering_err.vengpack");
         REQUIRE_FALSE(result.has_value());
         return result.error();
     };
@@ -979,8 +981,8 @@ TEST_CASE("Cooker: a scene-depth-reading translucent material cooks with the fla
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const VoidResult surface = cooker.CookPack(
-        FixtureDir / "material_surface_scene_depth_pack.json",
+    const VoidResult surface = Veng::Test::CookFixturePack(
+        cooker, FixtureDir / "material_surface_scene_depth_pack.json",
         Veng::TestSupport::TempDir() / "veng_cooker_material_surface_scene_depth.vengpack");
     REQUIRE_FALSE(surface.has_value());
     CHECK(surface.error().find("'readsSceneDepth' requires the Translucent domain") !=
@@ -997,7 +999,7 @@ TEST_CASE("Cooker: an unknown cull mode is a located cook error")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("unknown cull mode") != string::npos);
@@ -1017,7 +1019,7 @@ TEST_CASE("Cooker: a translucent material whose fragment writes the MRT is a loc
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("translucent material must write a single float4 SV_Target0") !=
@@ -1035,7 +1037,7 @@ TEST_CASE("Cooker: an unknown domain is a located cook error")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("unknown domain") != string::npos);
@@ -1056,7 +1058,7 @@ TEST_CASE(
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("surface material must write the g-buffer") != string::npos);
@@ -1076,7 +1078,7 @@ TEST_CASE(
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("postprocess material must write a single") != string::npos);
@@ -1092,7 +1094,7 @@ TEST_CASE("Cooker: an authored block exceeding the per-material bound is a locat
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(packJson, outArchive);
+    const VoidResult result = Veng::Test::CookFixturePack(cooker, packJson, outArchive);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().find("exceeds the per-material bound") != string::npos);

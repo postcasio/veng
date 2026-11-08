@@ -5,6 +5,8 @@
 // Self-contained like its brick.frag sibling: it declares its own MVP/NormalMatrix push
 // block, not the engine's DrawData model — it exercises the cook machinery generically.
 
+#include "Veng/binding.slang"
+
 // One shared push-constant block, used by both stages (see brick.frag). The vertex stage
 // reads MVP (offset 0) and NormalMatrix (offset 80); the block is exactly 128 bytes.
 struct PushConstants
@@ -17,7 +19,7 @@ struct PushConstants
     float3x3 NormalMatrix; // offset 80 (48 bytes) — ends at 128
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSInput
 {

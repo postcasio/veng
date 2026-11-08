@@ -714,7 +714,10 @@ the default and catches more. Do not build both routinely.
   renderer or backend work — with `ctest --test-dir build-debug -C Validation -j 4 -L validation`.
   It fails on any unallowlisted `Vulkan validation` or `Metal validation` ERROR line
   (`cmake/ValidationGate.cmake`; allowlist currently empty). In a Vulkan tree it runs the
-  `gpu`-labelled binaries; in a Metal tree it runs the gpu cases the backend runs with Metal's API
+  `gpu`-labelled binaries; in a Metal tree it runs the same binaries — the gpu suite only for its
+  `backend` cases, and the two that render a scene (the example launcher and the material preview)
+  under API validation alone, since shader validation's instrumentation doubles the scene
+  renderer's 28 KiB mip-tail kernels past Metal's 32 KiB of threadgroup memory — with Metal's API
   and shader validation on (`MTL_DEBUG_LAYER`, `MTL_SHADER_VALIDATION`,
   `MTL_SHADER_VALIDATION_REPORT_TO_STDERR`) and also fails on the shader validation layer's own
   stderr report and on a non-zero exit. The `validation_gate_selftest.*` cases feed the gate a
@@ -724,11 +727,13 @@ the default and catches more. Do not build both routinely.
   submission's error). Metal has no synchronization validation. The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
 - **A Metal tree runs part of the gpu band.** Every gpu test the Metal backend does not run yet
-  carries the `metal-pending` label and is disabled, so the tree's default band passes. So does the
-  cooker suite, whose fixture shaders use the declaration form a Metal cook refuses and whose cases
-  read the SPIR-V section, so the Vulkan tree is where it runs;
+  carries the `metal-pending` label and is disabled, so the tree's default band passes;
   `-DVENG_RUN_METAL_PENDING=ON` runs them anyway. The gpu suite's backend-level cases are one entry,
-  `veng_test_gpu.backend` (label `backend`), selected by source file (`VENG_GPU_BACKEND_CASES`).
+  `veng_test_gpu.backend` (label `backend`), selected by source file (`VENG_GPU_BACKEND_CASES`, the
+  same list in both trees), and its other cases are the second entry, `veng_test_gpu`, which a Metal
+  tree leaves pending. The cooker suite runs in both trees: its fixture shaders declare their
+  resources in the portable form, its pack cooks put the engine shader headers on the include path
+  (`tests/cooker/FixturePack.h`), and a case reading the SPIR-V section asks for SPIR-V itself.
 - **Synchronization validation cannot see a shader access through the bindless sets.** The
   context turns on its shader-access analysis (`syncval_shader_accesses_heuristic`), without which
   it checks no descriptor access a draw or dispatch makes at all; with it, accesses through an

@@ -5,12 +5,12 @@
 // one float4 target) and that a Translucent material against a g-buffer MRT shader fails the
 // single-target contract; fsMainReactive adds the reactive amount a "reactive" material declares.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float4 Color; // HDR color + coverage in a
 };
-
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {

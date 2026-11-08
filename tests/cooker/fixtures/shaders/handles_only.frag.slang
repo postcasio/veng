@@ -2,15 +2,13 @@
 // Used by the material-cook test to assert the field table holds only handle
 // fields and the block is just the handle slots.
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     uint Albedo;
     uint AlbedoSampler;
 };
-
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -36,7 +34,7 @@ struct PushConstants
     float3x3 NormalMatrix;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {
@@ -49,8 +47,8 @@ struct VSOutput
 GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
-    float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
+    float4 albedo = g_Textures[NonUniformIndex(p.Albedo)].Sample(
+        g_Samplers[NonUniformIndex(p.AlbedoSampler)], input.v_UV);
 
     GBufferOutput output;
     output.Albedo = albedo;

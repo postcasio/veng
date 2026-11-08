@@ -4,6 +4,8 @@
 // are the scalar/tight ones Load<T> reads (Lead 0, Mid 4, Region 16, Count 32), not the
 // 16-aligned ones (which would put Mid at 16 and Region at 32).
 
+#include "Veng/bindless.slang"
+
 struct MaterialParams
 {
     float  Lead;   // scalar first
@@ -11,8 +13,6 @@ struct MaterialParams
     float4 Region; // vec4 after the vec3 — tight 16, std140 would be 32
     uint   Count;  // trailing scalar — tight 32, std140 would be 48
 };
-
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint offset)
 {
@@ -38,7 +38,7 @@ struct PushConstants
     float3x3 NormalMatrix;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+VE_PUSH_CONSTANTS(PushConstants, g_PC);
 
 struct VSOutput
 {

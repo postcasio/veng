@@ -784,6 +784,7 @@ if (APPLE)
                 src/Renderer/Backend/Metal/AppleInterop.mm
                 src/Renderer/Backend/Metal/Barrier.mm
                 src/Renderer/Backend/Metal/BindlessWrites.mm
+                src/Renderer/Backend/Metal/Blit.mm
                 src/Renderer/Backend/Metal/Buffer.mm
                 src/Renderer/Backend/Metal/CommandBuffer.mm
                 src/Renderer/Backend/Metal/ComputePipeline.mm
@@ -800,6 +801,7 @@ if (APPLE)
                 src/Renderer/Backend/Metal/Sampler.mm
                 src/Renderer/Backend/Metal/Semaphore.mm
                 src/Renderer/Backend/Metal/ShaderModule.mm
+                src/Renderer/Backend/Metal/SwapChain.mm
                 src/Renderer/Backend/Metal/TimelineSemaphore.mm
         )
         target_sources(veng PRIVATE ${VENG_METAL_BACKEND_SOURCES})

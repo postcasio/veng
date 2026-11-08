@@ -106,6 +106,15 @@ namespace Veng::Renderer
         /// creation (MoltenVK); a user's MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS environment variable
         /// overrides it. Context::GetQueueSubmitMode() reports what took effect.
         QueueSubmitMode SubmitMode = QueueSubmitMode::Asynchronous;
+
+        /// @brief Whether worker uploads run on a queue of their own, beside the graphics queue.
+        ///
+        /// The Metal backend creates a second queue for them, synchronized with the frame by the
+        /// transfer timeline; false keeps them on the graphics queue, the debugging lever for
+        /// telling an upload race from any other fault. The Vulkan backend takes the device's
+        /// queue families as they are, and ignores it. QueueFamilyIndices::TransferIsGraphics()
+        /// reports what took effect.
+        bool DedicatedTransferQueue = true;
     };
 
     /// @brief The GPU device context: owns the device, queues, swap chain,

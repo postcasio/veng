@@ -1,12 +1,14 @@
 #include <Veng/Renderer/CommandBuffer.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FormatInfo.h>
 
 #include "Barrier.h"
+#include "Blit.h"
 #include "Natives.h"
 #include "Recording.h"
 #include "TypeMapping.h"
@@ -129,43 +131,100 @@ namespace Veng::Renderer
                                                  destinationOrigin:ToOrigin(destinationOrigin)];
         }
 
-        [[noreturn]] void NoRenderPasses(const string_view call)
+        // Sets the render encoder state a graphics pipeline carries beside its pipeline state.
+        void ApplyGraphicsPipeline(const CommandBuffer::Native& native,
+                                   const GraphicsPipeline& pipeline)
         {
-            VE_ASSERT(
-                false,
-                "CommandBuffer::{}: the Metal backend records compute and transfer work only; "
-                "it opens no render pass",
-                call);
-            std::abort();
+            const GraphicsPipeline::Native& state = pipeline.GetNative();
+            [native.Render setRenderPipelineState:state.State];
+            [native.Render setDepthStencilState:state.DepthStencil];
+            [native.Render setCullMode:state.Cull];
+            [native.Render setTriangleFillMode:state.Fill];
+            [native.Render setDepthClipMode:state.DepthClip];
+        }
+
+        // The bound index buffer from its index @p firstIndex on.
+        struct IndexRange
+        {
+            u64 Address = 0;
+            u64 Length = 0;
+        };
+
+        IndexRange IndexRangeOf(const CommandBuffer::Native& native, const u32 firstIndex)
+        {
+            VE_ASSERT(native.IndexBuffer, "CommandBuffer: an indexed draw with no index buffer");
+            const u64 size = native.IndexType == MTLIndexTypeUInt16 ? 2 : 4;
+            const u64 offset = u64{firstIndex} * size;
+            VE_ASSERT(offset <= native.IndexBuffer->GetSize(),
+                      "CommandBuffer: first index {} lies past the end of '{}'", firstIndex,
+                      native.IndexBuffer->GetName());
+            return {.Address = [native.IndexBuffer->GetNative().Buffer gpuAddress] + offset,
+                    .Length = native.IndexBuffer->GetSize() - offset};
         }
     }
 
     namespace Metal::Recording
     {
+        void OrderEncoder(CommandBuffer::Native& native, id<MTL4CommandEncoder> encoder,
+                          const MetalStage encoderStages)
+        {
+            // Metal 4 orders no work across submissions on its own, so a recording begins as if a
+            // barrier from everything earlier to every stage had been recorded.
+            if (native.FirstEncoder)
+            {
+                native.PendingAfter = MetalStage::All;
+                native.PendingBefore = MetalStage::All;
+                native.FirstEncoder = false;
+            }
+            const MetalStage before = native.PendingBefore & encoderStages;
+            if (before == MetalStage::None)
+            {
+                return;
+            }
+            // A consumer barrier waits on every earlier encoder's work, whichever kind it was; the
+            // stages this encoder does not run stay pending for the next encoder that does.
+            [encoder barrierAfterQueueStages:static_cast<MTLStages>(native.PendingAfter)
+                                beforeStages:static_cast<MTLStages>(before)
+                           visibilityOptions:MTL4VisibilityOptionDevice];
+            native.PendingBefore = static_cast<MetalStage>(static_cast<u64>(native.PendingBefore) &
+                                                           ~static_cast<u64>(encoderStages));
+            if (native.PendingBefore == MetalStage::None)
+            {
+                native.PendingAfter = MetalStage::None;
+            }
+        }
+
         id<MTL4ComputeCommandEncoder> ComputeEncoder(const CommandBuffer& cmd)
         {
             CommandBuffer::Native& native = cmd.GetNative();
             VE_ASSERT(native.Recording, "CommandBuffer: recording into a buffer that is not begun");
+            VE_ASSERT(native.Render == nil,
+                      "CommandBuffer: compute or transfer work recorded inside a render pass");
             if (native.Compute != nil)
             {
                 return native.Compute;
             }
             native.Compute = [native.CommandBuffer computeCommandEncoder];
-            if (native.FirstEncoder)
-            {
-                // Metal 4 orders no work across submissions on its own; the first encoder of a
-                // recording waits for everything committed before it.
-                [native.Compute barrierAfterQueueStages:MTLStageAll
-                                           beforeStages:MTLStageAll
-                                      visibilityOptions:MTL4VisibilityOptionDevice];
-                native.FirstEncoder = false;
-            }
+            OrderEncoder(native, native.Compute, ComputeEncoderStages);
             [native.Compute setArgumentTable:native.ComputeTable];
             if (native.BoundCompute)
             {
                 [native.Compute setComputePipelineState:native.BoundCompute->GetNative().State];
             }
             return native.Compute;
+        }
+
+        id<MTL4RenderCommandEncoder> RenderEncoder(const CommandBuffer& cmd,
+                                                   MTL4RenderPassDescriptor* pass)
+        {
+            CommandBuffer::Native& native = cmd.GetNative();
+            VE_ASSERT(native.Recording, "CommandBuffer: recording into a buffer that is not begun");
+            VE_ASSERT(native.Render == nil, "CommandBuffer: a render pass is already open");
+            EndEncoder(cmd);
+            const id<MTL4RenderCommandEncoder> encoder =
+                [native.CommandBuffer renderCommandEncoderWithDescriptor:pass];
+            OrderEncoder(native, encoder, RenderEncoderStages);
+            return encoder;
         }
 
         void EndEncoder(const CommandBuffer& cmd)
@@ -184,12 +243,14 @@ namespace Veng::Renderer
             {
                 return;
             }
-            // A producer barrier orders every later encoder's work, which an encoder barrier or a
-            // consumer barrier, each scoped to one encoder, does not.
-            [ComputeEncoder(cmd) barrierAfterStages:static_cast<MTLStages>(after)
-                                  beforeQueueStages:static_cast<MTLStages>(before)
-                                  visibilityOptions:MTL4VisibilityOptionDevice];
+            CommandBuffer::Native& native = cmd.GetNative();
+            VE_ASSERT(native.Render == nil,
+                      "CommandBuffer: a barrier recorded inside a render pass");
+            // Recorded as a consumer barrier on the encoders that follow, which is what orders
+            // work a render pass produced as well as work a compute encoder did.
             EndEncoder(cmd);
+            native.PendingAfter |= after;
+            native.PendingBefore |= before;
         }
 
         void CopyBuffer(const CommandBuffer& cmd, const Buffer& source, const u64 sourceOffset,
@@ -217,16 +278,26 @@ namespace Veng::Renderer
         VE_ASSERT(m_Native->CommandBuffer != nil && m_Native->Allocator != nil,
                   "CommandBuffer: failed to create a Metal command buffer and allocator");
 
-        MTL4ArgumentTableDescriptor* const table = [[MTL4ArgumentTableDescriptor alloc] init];
-        // A compute stage binds no vertex buffers, so its table ends at the push-constant slot. A table
-        // spanning every slot with initialized bindings leaves Metal's shader validation reporting
-        // nothing.
-        table.maxBufferBindCount = Cook::MetalBindingSlots::PushConstants + 1;
-        table.initializeBindings = YES;
-        NSError* error = nil;
-        m_Native->ComputeTable = [device newArgumentTableWithDescriptor:table error:&error];
-        VE_ASSERT(m_Native->ComputeTable != nil,
-                  "CommandBuffer: failed to create an argument table: {}", Metal::Describe(error));
+        // Each stage's table ends at the last slot it binds: the push block for compute and
+        // fragment, the instance buffer for vertex. A table spanning every slot with initialized
+        // bindings leaves Metal's shader validation reporting nothing.
+        namespace Slots = Cook::MetalBindingSlots;
+        const auto makeTable = [device](const u32 slots, NSString* label)
+        {
+            MTL4ArgumentTableDescriptor* const table = [[MTL4ArgumentTableDescriptor alloc] init];
+            table.maxBufferBindCount = slots;
+            table.initializeBindings = YES;
+            table.label = label;
+            NSError* error = nil;
+            const id<MTL4ArgumentTable> created = [device newArgumentTableWithDescriptor:table
+                                                                                   error:&error];
+            VE_ASSERT(created != nil, "CommandBuffer: failed to create an argument table: {}",
+                      Metal::Describe(error));
+            return created;
+        };
+        m_Native->ComputeTable = makeTable(Slots::PushConstants + 1, @"Compute Arguments");
+        m_Native->VertexTable = makeTable(Slots::VertexBufferBase + 2, @"Vertex Arguments");
+        m_Native->FragmentTable = makeTable(Slots::PushConstants + 1, @"Fragment Arguments");
     }
 
     CommandBuffer::~CommandBuffer()
@@ -247,28 +318,159 @@ namespace Veng::Renderer
         [m_Native->CommandBuffer beginCommandBufferWithAllocator:m_Native->Allocator];
         m_Native->Recording = true;
         m_Native->FirstEncoder = true;
+        m_Native->PendingAfter = Metal::MetalStage::None;
+        m_Native->PendingBefore = Metal::MetalStage::None;
         m_Native->BoundCompute = nullptr;
+        m_Native->BoundGraphics = nullptr;
+        m_Native->IndexBuffer = nullptr;
         m_Native->Ring.Rewind();
+        m_Native->PushAddress = 0;
+        m_Native->ComputePushBound = 0;
+        m_Native->RenderPushBound = 0;
         m_LastBoundPipelineLayout = nullptr;
+        m_BoundGraphicsPipeline = nullptr;
+        m_HasActiveRenderingInfo = false;
     }
 
     void CommandBuffer::End()
     {
+        VE_ASSERT(m_Native->Render == nil, "CommandBuffer::End: a render pass is still open");
         Metal::Recording::EndEncoder(*this);
         [m_Native->CommandBuffer endCommandBuffer];
         m_Native->Recording = false;
     }
 
-    void CommandBuffer::ValidateAttachmentFormats() {}
-
-    void CommandBuffer::BeginRendering(const RenderingInfo& /*info*/)
+    void CommandBuffer::ValidateAttachmentFormats()
     {
-        NoRenderPasses("BeginRendering");
+#if defined(VE_DEBUG) && VE_DEBUG
+        if (m_AttachmentFormatsValidated || !m_HasActiveRenderingInfo || !m_BoundGraphicsPipeline)
+        {
+            return;
+        }
+        m_AttachmentFormatsValidated = true;
+        const vector<Format>& colors = m_BoundGraphicsPipeline->GetColorAttachmentFormats();
+        VE_ASSERT(colors.size() == m_ActiveColorAttachmentFormats.size(),
+                  "CommandBuffer::Draw: pipeline '{}' declares {} color attachment(s) but {} are "
+                  "active",
+                  m_BoundGraphicsPipeline->GetName(), colors.size(),
+                  m_ActiveColorAttachmentFormats.size());
+        for (usize i = 0; i < colors.size(); i++)
+        {
+            VE_ASSERT(colors[i] == m_ActiveColorAttachmentFormats[i],
+                      "CommandBuffer::Draw: pipeline '{}' color attachment {} is {}, the render "
+                      "target is {}",
+                      m_BoundGraphicsPipeline->GetName(), i, FormatName(colors[i]),
+                      FormatName(m_ActiveColorAttachmentFormats[i]));
+        }
+        VE_ASSERT(m_BoundGraphicsPipeline->GetDepthAttachmentFormat() ==
+                      m_ActiveDepthAttachmentFormat,
+                  "CommandBuffer::Draw: pipeline '{}' depth attachment is {}, the render target "
+                  "is {}",
+                  m_BoundGraphicsPipeline->GetName(),
+                  FormatName(m_BoundGraphicsPipeline->GetDepthAttachmentFormat()),
+                  FormatName(m_ActiveDepthAttachmentFormat));
+#endif
+    }
+
+    void CommandBuffer::BeginRendering(const RenderingInfo& info)
+    {
+        VE_ASSERT(info.ViewMask == 0,
+                  "CommandBuffer::BeginRendering: the Metal backend renders no multiview pass");
+        m_ActiveColorAttachmentFormats.clear();
+        m_ActiveColorAttachmentFormats.reserve(info.ColorAttachments.size());
+
+        MTL4RenderPassDescriptor* const pass = [[MTL4RenderPassDescriptor alloc] init];
+        for (usize i = 0; i < info.ColorAttachments.size(); ++i)
+        {
+            const RenderingAttachmentInfo& attachment = info.ColorAttachments[i];
+            m_ActiveColorAttachmentFormats.push_back(attachment.ImageView != nullptr
+                                                         ? attachment.ImageView->GetFormat()
+                                                         : Format::Undefined);
+            if (attachment.ImageView == nullptr)
+            {
+                continue;
+            }
+            MTLRenderPassColorAttachmentDescriptor* const color = pass.colorAttachments[i];
+            color.texture = attachment.ImageView->GetNative().Texture;
+            color.loadAction = Metal::ToMetal(attachment.LoadOp);
+            color.storeAction = Metal::ToMetal(attachment.StoreOp);
+            if (const auto* clear = std::get_if<ClearColor>(&attachment.ClearValue))
+            {
+                color.clearColor = MTLClearColorMake(clear->R, clear->G, clear->B, clear->A);
+            }
+        }
+
+        const auto bindDepthStencil =
+            [pass](const RenderingAttachmentInfo& attachment, const bool depth, const bool stencil)
+        {
+            const id<MTLTexture> texture = attachment.ImageView->GetNative().Texture;
+            const auto* clear = std::get_if<ClearDepth>(&attachment.ClearValue);
+            if (depth)
+            {
+                pass.depthAttachment.texture = texture;
+                pass.depthAttachment.loadAction = Metal::ToMetal(attachment.LoadOp);
+                pass.depthAttachment.storeAction = Metal::ToMetal(attachment.StoreOp);
+                pass.depthAttachment.clearDepth = clear != nullptr ? clear->Depth : 1.0;
+            }
+            if (stencil)
+            {
+                pass.stencilAttachment.texture = texture;
+                pass.stencilAttachment.loadAction = Metal::ToMetal(attachment.LoadOp);
+                pass.stencilAttachment.storeAction = Metal::ToMetal(attachment.StoreOp);
+                pass.stencilAttachment.clearStencil = clear != nullptr ? clear->Stencil : 0;
+            }
+        };
+        m_ActiveDepthAttachmentFormat = Format::Undefined;
+        if (info.DepthAttachment.has_value())
+        {
+            const Format format = info.DepthAttachment->ImageView->GetFormat();
+            m_ActiveDepthAttachmentFormat = format;
+            const bool withStencil = format == Format::D32SfloatS8Uint;
+            bindDepthStencil(*info.DepthAttachment, true,
+                             withStencil && !info.StencilAttachment.has_value());
+        }
+        if (info.StencilAttachment.has_value())
+        {
+            bindDepthStencil(*info.StencilAttachment, false, true);
+        }
+
+        const uvec2 extent = uvec2(info.Offset) + info.Extent;
+        pass.renderTargetWidth = extent.x;
+        pass.renderTargetHeight = extent.y;
+        // A pass whose colour slots are all unbound and that has no depth names its sample count
+        // here; Metal takes it from an attachment otherwise.
+        pass.defaultRasterSampleCount = 1;
+        if (info.LayerCount > 1)
+        {
+            pass.renderTargetArrayLength = info.LayerCount;
+        }
+
+        m_HasActiveRenderingInfo = true;
+        m_AttachmentFormatsValidated = false;
+        m_Native->RenderExtent = extent;
+        m_Native->Render = Metal::Recording::RenderEncoder(*this, pass);
+        [m_Native->Render setArgumentTable:m_Native->VertexTable atStages:MTLRenderStageVertex];
+        [m_Native->Render setArgumentTable:m_Native->FragmentTable atStages:MTLRenderStageFragment];
+        // The flipped viewport lands primitives where Vulkan does, and Metal judges their winding
+        // there, so the engine's counter-clockwise front face carries over unchanged.
+        [m_Native->Render setFrontFacingWinding:MTLWindingCounterClockwise];
+        SetViewport(info.Offset, info.Extent);
+        SetScissor(info.Offset, info.Extent);
+        if (m_Native->BoundGraphics)
+        {
+            ApplyGraphicsPipeline(*m_Native, *m_Native->BoundGraphics);
+        }
     }
 
     void CommandBuffer::EndRendering()
     {
-        NoRenderPasses("EndRendering");
+        VE_ASSERT(m_Native->Render != nil, "CommandBuffer::EndRendering: no render pass is open");
+        [m_Native->Render endEncoding];
+        m_Native->Render = nil;
+        m_ActiveColorAttachmentFormats.clear();
+        m_ActiveDepthAttachmentFormat = Format::Undefined;
+        m_HasActiveRenderingInfo = false;
+        m_AttachmentFormatsValidated = false;
     }
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info)
@@ -301,21 +503,28 @@ namespace Veng::Renderer
         VE_ASSERT(firstSet + sets.size() <= MaxBoundDescriptorSets,
                   "CommandBuffer::BindDescriptorSets: sets {}+{} exceed the {}-set limit", firstSet,
                   sets.size(), MaxBoundDescriptorSets);
-        if (bindPoint != PipelineBindPoint::Compute)
-        {
-            NoRenderPasses("BindDescriptorSets (graphics)");
-        }
-
         const PipelineLayout::Native& layout = m_LastBoundPipelineLayout->GetNative();
-        const id<MTL4ArgumentTable> table = m_Native->ComputeTable;
+        // A bind point keeps its own bindings, as on every backend: the compute table, or the two
+        // render stages' tables together.
+        const bool compute = bindPoint == PipelineBindPoint::Compute;
+        const auto setAddress = [this, compute](const u64 address, const u32 slot)
+        {
+            if (compute)
+            {
+                [m_Native->ComputeTable setAddress:address atIndex:slot];
+                return;
+            }
+            [m_Native->VertexTable setAddress:address atIndex:slot];
+            [m_Native->FragmentTable setAddress:address atIndex:slot];
+        };
         usize nextDynamic = 0;
         for (usize i = 0; i < sets.size(); ++i)
         {
             const u32 set = firstSet + static_cast<u32>(i);
             const DescriptorSet::Native& native = sets[i]->GetNative();
             // Set N's argument buffer is bound at slot N.
-            [table setAddress:[native.Arguments->GetNative().Buffer gpuAddress]
-                      atIndex:Cook::MetalBindingSlots::DescriptorSetBase + set];
+            setAddress([native.Arguments->GetNative().Buffer gpuAddress],
+                       Cook::MetalBindingSlots::DescriptorSetBase + set);
             for (usize d = 0; d < native.DynamicAddresses.size(); ++d)
             {
                 VE_ASSERT(nextDynamic < dynamicOffsets.size(),
@@ -325,8 +534,8 @@ namespace Veng::Renderer
                 VE_ASSERT(set < layout.DynamicSlots.size(),
                           "CommandBuffer::BindDescriptorSets: set {} is past the bound layout '{}'",
                           set, m_LastBoundPipelineLayout->GetName());
-                [table setAddress:native.DynamicAddresses[d] + dynamicOffsets[nextDynamic++]
-                          atIndex:layout.DynamicSlots[set] + static_cast<u32>(d)];
+                setAddress(native.DynamicAddresses[d] + dynamicOffsets[nextDynamic++],
+                           layout.DynamicSlots[set] + static_cast<u32>(d));
             }
         }
         VE_ASSERT(nextDynamic == dynamicOffsets.size(),
@@ -334,32 +543,7 @@ namespace Veng::Renderer
                   dynamicOffsets.size(), nextDynamic);
     }
 
-    void CommandBuffer::DrawFullscreenTriangle()
-    {
-        NoRenderPasses("DrawFullscreenTriangle");
-    }
-
-    void CommandBuffer::Draw(u32, u32, u32, u32)
-    {
-        NoRenderPasses("Draw");
-    }
-
-    void CommandBuffer::DrawIndexed(u32, u32, u32, i32, u32)
-    {
-        NoRenderPasses("DrawIndexed");
-    }
-
-    void CommandBuffer::DrawIndexedIndirect(const Ref<Buffer>&, u64, u32, u32)
-    {
-        NoRenderPasses("DrawIndexedIndirect");
-    }
-
-    void CommandBuffer::DrawIndirect(const Ref<Buffer>&, u64, u32, u32)
-    {
-        NoRenderPasses("DrawIndirect");
-    }
-
-    // Copies the push block into the ring and binds the copy, when it changed since the last.
+    // Copies the push block into the ring when it changed since its last copy.
     static void FlushPushConstants(Context& context, CommandBuffer::Native& native)
     {
         if (!native.Push.IsDirty())
@@ -375,15 +559,138 @@ namespace Veng::Renderer
         const Buffer& chunk = *native.RingChunks[placement.Chunk];
         std::memcpy(static_cast<std::byte*>(chunk.GetNative().Contents) + placement.Offset,
                     bytes.data(), bytes.size());
-        [native.ComputeTable setAddress:[chunk.GetNative().Buffer gpuAddress] + placement.Offset
-                                atIndex:Cook::MetalBindingSlots::PushConstants];
+        native.PushAddress = [chunk.GetNative().Buffer gpuAddress] + placement.Offset;
         native.Push.MarkClean();
+    }
+
+    // The open render encoder, with the push block's latest copy bound for this draw.
+    static id<MTL4RenderCommandEncoder> PrepareDraw(Context& context, const CommandBuffer& cmd)
+    {
+        CommandBuffer::Native& native = cmd.GetNative();
+        VE_ASSERT(native.Render != nil, "CommandBuffer: a draw recorded outside a render pass");
+        VE_ASSERT(native.BoundGraphics, "CommandBuffer: a draw with no graphics pipeline bound");
+        FlushPushConstants(context, native);
+        if (native.PushAddress != 0 && native.RenderPushBound != native.PushAddress)
+        {
+            [native.VertexTable setAddress:native.PushAddress
+                                   atIndex:Cook::MetalBindingSlots::PushConstants];
+            [native.FragmentTable setAddress:native.PushAddress
+                                     atIndex:Cook::MetalBindingSlots::PushConstants];
+            native.RenderPushBound = native.PushAddress;
+        }
+        return native.Render;
+    }
+
+    void CommandBuffer::DrawFullscreenTriangle()
+    {
+        Draw(3, 1, 0, 0);
+    }
+
+    void CommandBuffer::Draw(const u32 vertexCount, const u32 instanceCount, const u32 firstVertex,
+                             const u32 firstInstance)
+    {
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        if (vertexCount == 0 || instanceCount == 0)
+        {
+            return;
+        }
+        [encoder drawPrimitives:m_Native->BoundGraphics->GetNative().Primitive
+                    vertexStart:firstVertex
+                    vertexCount:vertexCount
+                  instanceCount:instanceCount
+                   baseInstance:firstInstance];
+    }
+
+    void CommandBuffer::DrawIndexed(const u32 indexCount, const u32 instanceCount,
+                                    const u32 firstIndex, const i32 vertexOffset,
+                                    const u32 firstInstance)
+    {
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        if (indexCount == 0 || instanceCount == 0)
+        {
+            return;
+        }
+        const IndexRange indices = IndexRangeOf(*m_Native, firstIndex);
+        [encoder drawIndexedPrimitives:m_Native->BoundGraphics->GetNative().Primitive
+                            indexCount:indexCount
+                             indexType:m_Native->IndexType
+                           indexBuffer:indices.Address
+                     indexBufferLength:indices.Length
+                         instanceCount:instanceCount
+                            baseVertex:vertexOffset
+                          baseInstance:firstInstance];
+    }
+
+    void CommandBuffer::DrawIndexedIndirect(const Ref<Buffer>& buffer, const u64 offset,
+                                            const u32 drawCount, const u32 stride)
+    {
+        VE_ASSERT(offset % 4 == 0, "DrawIndexedIndirect: offset {} is not 4-byte aligned", offset);
+        VE_ASSERT(drawCount <= 1 || stride >= sizeof(DrawIndexedIndirectCommand),
+                  "DrawIndexedIndirect: stride {} is shorter than a record", stride);
+        VE_ASSERT(offset + (drawCount == 0 ? 0
+                                           : (u64{drawCount - 1} * stride) +
+                                                 sizeof(DrawIndexedIndirectCommand)) <=
+                      buffer->GetSize(),
+                  "DrawIndexedIndirect: {} records at offset {} run past the end of '{}'",
+                  drawCount, offset, buffer->GetName());
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        const IndexRange indices = IndexRangeOf(*m_Native, 0);
+        const u64 base = [buffer->GetNative().Buffer gpuAddress] + offset;
+        // Metal issues one indirect draw per call, so a multi-draw is one per record at its stride.
+        for (u32 i = 0; i < drawCount; ++i)
+        {
+            [encoder drawIndexedPrimitives:m_Native->BoundGraphics->GetNative().Primitive
+                                 indexType:m_Native->IndexType
+                               indexBuffer:indices.Address
+                         indexBufferLength:indices.Length
+                            indirectBuffer:base + (u64{i} * stride)];
+        }
+    }
+
+    void CommandBuffer::DrawIndirect(const Ref<Buffer>& buffer, const u64 offset,
+                                     const u32 drawCount, const u32 stride)
+    {
+        VE_ASSERT(offset % 4 == 0, "DrawIndirect: offset {} is not 4-byte aligned", offset);
+        VE_ASSERT(drawCount <= 1 || stride >= sizeof(DrawIndirectCommand),
+                  "DrawIndirect: stride {} is shorter than a record", stride);
+        VE_ASSERT(offset + (drawCount == 0
+                                ? 0
+                                : (u64{drawCount - 1} * stride) + sizeof(DrawIndirectCommand)) <=
+                      buffer->GetSize(),
+                  "DrawIndirect: {} records at offset {} run past the end of '{}'", drawCount,
+                  offset, buffer->GetName());
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        const u64 base = [buffer->GetNative().Buffer gpuAddress] + offset;
+        for (u32 i = 0; i < drawCount; ++i)
+        {
+            [encoder drawPrimitives:m_Native->BoundGraphics->GetNative().Primitive
+                     indirectBuffer:base + (u64{i} * stride)];
+        }
+    }
+
+    static void BindComputePushConstants(Context& context, CommandBuffer::Native& native)
+    {
+        FlushPushConstants(context, native);
+        if (native.PushAddress != 0 && native.ComputePushBound != native.PushAddress)
+        {
+            [native.ComputeTable setAddress:native.PushAddress
+                                    atIndex:Cook::MetalBindingSlots::PushConstants];
+            native.ComputePushBound = native.PushAddress;
+        }
     }
 
     void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
     {
         VE_ASSERT(m_Native->BoundCompute, "CommandBuffer::Dispatch: no compute pipeline is bound");
-        FlushPushConstants(m_Context, *m_Native);
+        BindComputePushConstants(m_Context, *m_Native);
         [Metal::Recording::ComputeEncoder(*this)
              dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, groupsZ)
             threadsPerThreadgroup:m_Native->BoundCompute->GetNative().ThreadsPerThreadgroup];
@@ -398,16 +705,24 @@ namespace Veng::Renderer
                   offset, buffer->GetName(), buffer->GetSize());
         VE_ASSERT(m_Native->BoundCompute,
                   "CommandBuffer::DispatchIndirect: no compute pipeline is bound");
-        FlushPushConstants(m_Context, *m_Native);
+        BindComputePushConstants(m_Context, *m_Native);
         [Metal::Recording::ComputeEncoder(*this)
             dispatchThreadgroupsWithIndirectBuffer:[buffer->GetNative().Buffer gpuAddress] + offset
                              threadsPerThreadgroup:m_Native->BoundCompute->GetNative()
                                                        .ThreadsPerThreadgroup];
     }
 
-    void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& /*pipeline*/)
+    void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
     {
-        NoRenderPasses("BindPipeline (graphics)");
+        m_Native->BoundGraphics = pipeline;
+        m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
+        m_BoundGraphicsPipeline = pipeline;
+        m_AttachmentFormatsValidated = false;
+        m_Native->Push.SetSize(m_LastBoundPipelineLayout->GetNative().PushBytes);
+        if (m_Native->Render != nil)
+        {
+            ApplyGraphicsPipeline(*m_Native, *pipeline);
+        }
     }
 
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
@@ -423,34 +738,59 @@ namespace Veng::Renderer
         }
     }
 
-    void CommandBuffer::SetScissor(ivec2, uvec2)
+    void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent)
     {
-        NoRenderPasses("SetScissor");
+        VE_ASSERT(m_Native->Render != nil, "SetScissor: no render pass is open");
+        // Metal refuses a scissor reaching past the render target, which Vulkan clips.
+        const uvec2 limit = m_Native->RenderExtent;
+        const uvec2 origin = glm::min(uvec2(glm::max(offset, ivec2(0))), limit);
+        const uvec2 end = glm::min(uvec2(glm::max(offset + ivec2(extent), ivec2(0))), limit);
+        [m_Native->Render setScissorRect:MTLScissorRect{.x = origin.x,
+                                                        .y = origin.y,
+                                                        .width = end.x - origin.x,
+                                                        .height = end.y - origin.y}];
     }
 
-    void CommandBuffer::SetBlendConstants(vec4)
+    void CommandBuffer::SetBlendConstants(const vec4 constants)
     {
-        NoRenderPasses("SetBlendConstants");
+        VE_ASSERT(m_Native->Render != nil, "SetBlendConstants: no render pass is open");
+        [m_Native->Render setBlendColorRed:constants.r
+                                     green:constants.g
+                                      blue:constants.b
+                                     alpha:constants.a];
     }
 
-    void CommandBuffer::SetViewport(ivec2, uvec2)
+    void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent)
     {
-        NoRenderPasses("SetViewport");
+        VE_ASSERT(m_Native->Render != nil, "SetViewport: no render pass is open");
+        // The engine's clip space is Vulkan's, with +Y down the target; a viewport of negative
+        // height lands it the same way under Metal's +Y-up convention.
+        [m_Native->Render setViewport:MTLViewport{
+                                          .originX = static_cast<f64>(offset.x),
+                                          .originY = static_cast<f64>(offset.y) + extent.y,
+                                          .width = static_cast<f64>(extent.x),
+                                          .height = -static_cast<f64>(extent.y),
+                                          .znear = 0.0,
+                                          .zfar = 1.0,
+                                      }];
     }
 
-    void CommandBuffer::BindVertexBuffer(const Ref<Buffer>&)
+    void CommandBuffer::BindVertexBuffer(const Ref<Buffer>& buffer)
     {
-        NoRenderPasses("BindVertexBuffer");
+        [m_Native->VertexTable setAddress:[buffer->GetNative().Buffer gpuAddress]
+                                  atIndex:Cook::MetalBindingSlots::VertexBufferBase];
     }
 
-    void CommandBuffer::BindInstanceBuffer(const Ref<Buffer>&)
+    void CommandBuffer::BindInstanceBuffer(const Ref<Buffer>& buffer)
     {
-        NoRenderPasses("BindInstanceBuffer");
+        [m_Native->VertexTable setAddress:[buffer->GetNative().Buffer gpuAddress]
+                                  atIndex:Cook::MetalBindingSlots::VertexBufferBase + 1];
     }
 
-    void CommandBuffer::BindIndexBuffer(const Ref<Buffer>&, IndexType)
+    void CommandBuffer::BindIndexBuffer(const Ref<Buffer>& buffer, const IndexType type)
     {
-        NoRenderPasses("BindIndexBuffer");
+        m_Native->IndexBuffer = buffer;
+        m_Native->IndexType = Metal::ToMetal(type);
     }
 
     void CommandBuffer::CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image)
@@ -547,7 +887,6 @@ namespace Veng::Renderer
     void CommandBuffer::ClearColorImage(const Ref<Image>& image, const vec4 value)
     {
         // A colour clear is a render pass's load action, one pass per mip and slice.
-        Metal::Recording::EndEncoder(*this);
         const id<MTLTexture> texture = image->GetNative().Texture;
         for (u32 mip = 0; mip < image->GetMipLevels(); ++mip)
         {
@@ -570,16 +909,7 @@ namespace Veng::Renderer
                 attachment.loadAction = MTLLoadActionClear;
                 attachment.storeAction = MTLStoreActionStore;
                 attachment.clearColor = MTLClearColorMake(value.x, value.y, value.z, value.w);
-                const id<MTL4RenderCommandEncoder> encoder =
-                    [m_Native->CommandBuffer renderCommandEncoderWithDescriptor:pass];
-                if (m_Native->FirstEncoder)
-                {
-                    [encoder barrierAfterQueueStages:MTLStageAll
-                                        beforeStages:MTLStageAll
-                                   visibilityOptions:MTL4VisibilityOptionDevice];
-                    m_Native->FirstEncoder = false;
-                }
-                [encoder endEncoding];
+                [Metal::Recording::RenderEncoder(*this, pass) endEncoding];
             }
         }
     }
@@ -610,21 +940,23 @@ namespace Veng::Renderer
 
     void CommandBuffer::BlitImage(const BlitImageInfo& info)
     {
+        // The offsets bound each region, start to end, as Vulkan's blit takes them.
         const ivec3 sourceExtent = info.SourceExtent - info.SourceOffset;
         const ivec3 destinationExtent = info.DestinationExtent - info.DestinationOffset;
-        VE_ASSERT(sourceExtent == destinationExtent,
-                  "BlitImage: the Metal backend copies a blit at equal extents only ({}x{}x{} to "
-                  "{}x{}x{})",
-                  sourceExtent.x, sourceExtent.y, sourceExtent.z, destinationExtent.x,
-                  destinationExtent.y, destinationExtent.z);
-        for (u32 layer = 0; layer < info.LayerCount; ++layer)
+        if (sourceExtent == destinationExtent)
         {
-            CopyTextureRegion(*this, *info.SourceImage, info.SourceMipLevel,
-                              info.SourceBaseLayer + layer, uvec3(info.SourceOffset),
-                              *info.DestinationImage, info.DestinationMipLevel,
-                              info.DestinationBaseLayer + layer, uvec3(info.DestinationOffset),
-                              uvec3(sourceExtent));
+            // An unscaled blit samples every texel at its centre, so the filter changes nothing.
+            for (u32 layer = 0; layer < info.LayerCount; ++layer)
+            {
+                CopyTextureRegion(*this, *info.SourceImage, info.SourceMipLevel,
+                                  info.SourceBaseLayer + layer, uvec3(info.SourceOffset),
+                                  *info.DestinationImage, info.DestinationMipLevel,
+                                  info.DestinationBaseLayer + layer, uvec3(info.DestinationOffset),
+                                  uvec3(sourceExtent));
+            }
+            return;
         }
+        Metal::BlitScaled(m_Context, *this, info);
     }
 
     void CommandBuffer::PrepareForAccess(const Ref<ImageView>& view, const AccessKind kind)

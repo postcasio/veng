@@ -27,8 +27,6 @@
 #include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 
-#include <array>
-
 namespace Veng::Renderer::Metal
 {
     /// @brief Where a buffer's or texture's memory was placed.
@@ -160,6 +158,18 @@ namespace Veng::Renderer
 
     struct GraphicsPipeline::Native
     {
+        /// @brief The pipeline state.
+        id<MTLRenderPipelineState> State = nil;
+        /// @brief The depth test and write state, set beside the pipeline.
+        id<MTLDepthStencilState> DepthStencil = nil;
+        /// @brief The primitive every draw with the pipeline assembles.
+        MTLPrimitiveType Primitive = MTLPrimitiveTypeTriangle;
+        /// @brief The faces culled.
+        MTLCullMode Cull = MTLCullModeNone;
+        /// @brief Whether triangles rasterize as their edges.
+        MTLTriangleFillMode Fill = MTLTriangleFillModeFill;
+        /// @brief Whether depth is clamped to the viewport range rather than clipped.
+        MTLDepthClipMode DepthClip = MTLDepthClipModeClip;
     };
 
     struct ComputePipeline::Native
@@ -178,18 +188,36 @@ namespace Veng::Renderer
         id<MTL4CommandAllocator> Allocator = nil;
         /// @brief The open compute encoder, or nil.
         id<MTL4ComputeCommandEncoder> Compute = nil;
+        /// @brief The open render encoder, between BeginRendering and EndRendering; or nil.
+        id<MTL4RenderCommandEncoder> Render = nil;
         /// @brief The compute stage's argument table.
         id<MTL4ArgumentTable> ComputeTable = nil;
+        /// @brief The vertex stage's argument table, which also carries the vertex buffers.
+        id<MTL4ArgumentTable> VertexTable = nil;
+        /// @brief The fragment stage's argument table.
+        id<MTL4ArgumentTable> FragmentTable = nil;
+        /// @brief The scaled blit's argument table, created at first use.
+        id<MTL4ArgumentTable> BlitTable = nil;
         /// @brief Whether recording is open.
         bool Recording = false;
         /// @brief Whether no encoder has opened since the buffer was begun, so the next one orders
         ///        itself after every earlier submission.
         bool FirstEncoder = true;
+        /// @brief The stages a recorded barrier waits on, applied by the next encoder that opens.
+        Metal::MetalStage PendingAfter = Metal::MetalStage::None;
+        /// @brief The stages a recorded barrier holds back that no encoder opened since has run.
+        Metal::MetalStage PendingBefore = Metal::MetalStage::None;
 
         /// @brief The bound compute pipeline.
         Ref<ComputePipeline> BoundCompute;
-        /// @brief The address bound at each argument-table buffer slot, or 0.
-        std::array<u64, Cook::MetalBindingSlots::BufferSlotCount> ComputeSlots{};
+        /// @brief The bound graphics pipeline, which a render pass opened after the bind applies.
+        Ref<GraphicsPipeline> BoundGraphics;
+        /// @brief The bound index buffer.
+        Ref<Buffer> IndexBuffer;
+        /// @brief The bound index buffer's index type.
+        MTLIndexType IndexType = MTLIndexTypeUInt32;
+        /// @brief The open render pass's attachment extent, which a viewport and scissor default to.
+        uvec2 RenderExtent{0, 0};
 
         /// @brief The bound layout's push block.
         Metal::PushConstantShadow Push;
@@ -197,6 +225,12 @@ namespace Veng::Renderer
         Metal::LinearRing Ring;
         /// @brief The ring's chunks, host-mapped buffers.
         vector<Ref<Buffer>> RingChunks;
+        /// @brief The address of the push block's latest copy, or 0.
+        u64 PushAddress = 0;
+        /// @brief The push address the compute table holds.
+        u64 ComputePushBound = 0;
+        /// @brief The push address the render tables hold.
+        u64 RenderPushBound = 0;
     };
 
     struct Fence::Native

@@ -23,4 +23,12 @@ namespace Veng
     /// @param handle  The GLFW window whose Cocoa window is queried.
     /// @return True when the window is in native full-screen.
     [[nodiscard]] bool IsNativeFullscreen(GLFWwindow* handle);
+
+    /// @brief Backs the window's content view with a CAMetalLayer and returns it (macOS only).
+    ///
+    /// The view owns the layer; the pointer is returned +0, and a caller keeping it retains it. The
+    /// layer's contents scale follows the window's backing scale, so its drawables are in pixels.
+    /// @param handle  The GLFW window whose content view takes the layer.
+    /// @return The CAMetalLayer, as an opaque pointer; null when the window has no Cocoa backing.
+    [[nodiscard]] void* AttachMetalLayer(GLFWwindow* handle);
 }

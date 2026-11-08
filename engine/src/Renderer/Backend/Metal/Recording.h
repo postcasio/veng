@@ -16,14 +16,31 @@ namespace Veng::Renderer::Metal::Recording
     /// @return The open compute encoder.
     id<MTL4ComputeCommandEncoder> ComputeEncoder(const CommandBuffer& cmd);
 
+    /// @brief Opens a render encoder for @p pass, ending an open compute encoder first.
+    ///
+    /// Ordered like ComputeEncoder: after every earlier submission when it is the recording's first
+    /// encoder of its stages, and after what a recorded barrier waits on.
+    /// @param cmd  The command buffer.
+    /// @param pass The render pass.
+    /// @return The open render encoder; the caller ends it.
+    id<MTL4RenderCommandEncoder> RenderEncoder(const CommandBuffer& cmd,
+                                               MTL4RenderPassDescriptor* pass);
+
+    /// @brief Applies the recorded barriers a newly opened encoder must wait on.
+    /// @param native        The command buffer's state.
+    /// @param encoder       The encoder just opened.
+    /// @param encoderStages The stages the encoder runs.
+    void OrderEncoder(CommandBuffer::Native& native, id<MTL4CommandEncoder> encoder,
+                      MetalStage encoderStages);
+
     /// @brief Ends the open encoder, if any.
     /// @param cmd The command buffer.
     void EndEncoder(const CommandBuffer& cmd);
 
     /// @brief Orders every later encoder's @p before stages after every earlier @p after stage.
     ///
-    /// Recorded on the open encoder (or a new compute encoder) as a producer barrier, which then
-    /// ends, so the work it orders lands in later encoders.
+    /// Ends the open compute encoder; each encoder opened after it applies the barrier as a
+    /// consumer barrier on the stages it runs.
     /// @param cmd    The command buffer.
     /// @param after  The stages waited on.
     /// @param before The stages that wait.

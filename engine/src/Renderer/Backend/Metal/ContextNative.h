@@ -1,12 +1,14 @@
 #pragma once
 
-// The Metal backend's Context::Native: the device and its one queue, the placement heaps and the
-// residency set every allocation joins, the frame slots, the per-worker upload recorders, and the
-// retire bins that hold what the GPU may still use. Included by Natives.h.
+// The Metal backend's Context::Native: the device and its queues, the swap chain, the placement
+// heaps and the residency set every allocation joins, the frame slots, the per-worker upload
+// recorders, GPU timing, the pipeline archive, and the retire bins that hold what the GPU may still
+// use. Included by Natives.h.
 
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <unordered_map>
 
 #include "Metal.h"
 
@@ -18,14 +20,73 @@
 
 namespace Veng::Renderer
 {
+    class SwapChain;
+
     struct Context::Native
     {
         /// @brief The device.
         id<MTLDevice> Device = nil;
-        /// @brief The one queue graphics, transfer and readback share.
+        /// @brief The queue graphics, readback and presentation run on.
         id<MTL4CommandQueue> Queue = nil;
+        /// @brief The queue worker uploads run on; Queue itself when the context keeps one queue.
+        id<MTL4CommandQueue> TransferQueue = nil;
+        /// @brief The window's swap chain; null headless.
+        Unique<SwapChain> SwapChain;
+
+        /// @brief The most GPU scopes one frame or one-shot recording times.
+        static constexpr u32 MaxGpuScopes = 128;
+        /// @brief The timestamps of every frame slot: per slot the frame's start and end, then a
+        ///        begin and end per scope.
+        id<MTL4CounterHeap> TimestampHeap = nil;
+        /// @brief The timestamps of a timed one-shot recording, a begin and end per scope.
+        id<MTL4CounterHeap> ImmediateTimestampHeap = nil;
+        /// @brief Nanoseconds per timestamp tick.
+        f64 TimestampPeriodNs = 1.0;
+        /// @brief Whether each slot's timestamps were written by a frame not yet read back.
+        vector<bool> TimestampWritten;
+        /// @brief The scope names each slot's last frame recorded, in timestamp order.
+        vector<vector<string>> ScopeNames;
+        /// @brief The scope depths each slot's last frame recorded.
+        vector<vector<u32>> ScopeDepths;
+        /// @brief The scope names the frame being recorded has opened.
+        vector<string> CurrentScopeNames;
+        /// @brief The scope depths the frame being recorded has opened.
+        vector<u32> CurrentScopeDepths;
+        /// @brief The frame's open scopes, MaxGpuScopes standing for one left untimed.
+        vector<u32> OpenScopeStack;
+        /// @brief Whether a timed one-shot recording is open.
+        bool ImmediateScopeRecording = false;
+        /// @brief The scope names the one-shot recording has opened.
+        vector<string> ImmediateScopeNames;
+        /// @brief The scope depths the one-shot recording has opened.
+        vector<u32> ImmediateScopeDepths;
+        /// @brief The one-shot recording's open scopes.
+        vector<u32> ImmediateOpenScopeStack;
         /// @brief The compiler pipelines are built with.
         id<MTL4Compiler> Compiler = nil;
+        /// @brief The pipeline archive a previous run wrote, or nil.
+        id<MTL4Archive> Archive = nil;
+        /// @brief Records every pipeline the compiler builds, for the archive written at teardown;
+        ///        nil when the context keeps no pipeline cache.
+        id<MTL4PipelineDataSetSerializer> Serializer = nil;
+        /// @brief Where the pipeline archive is read from and written to; empty for none.
+        string ArchivePath;
+        /// @brief The pipelines the archive served, which teardown builds again through the
+        ///        compiler so the archive it writes keeps them.
+        NSMutableArray<MTL4PipelineDescriptor*>* ArchiveServed = nil;
+        /// @brief How many pipelines the archive served rather than the compiler building them.
+        u64 ArchiveHits = 0;
+        /// @brief How many pipelines the compiler built while the context keeps an archive.
+        u64 ArchiveBuilds = 0;
+
+        /// @brief The library of the scaled blit's shaders, compiled at first use.
+        id<MTLLibrary> BlitLibrary = nil;
+        /// @brief The scaled blit's linear sampler.
+        id<MTLSamplerState> BlitSampler = nil;
+        /// @brief The scaled blit's pipeline for each destination pixel format.
+        std::unordered_map<NSUInteger, id<MTLRenderPipelineState>> BlitPipelines;
+        /// @brief Guards the blit library and pipelines.
+        std::mutex BlitMutex;
         /// @brief Every allocation the GPU reads: the heaps, and imported textures.
         id<MTLResidencySet> Residency = nil;
         /// @brief Whether the residency set changed since it was committed.
@@ -146,8 +207,11 @@ namespace Veng::Renderer
         /// @brief The last handle issued.
         u64 NextFrameRetiredHandle = 0;
 
-        /// @brief The event WaitIdle signals after everything committed before it.
+        /// @brief The event WaitIdle signals on the graphics queue after everything committed
+        ///        before it.
         id<MTLSharedEvent> IdleEvent = nil;
+        /// @brief The event WaitIdle signals on a dedicated transfer queue.
+        id<MTLSharedEvent> TransferIdleEvent = nil;
         /// @brief The last value WaitIdle signalled.
         u64 IdleValue = 0;
 
@@ -188,8 +252,9 @@ namespace Veng::Renderer
         /// @param event         The event to signal, or nil.
         /// @param value         The value to signal.
         /// @param waitTransfers Whether to wait the pending transfer values (and clear them).
+        /// @param queue         The queue to commit on; the graphics queue when nil.
         void Commit(id<MTL4CommandBuffer> commandBuffer, id<MTLSharedEvent> event, u64 value,
-                    bool waitTransfers);
+                    bool waitTransfers, id<MTL4CommandQueue> queue = nil);
 
         /// @brief Waits for every submission's completion feedback to have run.
         void WaitFeedback();
@@ -222,6 +287,31 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetReleaseSlot() const;
         /// @brief Whether a frame slot's regions may be written now.
         [[nodiscard]] bool IsSlotWritable(u32 slot) const;
+
+        /// @brief Builds a render pipeline, from the archive when it holds one.
+        /// @param descriptor The pipeline.
+        /// @param error      Receives the compiler's error on failure.
+        /// @return The pipeline state, or nil.
+        id<MTLRenderPipelineState> CreateRenderPipeline(MTL4RenderPipelineDescriptor* descriptor,
+                                                        NSError** error);
+
+        /// @brief Builds a compute pipeline, from the archive when it holds one.
+        /// @param descriptor The pipeline.
+        /// @param error      Receives the compiler's error on failure.
+        /// @return The pipeline state, or nil.
+        id<MTLComputePipelineState> CreateComputePipeline(MTL4ComputePipelineDescriptor* descriptor,
+                                                          NSError** error);
+
+        /// @brief Opens the pipeline archive at @p path, if one is there, and records what the
+        ///        compiler builds from here on.
+        void OpenPipelineArchive(const string& path);
+
+        /// @brief Writes the pipeline archive, when the context keeps one and this run built a
+        ///        pipeline it did not hold.
+        void SavePipelineArchive();
+
+        /// @brief The scaled blit's pipeline writing @p format, built at first use.
+        id<MTLRenderPipelineState> BlitPipeline(MTLPixelFormat format);
 
         /// @brief Takes a push-constant ring chunk from the free list or creates one.
         Ref<Buffer> AcquireRingChunk(Context& context);

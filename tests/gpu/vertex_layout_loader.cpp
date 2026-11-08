@@ -29,7 +29,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
 
-    const VoidResult cookResult = Veng::TestSupport::CookCached(cooker, packJson, outArchive);
+    const VoidResult cookResult =
+        Veng::TestSupport::CookCached(cooker, packJson, outArchive, {}, nullptr, nullptr, nullptr,
+                                      nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
