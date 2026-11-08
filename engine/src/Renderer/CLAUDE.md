@@ -4279,7 +4279,9 @@ measured bounds and the selection); the second the drawing.
   of the tile's own size: on a 6.4×10⁶ m sphere the device places a level-20–24 texel within about
   a micrometre (`tests/gpu/sphere_terrain.cpp`). MoltenVK's fast-math mode is requested explicitly
   (`MVK_CONFIG_FAST_MATH_ENABLED`, "always", through `VK_EXT_layer_settings`; the environment wins)
-  rather than inherited, and arithmetic that must hold its rounding is `precise`.
+  rather than inherited. Arithmetic that must hold its rounding is marked `precise`, but Slang's
+  default floating-point mode emits no `NoContraction` for it, so under fast math the device may
+  still contract or reassociate it; the micrometre bound is what the gpu test holds.
 - **The generator** (`SphereTerrainGenerator`, `Veng/Renderer/SphereTerrain.h`) is where a
   consumer's kernels enter: `GetChannels` (≤ `MaxSphereTerrainChannels`; channel 0 is height,
   `R32Sfloat`, metres above the radius; a channel may hold a divisor of the tile's resolution),
