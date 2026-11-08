@@ -694,10 +694,13 @@ extern "C"
 /// ShaderModuleBinaryInfo and ShaderModule grow the compute threadgroup size, and the bindless
 /// registry's slot arrays become the public BindlessSlotArray. A module reads the capabilities and
 /// creates modules, so a stale one lays both out short.
+/// Version 177 adds count-driven indirect draws and memoryless attachments: DeviceCapabilities grows
+/// IndirectDrawCount and MemorylessAttachments, and CommandBuffer the count-driven draws. A module
+/// reads the capabilities, so a stale one lays them out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 176u
+#define VENG_MODULE_ABI_VERSION 177u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -139,6 +139,12 @@ namespace Veng::Renderer
         /// @param hiZSampled Whether the pyramid is held and the cull may test it.
         void DeclareCull(RenderGraph& graph, const MipChainId& hiZ, bool hiZSampled);
 
+        /// @brief Declares the compaction pass a count-driven draw reads, after the cull.
+        ///
+        /// Declares nothing on a device without count-driven indirect draws.
+        /// @param graph The renderer's internal graph.
+        void DeclareCompact(RenderGraph& graph);
+
         /// @brief Declares a drawing pass's reads of the lists, records and commands.
         /// @param builder The drawing pass.
         void DeclareReads(RenderGraph::PassBuilder& builder) const;
@@ -265,8 +271,11 @@ namespace Veng::Renderer
             Ref<Buffer> Data;
             /// @brief Data's bindless storage slot.
             StorageBufferHandle DataHandle;
-            /// @brief The indirect commands.
+            /// @brief The indirect commands; under the count-driven draw, the compacted commands
+            ///        follow the cull's at m_CompactBase.
             Ref<Buffer> Commands;
+            /// @brief Each job's compacted command count, under the count-driven draw.
+            Ref<Buffer> Counts;
             /// @brief The cull tables.
             Ref<Buffer> Tables;
             /// @brief The cull's set over Data, Commands, the level memory and Tables.
@@ -282,7 +291,8 @@ namespace Veng::Renderer
         };
 
         /// @brief Grows a slot's buffers to hold the frame, rebuilding its cull set on change.
-        void EnsureCapacity(FrameSlot& slot, u64 dataBytes, u64 commandBytes, u64 tableBytes);
+        void EnsureCapacity(FrameSlot& slot, u64 dataBytes, u64 commandBytes, u64 tableBytes,
+                            u64 countBytes);
 
         /// @brief Brings a slot's records current with the stores.
         void SyncRecords(FrameSlot& slot);
@@ -359,6 +369,11 @@ namespace Veng::Renderer
         bool m_GpuCulled = false;
         /// @brief Forces the host cull.
         bool m_ForceCpuCull = false;
+        /// @brief Whether the device draws count-driven indirect draws, so a GPU-culled job draws
+        ///        its compacted commands.
+        bool m_IndirectCount = false;
+        /// @brief The compacted region's first command: the frame's command count.
+        u32 m_CompactBase = 0;
         /// @brief Whether a frame has been prepared since creation.
         bool m_Prepared = false;
 
@@ -368,6 +383,8 @@ namespace Veng::Renderer
         ResourceId m_CommandsId;
         /// @brief The imported level memory.
         ResourceId m_LodId;
+        /// @brief The imported compacted counts, under the count-driven draw.
+        ResourceId m_CountsId;
 
         /// @brief The stats.
         InstancedMeshStats m_Stats;

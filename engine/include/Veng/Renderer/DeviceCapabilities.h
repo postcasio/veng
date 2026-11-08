@@ -122,6 +122,21 @@ namespace Veng::Renderer
         ///        them. Reported only: no engine pass traces rays.
         bool RayTracing = false;
 
+        /// @brief True when an indirect draw may take its draw count from a GPU buffer
+        ///        (CommandBuffer::DrawIndexedIndirectCount and DrawIndirectCount).
+        ///
+        /// Without it, a GPU-driven producer issues its fixed maximum of records and writes the
+        /// ones it drops as zero-instance no-ops. The Vulkan backend reports drawIndirectCount
+        /// (enabled with it); the Metal backend runs the draws through an indirect command buffer.
+        bool IndirectDrawCount = false;
+        /// @brief True when an attachment whose contents never leave its render pass may live in
+        ///        tile memory alone, with no allocation and no load or store traffic.
+        ///
+        /// What an image created with ImageUsage::Transient takes; without it such an image is
+        /// backed by memory like any other. The Vulkan backend reports a lazily allocated memory
+        /// type; the Metal backend's memoryless storage.
+        bool MemorylessAttachments = false;
+
         /// @brief Returns true when every class in @p operations is legal in @p stage.
         /// @param stage       One shader stage.
         /// @param operations  The operation classes a shader relies on.

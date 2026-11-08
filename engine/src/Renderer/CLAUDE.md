@@ -129,7 +129,10 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   clockwise. A scissor is clamped to the render target, which Metal requires and Vulkan does not. A
   multi-draw indirect is one indirect draw per record at its stride (Metal draws one per call, as
   MoltenVK does), each carrying its own base instance, so `IsGpuDrivenCullingSupported()` is true;
-  a zero-instance record draws nothing. A direct draw of zero vertices or instances is skipped.
+  a zero-instance record draws nothing. A direct draw of zero vertices or instances is skipped. A
+  count-driven draw executes an indirect command buffer a compute dispatch encoded (see
+  "Count-driven indirect draws"), and a transient attachment is a memoryless texture (see
+  "Memoryless attachments").
 - **Blits.** A blit between equal extents is a copy. A scaled one is a backend-owned render pass
   (`Blit.mm`, Metal source compiled at first use, a pipeline per destination format) sampling a
   two-dimensional array view of the source level with a linear, clamped sampler at each destination
@@ -162,7 +165,8 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   and resolved on the CPU once the slot's fence is waited; a one-shot recording times into a heap of
   its own, resolved after its submit.
   `DeviceCapabilities` is filled from the device, its family in `DriverInfo`, its SIMD-group width
-  as the subgroup size, and the mesh-shading and ray-tracing bits.
+  as the subgroup size, the mesh-shading and ray-tracing bits, and count-driven draws and memoryless
+  attachments on (count-driven draws off under shader validation).
 - **Present.** `CreatePresentationSurface` backs the window's content view with a `CAMetalLayer`
   (`WindowCocoa.mm`), and the `SwapChain` configures it for three drawables and adds the layer's
   residency set to the graphics queue. The engine addresses swap-chain images by index, so the chain
@@ -2886,9 +2890,8 @@ over the candidate ids (`BVH::QueryBits`) and `Cull` walks its words.
 run of equal slots (see `PrepareDraws` above).
 Under **`CullMode::GPU`** the same frustum survivors are uploaded to a GPU buffer, a **compute**
 pass runs a **hi-Z occlusion test** over each candidate's screen-space AABB against the
-**previous-frame depth pyramid** and writes each `VkDrawIndexedIndirectCommand`'s `instanceCount`
-(1 for a survivor, 0 for an occluded candidate, which executes as a no-op), and the geometry pass
-issues the whole fixed buffer through a single `vkCmdDrawIndexedIndirect` per mesh group. The
+**previous-frame depth pyramid**, and the geometry pass draws one indirect run per mesh group
+(see "Count-driven indirect draws" for the two shapes the run takes). The
 compute does **not** re-run frustum culling — the BVH already did; it adds only occlusion. The
 hi-Z pyramid is a **min-Z mip chain** (the farthest depth per texel under the engine's reverse-Z)
 reduced from the depth target by compute into a
@@ -2907,9 +2910,8 @@ leaving it releases it. Under `CullMode::GPU` with `Occlusion` off the cull set 
 stand-in nothing samples; under `CullMode::CPU`, and on the depth+normal path, there is no pyramid
 and the graph imports an empty chain. `SceneRendererSettings::Occlusion` gates the
 occlusion test within the GPU path; with it off the GPU path issues every camera-frustum survivor.
-The submission shape is the **`drawIndirectCount`-free** form MoltenVK supports
-(`multiDrawIndirect` + `drawIndirectFirstInstance`, the candidate id carried in each command's
-`firstInstance` and read as an instance-rate vertex attribute); both modes drive the **same
+Every record carries its candidate id in `firstInstance`, read as an instance-rate vertex attribute
+(`multiDrawIndirect` + `drawIndirectFirstInstance`); both modes drive the **same
 buffer-indexed surface shader**, differing only in submission. The vertex stage reads that candidate
 id to fetch its `DrawData`, and it also **passes the id through to the fragment** as a
 `nointerpolation` interpolant on `SurfaceFragmentInput` (`v_CandidateId`), so a surface or
@@ -2931,6 +2933,72 @@ survivor count read back one frame late under `CullMode::GPU`, and `DidBroadphas
 refit and its size. Tree maintenance is refit-or-rebuild on a version move, never insertion or
 removal of single leaves; culling granularity is per-submesh, not meshlet;
 occlusion is temporal hi-Z, not two-pass; shadow views cull on the CPU BVH only.
+
+### Count-driven indirect draws
+
+**A GPU-driven producer draws exactly what survived where the device can take its draw count from a
+buffer** (`DeviceCapabilities::IndirectDrawCount`), and its fixed maximum elsewhere. The two shapes:
+
+- **Fixed maximum** (no capability — the MoltenVK reference): the cull writes every candidate's
+  record in its own slot, `instanceCount` 1 for a survivor and 0 for a culled one, and the draw
+  issues every slot of the run (`DrawIndexedIndirect`); a culled slot is a no-op draw.
+- **Count-driven**: the cull compacts — a survivor appends its record to the front of its run with
+  an atomic on the run's count — and the draw issues `min(count, maxDraws)` records
+  (`DrawIndexedIndirectCount`, or `DrawIndirectCount` for non-indexed records). The pass that writes
+  the records records `CommandBuffer::PrepareIndirectCount` for each range after its dispatch, and
+  the drawing pass declares an `IndirectRead` of both buffers.
+
+The users: the entity cull (`GpuCullSystem`, `occlusion_cull.comp`) compacts per draw group, each
+group's count beside the survivor stat in the host-mapped count buffer (zeroed per frame by
+`RecordFrame`), drawn by the g-buffer and picking passes through `RecordGroupIndirect`;
+`ReadbackGpuSurvivorFlags` reads the compacted records' candidates back into the same per-candidate
+flags. The instanced sets (`InstancedMeshSystem`) cull exactly as before and then run a second
+dispatch of `instanced_mesh_cull.comp` (`Mode` 1, the "Scene Instanced Compact" pass), one
+invocation per job copying the job's commands that draw anything — a level with survivors, a
+submesh with indices — past the frame's commands and counting them, which every view's draws (the
+g-buffer and both shadow passes) read. The point-field sprite draw is one GPU-written command
+already, so neither shape applies to it.
+
+**What each backend does.** Vulkan maps the count draws onto `vkCmdDraw*IndirectCount` where the
+device has `drawIndirectCount` (enabled with it, and only beside `multiDrawIndirect`), and
+`PrepareIndirectCount` records nothing. Metal has no draw whose count a buffer supplies, so
+`PrepareIndirectCount` dispatches the backend's encode kernel (`Backend/Metal/IndirectCount.metal`,
+Metal Shading Language compiled at build time into a library embedded in the engine, since Slang
+cannot write a `command_buffer`): one thread per possible record translates it into an indirect
+command buffer — a zero-instance record becomes a reset command — and thread 0 writes the execution
+range from the count. The draw then executes that buffer over the GPU-written range
+(`executeCommandsInBuffer:indirectBuffer:`), its commands inheriting the pipeline, buffers and
+render state from the encoder (every graphics pipeline is built to support it). The encode is
+ordered after the dispatches before it by an intra-encoder barrier, its parameters live in the
+command buffer's push-constant ring, and the draw completes them with the bound index buffer and
+primitive before the commit — so a prepared range must be drawn in the recording that prepared it,
+and if drawn more than once, with the same indices. The indirect command buffers are the command
+buffer's own, kept across recordings and resident. **Metal's shader validation executes no draw an
+indirect command buffer holds**, so a process run under it (`MTL_SHADER_VALIDATION`, which the
+validation gate sets) reports the capability off and takes the fixed maximum.
+
+`tests/gpu/indirect_draw.cpp` culls eight candidates through each path and counts the fragments a
+one-pixel target shades: the count-driven draws (indexed and not) execute exactly the five
+survivors over stale records past the count, and both paths draw the same survivor set.
+
+### Memoryless attachments
+
+**A render-graph transient whose contents never leave the pass it is drawn in takes no memory**
+where the device offers tile memory (`DeviceCapabilities::MemorylessAttachments`).
+`FindMemorylessTransients` (`RenderGraphSchedule.h`, device-free) marks a transient image when every
+access to it is a colour or depth attachment access in one pass, loading by clear or don't-care and
+storing don't-care — so nothing samples, copies or reads it back. `Compile` creates each marked
+transient as an image of its own with `ImageUsage::Transient` (and only its attachment usages),
+outside the aliasing assignment, since it holds no memory to share. Metal creates such an image as
+a memoryless texture straight from the device (a memoryless texture cannot come from a heap, and is
+in no residency set), and its view is the texture itself. Vulkan gives it transient-attachment
+usage and the lazily allocated memory type, which the capability reports where the device has one
+(MoltenVK on Apple silicon does; a desktop discrete GPU generally does not). An image created with
+`Transient` on a device without the capability is backed by memory like any other. The scene
+renderer's own targets are imports, not transients, so this reaches graphs that declare transients.
+`tests/unit/render_graph_schedule.cpp` pins the rule, and `tests/gpu/graphics_pipeline.cpp` renders
+a depth-tested pair of triangles through a memoryless depth transient and a stored one and reads
+back the same image.
 
 ### Level of detail
 

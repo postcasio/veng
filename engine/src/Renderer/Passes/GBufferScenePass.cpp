@@ -34,6 +34,22 @@ namespace Veng::Renderer
         }
     }
 
+    void RecordGroupIndirect(CommandBuffer& cmd, const GBufferDrawPlan& plan,
+                             const DrawGroup& group)
+    {
+        const u64 offset = plan.IndirectRegionOffset +
+                           static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
+        if (plan.IndirectCount)
+        {
+            cmd.DrawIndexedIndirectCount(plan.IndirectBuffer, offset, plan.CountBuffer,
+                                         plan.CountRegionOffset + (u64{group.FirstSlot} * 4),
+                                         group.SlotCount, sizeof(DrawIndexedIndirectCommand));
+            return;
+        }
+        cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                sizeof(DrawIndexedIndirectCommand));
+    }
+
     void GBufferScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         RenderGraph::PassBuilder builder = graph.AddPass("Scene GBuffer");
@@ -92,6 +108,10 @@ namespace Veng::Renderer
         if (m_Cull == SceneRendererSettings::CullMode::GPU)
         {
             builder.IndirectRead(m_IndirectId);
+            if (m_CountId.IsValid())
+            {
+                builder.IndirectRead(m_CountId);
+            }
         }
         if (m_Instanced != nullptr)
         {
@@ -196,14 +216,7 @@ namespace Veng::Renderer
 
                 if (plan.Cull == SceneRendererSettings::CullMode::GPU)
                 {
-                    // One indirect draw over the group's contiguous command run; culled
-                    // slots carry instanceCount 0 and no-op (no GPU-sourced count —
-                    // MoltenVK lacks drawIndirectCount).
-                    const u64 offset =
-                        plan.IndirectRegionOffset +
-                        static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
-                    cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                            sizeof(DrawIndexedIndirectCommand));
+                    RecordGroupIndirect(cmd, plan, group);
                 }
                 else
                 {

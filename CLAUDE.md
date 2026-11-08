@@ -751,6 +751,10 @@ the default and catches more. Do not build both routinely.
     MoltenVK's choices on Vulkan); `taa_stability.cpp` requires the MetalFX temporal and spatial
     scalers to be available, since every device the Metal backend runs on runs them, so their cases
     cannot pass through the "unavailable" branch there.
+  - **Capability-gated within a shared file:** the count-driven cases in `indirect_draw.cpp` run
+    only where `DeviceCapabilities::IndirectDrawCount` is set, which MoltenVK and Metal's shader
+    validation leave off, so they skip with a message in the Vulkan reference tree and under the
+    validation gate; their first run on a desktop Vulkan device is unproven here.
 - **Synchronization validation cannot see a shader access through the bindless sets.** The
   context turns on its shader-access analysis (`syncval_shader_accesses_heuristic`), without which
   it checks no descriptor access a draw or dispatch makes at all; with it, accesses through an

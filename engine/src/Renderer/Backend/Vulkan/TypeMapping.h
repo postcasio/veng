@@ -316,6 +316,10 @@ namespace Veng::Renderer
         {
             flags |= vk::ImageUsageFlagBits::eTransferDst;
         }
+        if (HasFlag(usage, ImageUsage::Transient))
+        {
+            flags |= vk::ImageUsageFlagBits::eTransientAttachment;
+        }
         return flags;
     }
 

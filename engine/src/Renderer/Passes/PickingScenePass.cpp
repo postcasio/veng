@@ -82,11 +82,7 @@ namespace Veng::Renderer
                 }
                 if (plan.Cull == SceneRendererSettings::CullMode::GPU)
                 {
-                    const u64 offset =
-                        plan.IndirectRegionOffset +
-                        static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
-                    cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                            sizeof(DrawIndexedIndirectCommand));
+                    RecordGroupIndirect(cmd, plan, group);
                 }
                 else
                 {

@@ -137,6 +137,8 @@ namespace Veng::Renderer
             u32 JobCount;
             u32 ThreadCount;
             u32 RowThreads;
+            u32 Mode = 0;
+            u32 CompactBase = 0;
         };
 
         // shadow_depth_instanced.vert's push block.
@@ -197,7 +199,7 @@ namespace Veng::Renderer
             m_Context, {
                            .Name = "SceneRenderer Instanced Cull Set Layout",
                            .Bindings = {StorageBinding(0), StorageBinding(1), StorageBinding(2),
-                                        StorageBinding(3)},
+                                        StorageBinding(3), StorageBinding(4)},
                        });
         m_CullLayout = PipelineLayout::Create(
             m_Context,
@@ -226,6 +228,7 @@ namespace Veng::Renderer
                                     : m_ShadowPipeline;
 
         m_Slots.resize(m_Context.GetMaxFramesInFlight());
+        m_IndirectCount = m_Context.GetDeviceCapabilities().IndirectDrawCount;
     }
 
     InstancedMeshSystem::~InstancedMeshSystem()
@@ -414,7 +417,8 @@ namespace Veng::Renderer
     }
 
     void InstancedMeshSystem::EnsureCapacity(FrameSlot& slot, const u64 dataBytes,
-                                             const u64 commandBytes, const u64 tableBytes)
+                                             const u64 commandBytes, const u64 tableBytes,
+                                             const u64 countBytes)
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bool rebind = slot.BoundLod != m_LodMemory.get();
@@ -442,6 +446,16 @@ namespace Veng::Renderer
                                           });
             rebind = true;
         }
+        if (slot.Counts == nullptr || slot.Counts->GetSize() < countBytes)
+        {
+            slot.Counts =
+                Buffer::Create(m_Context, {
+                                              .Name = "SceneRenderer Instanced Counts",
+                                              .Size = GrownSize(countBytes, 1024),
+                                              .Usage = BufferUsage::Storage | BufferUsage::Indirect,
+                                          });
+            rebind = true;
+        }
         if (slot.Tables == nullptr || slot.Tables->GetSize() < tableBytes)
         {
             slot.Tables = Buffer::Create(m_Context, {
@@ -462,6 +476,7 @@ namespace Veng::Renderer
             slot.CullSet->Write(1, slot.Commands);
             slot.CullSet->Write(2, m_LodMemory);
             slot.CullSet->Write(3, slot.Tables);
+            slot.CullSet->Write(4, slot.Counts);
             slot.BoundLod = m_LodMemory.get();
         }
     }
@@ -593,11 +608,14 @@ namespace Veng::Renderer
             m_HostLodMemory.assign(m_RecordCount, InstanceNoPreviousLod);
         }
 
+        // The count-driven draw reads each job's compacted commands from past the cull's.
+        m_CompactBase = commandCount;
+        const u64 commandRegions = m_GpuCulled && m_IndirectCount ? 2 : 1;
         EnsureCapacity(slot,
                        static_cast<u64>(m_RecordCount) * sizeof(MeshInstance) +
                            static_cast<u64>(listWords) * sizeof(u32),
-                       static_cast<u64>(commandCount) * sizeof(DrawIndexedIndirectCommand),
-                       tableBytes);
+                       commandRegions * commandCount * sizeof(DrawIndexedIndirectCommand),
+                       tableBytes, std::max<u64>(m_Jobs.size(), 1) * sizeof(u32));
         SyncRecords(slot);
 
         // Every command's range is the mesh's, its count zero for the cull to raise.
@@ -791,6 +809,8 @@ namespace Veng::Renderer
         m_DataId = graph.ImportBuffer("SceneRenderer Instanced Data");
         m_CommandsId = graph.ImportBuffer("SceneRenderer Instanced Commands");
         m_LodId = graph.ImportBuffer("SceneRenderer Instanced Levels");
+        m_CountsId =
+            m_IndirectCount ? graph.ImportBuffer("SceneRenderer Instanced Counts") : ResourceId{};
     }
 
     void InstancedMeshSystem::DeclareCull(RenderGraph& graph, const MipChainId& hiZ,
@@ -838,9 +858,66 @@ namespace Veng::Renderer
             });
     }
 
+    void InstancedMeshSystem::DeclareCompact(RenderGraph& graph)
+    {
+        if (!m_IndirectCount)
+        {
+            return;
+        }
+        RenderGraph::PassBuilder builder = graph.AddComputePass("Scene Instanced Compact");
+        builder.StorageBufferRead(m_CommandsId)
+            .StorageBufferWrite(m_CommandsId)
+            .StorageBufferWrite(m_CountsId);
+        builder.SkipWhen([this] { return !m_GpuCulled || m_ThreadCount == 0; });
+        builder.Execute(
+            [this](PassContext& inner)
+            {
+                CommandBuffer& cmd = inner.Cmd();
+                const FrameSlot& slot = m_Slots[m_FrameIndex];
+                const auto jobs = static_cast<u32>(m_Jobs.size());
+                const u32 groups = (jobs + CullGroupSize - 1) / CullGroupSize;
+                const u32 groupsX = std::min(groups, MaxGroupsPerDimension);
+                const u32 groupsY = (groups + groupsX - 1) / groupsX;
+                cmd.BindPipeline(m_CullPipeline);
+                m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {slot.CullSet},
+                    .FirstSet = BindlessRegistry::FirstUserSet,
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(CullPush{
+                    .JobsOffset = m_JobsOffset,
+                    .SetsOffset = m_SetsOffset,
+                    .ViewsOffset = m_ViewsOffset,
+                    .JobCount = jobs,
+                    .ThreadCount = m_ThreadCount,
+                    .RowThreads = groupsX * CullGroupSize,
+                    .Mode = 1,
+                    .CompactBase = m_CompactBase,
+                });
+                cmd.Dispatch(groupsX, groupsY, 1);
+                for (u32 j = 0; j < jobs; ++j)
+                {
+                    const Job& job = m_Jobs[j];
+                    const Mesh& mesh = *m_Sets[job.Set].SourceMesh;
+                    cmd.PrepareIndirectCount(slot.Commands,
+                                             static_cast<u64>(m_CompactBase + job.CommandBase) *
+                                                 sizeof(DrawIndexedIndirectCommand),
+                                             slot.Counts, static_cast<u64>(j) * sizeof(u32),
+                                             mesh.GetLodCount() *
+                                                 static_cast<u32>(mesh.GetSubMeshes().size()),
+                                             sizeof(DrawIndexedIndirectCommand));
+                }
+            });
+    }
+
     void InstancedMeshSystem::DeclareReads(RenderGraph::PassBuilder& builder) const
     {
         builder.StorageBufferRead(m_DataId).IndirectRead(m_CommandsId);
+        if (m_CountsId.IsValid())
+        {
+            builder.IndirectRead(m_CountsId);
+        }
     }
 
     void
@@ -853,6 +930,10 @@ namespace Veng::Renderer
         bindings.push_back({.Id = m_DataId, .Buffer = slot.Data});
         bindings.push_back({.Id = m_CommandsId, .Buffer = slot.Commands});
         bindings.push_back({.Id = m_LodId, .Buffer = m_LodMemory});
+        if (m_CountsId.IsValid())
+        {
+            bindings.push_back({.Id = m_CountsId, .Buffer = slot.Counts});
+        }
     }
 
     void InstancedMeshSystem::RecordJobDraws(CommandBuffer& cmd, const Job& job) const
@@ -861,6 +942,16 @@ namespace Veng::Renderer
         const SetEntry& entry = m_Sets[job.Set];
         const u32 commandCount = entry.SourceMesh->GetLodCount() *
                                  static_cast<u32>(entry.SourceMesh->GetSubMeshes().size());
+        if (m_GpuCulled && m_IndirectCount)
+        {
+            const auto jobIndex = static_cast<u64>(&job - m_Jobs.data());
+            cmd.DrawIndexedIndirectCount(slot.Commands,
+                                         static_cast<u64>(m_CompactBase + job.CommandBase) *
+                                             sizeof(DrawIndexedIndirectCommand),
+                                         slot.Counts, jobIndex * sizeof(u32), commandCount,
+                                         sizeof(DrawIndexedIndirectCommand));
+            return;
+        }
         if (m_GpuCulled)
         {
             cmd.DrawIndexedIndirect(slot.Commands,

@@ -207,6 +207,13 @@ namespace Veng::Renderer
         TransferSrc = 1 << 4,
         /// @brief Destination of a copy/blit operation.
         TransferDst = 1 << 5,
+        /// @brief An attachment whose contents never leave the render pass it is drawn in.
+        ///
+        /// Combines only with ColorAttachment or DepthAttachment. Each render pass using the image
+        /// loads it by clear or don't-care and stores it don't-care, and nothing samples, copies or
+        /// reads it back. Where DeviceCapabilities::MemorylessAttachments is set the image lives in
+        /// tile memory alone; elsewhere it is backed by memory like any other image.
+        Transient = 1 << 6,
     };
 
     /// @brief Bitmask of intended GPU usages for a Buffer.

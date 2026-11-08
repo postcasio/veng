@@ -76,6 +76,12 @@ namespace Veng::Renderer
         Ref<Buffer> CandidateIdBuffer;
         Ref<Buffer> IndirectBuffer;   // GPU mode only
         u32 IndirectRegionOffset = 0; // byte offset of this frame's command region (GPU)
+        // GPU mode on a device with count-driven indirect draws: the cull compacts each group's
+        // survivors to the front of its run and counts them into CountBuffer, the group's count at
+        // CountRegionOffset + 4 · FirstSlot.
+        bool IndirectCount = false;
+        Ref<Buffer> CountBuffer;
+        u64 CountRegionOffset = 0;
         // A representative loaded static surface material (the first survivor's). Its shared
         // pipeline layout drives the picking-pipeline build; the g-buffer draws bind each
         // group's own pipeline (see DrawGroup). Borrowed: the mesh's resident AssetHandle keeps

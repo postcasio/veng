@@ -206,10 +206,14 @@ namespace Veng::Renderer
         u32 FirstIndex;
         i32 VertexOffset;
         u32 FirstInstance;
+        u32 GroupFirst = 0;
+        u32 Pad0 = 0;
+        u32 Pad1 = 0;
+        u32 Pad2 = 0;
     };
 
-    static_assert(sizeof(GpuCullCandidate) == 48,
-                  "GpuCullCandidate must match the shader CullCandidate (48 bytes)");
+    static_assert(sizeof(GpuCullCandidate) == 64,
+                  "GpuCullCandidate must match the shader CullCandidate (64 bytes)");
 
     // The indirect geometry pass issues over DrawIndexedIndirectCommand records
     // (Veng/Renderer/Types.h), 20 bytes apart.

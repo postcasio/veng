@@ -254,10 +254,9 @@ namespace Veng::Renderer
         /// @brief Issues drawCount indexed draws from GPU-resident DrawIndexedIndirectCommand records.
         ///
         /// Each record is read when the draw executes, so a compute pass earlier in the frame may
-        /// write it. A command with InstanceCount == 0 executes as a no-op — the compute cull
-        /// zeroes culled candidates rather than compacting, since a count-driven indirect draw is
-        /// unavailable on MoltenVK (the buffer holds a fixed candidate maximum, one slot per
-        /// candidate).
+        /// write it. A command with InstanceCount == 0 executes as a no-op, which is how a
+        /// GPU-driven producer drops a record on a device without DeviceCapabilities::
+        /// IndirectDrawCount: it issues its fixed maximum and zeroes the records it culls.
         /// @param buffer    Buffer holding the DrawIndexedIndirectCommand records.
         /// @param offset    4-byte-aligned byte offset of the first command.
         /// @param drawCount Number of command records to issue.
@@ -285,6 +284,61 @@ namespace Veng::Renderer
         /// @pre A record with a non-zero firstInstance requires the drawIndirectFirstInstance
         ///      device feature.
         void DrawIndirect(const Ref<Buffer>& buffer, u64 offset, u32 drawCount, u32 stride);
+
+        /// @brief Readies a count-driven indirect draw over records a GPU pass just wrote.
+        ///
+        /// Recorded outside a render pass, after the dispatch that writes the records and the
+        /// count and before the pass that draws them, with the same arguments the draw takes. A
+        /// backend that issues count-driven draws natively records nothing; one that needs the
+        /// records translated first (an indirect command buffer encoded by a compute dispatch)
+        /// records that translation here, ordered after the dispatches recorded before it. A
+        /// GPU-driven culling pass records it right after its cull, once per range it will draw.
+        /// @param buffer      Buffer holding the records.
+        /// @param offset      4-byte-aligned byte offset of the first record.
+        /// @param countBuffer Buffer holding the draw count, one u32.
+        /// @param countOffset 4-byte-aligned byte offset of the count.
+        /// @param maxDraws    The most records drawn; a larger count is clamped to it.
+        /// @param stride      Byte stride between records.
+        /// @pre DeviceCapabilities::IndirectDrawCount.
+        void PrepareIndirectCount(const Ref<Buffer>& buffer, u64 offset,
+                                  const Ref<Buffer>& countBuffer, u64 countOffset, u32 maxDraws,
+                                  u32 stride);
+
+        /// @brief Issues as many indexed draws as a GPU buffer counts, from
+        ///        DrawIndexedIndirectCommand records.
+        ///
+        /// Draws min(count, maxDraws) records from @p offset at @p stride, the count read when the
+        /// draw executes, so a producer that compacts its survivors to the front of the range and
+        /// writes how many there are issues no draw for what it dropped.
+        /// @param buffer      Buffer holding the records.
+        /// @param offset      4-byte-aligned byte offset of the first record.
+        /// @param countBuffer Buffer holding the draw count, one u32.
+        /// @param countOffset 4-byte-aligned byte offset of the count.
+        /// @param maxDraws    The most records drawn.
+        /// @param stride      Byte stride between records (at least 20).
+        /// @pre DeviceCapabilities::IndirectDrawCount.
+        /// @pre PrepareIndirectCount was recorded for the same range earlier in this recording.
+        /// @pre Both buffers were created with BufferUsage::Indirect, and the pass drawing reads
+        ///      both through RenderGraph::PassBuilder::IndirectRead.
+        void DrawIndexedIndirectCount(const Ref<Buffer>& buffer, u64 offset,
+                                      const Ref<Buffer>& countBuffer, u64 countOffset, u32 maxDraws,
+                                      u32 stride);
+
+        /// @brief Issues as many non-indexed draws as a GPU buffer counts, from DrawIndirectCommand
+        ///        records.
+        ///
+        /// The non-indexed sibling of DrawIndexedIndirectCount, under the same contract.
+        /// @param buffer      Buffer holding the records.
+        /// @param offset      4-byte-aligned byte offset of the first record.
+        /// @param countBuffer Buffer holding the draw count, one u32.
+        /// @param countOffset 4-byte-aligned byte offset of the count.
+        /// @param maxDraws    The most records drawn.
+        /// @param stride      Byte stride between records (at least 16).
+        /// @pre DeviceCapabilities::IndirectDrawCount.
+        /// @pre PrepareIndirectCount was recorded for the same range earlier in this recording.
+        void DrawIndirectCount(const Ref<Buffer>& buffer, u64 offset,
+                               const Ref<Buffer>& countBuffer, u64 countOffset, u32 maxDraws,
+                               u32 stride);
 
         /// @brief Records a compute dispatch.
         void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);

@@ -1861,8 +1861,9 @@ namespace Veng::Renderer
         // vertex attribute), which needs drawIndirectFirstInstance. Enable the pair only
         // when both are supported, so a half-supported device never enables one alone;
         // GpuDrivenCullingSupported gates CullMode::GPU, with the CPU path as the fallback.
-        // MoltenVK lacks drawIndirectCount, so the count-buffer (vkCmdDrawIndexedIndirectCount)
-        // path is out — the buffer holds a fixed candidate maximum and culled slots no-op.
+        // drawIndirectCount (enabled below with the 1.2 features) lets the cull compact its
+        // survivors and draw only those; MoltenVK lacks it, so there the buffer holds a fixed
+        // candidate maximum and culled slots no-op.
         const bool gpuDrivenCullingSupported =
             features2.features.multiDrawIndirect && features2.features.drawIndirectFirstInstance;
         GpuDrivenCullingSupported = gpuDrivenCullingSupported;
@@ -2028,11 +2029,31 @@ namespace Veng::Renderer
         const bool shaderFloat16Supported = supportedVulkan12Features.shaderFloat16;
         Capabilities.ShaderFloat16 = shaderFloat16Supported;
 
+        // A count-driven indirect draw reads its draw count from a buffer; the GPU-driven cull
+        // takes it only beside multi-draw indirect, whose records it compacts.
+        const bool drawIndirectCountSupported =
+            supportedVulkan12Features.drawIndirectCount && gpuDrivenCullingSupported;
+        Capabilities.IndirectDrawCount = drawIndirectCountSupported;
+
+        // A lazily allocated memory type backs a transient attachment with tile memory alone, the
+        // way a tile-based GPU offers it; a desktop GPU generally has none.
+        const vk::PhysicalDeviceMemoryProperties memoryProperties =
+            PhysicalDevice.getMemoryProperties();
+        for (u32 type = 0; type < memoryProperties.memoryTypeCount; ++type)
+        {
+            if (memoryProperties.memoryTypes[type].propertyFlags &
+                vk::MemoryPropertyFlagBits::eLazilyAllocated)
+            {
+                Capabilities.MemorylessAttachments = true;
+            }
+        }
+
         // Designators must be in declaration order (MSVC enforces the C++ rule; clang is
         // lenient). shaderFloat16 is declared early (before the descriptor-indexing block);
         // timelineSemaphore is declared late, after that block and before bufferDeviceAddress.
         vk::PhysicalDeviceVulkan12Features vulkan12Features{
             .pNext = &features2,
+            .drawIndirectCount = drawIndirectCountSupported ? vk::True : vk::False,
             .shaderFloat16 = shaderFloat16Supported ? vk::True : vk::False,
             .shaderUniformBufferArrayNonUniformIndexing = vk::True,
             .shaderSampledImageArrayNonUniformIndexing = vk::True,

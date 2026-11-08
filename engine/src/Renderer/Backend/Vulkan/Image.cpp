@@ -90,9 +90,14 @@ namespace Veng::Renderer
             .sharingMode = static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
             .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)};
 
+        // A transient attachment takes the lazily allocated memory type where the device has one,
+        // so on a tile-based GPU it never leaves tile memory; elsewhere it is ordinary memory.
+        const bool memoryless = HasFlag(m_Usage, ImageUsage::Transient) &&
+                                m_Context.GetDeviceCapabilities().MemorylessAttachments;
         const VmaAllocationCreateInfo allocationCreateInfo{
-            .usage = VMA_MEMORY_USAGE_AUTO,
-            .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            .usage = memoryless ? VMA_MEMORY_USAGE_GPU_LAZILY_ALLOCATED : VMA_MEMORY_USAGE_AUTO,
+            .requiredFlags = memoryless ? VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT
+                                        : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             .pool = VK_NULL_HANDLE,
         };
 

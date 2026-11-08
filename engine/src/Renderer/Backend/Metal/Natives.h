@@ -10,6 +10,8 @@
 #include "Metal.h"
 #include "PushConstantRing.h"
 
+#include <unordered_map>
+
 #include "../../BarrierDecision.h"
 
 #include <Veng/Renderer/Buffer.h>
@@ -29,6 +31,63 @@
 
 namespace Veng::Renderer::Metal
 {
+    /// @brief The encode kernel's parameters (IndirectCount.metal), one per prepared range.
+    struct IndirectCountParams
+    {
+        /// @brief The indirect command buffer's resource ID.
+        u64 Commands = 0;
+        /// @brief The first record's GPU address.
+        u64 Records = 0;
+        /// @brief The draw count's GPU address.
+        u64 Count = 0;
+        /// @brief The bound index buffer's GPU address, written by an indexed draw.
+        u64 Indices = 0;
+        /// @brief The bytes between records.
+        u32 Stride = 0;
+        /// @brief The most records drawn.
+        u32 MaxDraws = 0;
+        /// @brief The range's first command in the indirect command buffer.
+        u32 First = 0;
+        /// @brief 0 for a non-indexed draw, 1 for 16-bit indices, 2 for 32-bit; set by the draw.
+        u32 IndexType = 0;
+        /// @brief The draw's primitive type, or IndirectCountUndrawn until a draw consumes it.
+        u32 Primitive = 0;
+        /// @brief Unused.
+        u32 Pad = 0;
+        /// @brief The execution range's first command, written by the kernel.
+        u32 RangeLocation = 0;
+        /// @brief The execution range's command count, written by the kernel.
+        u32 RangeLength = 0;
+    };
+    static_assert(sizeof(IndirectCountParams) == 64);
+
+    /// @brief The encode kernel's threadgroup width: one thread per record.
+    inline constexpr u32 IndirectCountThreadgroupSize = 64;
+
+    /// @brief The primitive a prepared range carries until a draw consumes it.
+    inline constexpr u32 IndirectCountUndrawn = 0xFFFFFFFFu;
+
+    /// @brief What identifies a prepared range: its records' and its count's GPU addresses.
+    struct IndirectCountKey
+    {
+        /// @brief The first record's GPU address.
+        u64 Records = 0;
+        /// @brief The count's GPU address.
+        u64 Count = 0;
+        /// @brief Equal when both addresses are.
+        [[nodiscard]] bool operator==(const IndirectCountKey&) const = default;
+    };
+
+    /// @brief Hashes an IndirectCountKey.
+    struct IndirectCountKeyHash
+    {
+        /// @brief The hash of @p key.
+        [[nodiscard]] usize operator()(const IndirectCountKey& key) const
+        {
+            return std::hash<u64>{}(key.Records) ^ (std::hash<u64>{}(key.Count) * 31u);
+        }
+    };
+
     /// @brief Where a buffer's or texture's memory was placed.
     struct HeapAllocation
     {
@@ -231,6 +290,33 @@ namespace Veng::Renderer
         u64 ComputePushBound = 0;
         /// @brief The push address the render tables hold.
         u64 RenderPushBound = 0;
+
+        /// @brief One range PrepareIndirectCount translated, which a count-driven draw executes.
+        struct IndirectCountRange
+        {
+            /// @brief The indirect command buffer the range was encoded into.
+            id<MTLIndirectCommandBuffer> Commands = nil;
+            /// @brief The encode kernel's parameters, in the ring; the draw completes them.
+            Metal::IndirectCountParams* Params = nullptr;
+            /// @brief The parameters' GPU address.
+            u64 ParamsAddress = 0;
+        };
+        /// @brief The ranges prepared in this recording, by their record and count addresses.
+        std::unordered_map<Metal::IndirectCountKey, IndirectCountRange, Metal::IndirectCountKeyHash>
+            IndirectCountRanges;
+        /// @brief The indirect command buffers ranges are encoded into, kept across recordings.
+        vector<id<MTLIndirectCommandBuffer>> IndirectCommandBuffers;
+        /// @brief Each indirect command buffer's capacity in commands.
+        vector<u32> IndirectCommandCapacities;
+        /// @brief The indirect command buffer the next range is placed in.
+        u32 IndirectCommandBuffer = 0;
+        /// @brief The next free command in it.
+        u32 IndirectCommandCursor = 0;
+        /// @brief The encode kernel's argument table, created at first use.
+        id<MTL4ArgumentTable> IndirectCountTable = nil;
+        /// @brief Whether the open compute encoder's last work was a range's encode, so the next
+        ///        needs no barrier ahead of it.
+        bool IndirectCountOrdered = false;
     };
 
     struct Fence::Native

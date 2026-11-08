@@ -267,4 +267,42 @@ namespace Veng::Renderer
 
         return schedule;
     }
+
+    vector<bool> FindMemorylessTransients(const std::span<const ScheduleResource> resources,
+                                          const std::span<const SchedulePass> passes)
+    {
+        constexpr u32 Untouched = ~0u;
+        vector<bool> memoryless(resources.size(), false);
+        vector<u32> pass(resources.size(), Untouched);
+        vector<bool> disqualified(resources.size(), false);
+        for (usize r = 0; r < resources.size(); ++r)
+        {
+            disqualified[r] = resources[r].IsImport || resources[r].IsBuffer;
+        }
+        for (u32 p = 0; p < passes.size(); ++p)
+        {
+            for (const RenderGraph::Access& access : passes[p].Accesses)
+            {
+                if (!access.Resource.IsValid())
+                {
+                    continue;
+                }
+                const u32 r = access.Resource.Index;
+                const bool attachment = access.Kind == AccessKind::ColorAttachment ||
+                                        access.Kind == AccessKind::DepthAttachment;
+                const bool discarded =
+                    access.Load != LoadOp::Load && access.Store == StoreOp::DontCare;
+                if (!attachment || !discarded || (pass[r] != Untouched && pass[r] != p))
+                {
+                    disqualified[r] = true;
+                }
+                pass[r] = p;
+            }
+        }
+        for (usize r = 0; r < resources.size(); ++r)
+        {
+            memoryless[r] = !disqualified[r] && pass[r] != Untouched;
+        }
+        return memoryless;
+    }
 }

@@ -16,6 +16,9 @@
 //
 // The compute -> indirect handoff is a graph-derived buffer barrier
 // (StorageBufferWrite -> IndirectRead), so the validation gate pins it on both backends.
+//
+// The count-driven cases cull into compacted records and draw as many as the cull counted, on a
+// device with DeviceCapabilities::IndirectDrawCount; they skip with a message elsewhere.
 
 #include <array>
 #include <cstring>
@@ -225,4 +228,260 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const vector<u8> pixels = target->Download();
     CHECK(Test::PixelsMatch(pixels, expectedColor));
+}
+
+namespace
+{
+    // The count-driven cases: a compute pass culls eight candidates (every index not a multiple of
+    // three survives) into indirect records, and one indirect draw of a fullscreen triangle per
+    // record into a one-pixel target counts the fragments it shades and marks each candidate drawn.
+    // A record draws one instance, so the fragment count is the number of draws executed.
+    constexpr AssetId CountCullShaderId{0x95B48A78EA5B5E22ULL};
+    constexpr AssetId CountFragmentShaderId{0x0F06AC2666DCE248ULL};
+    constexpr u32 CountCandidates = 8;
+    constexpr u32 SurvivorMask = (1u << 1) | (1u << 2) | (1u << 4) | (1u << 5) | (1u << 7);
+    constexpr u32 SurvivorCount = 5;
+
+    // How the draw reaches the cull's records.
+    enum class CountPath : u8
+    {
+        // Every record, a culled one with no instances.
+        FixedMaximum,
+        // As many indexed records as the cull counted.
+        IndexedCount,
+        // As many non-indexed records as the cull counted.
+        NonIndexedCount,
+    };
+
+    // What the draw shaded: fragments, and a bit per candidate.
+    struct Seen
+    {
+        u32 Fragments = 0;
+        u32 Candidates = 0;
+    };
+
+    Seen DrawThroughPath(Veng::Test::GpuFixture& fixture, const CountPath route)
+    {
+        Context& context = fixture.Context;
+        AssetManager assets(context, fixture.Tasks, fixture.Types);
+        REQUIRE(assets.Mount(path(TEST_SHADER_PACK)));
+        const auto cullShader = assets.LoadSync<Shader>(CountCullShaderId);
+        const auto vertShader = assets.LoadSync<Shader>(AssetId{0x1F46}); // indirect_instance.vert
+        const auto fragShader = assets.LoadSync<Shader>(CountFragmentShaderId);
+        REQUIRE(cullShader);
+        REQUIRE(vertShader);
+        REQUIRE(fragShader);
+
+        const auto upload = [](const Ref<Buffer>& buffer, const auto& values)
+        {
+            buffer->UploadSync(std::span<const u8>(reinterpret_cast<const u8*>(values.data()),
+                                                   values.size() * sizeof(values[0])));
+        };
+
+        std::array<u32, CountCandidates> candidateIds{};
+        for (u32 i = 0; i < CountCandidates; ++i)
+        {
+            candidateIds[i] = i;
+        }
+        auto instanceBuffer = Buffer::Create(
+            context,
+            {.Name = "Candidate Ids", .Size = sizeof(candidateIds), .Usage = BufferUsage::Vertex});
+        upload(instanceBuffer, candidateIds);
+        const std::array<f32, 3> unused{};
+        auto vertexBuffer = Buffer::Create(
+            context, {.Name = "Vertices", .Size = sizeof(unused), .Usage = BufferUsage::Vertex});
+        upload(vertexBuffer, unused);
+        const std::array<u32, 3> indices{0, 1, 2};
+        auto indexBuffer = Buffer::Create(
+            context, {.Name = "Indices", .Size = sizeof(indices), .Usage = BufferUsage::Index});
+        upload(indexBuffer, indices);
+
+        // Every slot starts as a record drawing candidate 0, which the cull never keeps, so a draw
+        // past the count shows up as an extra fragment and a culled candidate.
+        std::array<PaddedCommand, CountCandidates> stale{};
+        for (PaddedCommand& record : stale)
+        {
+            record.Command = {.IndexCount = 3, .InstanceCount = 1};
+        }
+        auto records =
+            Buffer::Create(context, {.Name = "Count Records",
+                                     .Size = sizeof(stale),
+                                     .Usage = BufferUsage::Indirect | BufferUsage::Storage |
+                                              BufferUsage::TransferDst});
+        upload(records, stale);
+        auto count =
+            Buffer::Create(context, {.Name = "Count",
+                                     .Size = 16,
+                                     .Usage = BufferUsage::Indirect | BufferUsage::Storage |
+                                              BufferUsage::TransferDst});
+        upload(count, std::array<u32, 4>{});
+        const auto seen =
+            Buffer::Create(context, {.Name = "Seen",
+                                     .Size = 16,
+                                     .Usage = BufferUsage::Storage | BufferUsage::TransferSrc |
+                                              BufferUsage::TransferDst});
+        upload(seen, std::array<u32, 4>{});
+
+        const auto target = Image::Create(context, {.Name = "Count Target",
+                                                    .Extent = {1, 1, 1},
+                                                    .Format = Format::RGBA8Unorm,
+                                                    .Usage = ImageUsage::ColorAttachment});
+        auto targetView =
+            ImageView::Create(context, {.Name = "Count Target View", .Image = target});
+
+        const auto storage = [](const u32 binding, const ShaderStage stages)
+        {
+            return DescriptorBinding{.Binding = binding,
+                                     .Type = DescriptorType::StorageBuffer,
+                                     .Count = 1,
+                                     .Stages = stages};
+        };
+        auto cullSetLayout = DescriptorSetLayout::Create(
+            context,
+            {.Name = "Count Cull Set Layout",
+             .Bindings = {storage(0, ShaderStage::Compute), storage(1, ShaderStage::Compute)}});
+        const auto cullLayout = PipelineLayout::Create(
+            context, {.Name = "Count Cull Layout",
+                      .DescriptorSetLayouts = {cullSetLayout},
+                      .PushConstantRanges = {PushConstantRange::Of<u32>(ShaderStage::Compute)}});
+        auto cullPipeline = ComputePipeline::Create(
+            context,
+            {.Name = "Count Cull Pipeline",
+             .PipelineLayout = cullLayout,
+             .ShaderStage = {.Stage = ShaderStage::Compute, .Module = cullShader->Get()->Module}});
+        auto cullSet =
+            DescriptorSet::Create(context, {.Name = "Count Cull Set", .Layout = cullSetLayout});
+        cullSet->Write(0, records);
+        cullSet->Write(1, count);
+
+        auto seenSetLayout = DescriptorSetLayout::Create(
+            context, {.Name = "Seen Set Layout", .Bindings = {storage(0, ShaderStage::Fragment)}});
+        const auto drawLayout = PipelineLayout::Create(
+            context, {.Name = "Count Draw Layout", .DescriptorSetLayouts = {seenSetLayout}});
+        auto seenSet =
+            DescriptorSet::Create(context, {.Name = "Seen Set", .Layout = seenSetLayout});
+        seenSet->Write(0, seen);
+        const auto drawPipeline = GraphicsPipeline::Create(
+            context, {.Name = "Count Draw Pipeline",
+                      .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                      .VertexBufferLayout = VertexBufferLayout{{Format::R32Sfloat, "a_Unused"}},
+                      .InstanceCandidateId = true,
+                      .PipelineLayout = drawLayout,
+                      .ShaderStages = {
+                          {.Stage = ShaderStage::Vertex, .Module = vertShader->Get()->Module},
+                          {.Stage = ShaderStage::Fragment, .Module = fragShader->Get()->Module}}});
+
+        const u32 mode = route == CountPath::FixedMaximum   ? 0u
+                         : route == CountPath::IndexedCount ? 1u
+                                                            : 2u;
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
+                const ResourceId targetId = graph.Import("Target");
+                const ResourceId recordsId = graph.ImportBuffer("Records");
+                const ResourceId countId = graph.ImportBuffer("Count");
+
+                graph.AddComputePass("Cull")
+                    .StorageBufferWrite(recordsId)
+                    .StorageBufferWrite(countId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& c = ctx.Cmd();
+                            c.BindPipeline(cullPipeline);
+                            c.BindDescriptorSets({.Sets = {cullSet},
+                                                  .FirstSet = 3,
+                                                  .PipelineBindPoint = PipelineBindPoint::Compute});
+                            c.PushConstants(mode);
+                            c.Dispatch(1, 1, 1);
+                            if (route != CountPath::FixedMaximum)
+                            {
+                                c.PrepareIndirectCount(records, 0, count, 0, CountCandidates,
+                                                       CommandStride);
+                            }
+                        });
+
+                graph.AddPass("Draw")
+                    .Color({.Resource = targetId, .Load = LoadOp::Clear, .Store = StoreOp::Store})
+                    .IndirectRead(recordsId)
+                    .IndirectRead(countId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& c = ctx.Cmd();
+                            c.BindPipeline(drawPipeline);
+                            c.BindDescriptorSets({seenSet.get()}, 3);
+                            c.SetViewport({0, 0}, {1, 1});
+                            c.SetScissor({0, 0}, {1, 1});
+                            c.BindVertexBuffer(vertexBuffer);
+                            c.BindInstanceBuffer(instanceBuffer);
+                            c.BindIndexBuffer(indexBuffer, IndexType::U32);
+                            switch (route)
+                            {
+                            case CountPath::FixedMaximum:
+                                c.DrawIndexedIndirect(records, 0, CountCandidates, CommandStride);
+                                break;
+                            case CountPath::IndexedCount:
+                                c.DrawIndexedIndirectCount(records, 0, count, 0, CountCandidates,
+                                                           CommandStride);
+                                break;
+                            case CountPath::NonIndexedCount:
+                                c.DrawIndirectCount(records, 0, count, 0, CountCandidates,
+                                                    CommandStride);
+                                break;
+                            }
+                        });
+
+                graph.Compile()->Execute(
+                    cmd, std::array{RenderGraph::ImportBinding{.Id = targetId, .View = targetView},
+                                    RenderGraph::ImportBinding{.Id = recordsId, .Buffer = records},
+                                    RenderGraph::ImportBinding{.Id = countId, .Buffer = count}});
+            });
+
+        const vector<u8> bytes = seen->Download();
+        Seen result;
+        std::memcpy(&result.Fragments, bytes.data(), sizeof(u32));
+        std::memcpy(&result.Candidates, bytes.data() + sizeof(u32), sizeof(u32));
+        return result;
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "indirect draw: a count-driven draw executes exactly the survivors the cull counted")
+{
+    if (!Context.GetDeviceCapabilities().IndirectDrawCount)
+    {
+        MESSAGE("count-driven indirect draws unsupported on this device; skipping");
+        return;
+    }
+    for (const CountPath path : {CountPath::IndexedCount, CountPath::NonIndexedCount})
+    {
+        CAPTURE(static_cast<u32>(path));
+        const Seen seen = DrawThroughPath(*this, path);
+        CHECK(seen.Fragments == SurvivorCount);
+        CHECK(seen.Candidates == SurvivorMask);
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "indirect draw: the fixed-maximum and count-driven paths draw the same survivors")
+{
+    if (!Context.IsGpuDrivenCullingSupported())
+    {
+        MESSAGE("GPU-driven culling unsupported on this device; skipping");
+        return;
+    }
+    const Seen fixed = DrawThroughPath(*this, CountPath::FixedMaximum);
+    CHECK(fixed.Candidates == SurvivorMask);
+    if (!Context.GetDeviceCapabilities().IndirectDrawCount)
+    {
+        MESSAGE(
+            "count-driven indirect draws unsupported on this device; the count path is skipped");
+        return;
+    }
+    const Seen counted = DrawThroughPath(*this, CountPath::IndexedCount);
+    CHECK(counted.Candidates == fixed.Candidates);
+    CHECK(counted.Fragments == fixed.Fragments);
 }

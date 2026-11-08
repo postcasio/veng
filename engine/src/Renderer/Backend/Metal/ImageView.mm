@@ -20,6 +20,15 @@ namespace Veng::Renderer
           m_Native(CreateUnique<Native>()), m_Image(info.Image)
     {
         const id<MTLTexture> texture = info.Image->GetNative().Texture;
+        if ([texture storageMode] == MTLStorageModeMemoryless)
+        {
+            // A memoryless texture takes no view; its one use is the whole attachment.
+            VE_ASSERT(info.BaseMipLevel == 0 && info.MipLevels == 1 && info.BaseArrayLayer == 0 &&
+                          info.ArrayLayers == [texture arrayLength],
+                      "ImageView '{}': a view of a memoryless image spans the whole image", m_Name);
+            m_Native->Texture = texture;
+            return;
+        }
         m_Native->Texture = [texture
             newTextureViewWithPixelFormat:[texture pixelFormat]
                               textureType:Metal::ToMetal(info.ViewType)

@@ -75,6 +75,22 @@ namespace Veng::Renderer
         descriptor.storageMode = MTLStorageModePrivate;
         descriptor.hazardTrackingMode = MTLHazardTrackingModeUntracked;
 
+        if (HasFlag(m_Usage, ImageUsage::Transient))
+        {
+            VE_ASSERT(!HasFlag(m_Usage, ImageUsage::Sampled | ImageUsage::Storage |
+                                            ImageUsage::TransferSrc | ImageUsage::TransferDst),
+                      "Image '{}': a transient attachment is only ever an attachment", m_Name);
+            // A memoryless texture has no memory to place, so it cannot come from a heap.
+            descriptor.usage = MTLTextureUsageRenderTarget;
+            descriptor.storageMode = MTLStorageModeMemoryless;
+            m_Native->Texture = [native.Device newTextureWithDescriptor:descriptor];
+            VE_ASSERT(m_Native->Texture != nil,
+                      "Image '{}': failed to create a {}x{} memoryless {} texture", m_Name,
+                      m_Extent.x, m_Extent.y, FormatName(m_Format));
+            [m_Native->Texture setLabel:Metal::ToNSString(m_Name)];
+            return;
+        }
+
         const MTLSizeAndAlign sizeAndAlign =
             [native.Device heapTextureSizeAndAlignWithDescriptor:descriptor];
         m_Native->Allocation = native.Allocate(false, sizeAndAlign.size, sizeAndAlign.align);

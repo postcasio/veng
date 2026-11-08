@@ -6,6 +6,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Veng.h>
 
+#include <span>
 #include <vector>
 
 namespace Veng
@@ -25,6 +26,7 @@ namespace Veng::Renderer
     class PipelineLayout;
     struct GBufferDrawPlan;
     struct GpuCullCandidate;
+    struct DrawGroup;
 
     /// @brief Owns the GPU occlusion-cull cluster and the hi-Z pyramid it tests against.
     ///
@@ -92,6 +94,15 @@ namespace Veng::Renderer
         /// @return The indirect-buffer import id, or an empty id under CullMode::CPU.
         ResourceId ImportIndirect(RenderGraph& graph);
 
+        /// @brief Imports the draw-count buffer beside the indirect commands when the cull
+        ///        compacts; returns its id, or an empty id when it does not.
+        ///
+        /// Called after ImportIndirect. The cull pass writes the counts and the geometry pass reads
+        /// them as indirect arguments, through the same graph-derived barrier as the commands.
+        /// @param graph The renderer's internal graph being rebuilt.
+        /// @return The count-buffer import id, or empty unless the GPU cull is count-driven.
+        ResourceId ImportCount(RenderGraph& graph);
+
         /// @brief Imports the hi-Z pyramid mip chain into the graph, or an empty chain when none is
         ///        held (CullMode::CPU).
         ///
@@ -147,8 +158,25 @@ namespace Veng::Renderer
         /// @param frameIndex        This frame's frame-in-flight index (the count-buffer slot).
         /// @param prevViewProj      The previous-frame camera world→clip the cull screen-bounds with.
         /// @param occlusionEnabled  Whether Settings.Occlusion permits the occlusion test this frame.
+        /// @param groups            The plan's static draw groups, whose runs the count-driven cull
+        ///                          compacts each survivor into; each group's count is zeroed.
         void RecordFrame(u32 candidateCount, u32 frameBase, u32 frameIndex,
-                         const mat4& prevViewProj, bool occlusionEnabled);
+                         const mat4& prevViewProj, bool occlusionEnabled,
+                         std::span<const DrawGroup> groups);
+
+        /// @brief Whether the cull compacts each group's survivors and counts them, for a
+        ///        count-driven draw (DeviceCapabilities::IndirectDrawCount).
+        [[nodiscard]] bool IsIndirectCount() const { return m_IndirectCount; }
+
+        /// @brief The draw-count buffer import id (empty unless the cull is count-driven).
+        [[nodiscard]] ResourceId GetCountId() const { return m_CountId; }
+
+        /// @brief The buffer holding the survivor stat and each group's draw count.
+        [[nodiscard]] const Ref<Buffer>& GetCountBuffer() const { return m_CullCountBuffer; }
+
+        /// @brief The byte offset of @p frameIndex's group counts in the count buffer; a group's
+        ///        count lies 4 · FirstSlot bytes past it.
+        [[nodiscard]] static u64 GroupCountOffset(u32 frameIndex);
 
         /// @brief Reads the survivor count the previous Execute wrote into @p frameIndex's region.
         ///
@@ -295,6 +323,13 @@ namespace Veng::Renderer
         Ref<Buffer> m_CullCountBuffer;
         /// @brief Imported buffer id for the indirect command buffer in the internal graph.
         ResourceId m_IndirectId;
+        /// @brief Imported buffer id for the count buffer, under the count-driven cull.
+        ResourceId m_CountId;
+        /// @brief Whether the cull compacts its survivors for a count-driven draw.
+        bool m_IndirectCount = false;
+        /// @brief This frame's groups as (first slot, slot count), for the cull pass's prepares and
+        ///        the survivor readback.
+        vector<uvec2> m_Groups;
 
         /// @brief Previous-frame camera world→clip the cull pass screen-bounds candidates with.
         mat4 m_CullPrevViewProj{1.0f};

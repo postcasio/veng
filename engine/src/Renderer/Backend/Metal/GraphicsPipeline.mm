@@ -99,6 +99,8 @@ namespace Veng::Renderer
         }
         descriptor.inputPrimitiveTopology = Metal::ToMetalClass(info.Topology);
         descriptor.rasterSampleCount = 1;
+        // A count-driven draw executes an indirect command buffer that inherits the pipeline.
+        descriptor.supportIndirectCommandBuffers = MTL4IndirectCommandBufferSupportStateEnabled;
         // Culling both faces draws nothing, which a pipeline that rasterizes nothing does.
         descriptor.rasterizationEnabled = info.CullMode != CullMode::FrontAndBack;
 

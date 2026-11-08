@@ -166,6 +166,61 @@ namespace
                 });
         }
 
+        // Renders @p draws into @p color over a graph-owned depth transient that the pass clears
+        // and stores as @p depthStore; returns the image backing the transient.
+        [[nodiscard]] Ref<Image> RenderOverTransientDepth(const ProbeTargets& color,
+                                                          const Ref<GraphicsPipeline>& pipeline,
+                                                          const std::span<const ProbeDraw> draws,
+                                                          const StoreOp depthStore) const
+        {
+            Ref<Image> depthImage;
+            m_Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    RenderGraph graph(m_Context);
+                    const ResourceId target = graph.Import("Color");
+                    const ResourceId depth = graph.CreateTransient({
+                        .Name = "Raster Probe Transient Depth",
+                        .Format = Format::D32Sfloat,
+                        .Extent = {Size, Size},
+                        .Usage = ImageUsage::DepthAttachment,
+                    });
+                    graph.AddPass("Raster Probe")
+                        .Color({.Resource = target,
+                                .Load = LoadOp::Clear,
+                                .Store = StoreOp::Store,
+                                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f}})
+                        .Depth({.Resource = depth,
+                                .Load = LoadOp::Clear,
+                                .Store = depthStore,
+                                .Clear = ClearDepth{.Depth = 0.0f}})
+                        .Execute(
+                            [&](PassContext& ctx)
+                            {
+                                CommandBuffer& c = ctx.Cmd();
+                                c.BindPipeline(pipeline);
+                                c.SetViewport({0, 0}, {Size, Size});
+                                c.SetScissor({0, 0}, {Size, Size});
+                                for (const ProbeDraw& draw : draws)
+                                {
+                                    ProbePush push{.Positions = draw.Positions,
+                                                   .Color = draw.Color};
+                                    for (vec4& position : push.Positions)
+                                    {
+                                        position.z = draw.Depth;
+                                    }
+                                    c.PushConstants(push);
+                                    c.Draw(3, 1, 0, 0);
+                                }
+                            });
+                    const auto compiled = graph.Compile();
+                    depthImage = compiled->ResolvedImage(depth);
+                    compiled->Execute(cmd, std::array{RenderGraph::ImportBinding{
+                                               .Id = target, .View = color.ColorView}});
+                });
+            return depthImage;
+        }
+
     private:
         Context& m_Context;
         AssetManager m_Assets;
@@ -251,4 +306,37 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // 0.75 of 255 is 191.25; a unorm store rounds it to 191.
     CHECK(texel[0] >= 190);
     CHECK(texel[0] <= 192);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "graphics pipeline: a memoryless depth attachment resolves depth as a stored one")
+{
+    const Probe probe(*this);
+    const auto pipeline = probe.Pipeline(CullMode::None, true, BlendState::Opaque());
+    // The far green draw lands over the near red one's edge only where depth fails it.
+    const std::array<ProbeDraw, 2> draws{
+        ProbeDraw{.Positions = {vec4(-1.0f, -1.0f, 0.0f, 0.0f), vec4(-1.0f, 1.0f, 0.0f, 0.0f),
+                                vec4(1.0f, -1.0f, 0.0f, 0.0f)},
+                  .Color = vec4(1.0f, 0.0f, 0.0f, 1.0f),
+                  .Depth = 0.75f},
+        ProbeDraw{.Color = vec4(0.0f, 1.0f, 0.0f, 1.0f), .Depth = 0.25f}};
+
+    const ProbeTargets discarded = probe.Targets(false);
+    const Ref<Image> memoryless =
+        probe.RenderOverTransientDepth(discarded, pipeline, draws, StoreOp::DontCare);
+    const ProbeTargets stored = probe.Targets(false);
+    const Ref<Image> backed =
+        probe.RenderOverTransientDepth(stored, pipeline, draws, StoreOp::Store);
+
+    // Only the attachment whose contents never leave the pass is made memoryless.
+    REQUIRE(memoryless != nullptr);
+    REQUIRE(backed != nullptr);
+    CHECK(HasFlag(memoryless->GetUsage(), ImageUsage::Transient) ==
+          Context.GetDeviceCapabilities().MemorylessAttachments);
+    CHECK_FALSE(HasFlag(backed->GetUsage(), ImageUsage::Transient));
+
+    const vector<u8> memorylessPixels = discarded.Color->Download();
+    CHECK(memorylessPixels == stored.Color->Download());
+    CHECK(TexelAt(memorylessPixels, 0, 0) == std::array<u8, 4>{255, 0, 0, 255});
+    CHECK(TexelAt(memorylessPixels, Size - 1, Size - 1) == std::array<u8, 4>{0, 255, 0, 255});
 }

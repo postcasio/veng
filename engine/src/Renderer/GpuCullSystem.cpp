@@ -78,7 +78,16 @@ namespace Veng::Renderer
             f32 DepthBias;
             u32 FrameBase;
             u32 CountIndex;
+            u32 Compact;
         };
+
+        // A frame's region of the count buffer: the survivor stat, then one count per slot.
+        constexpr u64 CountRegionWords = 1 + static_cast<u64>(MaxCullCandidates);
+    }
+
+    u64 GpuCullSystem::GroupCountOffset(const u32 frameIndex)
+    {
+        return ((frameIndex * CountRegionWords) + 1) * sizeof(u32);
     }
 
     Unique<GpuCullSystem> GpuCullSystem::Create(Context& context, AssetManager& assets,
@@ -197,11 +206,13 @@ namespace Veng::Renderer
                                           .Usage = BufferUsage::Storage | BufferUsage::Indirect,
                                       });
 
+        m_IndirectCount = m_Context.GetDeviceCapabilities().IndirectDrawCount;
         m_CullCountBuffer =
             Buffer::Create(m_Context, {
                                           .Name = "SceneRenderer Cull Count",
-                                          .Size = static_cast<u64>(framesInFlight) * sizeof(u32),
-                                          .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
+                                          .Size = framesInFlight * CountRegionWords * sizeof(u32),
+                                          .Usage = BufferUsage::Storage | BufferUsage::TransferSrc |
+                                                   BufferUsage::Indirect,
                                           .HostMapped = true,
                                       });
 
@@ -417,6 +428,16 @@ namespace Veng::Renderer
         return m_IndirectId;
     }
 
+    ResourceId GpuCullSystem::ImportCount(RenderGraph& graph)
+    {
+        m_CountId = ResourceId{};
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_IndirectCount)
+        {
+            m_CountId = graph.ImportBuffer("SceneRenderer Cull Count");
+        }
+        return m_CountId;
+    }
+
     void GpuCullSystem::ImportHiZChain(RenderGraph& graph)
     {
         // Import the hi-Z chain once: the GPU cull samples last frame's pyramid (declared
@@ -436,6 +457,10 @@ namespace Veng::Renderer
         // StorageBufferWrite → IndirectRead barrier feeding the geometry pass.
         RenderGraph::PassBuilder builder = graph.AddComputePass("Scene GPU Cull");
         builder.StorageBufferWrite(m_IndirectId);
+        if (m_CountId.IsValid())
+        {
+            builder.StorageBufferWrite(m_CountId);
+        }
 
         // The cull samples last frame's hi-Z pyramid (through m_CullSet, off the graph's
         // descriptor binding). Declaring .Sample on each mip drives the graph-derived
@@ -470,8 +495,24 @@ namespace Veng::Renderer
                     .DepthBias = 0.001f,
                     .FrameBase = m_CullFrameBase,
                     .CountIndex = m_CullCountIndex,
+                    .Compact = m_IndirectCount ? 1u : 0u,
                 });
                 cmd.Dispatch((m_CullCandidateCount + 63) / 64, 1, 1);
+                if (!m_IndirectCount)
+                {
+                    return;
+                }
+                const u64 regionOffset =
+                    static_cast<u64>(m_CullFrameBase) * sizeof(DrawIndexedIndirectCommand);
+                const u64 countOffset = (static_cast<u64>(m_CullCountIndex) + 1) * sizeof(u32);
+                for (const uvec2 group : m_Groups)
+                {
+                    cmd.PrepareIndirectCount(
+                        m_IndirectBuffer,
+                        regionOffset + (u64{group.x} * sizeof(DrawIndexedIndirectCommand)),
+                        m_CullCountBuffer, countOffset + (u64{group.x} * sizeof(u32)), group.y,
+                        sizeof(DrawIndexedIndirectCommand));
+                }
             });
     }
 
@@ -583,19 +624,36 @@ namespace Veng::Renderer
 
     void GpuCullSystem::RecordFrame(const u32 candidateCount, const u32 frameBase,
                                     const u32 frameIndex, const mat4& prevViewProj,
-                                    const bool occlusionEnabled)
+                                    const bool occlusionEnabled,
+                                    const std::span<const DrawGroup> groups)
     {
         // The GPU cull dispatch reads the candidate region this frame; zero its survivor
         // count so the next-frame readback reflects only this dispatch. The push members the
         // cull pass reads are set here (per-frame), not in the recompile-time declaration.
         m_CullCandidateCount = candidateCount;
         m_CullFrameBase = frameBase;
-        m_CullCountIndex = frameIndex;
+        m_CullCountIndex = static_cast<u32>(frameIndex * CountRegionWords);
         m_CullPrevViewProj = prevViewProj;
         m_CullHistoryValid = (occlusionEnabled && m_HiZHistoryValid) ? 1u : 0u;
 
         auto* counts = static_cast<u32*>(m_CullCountBuffer->GetMappedData());
-        counts[frameIndex] = 0;
+        counts[m_CullCountIndex] = 0;
+
+        // The compacting cull appends each survivor to its group's run, counted from zero.
+        m_Groups.clear();
+        if (m_IndirectCount)
+        {
+            GpuCullCandidate* const candidates = BeginFrameUpload(frameIndex);
+            for (const DrawGroup& group : groups)
+            {
+                m_Groups.emplace_back(group.FirstSlot, group.SlotCount);
+                counts[m_CullCountIndex + 1 + group.FirstSlot] = 0;
+                for (u32 slot = group.FirstSlot; slot < group.FirstSlot + group.SlotCount; ++slot)
+                {
+                    candidates[slot].GroupFirst = group.FirstSlot;
+                }
+            }
+        }
 
         // Record the region the readback reads one frame late.
         m_GpuCandidateCount = candidateCount;
@@ -613,7 +671,7 @@ namespace Veng::Renderer
             return;
         }
         const auto* counts = static_cast<const u32*>(m_CullCountBuffer->GetMappedData());
-        m_LastGpuSurvivorCount = counts[frameIndex];
+        m_LastGpuSurvivorCount = counts[frameIndex * CountRegionWords];
     }
 
     void GpuCullSystem::EvaluateHistory(const HiZHistoryState& current, const f32 sceneDiagonal)
@@ -650,6 +708,25 @@ namespace Veng::Renderer
         const u32 base = m_GpuReadbackRegion * MaxCullCandidates;
 
         vector<u32> flags(m_GpuCandidateCount);
+        if (m_IndirectCount)
+        {
+            // Each group's survivors lead its run, each naming its candidate as firstInstance.
+            const auto* counts = static_cast<const u32*>(m_CullCountBuffer->GetMappedData());
+            const u64 countBase = (m_GpuReadbackRegion * CountRegionWords) + 1;
+            for (const uvec2 group : m_Groups)
+            {
+                const u32 drawn = std::min(counts[countBase + group.x], group.y);
+                for (u32 i = 0; i < drawn; ++i)
+                {
+                    const u32 candidate = commands[base + group.x + i].FirstInstance;
+                    if (candidate < m_GpuCandidateCount)
+                    {
+                        flags[candidate] = 1;
+                    }
+                }
+            }
+            return flags;
+        }
         for (u32 i = 0; i < m_GpuCandidateCount; ++i)
         {
             flags[i] = commands[base + i].InstanceCount;

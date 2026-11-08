@@ -42,6 +42,16 @@
       "source": "indirect_cull.comp.shader.json"
     },
     {
+      "id": "0x95B48A78EA5B5E22",
+      "type": "Shader",
+      "source": "indirect_count_cull.comp.shader.json"
+    },
+    {
+      "id": "0x0F06AC2666DCE248",
+      "type": "Shader",
+      "source": "indirect_count.frag.shader.json"
+    },
+    {
       "id": "0x0000000000001F49",
       "type": "Shader",
       "source": "volume_write.comp.shader.json"

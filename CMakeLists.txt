@@ -1084,6 +1084,26 @@ veng_embed_binary(${VENG_ICON_FONT_OTF} g_IconFont)
 target_compile_definitions(veng PRIVATE VENG_HAS_ICON_FONT=1)
 
 # ---------------------------------------------------------------------------
+# The Metal backend's own library — the count-driven draw's encode kernel
+# ---------------------------------------------------------------------------
+
+# Written in Metal Shading Language rather than cooked from Slang, since it encodes indirect
+# command buffers, and compiled here into a library the backend loads from memory.
+if (VE_GPU_BACKEND STREQUAL "Metal")
+    set(VENG_INDIRECT_COUNT_SOURCE
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/src/Renderer/Backend/Metal/IndirectCount.metal)
+    set(VENG_INDIRECT_COUNT_AIR ${CMAKE_CURRENT_BINARY_DIR}/IndirectCount.air)
+    set(VENG_INDIRECT_COUNT_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/IndirectCount.metallib)
+    add_custom_command(
+        OUTPUT ${VENG_INDIRECT_COUNT_LIBRARY}
+        COMMAND xcrun -sdk macosx metal -c ${VENG_INDIRECT_COUNT_SOURCE} -o ${VENG_INDIRECT_COUNT_AIR}
+        COMMAND xcrun -sdk macosx metallib ${VENG_INDIRECT_COUNT_AIR} -o ${VENG_INDIRECT_COUNT_LIBRARY}
+        DEPENDS ${VENG_INDIRECT_COUNT_SOURCE}
+        COMMENT "Compiling the Metal backend's indirect-count library")
+    veng_embed_binary(${VENG_INDIRECT_COUNT_LIBRARY} g_IndirectCountLibrary)
+endif ()
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -1969,6 +1989,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_count_cull.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_count.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sh_eval.comp.slang
@@ -2000,6 +2022,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_count_cull.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_count.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sh_eval.comp.shader.json
@@ -2045,11 +2069,11 @@ if (VENG_BUILD_TESTS)
             tests/gpu/image_clear_format.cpp
             # indirect_draw.cpp draws three indirect records at a padded stride, two of them culled to
             # zero instances by a compute pass, and reads back the candidate the survivor's base
-            # instance selected.
+            # instance selected; and counts what a count-driven draw of compacted survivors executes.
             tests/gpu/indirect_draw.cpp
             # graphics_pipeline.cpp places one triangle from the push block and reads back where clip
-            # space lands, which winding is the front face, which depth wins and how a loaded
-            # attachment blends; image_blit.cpp reads back the texels a scaled and a mirrored blit's
+            # space lands, which winding is the front face, which depth wins (through a stored and a
+            # memoryless depth attachment) and how a loaded attachment blends; image_blit.cpp reads back the texels a scaled and a mirrored blit's
             # linear filter determines.
             tests/gpu/graphics_pipeline.cpp
             tests/gpu/image_blit.cpp

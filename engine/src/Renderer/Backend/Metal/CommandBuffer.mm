@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
+#include <utility>
 
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FormatInfo.h>
@@ -200,6 +202,8 @@ namespace Veng::Renderer
             VE_ASSERT(native.Recording, "CommandBuffer: recording into a buffer that is not begun");
             VE_ASSERT(native.Render == nil,
                       "CommandBuffer: compute or transfer work recorded inside a render pass");
+            // Whatever is encoded next may write what a range's encode reads.
+            native.IndirectCountOrdered = false;
             if (native.Compute != nil)
             {
                 return native.Compute;
@@ -302,7 +306,13 @@ namespace Veng::Renderer
 
     CommandBuffer::~CommandBuffer()
     {
-        m_Context.GetNative().ReleaseRingChunks(m_Native->RingChunks);
+        Context::Native& native = m_Context.GetNative();
+        native.ReleaseRingChunks(m_Native->RingChunks);
+        for (const id<MTLIndirectCommandBuffer> commands : m_Native->IndirectCommandBuffers)
+        {
+            native.Retire(function<void()>([&native, commands] { native.Evict(commands); }));
+            native.Retire(commands);
+        }
     }
 
     void CommandBuffer::Reset()
@@ -327,6 +337,10 @@ namespace Veng::Renderer
         m_Native->PushAddress = 0;
         m_Native->ComputePushBound = 0;
         m_Native->RenderPushBound = 0;
+        m_Native->IndirectCountRanges.clear();
+        m_Native->IndirectCommandBuffer = 0;
+        m_Native->IndirectCommandCursor = 0;
+        m_Native->IndirectCountOrdered = false;
         m_LastBoundPipelineLayout = nullptr;
         m_BoundGraphicsPipeline = nullptr;
         m_HasActiveRenderingInfo = false;
@@ -718,6 +732,215 @@ namespace Veng::Renderer
             [encoder drawPrimitives:m_Native->BoundGraphics->GetNative().Primitive
                      indirectBuffer:base + (u64{i} * stride)];
         }
+    }
+
+    namespace
+    {
+        // Places @p commands consecutive commands in the recording's indirect command buffers,
+        // creating one that holds them when none has room.
+        std::pair<id<MTLIndirectCommandBuffer>, u32>
+        PlaceIndirectCommands(Context::Native& context, CommandBuffer::Native& native,
+                              const u32 commands)
+        {
+            constexpr u32 MinimumCapacity = 4096;
+            while (native.IndirectCommandBuffer < native.IndirectCommandBuffers.size())
+            {
+                const u32 capacity = native.IndirectCommandCapacities[native.IndirectCommandBuffer];
+                if (native.IndirectCommandCursor + commands <= capacity)
+                {
+                    const u32 first = native.IndirectCommandCursor;
+                    native.IndirectCommandCursor += commands;
+                    return {native.IndirectCommandBuffers[native.IndirectCommandBuffer], first};
+                }
+                ++native.IndirectCommandBuffer;
+                native.IndirectCommandCursor = 0;
+            }
+            // Draws inherit everything but the draw itself from the render encoder they execute in.
+            MTLIndirectCommandBufferDescriptor* const descriptor =
+                [[MTLIndirectCommandBufferDescriptor alloc] init];
+            descriptor.commandTypes =
+                MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed;
+            descriptor.inheritPipelineState = YES;
+            descriptor.inheritBuffers = YES;
+            descriptor.inheritDepthStencilState = YES;
+            descriptor.inheritDepthBias = YES;
+            descriptor.inheritDepthClipMode = YES;
+            descriptor.inheritCullMode = YES;
+            descriptor.inheritFrontFacingWinding = YES;
+            descriptor.inheritTriangleFillMode = YES;
+            const u32 capacity = std::max(MinimumCapacity, commands);
+            const id<MTLIndirectCommandBuffer> created = [context.Device
+                newIndirectCommandBufferWithDescriptor:descriptor
+                                       maxCommandCount:capacity
+                                               options:MTLResourceStorageModePrivate |
+                                                       MTLResourceHazardTrackingModeUntracked];
+            VE_ASSERT(created != nil,
+                      "CommandBuffer: failed to create an indirect command buffer of {} commands",
+                      capacity);
+            [created setLabel:@"Indirect Count Commands"];
+            context.MakeResident(created);
+            native.IndirectCommandBuffers.push_back(created);
+            native.IndirectCommandCapacities.push_back(capacity);
+            native.IndirectCommandBuffer =
+                static_cast<u32>(native.IndirectCommandBuffers.size() - 1);
+            native.IndirectCommandCursor = commands;
+            return {created, 0};
+        }
+
+        // The prepared range a count-driven draw executes, completed with the draw's index buffer
+        // and primitive.
+        const CommandBuffer::Native::IndirectCountRange&
+        ConsumeIndirectCount(const CommandBuffer::Native& native, const Buffer& buffer,
+                             const u64 offset, const Buffer& countBuffer, const u64 countOffset,
+                             const u32 indexType, const u64 indices, const u32 primitive)
+        {
+            const Metal::IndirectCountKey key{
+                .Records = [buffer.GetNative().Buffer gpuAddress] + offset,
+                .Count = [countBuffer.GetNative().Buffer gpuAddress] + countOffset};
+            const auto found = native.IndirectCountRanges.find(key);
+            VE_ASSERT(
+                found != native.IndirectCountRanges.end(),
+                "CommandBuffer: a count-driven draw of '{}' at {} with no PrepareIndirectCount "
+                "for it earlier in the recording",
+                buffer.GetName(), offset);
+            Metal::IndirectCountParams& params = *found->second.Params;
+            // The encode runs at execution, after every draw of the recording is recorded.
+            VE_ASSERT(params.Primitive == Metal::IndirectCountUndrawn ||
+                          (params.Primitive == primitive && params.IndexType == indexType &&
+                           params.Indices == indices),
+                      "CommandBuffer: the range of '{}' at {} is drawn twice with different "
+                      "indices or primitives",
+                      buffer.GetName(), offset);
+            params.Primitive = primitive;
+            params.IndexType = indexType;
+            params.Indices = indices;
+            return found->second;
+        }
+    }
+
+    void CommandBuffer::PrepareIndirectCount(const Ref<Buffer>& buffer, const u64 offset,
+                                             const Ref<Buffer>& countBuffer, const u64 countOffset,
+                                             const u32 maxDraws, const u32 stride)
+    {
+        VE_ASSERT(offset % 4 == 0 && countOffset % 4 == 0,
+                  "PrepareIndirectCount: offsets {} and {} are not 4-byte aligned", offset,
+                  countOffset);
+        VE_ASSERT(stride >= sizeof(DrawIndirectCommand) && stride % 4 == 0,
+                  "PrepareIndirectCount: stride {} is not a record's", stride);
+        VE_ASSERT(maxDraws == 0 ||
+                      offset + (u64{maxDraws - 1} * stride) + sizeof(DrawIndirectCommand) <=
+                          buffer->GetSize(),
+                  "PrepareIndirectCount: {} records at offset {} run past the end of '{}'",
+                  maxDraws, offset, buffer->GetName());
+        Context::Native& context = m_Context.GetNative();
+        Native& native = *m_Native;
+        const Metal::IndirectCountKey key{
+            .Records = [buffer->GetNative().Buffer gpuAddress] + offset,
+            .Count = [countBuffer->GetNative().Buffer gpuAddress] + countOffset};
+        VE_ASSERT(!native.IndirectCountRanges.contains(key),
+                  "PrepareIndirectCount: the range of '{}' at {} is already prepared",
+                  buffer->GetName(), offset);
+
+        const auto [commands, first] =
+            PlaceIndirectCommands(context, native, std::max(maxDraws, 1u));
+
+        const Metal::RingPlacement placement =
+            native.Ring.Allocate(static_cast<u32>(sizeof(Metal::IndirectCountParams)));
+        while (placement.Chunk >= native.RingChunks.size())
+        {
+            native.RingChunks.push_back(context.AcquireRingChunk(m_Context));
+        }
+        const Buffer& chunk = *native.RingChunks[placement.Chunk];
+        auto* const params = reinterpret_cast<Metal::IndirectCountParams*>(
+            static_cast<std::byte*>(chunk.GetNative().Contents) + placement.Offset);
+        const MTLResourceID commandsId = [commands gpuResourceID];
+        u64 commandsBits = 0;
+        static_assert(sizeof(commandsId) == sizeof(commandsBits));
+        std::memcpy(&commandsBits, &commandsId, sizeof(commandsBits));
+        *params = Metal::IndirectCountParams{
+            .Commands = commandsBits,
+            .Records = key.Records,
+            .Count = key.Count,
+            .Stride = stride,
+            .MaxDraws = maxDraws,
+            .First = first,
+            .Primitive = Metal::IndirectCountUndrawn,
+        };
+        const u64 paramsAddress = [chunk.GetNative().Buffer gpuAddress] + placement.Offset;
+        native.IndirectCountRanges.emplace(
+            key, Native::IndirectCountRange{
+                     .Commands = commands, .Params = params, .ParamsAddress = paramsAddress});
+
+        if (native.IndirectCountTable == nil)
+        {
+            MTL4ArgumentTableDescriptor* const table = [[MTL4ArgumentTableDescriptor alloc] init];
+            table.maxBufferBindCount = 1;
+            table.initializeBindings = YES;
+            table.label = @"Indirect Count Arguments";
+            NSError* error = nil;
+            native.IndirectCountTable = [context.Device newArgumentTableWithDescriptor:table
+                                                                                 error:&error];
+            VE_ASSERT(native.IndirectCountTable != nil,
+                      "CommandBuffer: failed to create the indirect-count argument table: {}",
+                      Metal::Describe(error));
+        }
+
+        const bool ordered = native.IndirectCountOrdered;
+        const id<MTL4ComputeCommandEncoder> encoder = Metal::Recording::ComputeEncoder(*this);
+        // The encode reads what the dispatches before it in this encoder wrote; encodes need no
+        // order among themselves.
+        if (!ordered)
+        {
+            [encoder barrierAfterEncoderStages:MTLStageDispatch | MTLStageBlit
+                           beforeEncoderStages:MTLStageDispatch
+                             visibilityOptions:MTL4VisibilityOptionDevice];
+        }
+        [native.IndirectCountTable setAddress:paramsAddress atIndex:0];
+        [encoder setArgumentTable:native.IndirectCountTable];
+        [encoder setComputePipelineState:context.IndirectCountPipeline()];
+        const u32 groups = (std::max(maxDraws, 1u) + Metal::IndirectCountThreadgroupSize - 1) /
+                           Metal::IndirectCountThreadgroupSize;
+        [encoder dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(Metal::IndirectCountThreadgroupSize, 1, 1)];
+        [encoder setArgumentTable:native.ComputeTable];
+        if (native.BoundCompute)
+        {
+            [encoder setComputePipelineState:native.BoundCompute->GetNative().State];
+        }
+        native.IndirectCountOrdered = true;
+    }
+
+    void CommandBuffer::DrawIndexedIndirectCount(const Ref<Buffer>& buffer, const u64 offset,
+                                                 const Ref<Buffer>& countBuffer,
+                                                 const u64 countOffset, const u32 /*maxDraws*/,
+                                                 const u32 /*stride*/)
+    {
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        const IndexRange indices = IndexRangeOf(*m_Native, 0);
+        const Native::IndirectCountRange& range = ConsumeIndirectCount(
+            *m_Native, *buffer, offset, *countBuffer, countOffset,
+            m_Native->IndexType == MTLIndexTypeUInt16 ? 1u : 2u, indices.Address,
+            static_cast<u32>(m_Native->BoundGraphics->GetNative().Primitive));
+        [encoder executeCommandsInBuffer:range.Commands
+                          indirectBuffer:range.ParamsAddress +
+                                         offsetof(Metal::IndirectCountParams, RangeLocation)];
+    }
+
+    void CommandBuffer::DrawIndirectCount(const Ref<Buffer>& buffer, const u64 offset,
+                                          const Ref<Buffer>& countBuffer, const u64 countOffset,
+                                          const u32 /*maxDraws*/, const u32 /*stride*/)
+    {
+        const id<MTL4RenderCommandEncoder> encoder = PrepareDraw(m_Context, *this);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        const Native::IndirectCountRange& range =
+            ConsumeIndirectCount(*m_Native, *buffer, offset, *countBuffer, countOffset, 0u, 0u,
+                                 static_cast<u32>(m_Native->BoundGraphics->GetNative().Primitive));
+        [encoder executeCommandsInBuffer:range.Commands
+                          indirectBuffer:range.ParamsAddress +
+                                         offsetof(Metal::IndirectCountParams, RangeLocation)];
     }
 
     static void BindComputePushConstants(Context& context, CommandBuffer::Native& native)

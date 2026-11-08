@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Context.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
 
 #include <Veng/Diagnostics/Profiler.h>
@@ -22,6 +23,12 @@
 #include "Recording.h"
 #include "SwapChain.h"
 #include "TypeMapping.h"
+
+namespace Veng
+{
+    extern const unsigned char g_IndirectCountLibrary[];
+    extern const unsigned long g_IndirectCountLibrarySize;
+}
 
 namespace Veng::Renderer
 {
@@ -576,6 +583,37 @@ namespace Veng::Renderer
                                                          error:error];
     }
 
+    id<MTLComputePipelineState> Context::Native::IndirectCountPipeline()
+    {
+        const std::scoped_lock lock(BlitMutex);
+        if (IndirectCountEncoder != nil)
+        {
+            return IndirectCountEncoder;
+        }
+        const dispatch_data_t bytes =
+            dispatch_data_create(g_IndirectCountLibrary, g_IndirectCountLibrarySize, nullptr,
+                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+        NSError* error = nil;
+        const id<MTLLibrary> library = [Device newLibraryWithData:bytes error:&error];
+        VE_ASSERT(library != nil, "Context: the indirect-count library failed to load: {}",
+                  Metal::Describe(error));
+        MTL4LibraryFunctionDescriptor* const function =
+            [[MTL4LibraryFunctionDescriptor alloc] init];
+        function.library = library;
+        function.name = @"EncodeIndirectCount";
+        MTL4ComputePipelineDescriptor* const descriptor =
+            [[MTL4ComputePipelineDescriptor alloc] init];
+        descriptor.computeFunctionDescriptor = function;
+        descriptor.requiredThreadsPerThreadgroup =
+            MTLSizeMake(Metal::IndirectCountThreadgroupSize, 1, 1);
+        descriptor.label = @"Indirect Count Encoder";
+        IndirectCountEncoder = CreateComputePipeline(descriptor, &error);
+        VE_ASSERT(IndirectCountEncoder != nil,
+                  "Context: the indirect-count encoder failed to build: {}",
+                  Metal::Describe(error));
+        return IndirectCountEncoder;
+    }
+
     void Context::Native::OpenPipelineArchive(const string& path)
     {
         ArchivePath = path;
@@ -765,6 +803,12 @@ namespace Veng::Renderer
         capabilities.RGBA16SfloatStorage = true;
         capabilities.MeshShading = [native.Device supportsFamily:MTLGPUFamilyMetal3];
         capabilities.RayTracing = [native.Device supportsRaytracing];
+        // A count-driven draw executes an indirect command buffer a compute dispatch encodes. Metal's
+        // shader validation executes no draw such a buffer holds, so a process running under it
+        // takes the fixed-maximum path. A tile-based Apple GPU keeps a memoryless attachment in tile
+        // memory alone.
+        capabilities.IndirectDrawCount = std::getenv("MTL_SHADER_VALIDATION") == nullptr;
+        capabilities.MemorylessAttachments = true;
         native.BlockCompressionSupported = [native.Device supportsBCTextureCompression];
         native.AstcSupported = [native.Device supportsFamily:MTLGPUFamilyApple2];
 

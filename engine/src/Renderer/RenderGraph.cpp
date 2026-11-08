@@ -318,6 +318,34 @@ namespace Veng::Renderer
             resource.Name = m_Resources[i].Name;
         }
 
+        // The device-free view of the resources and passes the schedule is derived from, and
+        // which transients may live in tile memory alone.
+        vector<ScheduleResource> scheduleResources;
+        scheduleResources.reserve(m_Resources.size());
+        for (const Resource& resource : m_Resources)
+        {
+            scheduleResources.push_back({
+                .IsImport = resource.IsImport,
+                .IsBuffer = resource.IsBuffer,
+                .Name = resource.Name,
+                .ImageUsage = resource.Desc.Usage,
+                .BufferUsage = resource.BufferDesc.Usage,
+            });
+        }
+
+        vector<SchedulePass> schedulePasses;
+        schedulePasses.reserve(m_Passes.size());
+        for (const Unique<Pass>& pass : m_Passes)
+        {
+            schedulePasses.push_back({.Name = pass->Name, .Accesses = pass->Accesses});
+        }
+
+        vector<bool> memoryless(m_Resources.size(), false);
+        if (m_Context.GetDeviceCapabilities().MemorylessAttachments)
+        {
+            memoryless = FindMemorylessTransients(scheduleResources, schedulePasses);
+        }
+
         // Allocate buffer transients: one buffer per transient (no aliasing — the
         // buffer path's resources are small and persist within a frame). Imported
         // buffers carry no backing here; they bind per frame.
@@ -363,6 +391,26 @@ namespace Veng::Renderer
                 // transients participate in the aliasing assignment here.
                 if (m_Resources[i].IsImport || m_Resources[i].IsBuffer)
                 {
+                    continue;
+                }
+                // A memoryless transient takes no memory, so it shares none: it gets its own.
+                if (memoryless[i])
+                {
+                    const TransientDesc& desc = m_Resources[i].Desc;
+                    CompiledGraph::Native::Resource& resource = native->Resources[i];
+                    resource.Image = Image::Create(
+                        m_Context, {
+                                       .Name = desc.Name,
+                                       .Extent = {desc.Extent.x, desc.Extent.y, 1},
+                                       .Format = desc.Format,
+                                       .Usage = (desc.Usage & (ImageUsage::ColorAttachment |
+                                                               ImageUsage::DepthAttachment)) |
+                                                ImageUsage::Transient,
+                                   });
+                    resource.View = ImageView::Create(m_Context, {
+                                                                     .Name = desc.Name + " View",
+                                                                     .Image = resource.Image,
+                                                                 });
                     continue;
                 }
 
@@ -434,29 +482,6 @@ namespace Veng::Renderer
                 resource.Image = slotImages[slot];
                 resource.View = slotViews[slot];
             }
-        }
-
-        // Derive the per-pass barrier/transition/attachment schedule device-free, then
-        // pair each derived pass with the replay state (kind, layers, callback) the
-        // derivation does not carry.
-        vector<ScheduleResource> scheduleResources;
-        scheduleResources.reserve(m_Resources.size());
-        for (const Resource& resource : m_Resources)
-        {
-            scheduleResources.push_back({
-                .IsImport = resource.IsImport,
-                .IsBuffer = resource.IsBuffer,
-                .Name = resource.Name,
-                .ImageUsage = resource.Desc.Usage,
-                .BufferUsage = resource.BufferDesc.Usage,
-            });
-        }
-
-        vector<SchedulePass> schedulePasses;
-        schedulePasses.reserve(m_Passes.size());
-        for (const Unique<Pass>& pass : m_Passes)
-        {
-            schedulePasses.push_back({.Name = pass->Name, .Accesses = pass->Accesses});
         }
 
         vector<ScheduledPass> schedule =

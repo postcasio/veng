@@ -129,4 +129,18 @@ namespace Veng::Renderer
     [[nodiscard]] VE_API vector<ScheduledPass>
     DeriveRenderGraphSchedule(std::span<const ScheduleResource> resources,
                               std::span<const SchedulePass> passes);
+
+    /// @brief Finds the image transients whose contents never leave the render pass they are
+    ///        drawn in, which a device with memoryless attachments keeps in tile memory alone.
+    ///
+    /// A transient qualifies when every access to it is a colour or depth attachment access in one
+    /// pass, each loading by clear or don't-care and storing don't-care: then nothing samples,
+    /// copies or reads it back, and nothing it holds outlives the pass. An import or a buffer never
+    /// qualifies, nor does a transient no pass touches.
+    /// @param resources The resource table, indexed by ResourceId::Index.
+    /// @param passes    The passes, in declaration order.
+    /// @return One flag per resource, true where the transient qualifies.
+    [[nodiscard]] VE_API vector<bool>
+    FindMemorylessTransients(std::span<const ScheduleResource> resources,
+                             std::span<const SchedulePass> passes);
 }

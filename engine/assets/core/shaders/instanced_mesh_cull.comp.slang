@@ -7,6 +7,10 @@
 // counting itself into the level's indirect draws. The renderer wrote every command's index range
 // and zeroed its instance count beforehand.
 //
+// A second dispatch (Mode 1) runs where the device draws a count-driven indirect draw: one
+// invocation per job copies the job's commands that draw anything to the front of its run in the
+// compacted region (CompactBase on) and writes how many there are, so the draw issues only those.
+//
 // The CPU fallback (src/Renderer/InstancedCull.cpp) runs the same decisions on the host; the two
 // are kept alike.
 #include "hi_z_occlusion.slang"
@@ -99,6 +103,7 @@ struct InstancedMeshCullSet3
     RWStructuredBuffer<DrawIndexedIndirectCommand> Commands;
     RWStructuredBuffer<uint> LodMemory;
     ByteAddressBuffer Tables;
+    RWStructuredBuffer<uint> Counts; // Mode 1: each job's compacted command count
 };
 VE_DESCRIPTOR_SET(3, InstancedMeshCullSet3, g_Set3);
 
@@ -110,6 +115,8 @@ struct PushConstants
     uint JobCount;
     uint ThreadCount;  // invocations the jobs cover
     uint RowThreads;   // invocations per dispatch row (groups in x times 64)
+    uint Mode;         // 0 the cull, 1 the compaction
+    uint CompactBase;  // the compacted region's first command
 };
 
 VE_PUSH_CONSTANTS(PushConstants, g_PC);
@@ -190,6 +197,28 @@ uint FindJob(uint invocation)
 void csMain(uint3 id : SV_DispatchThreadID)
 {
     const uint invocation = id.y * g_PC.RowThreads + id.x;
+    if (g_PC.Mode != 0u)
+    {
+        if (invocation >= g_PC.JobCount)
+        {
+            return;
+        }
+        const CullJob compactJob = g_Set3.Tables.Load<CullJob>(g_PC.JobsOffset + invocation * CullJobBytes);
+        const CullSet compactSet = g_Set3.Tables.Load<CullSet>(g_PC.SetsOffset + compactJob.Set * CullSetBytes);
+        const uint commands = compactSet.LodCount * compactSet.SubMeshCount;
+        uint drawn = 0u;
+        for (uint c = 0u; c < commands; ++c)
+        {
+            const DrawIndexedIndirectCommand command = g_Set3.Commands[compactJob.CommandBase + c];
+            if (command.InstanceCount != 0u && command.IndexCount != 0u)
+            {
+                g_Set3.Commands[g_PC.CompactBase + compactJob.CommandBase + drawn] = command;
+                ++drawn;
+            }
+        }
+        g_Set3.Counts[invocation] = drawn;
+        return;
+    }
     if (invocation >= g_PC.ThreadCount)
     {
         return;

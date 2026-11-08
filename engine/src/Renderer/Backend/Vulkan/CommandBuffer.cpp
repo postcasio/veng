@@ -286,6 +286,52 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.drawIndirect(buffer->GetNative().Buffer, offset, drawCount, stride);
     }
 
+    void CommandBuffer::PrepareIndirectCount(const Ref<Buffer>& /*buffer*/, const u64 offset,
+                                             const Ref<Buffer>& /*countBuffer*/,
+                                             const u64 countOffset, const u32 /*maxDraws*/,
+                                             const u32 /*stride*/)
+    {
+        // The count commands read the count themselves when they execute.
+        VE_ASSERT(m_Context.GetDeviceCapabilities().IndirectDrawCount,
+                  "PrepareIndirectCount: the device draws no count-driven indirect draws");
+        VE_ASSERT(offset % 4 == 0 && countOffset % 4 == 0,
+                  "PrepareIndirectCount: offsets {} and {} are not 4-byte aligned", offset,
+                  countOffset);
+    }
+
+    void CommandBuffer::DrawIndexedIndirectCount(const Ref<Buffer>& buffer, const u64 offset,
+                                                 const Ref<Buffer>& countBuffer,
+                                                 const u64 countOffset, const u32 maxDraws,
+                                                 const u32 stride)
+    {
+        VE_ASSERT(m_Context.GetDeviceCapabilities().IndirectDrawCount,
+                  "DrawIndexedIndirectCount: the device draws no count-driven indirect draws");
+        VE_ASSERT(offset % 4 == 0 && countOffset % 4 == 0,
+                  "DrawIndexedIndirectCount: offsets {} and {} are not 4-byte aligned", offset,
+                  countOffset);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        m_Native->CommandBuffer.drawIndexedIndirectCount(buffer->GetNative().Buffer, offset,
+                                                         countBuffer->GetNative().Buffer,
+                                                         countOffset, maxDraws, stride);
+    }
+
+    void CommandBuffer::DrawIndirectCount(const Ref<Buffer>& buffer, const u64 offset,
+                                          const Ref<Buffer>& countBuffer, const u64 countOffset,
+                                          const u32 maxDraws, const u32 stride)
+    {
+        VE_ASSERT(m_Context.GetDeviceCapabilities().IndirectDrawCount,
+                  "DrawIndirectCount: the device draws no count-driven indirect draws");
+        VE_ASSERT(offset % 4 == 0 && countOffset % 4 == 0,
+                  "DrawIndirectCount: offsets {} and {} are not 4-byte aligned", offset,
+                  countOffset);
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
+        m_Native->CommandBuffer.drawIndirectCount(buffer->GetNative().Buffer, offset,
+                                                  countBuffer->GetNative().Buffer, countOffset,
+                                                  maxDraws, stride);
+    }
+
     void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
     {
         m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);

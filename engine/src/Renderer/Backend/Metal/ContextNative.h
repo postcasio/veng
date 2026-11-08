@@ -97,6 +97,9 @@ namespace Veng::Renderer
         std::mutex BlitMutex;
         /// @brief The area clear's pipeline for each attachment layout and clear mask.
         std::unordered_map<string, id<MTLRenderPipelineState>> ClearPipelines;
+        /// @brief The count-driven draw's encode kernel, built at first use from the backend's own
+        ///        library.
+        id<MTLComputePipelineState> IndirectCountEncoder = nil;
         /// @brief The area clear's depth state that writes depth everywhere.
         id<MTLDepthStencilState> ClearDepthWrite = nil;
         /// @brief The area clear's depth state that leaves depth alone.
@@ -365,6 +368,9 @@ namespace Veng::Renderer
 
         /// @brief The area clear's depth state, writing depth when @p writesDepth.
         id<MTLDepthStencilState> ClearDepthState(bool writesDepth);
+
+        /// @brief The count-driven draw's encode kernel, built at first use.
+        id<MTLComputePipelineState> IndirectCountPipeline();
 
         /// @brief Takes a push-constant ring chunk from the free list or creates one.
         Ref<Buffer> AcquireRingChunk(Context& context);

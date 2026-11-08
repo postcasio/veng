@@ -370,3 +370,68 @@ TEST_CASE("Schedule: a depth attachment is flagged depth and a color attachment 
     CHECK(schedule[0].Attachments[1].Slot == 1);
     CHECK(schedule[0].Transitions[1].Dst.Layout == ImageLayout::DepthAttachment);
 }
+
+TEST_CASE("Schedule: only an attachment discarded inside its one pass is memoryless")
+{
+    // Slot 0 is drawn into and discarded in pass 0; slot 1 is stored there and sampled by pass 1;
+    // slot 2 is stored there and copied out by pass 1; slot 3 is the imported target.
+    const vector<ScheduleResource> resources{
+        TransientImage("Discarded", ImageUsage::DepthAttachment),
+        TransientImage("Sampled", ImageUsage::ColorAttachment | ImageUsage::Sampled),
+        TransientImage("Read Back", ImageUsage::ColorAttachment | ImageUsage::TransferSrc),
+        ImportImage("Target")};
+    const vector<RenderGraph::Access> drawn{{.Resource = ResourceId{.Index = 0},
+                                             .Kind = AccessKind::DepthAttachment,
+                                             .Load = LoadOp::Clear,
+                                             .Store = StoreOp::DontCare},
+                                            {.Resource = ResourceId{.Index = 1},
+                                             .Kind = AccessKind::ColorAttachment,
+                                             .Load = LoadOp::Clear,
+                                             .Store = StoreOp::Store},
+                                            {.Resource = ResourceId{.Index = 2},
+                                             .Kind = AccessKind::ColorAttachment,
+                                             .Load = LoadOp::DontCare,
+                                             .Store = StoreOp::Store},
+                                            {.Resource = ResourceId{.Index = 3},
+                                             .Kind = AccessKind::ColorAttachment,
+                                             .Load = LoadOp::Clear,
+                                             .Store = StoreOp::DontCare}};
+    const vector<RenderGraph::Access> read{Access(1, AccessKind::SampleGraphics),
+                                           Access(2, AccessKind::TransferSrc)};
+    const vector<SchedulePass> passes{{.Name = "Draw", .Accesses = drawn},
+                                      {.Name = "Read", .Accesses = read}};
+
+    const vector<bool> memoryless = FindMemorylessTransients(resources, passes);
+
+    REQUIRE(memoryless.size() == resources.size());
+    CHECK(memoryless[0]);
+    CHECK_FALSE(memoryless[1]);
+    CHECK_FALSE(memoryless[2]);
+    CHECK_FALSE(memoryless[3]);
+}
+
+TEST_CASE("Schedule: an attachment loaded or drawn across two passes is not memoryless")
+{
+    const vector<ScheduleResource> resources{
+        TransientImage("Loaded", ImageUsage::ColorAttachment),
+        TransientImage("Two Passes", ImageUsage::ColorAttachment)};
+    const vector<RenderGraph::Access> first{{.Resource = ResourceId{.Index = 0},
+                                             .Kind = AccessKind::ColorAttachment,
+                                             .Load = LoadOp::Load,
+                                             .Store = StoreOp::DontCare},
+                                            {.Resource = ResourceId{.Index = 1},
+                                             .Kind = AccessKind::ColorAttachment,
+                                             .Load = LoadOp::Clear,
+                                             .Store = StoreOp::DontCare}};
+    const vector<RenderGraph::Access> second{{.Resource = ResourceId{.Index = 1},
+                                              .Kind = AccessKind::ColorAttachment,
+                                              .Load = LoadOp::DontCare,
+                                              .Store = StoreOp::DontCare}};
+    const vector<SchedulePass> passes{{.Name = "First", .Accesses = first},
+                                      {.Name = "Second", .Accesses = second}};
+
+    const vector<bool> memoryless = FindMemorylessTransients(resources, passes);
+
+    CHECK_FALSE(memoryless[0]);
+    CHECK_FALSE(memoryless[1]);
+}

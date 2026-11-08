@@ -982,10 +982,11 @@ namespace Veng::Renderer
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
         // graph-derived buffer barrier.
         const ResourceId indirectId = m_GpuCull->ImportIndirect(graph);
+        const ResourceId countId = m_GpuCull->ImportCount(graph);
 
         auto gbufferPass = CreateUnique<GBufferScenePass>(
             m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
-            m_Topology->GBufferStores,
+            countId, m_Topology->GBufferStores,
             m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr, instanced,
             m_SphereTerrain.get(), *m_SurfaceShadows);
         m_Passes.push_back(std::move(gbufferPass));
@@ -1646,6 +1647,7 @@ namespace Veng::Renderer
         {
             m_Instanced->Import(graph);
             m_Instanced->DeclareCull(graph, m_GpuCull->GetHiZChainId(), m_GpuCull->IsHiZReduced());
+            m_Instanced->DeclareCompact(graph);
         }
 
         // The HDR tail — point fields, DoF composite, bloom sweep — is declared just before the
@@ -2267,6 +2269,9 @@ namespace Veng::Renderer
             SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = postResolveView.Index};
         plan.IndirectRegionOffset =
             frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
+        plan.IndirectCount = m_GpuCull->IsIndirectCount();
+        plan.CountBuffer = m_GpuCull->GetCountBuffer();
+        plan.CountRegionOffset = GpuCullSystem::GroupCountOffset(frameIndex);
 
         const std::span<const SubMeshCandidate> candidates =
             view.Broadphase->GetSubMeshCandidates();
@@ -2525,7 +2530,7 @@ namespace Veng::Renderer
         if (m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU)
         {
             m_GpuCull->RecordFrame(static_cast<u32>(plan.Slots.size()), frameBase, frameIndex,
-                                   m_PreviousViewProj, m_Settings.Occlusion);
+                                   m_PreviousViewProj, m_Settings.Occlusion, plan.Groups);
         }
     }
 
@@ -4015,6 +4020,11 @@ namespace Veng::Renderer
         {
             bindings.push_back(
                 {.Id = m_GpuCull->GetIndirectId(), .Buffer = m_GpuCull->GetIndirectBuffer()});
+            if (m_GpuCull->GetCountId().IsValid())
+            {
+                bindings.push_back(
+                    {.Id = m_GpuCull->GetCountId(), .Buffer = m_GpuCull->GetCountBuffer()});
+            }
         }
         if (m_InstancedActive)
         {
