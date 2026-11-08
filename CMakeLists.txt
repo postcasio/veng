@@ -49,41 +49,51 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # per-TU flags, whether or not the in-build linter (below) is enabled.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# The four canonical build-tree names carry their configuration, enforced here so a tree's name
-# and its cache can never disagree. A drift between the two is invisible — the option lives in
+# The canonical build-tree names carry their configuration, enforced here so a tree's name and its
+# cache can never disagree. A drift between the two is invisible — the option lives in
 # CMakeCache.txt, nothing in a build's output says which way it went, and a validation-less
 # "build-debug" runs the validation gate proving nothing — so the name is made authoritative:
 #
-#   build                  Release  VE_DEBUG=OFF  VE_VALIDATION=OFF  VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
-#   build-debug            Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
-#   build-debug-profiling  Debug    VE_DEBUG=ON   VE_VALIDATION=OFF  VE_PROFILE=ON   VENG_ENABLE_COVERAGE=OFF
-#   build-coverage         Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=ON
+#   build                         Release  VE_DEBUG=OFF  VE_VALIDATION=OFF  VE_PROFILE=OFF  COVERAGE=OFF  native
+#   build-debug                   Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  COVERAGE=OFF  native
+#   build-debug-profiling         Debug    VE_DEBUG=ON   VE_VALIDATION=OFF  VE_PROFILE=ON   COVERAGE=OFF  native
+#   build-coverage                Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  COVERAGE=ON   native
+#   build-vulkan                  Release  VE_DEBUG=OFF  VE_VALIDATION=OFF  VE_PROFILE=OFF  COVERAGE=OFF  Vulkan
+#   build-debug-vulkan            Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  COVERAGE=OFF  Vulkan
+#   build-debug-profiling-vulkan  Debug    VE_DEBUG=ON   VE_VALIDATION=OFF  VE_PROFILE=ON   COVERAGE=OFF  Vulkan
 #
+# The last column is VE_GPU_BACKEND; "native" is Metal on Apple and Vulkan elsewhere, and the
+# -vulkan trees are the Vulkan build kept as a reference where the native backend is another.
 # A variable unset in the cache is forced to the table's value, so a bare `cmake -B build-debug`
 # yields the documented tree. A value already set and contradicting the table — a stale cache or
 # an explicit -D — is a hard error, never silently corrected: flipping any of these is a full
 # rebuild and must be chosen, not inherited. Any other basename (worktrees, CI dirs, scratch
 # trees) is untouched, and so is every subproject build. VE_DEBUG and VE_PROFILE are independent
 # knobs — neither implies nor excludes the other; the per-tree rows above are the whole policy.
-# The profiling tree carries no validation because the layer hooks every command it would measure.
+# The profiling trees carry no validation because the layer hooks every command they would measure.
 # Placed ahead of the VE_DEBUG declaration and the build-type default below, which the forced
 # values pre-empt for canonical names and which still serve every other tree.
 if (PROJECT_IS_TOP_LEVEL)
     get_filename_component(VENG_TREE_NAME "${CMAKE_BINARY_DIR}" NAME)
+    if (APPLE)
+        set(VENG_NATIVE_GPU_BACKEND Metal)
+    else ()
+        set(VENG_NATIVE_GPU_BACKEND Vulkan)
+    endif ()
     set(VENG_TREE_CANONICAL TRUE)
-    if (VENG_TREE_NAME STREQUAL "build")
+    if (VENG_TREE_NAME MATCHES "^(build|build-vulkan)$")
         set(VENG_TREE_BUILD_TYPE Release)
         set(VENG_TREE_VE_DEBUG OFF)
         set(VENG_TREE_VE_VALIDATION OFF)
         set(VENG_TREE_VE_PROFILE OFF)
         set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
-    elseif (VENG_TREE_NAME STREQUAL "build-debug")
+    elseif (VENG_TREE_NAME MATCHES "^(build-debug|build-debug-vulkan)$")
         set(VENG_TREE_BUILD_TYPE Debug)
         set(VENG_TREE_VE_DEBUG ON)
         set(VENG_TREE_VE_VALIDATION ON)
         set(VENG_TREE_VE_PROFILE OFF)
         set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
-    elseif (VENG_TREE_NAME STREQUAL "build-debug-profiling")
+    elseif (VENG_TREE_NAME MATCHES "^(build-debug-profiling|build-debug-profiling-vulkan)$")
         set(VENG_TREE_BUILD_TYPE Debug)
         set(VENG_TREE_VE_DEBUG ON)
         set(VENG_TREE_VE_VALIDATION OFF)
@@ -97,6 +107,11 @@ if (PROJECT_IS_TOP_LEVEL)
         set(VENG_TREE_VENG_ENABLE_COVERAGE ON)
     else ()
         set(VENG_TREE_CANONICAL FALSE)
+    endif ()
+    if (VENG_TREE_NAME MATCHES "-vulkan$")
+        set(VENG_TREE_VE_GPU_BACKEND Vulkan)
+    else ()
+        set(VENG_TREE_VE_GPU_BACKEND ${VENG_NATIVE_GPU_BACKEND})
     endif ()
     if (VENG_TREE_CANONICAL)
         if (NOT CMAKE_BUILD_TYPE)
@@ -128,6 +143,17 @@ if (PROJECT_IS_TOP_LEVEL)
                 endif ()
             endif ()
         endforeach ()
+        # The backend is a string, so it is checked apart from the boolean knobs above.
+        if (NOT DEFINED VE_GPU_BACKEND AND NOT DEFINED CACHE{VE_GPU_BACKEND})
+            set(VE_GPU_BACKEND ${VENG_TREE_VE_GPU_BACKEND} CACHE STRING
+                    "Fixed by the canonical tree name ${VENG_TREE_NAME}" FORCE)
+        elseif (NOT VE_GPU_BACKEND STREQUAL VENG_TREE_VE_GPU_BACKEND)
+            message(FATAL_ERROR
+                    "the tree '${VENG_TREE_NAME}' means VE_GPU_BACKEND=${VENG_TREE_VE_GPU_BACKEND}, "
+                    "but this configure carries VE_GPU_BACKEND=${VE_GPU_BACKEND}. The settings "
+                    "follow the tree's name; drop the flag, or delete the tree and reconfigure, or "
+                    "use a differently-named tree.")
+        endif ()
     endif ()
 endif ()
 
@@ -136,11 +162,13 @@ endif ()
 # dependencies are configured.
 option(VE_DEBUG "Enable veng debug features (asserts, debug code, -Werror)" OFF)
 
-# VE_VALIDATION alone compiles in the Vulkan validation layers (VE_ENABLE_VALIDATION_LAYERS) and
-# registers the validation_gate test. It defaults to VE_DEBUG, so a debug tree validates unless told
+# VE_VALIDATION alone compiles in the backend's validation (VE_ENABLE_VALIDATION_LAYERS) and
+# registers the validation_gate test: the Vulkan validation layers in a Vulkan tree, and in a Metal
+# tree the check of every committed command buffer's error, with Metal's API and shader validation
+# turned on for the gate's processes. It defaults to VE_DEBUG, so a debug tree validates unless told
 # otherwise; it is a separate knob because synchronization validation hooks every vkCmd*, so a tree
 # measuring command recording would otherwise measure the layer as much as the engine.
-option(VE_VALIDATION "Enable the Vulkan validation layers and the validation gate" ${VE_DEBUG})
+option(VE_VALIDATION "Enable the backend's validation and the validation gate" ${VE_DEBUG})
 
 # Pin the build type before the FetchContent dependencies below are configured. Several of them
 # default an unset CMAKE_BUILD_TYPE to Release in their own CMakeLists — one of those writes it
@@ -186,17 +214,27 @@ set(VENG_DEBUG_OPT $<$<AND:$<CONFIG:Debug>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O2>)
 # the engine subdirectory that acts on it.
 option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" OFF)
 
-# VE_GPU_BACKEND names the one graphics API the engine is built against. Every backend-specific
-# source lives under engine/src/Renderer/Backend/<backend>/ and compiles only in a tree configured
-# for that backend; nothing outside that directory names a graphics API. The choice is a
-# compile-time one — each public resource's Native struct is defined by the backend compiled in —
-# so it is a PUBLIC compile definition (VE_GPU_BACKEND_<NAME>) and the exported package records it
-# as VENG_GPU_BACKEND.
-set(VE_GPU_BACKEND "Vulkan" CACHE STRING "The GPU backend the engine is built against (Vulkan)")
-set_property(CACHE VE_GPU_BACKEND PROPERTY STRINGS Vulkan)
-if (NOT VE_GPU_BACKEND STREQUAL "Vulkan")
+# VE_GPU_BACKEND names the one graphics API the engine is built against: Metal (Apple only) or
+# Vulkan. Every backend-specific source lives under engine/src/Renderer/Backend/<backend>/ and
+# compiles only in a tree configured for that backend; nothing outside that directory names a
+# graphics API. The choice is a compile-time one — each public resource's Native struct is defined
+# by the backend compiled in — so it is a PUBLIC compile definition (VE_GPU_BACKEND_<NAME>) and the
+# exported package records it as VENG_GPU_BACKEND. A tree the canonical table does not name
+# defaults to the platform's native backend.
+if (APPLE)
+    set(VENG_DEFAULT_GPU_BACKEND Metal)
+else ()
+    set(VENG_DEFAULT_GPU_BACKEND Vulkan)
+endif ()
+set(VE_GPU_BACKEND "${VENG_DEFAULT_GPU_BACKEND}" CACHE STRING
+        "The GPU backend the engine is built against (Metal or Vulkan)")
+set_property(CACHE VE_GPU_BACKEND PROPERTY STRINGS Metal Vulkan)
+if (NOT VE_GPU_BACKEND MATCHES "^(Metal|Vulkan)$")
     message(FATAL_ERROR "VE_GPU_BACKEND='${VE_GPU_BACKEND}' is not a backend this tree builds; "
-            "the accepted value is Vulkan")
+            "the accepted values are Metal and Vulkan")
+endif ()
+if (VE_GPU_BACKEND STREQUAL "Metal" AND NOT APPLE)
+    message(FATAL_ERROR "VE_GPU_BACKEND=Metal builds only on Apple platforms")
 endif ()
 
 # VE_SHADER_TARGETS names the GPU code every shader cooks to: Native (the default) cooks the target
@@ -1383,6 +1421,14 @@ if (VENG_BUILD_TESTS)
                 GPUOpen::VulkanMemoryAllocator
         )
     endif ()
+    # The Metal backend's device-free logic (the heap sub-allocator, the binding model, the
+    # push-constant ring, the barrier mapping) is plain C++ in headers beside the backend, so its
+    # cases register in a Metal tree with no device and no Objective-C. The binding model reads the
+    # cooker's slot constants.
+    if (VE_GPU_BACKEND STREQUAL "Metal")
+        target_sources(veng_test_unit PRIVATE tests/unit/metal_backend.cpp)
+        target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cooker/include)
+    endif ()
 
     # One ctest entry runs the whole binary: per-case discovery costs a process
     # spawn per TEST_CASE, dwarfing the ~1s the full suite takes in one run.
@@ -1998,6 +2044,8 @@ if (VENG_BUILD_TESTS)
             tests/gpu/typed_buffer_roundtrip.cpp
             tests/gpu/image_clear_format.cpp
             tests/gpu/descriptor_write_paths.cpp
+            tests/gpu/compute_binding.cpp
+            tests/gpu/bindless_lifecycle.cpp
             tests/gpu/isolation.cpp
             # The byte-address storage-buffer bindless input (set-0 g_Buffers[]) spike +
             # the SetStorageBufferHandle material path: registers a buffer beside a sampler
@@ -2407,7 +2455,8 @@ if (VENG_BUILD_TESTS)
         target_sources(veng_test_gpu PRIVATE tests/gpu/external_texture_import.mm)
         set_source_files_properties(tests/gpu/external_texture_import.mm
                 PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-        target_link_libraries(veng_test_gpu PRIVATE "-framework Metal" "-framework IOSurface")
+        target_link_libraries(veng_test_gpu PRIVATE "-framework Metal" "-framework IOSurface"
+                "-framework Foundation")
 
         # The one encoding case: a real capture written through the recorder's backend and read back
         # out of the file. Takes the backend's own frameworks and PCH opt-out.
@@ -2416,10 +2465,33 @@ if (VENG_BUILD_TESTS)
                 PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
         target_link_libraries(veng_test_gpu PRIVATE
                 "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
-                "-framework VideoToolbox")
+                "-framework VideoToolbox" "-framework CoreFoundation")
     endif ()
 
-    add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
+    # The suite is two entries, split by source file with doctest's -sf/-sfe filters. The `backend`
+    # entry holds the cases at the GPU backend's own level — resources, binding, barriers, the
+    # graph's scheduling, indirect draws — which a renderer or backend change also runs against
+    # the Vulkan reference tree (`ctest --test-dir build-debug-vulkan -L backend`). In a Metal tree
+    # it holds the cases the Metal backend runs, and every other case is `metal-pending` (see
+    # VENG_METAL_PENDING_TESTS below).
+    set(VENG_GPU_BACKEND_CASES
+            buffer_roundtrip typed_buffer_roundtrip texture_readback descriptor_write_paths
+            isolation timeline_semaphore frame_retired device_capabilities compute_binding
+            bindless_lifecycle)
+    if (VE_GPU_BACKEND STREQUAL "Vulkan")
+        list(APPEND VENG_GPU_BACKEND_CASES
+                image_clear_format bindless_registry bindless_storage_buffer indirect_draw
+                transfer_retire render_graph_skip transient_aliasing storage_image_range
+                volume_texture_3d async_upload async_submit)
+    endif ()
+    list(TRANSFORM VENG_GPU_BACKEND_CASES REPLACE "^(.*)$" "*/tests/gpu/\\1.cpp"
+            OUTPUT_VARIABLE VENG_GPU_BACKEND_FILES)
+    list(JOIN VENG_GPU_BACKEND_FILES "," VENG_GPU_BACKEND_FILTER)
+
+    add_test(NAME veng_test_gpu.backend COMMAND veng_test_gpu "-sf=${VENG_GPU_BACKEND_FILTER}")
+    set_tests_properties(veng_test_gpu.backend PROPERTIES LABELS "gpu;backend"
+            SKIP_RETURN_CODE 77)
+    add_test(NAME veng_test_gpu COMMAND veng_test_gpu "-sfe=${VENG_GPU_BACKEND_FILTER}")
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # ---- MCP render-tools proof (GPU band) ---------------------------------
@@ -2744,7 +2816,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     # ordinary ctest run skips it: it re-runs the whole gpu suite under the layers,
     # which doubles the band's GPU time, so it is run on demand —
     # `ctest --test-dir build-debug -C Validation -L validation`.
-    if (VE_VALIDATION)
+    if (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Vulkan")
         # The MaterialPreview gate binary exists only when the editor is built; pass its
         # path through only when the target was built so the gate runs the two-renderer
         # handoff there too.
@@ -2757,6 +2829,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         add_test(NAME validation_gate
             CONFIGURATIONS Validation
             COMMAND ${CMAKE_COMMAND}
+                -D VENG_GATE_BACKEND=Vulkan
                 -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
                 -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
                 -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
@@ -2766,6 +2839,34 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
         )
         set_tests_properties(validation_gate PROPERTIES LABELS validation)
+    elseif (VE_VALIDATION AND VE_GPU_BACKEND STREQUAL "Metal")
+        # On Metal the gate runs the gpu cases the backend runs (the `backend` entry's), under
+        # Metal's API and shader validation.
+        add_test(NAME validation_gate
+            CONFIGURATIONS Validation
+            COMMAND ${CMAKE_COMMAND}
+                -D VENG_GATE_BACKEND=Metal
+                -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
+                "-DVENG_GATE_GPU_ARGS=-sf=${VENG_GPU_BACKEND_FILTER}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
+        )
+        set_tests_properties(validation_gate PROPERTIES LABELS validation)
+    endif ()
+
+    # The gate's self-tests: a recorded log carrying each kind of finding the gate reads — a logged
+    # validation error, and the Metal shader validation layer's own report — must fail it, so the
+    # gate is known to be able to fail. Metal reports no deliberately invalid command buffer reliably
+    # enough to stage one live.
+    if (VE_VALIDATION)
+        foreach (VENG_GATE_FIXTURE logged_error shader_report)
+            add_test(NAME validation_gate_selftest.${VENG_GATE_FIXTURE} CONFIGURATIONS Validation
+                COMMAND ${CMAKE_COMMAND}
+                    -D VENG_GATE_CHECK_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/validation_gate/${VENG_GATE_FIXTURE}.log
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake)
+            set_tests_properties(validation_gate_selftest.${VENG_GATE_FIXTURE} PROPERTIES
+                LABELS validation
+                PASS_REGULAR_EXPRESSION "the recorded log carries unallowlisted validation ERRORs")
+        endforeach ()
     endif ()
 endif ()
 
@@ -2979,3 +3080,31 @@ configure_file(
         ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
         @ONLY
 )
+
+# In a Metal tree the GPU work the Metal backend does not run yet is `metal-pending`: every test
+# labelled gpu except those in VENG_METAL_RUNS takes the label and is disabled, so the tree's
+# default band passes, and so does the cooker suite, whose fixture shaders use the declaration form
+# a Metal cook refuses and whose cases read the SPIR-V section. VENG_RUN_METAL_PENDING runs them
+# anyway, for a backend under development. Placed after every test is registered.
+if (VENG_BUILD_TESTS AND VE_GPU_BACKEND STREQUAL "Metal")
+    option(VENG_RUN_METAL_PENDING "Run the gpu tests the Metal backend does not run yet" OFF)
+    set(VENG_METAL_RUNS
+            veng_test_gpu.backend
+            death.buffer_upload_overrun
+            death.material_block_overruns_allocation
+            death.material_range_overruns_block
+            death.descriptor_type_mismatch
+    )
+    get_property(VENG_ALL_TESTS DIRECTORY PROPERTY TESTS)
+    foreach (VENG_TEST IN LISTS VENG_ALL_TESTS)
+        get_test_property(${VENG_TEST} LABELS VENG_TEST_LABELS)
+        if (("gpu" IN_LIST VENG_TEST_LABELS OR VENG_TEST STREQUAL "cooker")
+                AND NOT VENG_TEST IN_LIST VENG_METAL_RUNS)
+            list(APPEND VENG_TEST_LABELS metal-pending)
+            set_tests_properties(${VENG_TEST} PROPERTIES LABELS "${VENG_TEST_LABELS}")
+            if (NOT VENG_RUN_METAL_PENDING)
+                set_tests_properties(${VENG_TEST} PROPERTIES DISABLED ON)
+            endif ()
+        endif ()
+    endforeach ()
+endif ()

@@ -1,9 +1,10 @@
 # veng
 
-A C++26 Vulkan rendering engine. Built as a shared library (`libveng`) with a
-public API under `engine/include/Veng/` and a Vulkan backend hidden behind it.
-Primary dev platform is macOS via MoltenVK; the code is written to be portable
-to Windows, which is why every exported symbol is annotated (see
+A C++26 rendering engine with two GPU backends, chosen per build: Metal (Metal 4), the native
+backend on Apple, and Vulkan, the backend everywhere else and the reference build on Apple (through
+MoltenVK). Built as a shared library (`libveng`) with a public API under `engine/include/Veng/` and
+the backend hidden behind it. Primary dev platform is macOS; the code is written to be portable to
+Windows, which is why every exported symbol is annotated (see
 [Symbol export](#symbol-export--hidden-by-default-annotated-to-cross)).
 
 **The render thread is single.** The render `Context` is constructed explicitly
@@ -61,22 +62,35 @@ every module is written against; each module's architecture lives in its own `CL
 ## Build & test
 
 ```sh
-# Default build — VE_DEBUG=ON, VE_VALIDATION=ON (Vulkan validation on). Configure once, then build.
+# Default build — VE_DEBUG=ON, VE_VALIDATION=ON, the platform's native backend (Metal on Apple).
 cmake -B build-debug -S .
-cmake --build build-debug -j 4
+cmake --build build-debug -j 6
 ctest --test-dir build-debug -j 4 --output-on-failure
 ```
 
-**The canonical tree names carry their configuration, enforced at configure time.**
-When veng is the top-level project and the binary dir's basename is one of the four
-canonical names, `CMakeLists.txt` fixes the tree's settings from its name:
+**Requirements.** The Vulkan SDK everywhere, for its Slang component (the cooker links it), and for
+the Vulkan backend's loader and headers in a Vulkan tree. In a Metal tree, Xcode's Metal toolchain,
+which Xcode 26 downloads separately (`xcodebuild -downloadComponent MetalToolchain`); its absence is
+a configure-time error.
 
-| tree basename | build type | `VE_DEBUG` | `VE_VALIDATION` | `VE_PROFILE` | `VENG_ENABLE_COVERAGE` |
-|---|---|---|---|---|---|
-| `build` | Release | OFF | OFF | OFF | OFF |
-| `build-debug` | Debug | ON | ON | OFF | OFF |
-| `build-debug-profiling` | Debug | ON | OFF | ON | OFF |
-| `build-coverage` | Debug | ON | ON | OFF | ON |
+**The canonical tree names carry their configuration, enforced at configure time.**
+When veng is the top-level project and the binary dir's basename is one of the canonical names,
+`CMakeLists.txt` fixes the tree's settings from its name:
+
+| tree basename | build type | `VE_DEBUG` | `VE_VALIDATION` | `VE_PROFILE` | `VENG_ENABLE_COVERAGE` | `VE_GPU_BACKEND` |
+|---|---|---|---|---|---|---|
+| `build` | Release | OFF | OFF | OFF | OFF | native |
+| `build-debug` | Debug | ON | ON | OFF | OFF | native |
+| `build-debug-profiling` | Debug | ON | OFF | ON | OFF | native |
+| `build-coverage` | Debug | ON | ON | OFF | ON | native |
+| `build-vulkan` | Release | OFF | OFF | OFF | OFF | Vulkan |
+| `build-debug-vulkan` | Debug | ON | ON | OFF | OFF | Vulkan |
+| `build-debug-profiling-vulkan` | Debug | ON | OFF | ON | OFF | Vulkan |
+
+"Native" is **Metal on Apple and Vulkan elsewhere**, so on Apple `build-debug` is the Metal tree the
+project is worked in, and the `-vulkan` trees are the Vulkan build kept as a reference (on Windows
+and Linux they duplicate the native trees). A tree the table does not name defaults to the native
+backend too.
 
 A variable unset in the cache is forced to the table's value — so the bare configure
 above yields the documented tree with no flags — and a value contradicting the table
@@ -87,7 +101,8 @@ right tree name, deleting the tree, or using a non-canonical name. Any other bas
 `VE_DEBUG` and `VE_PROFILE` are **independent knobs** — neither implies nor excludes
 the other; `build-debug-profiling` (debug code *and* profiler) is the standing
 profiling tree, and `VE_PROFILE` defaults plain OFF everywhere. **`VE_VALIDATION`** alone
-compiles in the Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`) and registers the
+compiles in the backend's validation (`VE_ENABLE_VALIDATION_LAYERS`: the Vulkan validation layers,
+or the Metal backend's check of each submission's reported error) and registers the
 `validation_gate` test (run on demand, see below); it defaults to `VE_DEBUG`, and the profiling
 tree pins it OFF because synchronization validation hooks every `vkCmd*`, so a profile of command
 recording would measure the layer as much as the engine. That tree keeps `VE_DEBUG`'s asserts and debug code.
@@ -665,8 +680,8 @@ handshake are in
 
 ### The release build (validation OFF)
 
-`VE_VALIDATION` (on wherever `VE_DEBUG` is, unless a tree says otherwise) enables Vulkan
-validation layers (`VE_ENABLE_VALIDATION_LAYERS`), and the default `build-debug` above turns
+`VE_VALIDATION` (on wherever `VE_DEBUG` is, unless a tree says otherwise) enables the backend's
+validation (`VE_ENABLE_VALIDATION_LAYERS`), and the default `build-debug` above turns
 it on — so validation runs by default. The
 validation-**OFF** build is the *optional* one, in its own `build/` dir (both
 `build/` and `build-debug/` are gitignored):
@@ -690,16 +705,30 @@ the default and catches more. Do not build both routinely.
   serial-versus-parallel byte comparison was **rejected**, not merely unavailable; the reasoning,
   and what carries the weight instead (the thread sanitiser and `vengc verify`), is in
   [cooker/CLAUDE.md](cooker/CLAUDE.md#what-is-checked-and-what-was-deliberately-not).
-- **Validation errors do NOT fail tests by themselves.** The debug-messenger
-  callback (`engine/src/Renderer/Backend/Vulkan/Context.cpp`) only `Log::Error`s on
-  validation errors — it never aborts. So a green `ctest` under `VE_VALIDATION` only means
-  something if the validation gate ran, and **an ordinary `ctest` does not run it**: the gate
-  re-runs the whole gpu suite under the layers, doubling the band's GPU time, so it carries
-  `CONFIGURATIONS Validation` and is run on demand — before landing renderer or backend work —
-  with `ctest --test-dir build-debug -C Validation -j 4 -L validation`. It runs the
-  `gpu`-labelled binaries and fails on any unallowlisted `Vulkan validation` ERROR line
-  (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
+- **Validation errors do NOT fail tests by themselves.** The Vulkan debug-messenger callback
+  (`engine/src/Renderer/Backend/Vulkan/Context.cpp`) and the Metal backend's submission feedback
+  (`Backend/Metal/Context.mm`) only `Log::Error` a validation error — neither aborts. So a green
+  `ctest` under `VE_VALIDATION` only means something if the validation gate ran, and **an ordinary
+  `ctest` does not run it**: the gate re-runs the gpu suite under validation, doubling the band's
+  GPU time, so it carries `CONFIGURATIONS Validation` and is run on demand — before landing
+  renderer or backend work — with `ctest --test-dir build-debug -C Validation -j 4 -L validation`.
+  It fails on any unallowlisted `Vulkan validation` or `Metal validation` ERROR line
+  (`cmake/ValidationGate.cmake`; allowlist currently empty). In a Vulkan tree it runs the
+  `gpu`-labelled binaries; in a Metal tree it runs the gpu cases the backend runs with Metal's API
+  and shader validation on (`MTL_DEBUG_LAYER`, `MTL_SHADER_VALIDATION`,
+  `MTL_SHADER_VALIDATION_REPORT_TO_STDERR`) and also fails on the shader validation layer's own
+  stderr report and on a non-zero exit. The `validation_gate_selftest.*` cases feed the gate a
+  recorded log carrying each kind of finding and pass only when it fails, so the gate is known to be
+  able to fail; a live invalid command buffer is not staged, since on macOS 26 Metal reports none
+  reliably (a shader validation report reaches stderr intermittently, and a faulting store reaches no
+  submission's error). Metal has no synchronization validation. The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
+- **A Metal tree runs part of the gpu band.** Every gpu test the Metal backend does not run yet
+  carries the `metal-pending` label and is disabled, so the tree's default band passes. So does the
+  cooker suite, whose fixture shaders use the declaration form a Metal cook refuses and whose cases
+  read the SPIR-V section, so the Vulkan tree is where it runs;
+  `-DVENG_RUN_METAL_PENDING=ON` runs them anyway. The gpu suite's backend-level cases are one entry,
+  `veng_test_gpu.backend` (label `backend`), selected by source file (`VENG_GPU_BACKEND_CASES`).
 - **Synchronization validation cannot see a shader access through the bindless sets.** The
   context turns on its shader-access analysis (`syncval_shader_accesses_heuristic`), without which
   it checks no descriptor access a draw or dispatch makes at all; with it, accesses through an
@@ -783,10 +812,11 @@ unmapped values — so adding a format is a loud one-line fix, not silent UB.
 
 ### One GPU backend per build — only the backend names a graphics API
 
-**`VE_GPU_BACKEND`** (a cache string; `Vulkan` is the only value it accepts) picks the one backend
-a tree compiles. Its sources, its precompiled header and its libraries (`Vulkan::Vulkan`, VMA) are
-conditional on it; it is a PUBLIC compile definition (`VE_GPU_BACKEND_VULKAN`) and the exported
-package records it as `VENG_GPU_BACKEND`. There is no runtime selection and no virtual dispatch:
+**`VE_GPU_BACKEND`** (a cache string, `Metal` or `Vulkan`; `Metal` builds only on Apple) picks the one
+backend a tree compiles. Its sources and its libraries (`Vulkan::Vulkan` and VMA, or the Metal and
+QuartzCore frameworks) are conditional on it; it is a PUBLIC compile definition
+(`VE_GPU_BACKEND_VULKAN` or `VE_GPU_BACKEND_METAL`) and the exported package records it as
+`VENG_GPU_BACKEND`. There is no runtime selection and no virtual dispatch:
 each public resource's `Native` struct is defined by the backend compiled in.
 
 **`VE_SHADER_TARGETS`** (`Native`, the default, or `All`) is the GPU code shaders cook to: `Native`
@@ -1077,6 +1107,13 @@ of its own keyed on `<name>_EXPORTS` — `veng_add_game` builds it hidden too (s
 `examples/template/MarkerSet.h`).
 
 ## Working norms
+
+**A renderer or backend change also proves the Vulkan backend.** On Apple nothing else runs Vulkan
+on the development machine, while it still ships everywhere else and is the only backend with
+synchronization validation. So a change touching `engine/src/Renderer/`, the render graph, shaders or
+`Backend/Vulkan/` also runs, each once to a log, `ctest --test-dir build-debug-vulkan -L backend` and
+that tree's validation gate on the same label (`ctest --test-dir build-debug-vulkan -C Validation -L
+validation`) before it commits.
 
 **Every unit of work lands the same way.** Per change:
 1. Implement it.

@@ -64,9 +64,10 @@ namespace Veng::Renderer
                               capabilities.MaxComputeWorkgroupSubgroups)
                 : string("unavailable");
         return fmt::format(
-            "Device: {} ({} {}, Vulkan {}.{}.{}); subgroup size {} in {} [{}], quad in all stages "
+            "Device: {} ({} {}, API {}.{}.{}); subgroup size {} in {} [{}], quad in all stages "
             "{}; size control {}; float16 {}, int16 {}, 16-bit storage buffers {}; storage writes "
-            "B10G11R11Ufloat {}, RGBA16Sfloat {}; MetalFX temporal {}, spatial {}",
+            "B10G11R11Ufloat {}, RGBA16Sfloat {}; MetalFX temporal {}, spatial {}; mesh shading "
+            "{}; ray tracing {}",
             capabilities.DeviceName, capabilities.DriverName, capabilities.DriverInfo,
             (capabilities.ApiVersion >> 22U) & 0x7FU, (capabilities.ApiVersion >> 12U) & 0x3FFU,
             capabilities.ApiVersion & 0xFFFU, capabilities.SubgroupSize,
@@ -76,6 +77,7 @@ namespace Veng::Renderer
             YesNo(capabilities.ShaderFloat16), YesNo(capabilities.ShaderInt16),
             YesNo(capabilities.StorageBuffer16BitAccess),
             YesNo(capabilities.B10G11R11UfloatStorage), YesNo(capabilities.RGBA16SfloatStorage),
-            YesNo(capabilities.MetalFxTemporal), YesNo(capabilities.MetalFxSpatial));
+            YesNo(capabilities.MetalFxTemporal), YesNo(capabilities.MetalFxSpatial),
+            YesNo(capabilities.MeshShading), YesNo(capabilities.RayTracing));
     }
 }

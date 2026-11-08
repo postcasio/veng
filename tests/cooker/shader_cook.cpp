@@ -3,6 +3,8 @@
 // reflected tables (bindings, push constants):
 //   - vertex stage (entry 4001, mesh.vert.slang via mesh.vert.shader.json)
 //   - fragment stage (entry 4002, brick.frag.slang via brick.frag.shader.json)
+//   - compute stage (grid.comp.slang via grid.comp.shader.json), whose [numthreads] the cooked
+//     interface carries
 //
 // The blob is read back through ParseCookedShader, the loader's own parser.
 // Shaders reference their vertex layout by AssetId
@@ -116,6 +118,32 @@ TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflecti
     CHECK(pushConstant.Offset == 0);
     CHECK(pushConstant.StageMask == 2u); // ShaderStage::Fragment underlying value
     CHECK(pushConstant.Size > 0);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a compute shader's threadgroup size is cooked axis by axis")
+{
+    path outArchive;
+    const Result<ArchiveReader> reader = CookShaderPack(outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x5C9F7BDAE2311FD0ULL});
+    REQUIRE(entry.has_value());
+    const Result<CookedShaderView> shader = ParseCookedShader(entry->Blob);
+    REQUIRE_MESSAGE(shader.has_value(), shader.error());
+
+    // grid.comp.slang declares [numthreads(8, 4, 2)].
+    CHECK(shader->Interface.ThreadgroupSize[0] == 8u);
+    CHECK(shader->Interface.ThreadgroupSize[1] == 4u);
+    CHECK(shader->Interface.ThreadgroupSize[2] == 2u);
+
+    // A stage other than compute has none.
+    const optional<ArchiveEntry> fragment = reader->Find(AssetId{0xFA2});
+    REQUIRE(fragment.has_value());
+    const Result<CookedShaderView> fragmentShader = ParseCookedShader(fragment->Blob);
+    REQUIRE(fragmentShader.has_value());
+    CHECK(fragmentShader->Interface.ThreadgroupSize[0] == 0u);
 
     std::filesystem::remove(outArchive);
 }

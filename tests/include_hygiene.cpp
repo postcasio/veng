@@ -6,8 +6,8 @@
 // pulls in <vulkan/...>, <GLFW/...>, vk_mem_alloc.h or <nfd.h>, this file fails
 // to compile — keeping the boundary from rotting.
 //
-// Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
-// escape hatch that exposes raw handles and is expected to need Vulkan headers.
+// Veng/Renderer/Native.h and Veng/Renderer/NativeMetal.h are deliberately excluded: they are the
+// sanctioned escape hatches that expose raw handles, each compiling only in its backend's build.
 //
 // Compiling catches an include that fails to resolve; it cannot catch a header naming a backend
 // type it never needs complete, or a backend header reached through a relative path. So the
@@ -259,6 +259,7 @@ int main()
     namespace fs = std::filesystem;
     const fs::path root = VENG_PUBLIC_INCLUDE_DIR;
     const fs::path exempt = root / "Veng" / "Renderer" / "Native.h";
+    const fs::path exemptMetal = root / "Veng" / "Renderer" / "NativeMetal.h";
     const std::regex backendName{
         R"(\bvk::|\bVk[A-Z]\w*|\bVK_[A-Z]\w*|\bVma[A-Z]\w*|\bvma[A-Z]\w*|vulkan/|vk_mem_alloc|Renderer/Backend/)"};
 
@@ -266,7 +267,7 @@ int main()
     for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root))
     {
         if (!entry.is_regular_file() || entry.path().extension() != ".h" ||
-            fs::equivalent(entry.path(), exempt))
+            fs::equivalent(entry.path(), exempt) || fs::equivalent(entry.path(), exemptMetal))
         {
             continue;
         }
@@ -288,7 +289,7 @@ int main()
     const fs::path engineSource = VENG_ENGINE_SOURCE_DIR;
     const fs::path backendSource = engineSource / "Renderer" / "Backend";
     const std::regex backendInclude{
-        R"(^\s*#\s*(include|import)\s*[<"].*(Backend/|vulkan/|vk_mem_alloc|Veng/Renderer/Native\.h))"};
+        R"(^\s*#\s*(include|import)\s*[<"].*(Backend/|vulkan/|vk_mem_alloc|Veng/Renderer/Native(Metal)?\.h))"};
     for (const fs::directory_entry& entry : fs::recursive_directory_iterator(engineSource))
     {
         const fs::path extension = entry.path().extension();

@@ -808,26 +808,6 @@ namespace Veng::Renderer
         return m_Native->Capabilities;
     }
 
-    bool Context::IsGpuTimingSupported() const
-    {
-        return m_GpuTimingSupported;
-    }
-
-    f32 Context::GetLastGpuFrameTimeMs() const
-    {
-        return m_GpuFrameTimeMs;
-    }
-
-    std::span<const Context::GpuPassTiming> Context::GetLastGpuPassTimings() const
-    {
-        return m_GpuPassTimings;
-    }
-
-    std::span<const Context::GpuPassTiming> Context::GetLastImmediateGpuPassTimings() const
-    {
-        return m_ImmediateGpuPassTimings;
-    }
-
     Context::GpuMemoryUsage Context::GetGpuMemoryUsage() const
     {
         const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
@@ -1666,21 +1646,6 @@ namespace Veng::Renderer
         return *m_Native->Bindless;
     }
 
-    GeneratedTextureService& Context::GetGeneratedTextures() const
-    {
-        return *m_GeneratedTextures;
-    }
-
-    AsyncReadback& Context::GetAsyncReadback() const
-    {
-        return *m_AsyncReadback;
-    }
-
-    void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)
-    {
-        m_PendingBindlessAcquires.push_back(view);
-    }
-
     void Context::RecordSetupCommands(std::function<void(CommandBuffer&)> commands)
     {
         if (m_Native->ActiveImmediateCommands != nullptr)
@@ -1694,33 +1659,6 @@ namespace Veng::Renderer
             return;
         }
         m_PendingSetupCommands.push_back(std::move(commands));
-    }
-
-    void Context::DrainBindlessAcquires(CommandBuffer& commandBuffer)
-    {
-        for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
-        {
-            commandBuffer.PrepareForAccess(view, AccessKind::SampleAny);
-        }
-        m_PendingBindlessAcquires.clear();
-    }
-
-    void Context::DrainSetupCommands(CommandBuffer& commandBuffer)
-    {
-        if (m_PendingSetupCommands.empty())
-        {
-            return;
-        }
-        // Swapped out first: a recording may itself hand over more setup work, which records
-        // directly now that a buffer is open.
-        vector<std::function<void(CommandBuffer&)>> pending;
-        pending.swap(m_PendingSetupCommands);
-        BeginGpuScope(commandBuffer, "Setup Commands");
-        for (const std::function<void(CommandBuffer&)>& commands : pending)
-        {
-            commands(commandBuffer);
-        }
-        EndGpuScope(commandBuffer);
     }
 
     vector<const char*>& Context::Native::GetRequiredExtensions()

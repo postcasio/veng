@@ -27,6 +27,11 @@ namespace Veng
         }
     }
 
+    GLFWwindow* GetGlfwWindow(const Window& window)
+    {
+        return window.m_Handle;
+    }
+
     Window::Window(const WindowInfo& info)
         : m_Extent(info.Extent), m_Resizable(info.Resizable), m_Title(info.Title),
           m_MouseCaptured(info.CaptureMouse), m_Native(CreateUnique<Native>())

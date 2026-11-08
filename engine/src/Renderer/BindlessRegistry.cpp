@@ -15,19 +15,17 @@
 #include <Veng/Renderer/FormatInfo.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Sampler.h>
-#include "Natives.h"
-#include "TypeMapping.h"
 
-#include "../../MaterialArena.h"
+#include "BindlessBackend.h"
+#include "MaterialArena.h"
 
 namespace Veng::Renderer
 {
     namespace
     {
         // Bit-pattern equality for a sampler's float fields. Two descriptions differing by an
-        // epsilon produce two different Vulkan samplers, so the cache must treat them as different
+        // epsilon produce two different device samplers, so the cache must treat them as different
         // too; comparing the bits also makes the relation reflexive for a NaN LOD, which `==` is
         // not — a description carrying one would otherwise miss against itself and take a fresh
         // slot on every ask.
@@ -77,7 +75,7 @@ namespace Veng::Renderer
         }
     }
 
-    void BindlessRegistry::SlotArray::Init(u32 capacity, u32 framesInFlight)
+    void BindlessSlotArray::Init(u32 capacity, u32 framesInFlight)
     {
         Slots.resize(capacity);
         Free.resize(capacity);
@@ -88,7 +86,7 @@ namespace Veng::Renderer
         PendingRelease.resize(framesInFlight);
     }
 
-    u32 BindlessRegistry::SlotArray::Allocate(Ref<void> resource, string_view what)
+    u32 BindlessSlotArray::Allocate(Ref<void> resource, string_view what)
     {
         VE_ASSERT(!Free.empty(), "BindlessRegistry: {} array exhausted ({} slots)", what,
                   Slots.size());
@@ -99,12 +97,12 @@ namespace Veng::Renderer
         return index;
     }
 
-    void BindlessRegistry::SlotArray::ReleaseDeferred(u32 index, u32 currentFrameInFlight)
+    void BindlessSlotArray::ReleaseDeferred(u32 index, u32 currentFrameInFlight)
     {
         PendingRelease[currentFrameInFlight].push_back(index);
     }
 
-    void BindlessRegistry::SlotArray::OnFrameAcquired(u32 frameInFlight)
+    void BindlessSlotArray::OnFrameAcquired(u32 frameInFlight)
     {
         for (const u32 index : PendingRelease[frameInFlight])
         {
@@ -315,141 +313,6 @@ namespace Veng::Renderer
 
     BindlessRegistry::~BindlessRegistry() = default;
 
-    void BindlessRegistry::WriteTexture(u32 index, const Ref<ImageView>& view) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .imageView = GetVkImageView(*view),
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = TextureBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::SampledImage),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteNormalVariance(u32 index, const Ref<ImageView>& view) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .imageView = GetVkImageView(*view),
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = NormalVarianceBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::SampledImage),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteVolume(u32 index, const Ref<ImageView>& view) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .imageView = GetVkImageView(*view),
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_VolumeSet),
-            .dstBinding = TypedSetBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::SampledImage),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteCube(u32 index, const Ref<ImageView>& view) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .imageView = GetVkImageView(*view),
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_CubeSet),
-            .dstBinding = TypedSetBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::SampledImage),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteSampler(u32 index, const Ref<Sampler>& sampler) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .sampler = GetVkSampler(*sampler),
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = SamplerBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::Sampler),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteStorageImage(u32 index, const Ref<ImageView>& view) const
-    {
-        const vk::DescriptorImageInfo imageInfo{
-            .imageView = GetVkImageView(*view),
-            .imageLayout = vk::ImageLayout::eGeneral,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = StorageImageBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::StorageImage),
-            .pImageInfo = &imageInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
-    void BindlessRegistry::WriteStorageBuffer(u32 index, const Ref<Buffer>& buffer) const
-    {
-        // Bind the whole buffer at full range; a material selects the slot by handle index and
-        // byte-addresses inside it, so there is no dynamic offset.
-        const vk::DescriptorBufferInfo bufferInfo{
-            .buffer = GetVkBuffer(*buffer),
-            .offset = 0,
-            .range = VK_WHOLE_SIZE,
-        };
-
-        const vk::WriteDescriptorSet write{
-            .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = StorageBufferBinding,
-            .dstArrayElement = index,
-            .descriptorCount = 1,
-            .descriptorType = ToVk(DescriptorType::StorageBuffer),
-            .pBufferInfo = &bufferInfo,
-        };
-
-        GetVkDevice(m_Context).updateDescriptorSets(write, {});
-    }
-
     TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled)
     {
         return Register(sampled, nullptr);
@@ -541,7 +404,7 @@ namespace Veng::Renderer
             }
         }
 
-        // The Vulkan sampler is built from the effective description (the global override folded in
+        // The device sampler is built from the effective description (the global override folded in
         // for an opted-in one); the author description is what the entry stores, to key the cache
         // and to rebuild from on a later SetGlobalAnisotropy.
         const Ref<Sampler> sampler = Sampler::Create(m_Context, EffectiveSamplerInfo(info));
@@ -729,7 +592,7 @@ namespace Veng::Renderer
         // at an out-of-frame immediate recording.
         // Neither consumes a dirty count.
         const u32 slot = m_Context.GetCurrentFrameInFlight();
-        if (m_Context.GetNative().IsSlotWritable(slot))
+        if (BindlessBackend::IsSlotWritable(m_Context, slot))
         {
             WriteMaterialRegion(entryIndex, slot, offset, bytes);
         }
@@ -757,7 +620,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Textures.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_Textures.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(VolumeHandle handle)
@@ -766,7 +629,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Volumes.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_Volumes.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(CubeHandle handle)
@@ -775,7 +638,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Cubes.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_Cubes.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(SamplerHandle handle)
@@ -796,7 +659,7 @@ namespace Veng::Renderer
                       handle.Index, entry.Info.Name);
         }
 
-        m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_Samplers.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(StorageImageHandle handle)
@@ -805,7 +668,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_StorageImages.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(StorageBufferHandle handle)
@@ -814,7 +677,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_StorageBuffers.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
+        m_StorageBuffers.ReleaseDeferred(handle.Index, BindlessBackend::GetReleaseSlot(m_Context));
     }
 
     void BindlessRegistry::Release(MaterialHandle handle)
@@ -829,7 +692,7 @@ namespace Veng::Renderer
 
         MaterialEntry& entry = m_MaterialEntries[entryIndex];
         m_MaterialArena->ReleaseDeferred(handle.Offset, entry.Capacity,
-                                         m_Context.GetNative().GetReleaseSlot());
+                                         BindlessBackend::GetReleaseSlot(m_Context));
 
         // Retire the entry with the range: an entry still owing flushes would write its stale
         // bytes into whatever material the range is reallocated to.
@@ -868,7 +731,7 @@ namespace Veng::Renderer
             return DescribeMaterialRanges();
         }
 
-        const SlotArray* const slots = SlotsFor(array);
+        const BindlessSlotArray* const slots = SlotsFor(array);
         VE_ASSERT(slots != nullptr, "BindlessRegistry::DescribeSlots: unmapped BindlessArray {}",
                   static_cast<u32>(array));
 
@@ -913,7 +776,7 @@ namespace Veng::Renderer
         {
             return nullptr;
         }
-        const SlotArray* const slots = SlotsFor(array);
+        const BindlessSlotArray* const slots = SlotsFor(array);
         if (slots == nullptr || index >= slots->Slots.size() || !slots->Slots[index] ||
             std::ranges::find(slots->Free, index) != slots->Free.end())
         {
@@ -922,7 +785,7 @@ namespace Veng::Renderer
         return std::static_pointer_cast<ImageView>(slots->Slots[index]);
     }
 
-    const BindlessRegistry::SlotArray* BindlessRegistry::SlotsFor(const BindlessArray array) const
+    const BindlessSlotArray* BindlessRegistry::SlotsFor(const BindlessArray array) const
     {
         switch (array)
         {

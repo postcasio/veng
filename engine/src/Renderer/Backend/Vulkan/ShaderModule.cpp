@@ -48,7 +48,7 @@ namespace Veng::Renderer
     /// @param info     Binary SPIR-V, entry point, and name.
     ShaderModule::ShaderModule(Context& context, const ShaderModuleBinaryInfo& info)
         : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
-          m_Native(CreateUnique<Native>())
+          m_ThreadgroupSize(info.ThreadgroupSize), m_Native(CreateUnique<Native>())
     {
         VE_ASSERT(info.Kind == ShaderCodeKind::SpirV,
                   "ShaderModule '{}': the Vulkan backend creates modules from SPIR-V only",

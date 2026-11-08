@@ -2,6 +2,8 @@
 
 // The engine's seam to Apple's GPU objects, free of every graphics API's types: the video
 // recorder and the MetalFX scalers reach Metal through it whichever backend is compiled in. The
+// Vulkan backend implements it through MoltenVK's Metal-object export; the Metal backend hands out
+// its own objects. The
 // device (Context::GetExternalDevice) and the frame-split shared event (FrameSplitPoint) already
 // reach a caller through the public Context; this adds what is per image and the release that
 // follows a frame.
@@ -72,9 +74,9 @@ namespace Veng::Renderer::Apple
     /// @brief Returns the platform texture behind an engine image, as an opaque handle.
     ///
     /// The handle is unowned (+0) — the backend keeps the reference, and it is valid for as long
-    /// as the image is. Null when the image was not created with
-    /// ImageInfo::PlatformExport, when the device enabled no platform-object interop, or on a
-    /// platform with none.
+    /// as the image is. On the Metal backend every image's texture is returned. On the Vulkan
+    /// backend it is null when the image was not created with ImageInfo::PlatformExport or the
+    /// device enabled no platform-object interop. Null on a platform with none.
     /// @param context  The context the image was created on.
     /// @param image    The image to read the texture of.
     /// @return The platform texture (an @c MTLTexture on Apple), or null.
@@ -88,7 +90,7 @@ namespace Veng::Renderer::Apple
     /// @param context The context whose frame retire releases the object.
     /// @param object  The retained object (an Objective-C object on Apple); its one reference is
     ///                consumed.
-    VE_API void ReleaseAfterFrame(Context& context, void* object);
+    VE_API void ReleaseAfterFrame(const Context& context, void* object);
 
 #ifndef __APPLE__
     inline void* GetPlatformTexture(const Context&, const Image&)
@@ -108,6 +110,6 @@ namespace Veng::Renderer::Apple
         return nullptr;
     }
 
-    inline void ReleaseAfterFrame(Context&, void*) {}
+    inline void ReleaseAfterFrame(const Context&, void*) {}
 #endif
 }

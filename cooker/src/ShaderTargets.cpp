@@ -506,6 +506,15 @@ namespace Veng::Cook
         }
 
         ReflectedShaderInterface reflected{.StageMask = *stageMask};
+        if (spirv.getEntryPointByIndex(0)->getStage() == SLANG_STAGE_COMPUTE)
+        {
+            std::array<SlangUInt, 3> size{};
+            spirv.getEntryPointByIndex(0)->getComputeThreadGroupSize(3, size.data());
+            for (usize axis = 0; axis < size.size(); ++axis)
+            {
+                reflected.ThreadgroupSize[axis] = static_cast<u32>(size[axis]);
+            }
+        }
 
         // Records one binding, finding its Metal side when Metal is compiled.
         const auto addBinding = [&](slang::VariableLayoutReflection* variable, const u32 set,

@@ -11,7 +11,7 @@
 if (VE_GPU_BACKEND STREQUAL "Vulkan")
     add_library(veng_backend_objs OBJECT
         src/Renderer/Backend/Vulkan/Barrier.cpp
-        src/Renderer/Backend/Vulkan/BindlessRegistry.cpp
+        src/Renderer/Backend/Vulkan/BindlessWrites.cpp
         src/Renderer/Backend/Vulkan/Buffer.cpp
         src/Renderer/Backend/Vulkan/CommandBuffer.cpp
         src/Renderer/Backend/Vulkan/CommandPool.cpp
@@ -349,6 +349,8 @@ add_library(veng SHARED
         src/Renderer/RenderGraph.cpp
         src/Renderer/RenderGraphSchedule.cpp
         src/Renderer/BarrierDecision.cpp
+        src/Renderer/BindlessRegistry.cpp
+        src/Renderer/Context.cpp
         src/Renderer/TransientAllocation.cpp
         src/Renderer/MaterialArena.cpp
         src/Renderer/VertexBufferLayout.cpp
@@ -488,6 +490,8 @@ endif ()
 if (VE_GPU_BACKEND STREQUAL "Vulkan")
     target_compile_definitions(veng PUBLIC VE_GPU_BACKEND_VULKAN=1 VULKAN_HPP_STORAGE_SHARED)
     target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
+elseif (VE_GPU_BACKEND STREQUAL "Metal")
+    target_compile_definitions(veng PUBLIC VE_GPU_BACKEND_METAL=1)
 endif ()
 if (WIN32)
     # The crash reporter's symbol resolution (Veng/Platform/CrashReport.h); ships with Windows.
@@ -696,6 +700,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/LodSelection.cpp
         src/Renderer/ShadowCasters.cpp
         src/Renderer/Backend/Vulkan/CommandBuffer.cpp
+        src/Renderer/Backend/Metal/CommandBuffer.mm
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/DepthNormalPrepassScenePass.cpp
         src/Renderer/Passes/ShadowScenePass.cpp
@@ -770,6 +775,38 @@ if (APPLE)
                 PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     endif ()
     target_link_libraries(veng PRIVATE "-framework Metal" "-weak_framework MetalFX")
+
+    # The Metal backend: Objective-C++ compiled with ARC, which is enabled per file so the engine's
+    # other .mm sources keep their manual retain and release. Like those, its units compile without
+    # the C++ precompiled header.
+    if (VE_GPU_BACKEND STREQUAL "Metal")
+        set(VENG_METAL_BACKEND_SOURCES
+                src/Renderer/Backend/Metal/AppleInterop.mm
+                src/Renderer/Backend/Metal/Barrier.mm
+                src/Renderer/Backend/Metal/BindlessWrites.mm
+                src/Renderer/Backend/Metal/Buffer.mm
+                src/Renderer/Backend/Metal/CommandBuffer.mm
+                src/Renderer/Backend/Metal/ComputePipeline.mm
+                src/Renderer/Backend/Metal/Context.mm
+                src/Renderer/Backend/Metal/DescriptorSet.mm
+                src/Renderer/Backend/Metal/DescriptorSetLayout.mm
+                src/Renderer/Backend/Metal/DeviceProbe.mm
+                src/Renderer/Backend/Metal/Fence.mm
+                src/Renderer/Backend/Metal/GraphicsPipeline.mm
+                src/Renderer/Backend/Metal/Image.mm
+                src/Renderer/Backend/Metal/ImageView.mm
+                src/Renderer/Backend/Metal/NativeMetal.mm
+                src/Renderer/Backend/Metal/PipelineLayout.mm
+                src/Renderer/Backend/Metal/Sampler.mm
+                src/Renderer/Backend/Metal/Semaphore.mm
+                src/Renderer/Backend/Metal/ShaderModule.mm
+                src/Renderer/Backend/Metal/TimelineSemaphore.mm
+        )
+        target_sources(veng PRIVATE ${VENG_METAL_BACKEND_SOURCES})
+        set_property(SOURCE ${VENG_METAL_BACKEND_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -fobjc-arc)
+        set_property(SOURCE ${VENG_METAL_BACKEND_SOURCES} PROPERTY SKIP_PRECOMPILE_HEADERS ON)
+        target_link_libraries(veng PRIVATE "-framework QuartzCore")
+    endif ()
 
     # The video recorder's encoder backend: AVAssetWriter over VideoToolbox, writing the frames the
     # renderer composited into the writer's own IOSurface-backed buffers. Non-ARC like the TUs above.

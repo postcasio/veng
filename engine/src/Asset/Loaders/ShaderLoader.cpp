@@ -68,6 +68,10 @@ namespace Veng
 #if defined(VE_GPU_BACKEND_VULKAN)
         constexpr CookedShaderCode NativeShaderCode = CookedShaderCode::SpirV;
         constexpr Renderer::ShaderCodeKind NativeShaderCodeKind = Renderer::ShaderCodeKind::SpirV;
+#elif defined(VE_GPU_BACKEND_METAL)
+        constexpr CookedShaderCode NativeShaderCode = CookedShaderCode::MetalLibrary;
+        constexpr Renderer::ShaderCodeKind NativeShaderCodeKind =
+            Renderer::ShaderCodeKind::MetalLibrary;
 #endif
 
         // A Metal binding names an argument-buffer element, or a buffer slot, which must be one of
@@ -198,9 +202,12 @@ namespace Veng
         const auto code = CreateRef<vector<u8>>((*section)->Bytes.begin(), (*section)->Bytes.end());
         const auto parsedInterface =
             CreateRef<Renderer::ShaderInterface>(std::move(shaderInterface));
-        parsed.Complete = [code, parsedInterface, entryPoint = (*section)->EntryPoint,
-                           id](AssetManager& manager,
-                               std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+        const uvec3 threadgroupSize{view.Interface.ThreadgroupSize[0],
+                                    view.Interface.ThreadgroupSize[1],
+                                    view.Interface.ThreadgroupSize[2]};
+        parsed.Complete =
+            [code, parsedInterface, entryPoint = (*section)->EntryPoint, threadgroupSize,
+             id](AssetManager& manager, std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
             const Ref<Renderer::ShaderModule> shader = Renderer::ShaderModule::Create(
@@ -209,6 +216,7 @@ namespace Veng
                                           .Binary = *code,
                                           .Kind = NativeShaderCodeKind,
                                           .EntryPoint = entryPoint,
+                                          .ThreadgroupSize = threadgroupSize,
                                       });
 
             const Ref<Veng::Shader> asset = CreateRef<Veng::Shader>(Veng::Shader{

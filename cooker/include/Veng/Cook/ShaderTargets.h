@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <string_view>
 
 #include <Veng/Asset/CookedBlobs.h>
@@ -113,6 +115,9 @@ namespace Veng::Cook
         vector<CookedDescriptorBinding> Bindings;
         /// @brief Every push-constant block.
         vector<CookedPushConstantBlock> PushConstants;
+        /// @brief A compute entry point's threadgroup size along x, y and z; zero for every other
+        ///        stage.
+        std::array<u32, 3> ThreadgroupSize{};
     };
 
     /// @brief Reflects one entry point's interface, and checks its Metal layout against SPIR-V's.

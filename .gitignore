@@ -2,6 +2,9 @@
 /build/
 /build-debug/
 /build-debug-profiling/
+/build-vulkan/
+/build-debug-vulkan/
+/build-debug-profiling-vulkan/
 /build-debug-off/
 .idea
 imgui.ini

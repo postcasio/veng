@@ -15,6 +15,11 @@
       "id": "0x0000000000000FA2",
       "type": "Shader",
       "source": "shaders/brick.frag.shader.json"
+    },
+    {
+      "id": "0x5C9F7BDAE2311FD0",
+      "type": "Shader",
+      "source": "shaders/grid.comp.shader.json"
     }
   ]
 }

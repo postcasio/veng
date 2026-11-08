@@ -6,11 +6,6 @@
 
 namespace Veng
 {
-    GLFWwindow* GetGlfwWindow(const Window& window)
-    {
-        return window.m_Handle;
-    }
-
     vk::SurfaceKHR GetVkSurface(const Window& window)
     {
         return vk::SurfaceKHR{std::bit_cast<VkSurfaceKHR>(window.GetNative().PresentationSurface)};

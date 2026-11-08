@@ -459,7 +459,12 @@ namespace Veng::Cook
             }
 
             return BuildCookedShaderBlob(
-                CookedShaderInterfaceHeader{.VertexLayoutAssetId = vertexLayoutAssetId},
+                CookedShaderInterfaceHeader{
+                    .VertexLayoutAssetId = vertexLayoutAssetId,
+                    .ThreadgroupSize = {reflected->ThreadgroupSize[0],
+                                        reflected->ThreadgroupSize[1],
+                                        reflected->ThreadgroupSize[2]},
+                },
                 reflected->Bindings, reflected->PushConstants, sections);
         }
 

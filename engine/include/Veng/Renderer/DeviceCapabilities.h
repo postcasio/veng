@@ -44,9 +44,11 @@ namespace Veng::Renderer
     {
         /// @brief The device's name, as the driver reports it.
         string DeviceName;
-        /// @brief The driver's name, as the driver reports it.
+        /// @brief The driver's name, as the driver reports it; the graphics API on a backend whose
+        ///        driver reports none.
         string DriverName;
-        /// @brief The driver's version string, as the driver reports it.
+        /// @brief The driver's version string, as the driver reports it; the device's GPU family on
+        ///        a backend whose driver reports none.
         string DriverInfo;
         /// @brief The graphics API version the device supports, packed as variant (3 bits), major
         ///        (7), minor (10) and patch (12) from the high bit down.
@@ -112,6 +114,13 @@ namespace Veng::Renderer
         ///
         /// What UpscaleFilter::MetalFXSpatial needs; without it a renderer filters bilinearly.
         bool MetalFxSpatial = false;
+
+        /// @brief True when the device can run mesh-shading pipelines (object or task, and mesh
+        ///        stages). Reported only: no engine pipeline uses them.
+        bool MeshShading = false;
+        /// @brief True when the device can build acceleration structures and trace rays against
+        ///        them. Reported only: no engine pass traces rays.
+        bool RayTracing = false;
 
         /// @brief Returns true when every class in @p operations is legal in @p stage.
         /// @param stage       One shader stage.

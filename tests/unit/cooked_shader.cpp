@@ -43,11 +43,15 @@ TEST_CASE("CookedShader: a blob carrying SPIR-V and a Metal library round-trips 
     };
 
     const vector<u8> blob = BuildCookedShaderBlob(
-        CookedShaderInterfaceHeader{.VertexLayoutAssetId = 42}, bindings, {}, sections);
+        CookedShaderInterfaceHeader{.VertexLayoutAssetId = 42, .ThreadgroupSize = {8, 4, 2}},
+        bindings, {}, sections);
     const Result<CookedShaderView> view = ParseCookedShader(blob);
     REQUIRE_MESSAGE(view.has_value(), view.error());
 
     CHECK(view->Interface.VertexLayoutAssetId == 42);
+    CHECK(view->Interface.ThreadgroupSize[0] == 8);
+    CHECK(view->Interface.ThreadgroupSize[1] == 4);
+    CHECK(view->Interface.ThreadgroupSize[2] == 2);
     REQUIRE(view->Bindings.size() == 1);
     CHECK(view->Bindings[0].MetalIndex == 5);
     CHECK(std::string_view(view->Bindings[0].Name) == "Many");

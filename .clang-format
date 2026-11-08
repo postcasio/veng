@@ -30,4 +30,37 @@ AttributeMacros:
   - VE_MODULE_EXPORT
   - VE_DLL_EXPORT
   - VE_DLL_IMPORT
+---
+# Objective-C++ sources (.mm, and headers that #import) take the same style.
+Language: ObjC
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+NamespaceIndentation: All
+BreakBeforeBraces: Allman
+PointerAlignment: Left
+QualifierAlignment: Left
+AlignTrailingComments: true
+ReflowComments: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AlwaysBreakTemplateDeclarations: Yes
+SortIncludes: false
+FixNamespaceComments: false
+SpaceAfterCStyleCast: false
+AttributeMacros:
+  - VE_API
+  - VE_EDITOR_API
+  - VE_GRAPH_API
+  - VE_MCP_API
+  - VE_COOK_API
+  - VE_MODULE_EXPORT
+  - VE_DLL_EXPORT
+  - VE_DLL_IMPORT
 ...

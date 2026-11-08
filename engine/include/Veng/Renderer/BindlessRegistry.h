@@ -246,6 +246,48 @@ namespace Veng::Renderer
         u64 ImageBytes = 0;
     };
 
+    /// @brief A free-list slot allocator with deferred release, one per arrayed bindless binding.
+    ///
+    /// A slot freed while frame-in-flight index i is current goes into PendingRelease[i] and is
+    /// returned to the free list only the next time index i becomes current (once its fence has
+    /// been waited), by which point no in-flight work can still read it — or sooner, through
+    /// BindlessRegistry::ReclaimAllReleased, once nothing is in flight. Device-free: it holds the
+    /// owning references and the indices, and every backend shares it.
+    struct VE_API BindlessSlotArray
+    {
+        /// @brief Per-slot resource Ref keeping the resource alive.
+        vector<Ref<void>> Slots;
+        /// @brief Available slot indices; the back is handed out next.
+        vector<u32> Free;
+        /// @brief Slots pending reclaim, one bucket per frame-in-flight.
+        vector<vector<u32>> PendingRelease;
+
+        /// @brief Sizes the arrays for @p capacity slots and @p framesInFlight release buckets.
+        ///
+        /// The free list hands slots out lowest index first.
+        /// @param capacity       The number of slots.
+        /// @param framesInFlight The number of release buckets.
+        void Init(u32 capacity, u32 framesInFlight);
+
+        /// @brief Allocates a slot, storing @p resource as its owner.
+        ///
+        /// Fatal when every slot is taken.
+        /// @param resource The resource the slot keeps alive.
+        /// @param what     The array's name, for the exhaustion message.
+        /// @return The slot index.
+        u32 Allocate(Ref<void> resource, string_view what);
+
+        /// @brief Queues slot @p index for reclaim once frame @p currentFrameInFlight completes.
+        /// @param index                The slot to release.
+        /// @param currentFrameInFlight The release bucket it waits in.
+        void ReleaseDeferred(u32 index, u32 currentFrameInFlight);
+
+        /// @brief Returns bucket @p frameInFlight's slots to the free list and drops their
+        ///        resources.
+        /// @param frameInFlight The bucket whose fence has been waited.
+        void OnFrameAcquired(u32 frameInFlight);
+    };
+
     /// @brief The global bindless descriptor set: set 0, reserved in every
     /// PipelineLayout so it can be bound once and never rebound for the rest of a pass.
     ///
@@ -864,31 +906,6 @@ namespace Veng::Renderer
         static constexpr u32 AreaVertexStride = 16;
 
     private:
-        /// @brief A free-list slot allocator with deferred release, one per arrayed binding.
-        ///
-        /// A slot freed while frame-in-flight index i is current goes into PendingRelease[i]
-        /// and is only returned to the free list the next time AcquireNextFrame makes index i
-        /// current (i.e. after its fence has been waited), by which point no in-flight draw
-        /// can still be sampling it — or sooner, by ReclaimAllReleased, once nothing is in flight.
-        struct VE_API SlotArray
-        {
-            /// @brief Per-slot resource Ref keeping the resource alive.
-            vector<Ref<void>> Slots;
-            /// @brief Available slot indices.
-            vector<u32> Free;
-            /// @brief Slots pending reclaim, one bucket per frame-in-flight.
-            vector<vector<u32>> PendingRelease;
-
-            /// @brief Initializes the arrays for the given capacity and frames-in-flight count.
-            void Init(u32 capacity, u32 framesInFlight);
-            /// @brief Allocates a slot, storing `resource` as its owner. Asserts capacity.
-            u32 Allocate(Ref<void> resource, string_view what);
-            /// @brief Queues slot `index` for reclaim once frame `currentFrameInFlight` has completed.
-            void ReleaseDeferred(u32 index, u32 currentFrameInFlight);
-            /// @brief Reclaims all slots whose deferred window has expired for `frameInFlight`.
-            void OnFrameAcquired(u32 frameInFlight);
-        };
-
         /// @brief Returns frame-in-flight bucket @p frameInFlight of every slot array and the
         ///        material arena to their free lists, dropping the reclaimed slots' resources.
         void ReclaimBucket(u32 frameInFlight);
@@ -921,7 +938,7 @@ namespace Veng::Renderer
         /// @brief The slot allocator backing one arrayed binding, or null when @p array is unmapped.
         /// @param array  Which arrayed binding.
         /// @return Its allocator, borrowed.
-        [[nodiscard]] const SlotArray* SlotsFor(BindlessArray array) const;
+        [[nodiscard]] const BindlessSlotArray* SlotsFor(BindlessArray array) const;
 
         /// @brief Fills @p slot's resource description from the Ref its array holds.
         ///
@@ -956,7 +973,7 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_CubeSet;
 
         /// @brief Slot allocator for the sampled-image array.
-        SlotArray m_Textures;
+        BindlessSlotArray m_Textures;
         /// @brief The normal-variance companion each texture slot holds, null where it reads zero.
         ///
         /// Indexed like m_Textures and kept alive with it; a slot's entry is dropped when the
@@ -965,11 +982,11 @@ namespace Veng::Renderer
         /// @brief The one-texel image every texture slot without a companion reads as zero variance.
         Ref<ImageView> m_ZeroNormalVariance;
         /// @brief Slot allocator for the 3D sampled-image (volume) array.
-        SlotArray m_Volumes;
+        BindlessSlotArray m_Volumes;
         /// @brief Slot allocator for the cube sampled-image array.
-        SlotArray m_Cubes;
+        BindlessSlotArray m_Cubes;
         /// @brief Slot allocator for the sampler array.
-        SlotArray m_Samplers;
+        BindlessSlotArray m_Samplers;
 
         /// @brief One shared sampler and the description it answers for.
         struct SamplerCacheEntry
@@ -999,9 +1016,9 @@ namespace Veng::Renderer
         f32 m_GlobalMaxAnisotropy = DefaultMaxAnisotropy;
 
         /// @brief Slot allocator for the storage-image array.
-        SlotArray m_StorageImages;
+        BindlessSlotArray m_StorageImages;
         /// @brief Slot allocator for the byte-address storage-buffer array.
-        SlotArray m_StorageBuffers;
+        BindlessSlotArray m_StorageBuffers;
 
         /// @brief The per-material parameter buffer (binding MaterialParamBinding).
         ///

@@ -1,11 +1,13 @@
 # veng
 
-**veng** is a modern Vulkan rendering engine written in C++26. It gives you a
-clean, high-level API for building real-time 3D applications and games, while
-keeping all the Vulkan complexity — synchronization, memory, descriptors,
-pipeline state — hidden behind it.
+**veng** is a modern rendering engine written in C++26. It gives you a clean,
+high-level API for building real-time 3D applications and games, while keeping the
+GPU complexity — synchronization, memory, descriptors, pipeline state — hidden
+behind it. One build carries one GPU backend: **Metal** (Metal 4) on Apple, and
+**Vulkan** everywhere else, with the Vulkan build kept on Apple too, through
+MoltenVK, as a reference.
 
-It is developed primarily on **macOS** (via MoltenVK) and written to be portable.
+It is developed primarily on **macOS** and written to be portable.
 
 > **Status:** early and actively developed (`v0.1.0`). The API is still evolving.
 
@@ -15,8 +17,12 @@ It is developed primarily on **macOS** (via MoltenVK) and written to be portable
 
 - A **C++26**-capable compiler
 - **CMake 4.1** or newer
-- A **Vulkan SDK** (MoltenVK on macOS), with its **Slang** component — the cooker's
-  shader compiler comes from the SDK rather than being fetched
+- A **Vulkan SDK** on every platform, with its **Slang** component — the cooker's
+  shader compiler comes from the SDK rather than being fetched — which is also the
+  Vulkan backend's loader and headers (MoltenVK on macOS)
+- On Apple, for the Metal backend: **macOS 26** on **Apple silicon**, and Xcode's
+  **Metal toolchain**, a separate download in Xcode 26
+  (`xcodebuild -downloadComponent MetalToolchain`)
 
 Everything else — GLFW, glm, zlib, fmt, Vulkan Memory Allocator, Dear ImGui, stb,
 and the cooker's assimp — is downloaded and version-pinned automatically by CMake
@@ -37,7 +43,7 @@ cmake --build build
 This produces the engine library (`libveng`), the asset cooker (`vengc`), the
 trace converter (`vengtrace`), and the sample application.
 
-To enable Vulkan validation layers while developing, configure a separate
+To enable the backend's validation while developing, configure a separate
 `build-debug` tree — the name alone selects the configuration:
 
 ```sh
@@ -45,11 +51,16 @@ cmake -B build-debug -S .
 cmake --build build-debug
 ```
 
-The canonical tree names (`build`, `build-debug`, `build-debug-profiling`,
-`build-coverage`) carry their configuration: configuring one with no flags yields
-the documented settings, and a `-D` (or a stale cache) contradicting the name is a
-configure-time error rather than a silent flip. Any other directory name takes
-flags as usual.
+The canonical tree names carry their configuration, the GPU backend included:
+configuring one with no flags yields the documented settings, and a `-D` (or a
+stale cache) contradicting the name is a configure-time error rather than a silent
+flip. Any other directory name takes flags as usual, and defaults to the
+platform's native backend.
+
+| Platform | Native trees (`build`, `build-debug`, `build-debug-profiling`, `build-coverage`) | Vulkan reference trees (`build-vulkan`, `build-debug-vulkan`, `build-debug-profiling-vulkan`) |
+|---|---|---|
+| macOS | Metal | Vulkan (MoltenVK) |
+| Windows, Linux | Vulkan | Vulkan |
 
 ---
 

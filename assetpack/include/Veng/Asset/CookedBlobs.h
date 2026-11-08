@@ -365,7 +365,7 @@ namespace Veng
     /// @brief The current cooked shader format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedShaderVersion = 2u;
+    inline constexpr u32 CookedShaderVersion = 3u;
 
     /// @brief The kind of compiled code a cooked shader section holds.
     enum class CookedShaderCode : u32
@@ -435,10 +435,17 @@ namespace Veng
         u32 PushConstantCount = 0;
         /// @brief AssetId of the referenced vertex layout, or 0 if the shader has no vertex inputs.
         u64 VertexLayoutAssetId = 0;
+        /// @brief A compute entry point's threadgroup size, its [numthreads], along x, y and z; zero
+        ///        for every other stage.
+        ///
+        /// A Metal dispatch names its threadgroup size, and a compiled Metal library does not report
+        /// the kernel's, so the cook records it from the shader's reflection.
+        u32 ThreadgroupSize[3] = {};
+        /// @brief Reserved; zero.
+        u32 Reserved = 0;
     };
-    static_assert(sizeof(CookedShaderInterfaceHeader) == 16,
-                  "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between "
-                  "the u32 fields and the u64");
+    static_assert(sizeof(CookedShaderInterfaceHeader) == 32,
+                  "CookedShaderInterfaceHeader layout changed: bump CookedShaderVersion");
 
     /// @brief How a descriptor binding is reached on Metal.
     enum class CookedMetalBinding : u32

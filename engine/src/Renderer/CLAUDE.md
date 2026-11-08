@@ -2,7 +2,7 @@
 
 The public renderer API lives under `engine/include/Veng/Renderer/` and the GPU backend under
 `engine/src/Renderer/Backend/<backend>/` (the public class lives in `Veng/Renderer/X.h`; its Vulkan
-impl in `src/Renderer/Backend/Vulkan/X.cpp`). Project-wide conventions — error policy, the Native idiom, resource
+impl in `src/Renderer/Backend/Vulkan/X.cpp`, its Metal impl in `src/Renderer/Backend/Metal/X.mm`). Project-wide conventions — error policy, the Native idiom, resource
 ownership — live in [the root CLAUDE.md](../../../CLAUDE.md); the runtime overview and the
 `Application` drive in [engine/CLAUDE.md](../../CLAUDE.md); the scene/ECS layer in
 [../Scene/CLAUDE.md](../Scene/CLAUDE.md); materials and shaders in
@@ -31,6 +31,9 @@ engine-typed, and meets the backend at a handful of private seams:
   `DispatchIndirectCommand` in `Types.h`, size-asserted); the Vulkan backend asserts each matches
   its `Vk*` counterpart field for field.
 - **Device limits come from `DeviceCapabilities`**, the buffer offset alignments among them.
+- **The bindless registry is device-free** (`BindlessRegistry.cpp`): its slot allocation, release
+  buckets and budgets are shared, and each backend defines only its slot writes and the two frame-slot
+  queries `BindlessBackend.h` declares.
 - **A window's presentation surface** is created by the backend (`CreatePresentationSurface`,
   `WindowNative.h`) and held by the window as an opaque handle.
 - **Apple objects** reach the video recorder and MetalFX through `AppleInterop.h` (+0 references);
@@ -40,11 +43,80 @@ engine-typed, and meets the backend at a handful of private seams:
   the backend; a test that includes a backend header or `Native.h` registers only in a tree built
   against that backend.
 
-`Veng/Renderer/Native.h` is the one public interop header: it compiles only in a Vulkan tree, holds
-the vulkan.hpp configuration the backend builds on, and declares the raw-handle accessors the
-backend defines. No engine source outside `Backend/` includes it or a backend header, which
+`Veng/Renderer/Native.h` is the Vulkan backend's public interop header: it compiles only in a Vulkan
+tree, holds the vulkan.hpp configuration the backend builds on, and declares the raw-handle accessors
+the backend defines. Its Metal sibling, `Veng/Renderer/NativeMetal.h`, compiles only in a Metal tree
+and returns the Metal backend's objects as +0 opaque pointers, with typed wrappers in an
+Objective-C translation unit. No engine source outside `Backend/` includes it or a backend header, which
 `include_hygiene` enforces; the `ImGui` layer renders on engine primitives (see
 [../UI/CLAUDE.md](../UI/CLAUDE.md)).
+
+## The Metal backend
+
+`VE_GPU_BACKEND=Metal` (the native backend on Apple) builds `Backend/Metal/`, Objective-C++ compiled
+with ARC, against **Metal 4**: a device of the Metal 4 GPU family (Apple silicon on macOS 26) is
+required, and `Context::Initialize` fails naming the device where it is missing. It runs headless
+work: buffers, images, samplers, compute pipelines, descriptor sets, push constants, the bindless
+registry, synchronization and readback. It builds no render pipeline, opens no render pass for
+drawing and presents to no window; those calls assert. Its device-free logic lives in plain C++
+headers beside it (`HeapAllocator.h`, `BindingModel.h`, `PushConstantRing.h`, `BarrierMapping.h`),
+which `tests/unit/metal_backend.cpp` covers.
+
+- **One queue.** One `MTL4CommandQueue` carries graphics, transfer and readback, so every queue
+  family is the same (`TransferIsGraphics()`), and `QueueSubmitMode` reports `Asynchronous` and has
+  no effect. Each `CommandBuffer` owns its `MTL4CommandAllocator`, reset when the buffer is begun
+  again — which is after its last recording completed: a frame slot's after its fence, a worker's
+  upload after its timeline value, a one-shot after its wait. Uploads on a worker commit on the same
+  queue, signal the transfer timeline, and the next submission that uses the image waits for it with
+  a queue-level `waitForEvent`.
+- **Memory.** Buffers and images are placed in `MTLHeap`s of the placement type, 64 MiB each, with
+  a first-fit sub-allocator over each heap's free ranges; a placement over a quarter of that takes a
+  heap of its own, released with it. Every heap, every texture placed in one, and every imported
+  texture is in one residency set the queue holds, committed before each submission that follows a
+  change; a placed texture is listed beside its heap because Metal's shader validation counts it
+  resident only then, and reads one it does not as zero. A mappable buffer is
+  shared storage; a `DeviceLocal` one, and every image, private. `GetGpuMemoryUsage` reports the
+  device's allocated size against its recommended working set. A format Apple silicon has no pixel
+  format for (`D16UnormS8Uint`, `D24UnormS8Uint`, `X8D24UnormPack32`) is fatal, naming it.
+- **Binding.** The translation of the binding vocabulary is
+  [docs/guides/shader-bindings.md](../../../docs/guides/shader-bindings.md)'s. A `DescriptorSetLayout`
+  places its bindings in binding order, a combined image sampler two elements and an array one per
+  entry, and a dynamic uniform buffer outside — the placement the cook gives a shader declaring the
+  set. A `DescriptorSet` is a host-mapped argument buffer of 8-byte elements (resource IDs and GPU
+  addresses) written in place; `BindDescriptorSets` binds set N's at buffer slot N of the stage's
+  argument table, and each dynamic buffer by address plus its dynamic offset at slot 8 plus its
+  position among the layout's dynamic buffers. The argument table is snapshotted at each dispatch.
+  The bindless sets are three such argument buffers, and a registration writes its element in place.
+- **Push constants.** `PushConstants` writes a CPU shadow of the bound layout's block (at most 256
+  bytes), which persists across pipeline binds; before the next dispatch that follows a change the
+  block is copied into the command buffer's linear ring and bound by address at slot 12. The ring's
+  64 KiB chunks come from a context free list, rewind when the buffer is begun again and return to
+  the list, through the retire path, when it is destroyed.
+- **Compute.** A compute pipeline's threadgroup size is its module's
+  (`ShaderModuleBinaryInfo::ThreadgroupSize`), which the cook records from the shader's
+  `[numthreads]`: a Metal dispatch names it, and a compiled library does not report it. Compute work,
+  copies and fills share one compute encoder until a barrier ends it; a colour clear is a render
+  pass's load action; an unscaled blit is a copy.
+- **Synchronization.** Metal 4 tracks no resource and orders nothing across submissions, so the first
+  encoder of every recording waits on all earlier queue work, and a barrier is a producer barrier
+  (`barrierAfterStages:beforeQueueStages:`), which orders every later encoder, recorded on the open
+  encoder before it ends. The graph's device-free decision maps onto Metal stages
+  (`BarrierMapping.h`): there are no layouts, so a read after a read needs nothing whatever layouts
+  it names, and a transfer covers the blit stage and the render-pass clear. `Fence`, `Semaphore` and
+  `TimelineSemaphore` are `MTLSharedEvent`s; `WaitIdle` signals an event after everything committed
+  and waits for it and for every submission's feedback.
+- **Validation and diagnostics.** Every submission carries a feedback handler that logs a reported
+  error — as `[ERROR] Metal validation: ...` under `VE_VALIDATION`. The validation gate runs its
+  processes with `MTL_DEBUG_LAYER`, `MTL_SHADER_VALIDATION` and `MTL_SHADER_VALIDATION_REPORT_TO_STDERR`
+  set, and fails on that line, on the shader validation layer's own report (a finding such as an
+  out-of-bounds store reaches no submission's error, only stderr, and the layer suppresses the
+  access), and on a process that exits non-zero (API validation aborts on misuse). Metal has no
+  synchronization validation, so synchronization correctness rests on the shared decision, which
+  the Vulkan reference tree's gate keeps proving. GPU scopes are debug groups in a debug build.
+  `DeviceCapabilities` is filled from the device, its family in `DriverInfo`, its SIMD-group width
+  as the subgroup size, and the mesh-shading and ray-tracing bits.
+- **Interop.** `AppleInterop.h` hands out the backend's own objects; an external texture is wrapped
+  as an image that holds it and keeps it resident until the image retires.
 
 ## RenderGraph: barriers fall out of declared use
 

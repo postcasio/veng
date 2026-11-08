@@ -47,6 +47,12 @@ namespace Veng::Renderer
         ShaderCodeKind Kind = ShaderCodeKind::SpirV;
         /// @brief Shader entry-point name.
         string EntryPoint = "main";
+        /// @brief A compute entry point's threadgroup size, its [numthreads]; zero for any other
+        ///        stage.
+        ///
+        /// A Metal dispatch names its threadgroup size, so a compute pipeline on the Metal backend
+        /// requires it; the Vulkan backend reads it from the SPIR-V and ignores this.
+        uvec3 ThreadgroupSize{0, 0, 0};
     };
 
     /// @brief A compiled shader module.
@@ -86,6 +92,9 @@ namespace Veng::Renderer
         /// @brief Returns the shader entry-point name.
         [[nodiscard]] const string& GetEntryPoint() const { return m_EntryPoint; }
 
+        /// @brief A compute entry point's threadgroup size; zero for any other stage.
+        [[nodiscard]] uvec3 GetThreadgroupSize() const { return m_ThreadgroupSize; }
+
         /// @brief Opaque backend handle; defined in ShaderModule.cpp.
         struct Native;
         /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
@@ -100,6 +109,8 @@ namespace Veng::Renderer
         string m_Name;
         /// @brief Entry-point name.
         string m_EntryPoint;
+        /// @brief A compute entry point's threadgroup size.
+        uvec3 m_ThreadgroupSize{0, 0, 0};
         /// @brief Backend shader module.
         Unique<Native> m_Native;
     };

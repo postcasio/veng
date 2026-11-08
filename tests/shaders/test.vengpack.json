@@ -125,6 +125,16 @@
       "id": "0x4129C7EEF4F1682A",
       "type": "Shader",
       "source": "sphere_terrain_placement_probe.comp.shader.json"
+    },
+    {
+      "id": "0xF5BBFEE534FDAFAD",
+      "type": "Shader",
+      "source": "binding_model.comp.shader.json"
+    },
+    {
+      "id": "0xC1E1ECDAC2BB39DE",
+      "type": "Shader",
+      "source": "bindless_compute.comp.shader.json"
     }
   ]
 }

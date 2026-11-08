@@ -95,3 +95,41 @@ TEST_CASE("Bindless: a default slot reads as absent in every field")
     CHECK(slot.SizeBytes == 0u);
     CHECK(slot.ImageBytes == 0u);
 }
+
+TEST_CASE("Bindless: a slot array hands out the lowest free slot first")
+{
+    BindlessSlotArray slots;
+    slots.Init(4, 2);
+    CHECK(slots.Allocate(CreateRef<int>(0), "test") == 0u);
+    CHECK(slots.Allocate(CreateRef<int>(1), "test") == 1u);
+    CHECK(slots.Allocate(CreateRef<int>(2), "test") == 2u);
+    CHECK(slots.Slots.size() == 4);
+    CHECK(slots.Free.size() == 1);
+}
+
+TEST_CASE("Bindless: a released slot waits for its own frame bucket and keeps its resource")
+{
+    BindlessSlotArray slots;
+    slots.Init(2, 2);
+    const Ref<int> resource = CreateRef<int>(7);
+    const u32 slot = slots.Allocate(resource, "test");
+    const u32 other = slots.Allocate(CreateRef<int>(8), "test");
+    CHECK(slots.Free.empty());
+
+    // Released while frame 1 records: frame 0's retirement returns nothing, and the resource stays
+    // alive until frame 1's slot retires.
+    slots.ReleaseDeferred(slot, 1);
+    slots.OnFrameAcquired(0);
+    CHECK(slots.Free.empty());
+    CHECK(resource.use_count() == 2);
+
+    slots.OnFrameAcquired(1);
+    REQUIRE(slots.Free.size() == 1);
+    CHECK(slots.Free.back() == slot);
+    CHECK(resource.use_count() == 1);
+    CHECK(slots.Slots[other] != nullptr);
+
+    // The bucket was emptied, so a second retirement of it returns nothing more.
+    slots.OnFrameAcquired(1);
+    CHECK(slots.Free.size() == 1);
+}

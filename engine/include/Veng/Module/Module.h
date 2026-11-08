@@ -690,10 +690,14 @@ extern "C"
 /// Version 175 cooks shaders per GPU target: ShaderBinding grows its Metal placement, and
 /// ShaderModuleBinaryInfo the kind of code it carries, mid-struct. A module reads shader interfaces
 /// and creates modules, so a stale one lays both out short.
+/// Version 176 adds a Metal backend: DeviceCapabilities grows MeshShading and RayTracing,
+/// ShaderModuleBinaryInfo and ShaderModule grow the compute threadgroup size, and the bindless
+/// registry's slot arrays become the public BindlessSlotArray. A module reads the capabilities and
+/// creates modules, so a stale one lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 175u
+#define VENG_MODULE_ABI_VERSION 176u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

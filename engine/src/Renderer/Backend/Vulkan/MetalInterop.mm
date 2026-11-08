@@ -37,7 +37,7 @@ namespace Veng::Renderer::Apple
 
     optional<ExternalTextureDescription> DescribeExternalTexture(void* texture)
     {
-        id<MTLTexture> mtlTexture = (id<MTLTexture>)texture;
+        const auto mtlTexture = (id<MTLTexture>)texture;
         if (mtlTexture == nil)
         {
             return std::nullopt;
@@ -50,8 +50,8 @@ namespace Veng::Renderer::Apple
         }
 
         return ExternalTextureDescription{
-            .Extent = uvec2{static_cast<u32>([mtlTexture width]),
-                            static_cast<u32>([mtlTexture height])},
+            .Extent =
+                uvec2{static_cast<u32>([mtlTexture width]), static_cast<u32>([mtlTexture height])},
             .Format = *format,
         };
     }
@@ -92,7 +92,7 @@ namespace Veng::Renderer::Apple
             return nullptr;
         }
 
-        id<MTLTexture> mtlTexture = (id<MTLTexture>)texture;
+        const auto mtlTexture = (id<MTLTexture>)texture;
 
         const ImageInfo info{
             .Name = string(name),
@@ -103,8 +103,8 @@ namespace Veng::Renderer::Apple
             .Type = ImageType::Type2D,
             // Everything a composite target plus a readback or a sample could want: the import is
             // free of charge, since the texture's memory is allocated either way.
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc | ImageUsage::TransferDst |
-                     ImageUsage::Sampled,
+            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc |
+                     ImageUsage::TransferDst | ImageUsage::Sampled,
         };
 
         // A single-plane colour texture is plane 0, which is what the import's aspect names.
@@ -117,7 +117,9 @@ namespace Veng::Renderer::Apple
             .pNext = &importInfo,
             .imageType = ToVk(info.Type),
             .format = ToVk(info.Format),
-            .extent = vk::Extent3D{info.Extent.x, info.Extent.y, info.Extent.z},
+            .extent = vk::Extent3D{.width = info.Extent.x,
+                                   .height = info.Extent.y,
+                                   .depth = info.Extent.z},
             .mipLevels = info.MipLevels,
             .arrayLayers = info.Layers,
             .samples = vk::SampleCountFlagBits::e1,
@@ -138,7 +140,7 @@ namespace Veng::Renderer::Apple
         // so the silencing bind is an allocate-then-bind rather than vmaCreateImage; it is accepted
         // and changes nothing — the render still lands in the external texture's memory. Made only
         // here, so a shipped build pays neither the allocation nor the call.
-        const VkImage rawImage = static_cast<VkImage>(native->Image);
+        const auto rawImage = static_cast<VkImage>(native->Image);
         // VMA's AUTO usages are legal only where it creates the resource itself and so knows its
         // details; this image already exists, so the memory is asked for by its properties.
         const VmaAllocationCreateInfo allocationCreateInfo{
@@ -166,7 +168,7 @@ namespace Veng::Renderer::Apple
         return Image::CreateImported(context, info, std::move(native));
     }
 
-    void ReleaseAfterFrame(Context& context, void* object)
+    void ReleaseAfterFrame(const Context& context, void* object)
     {
         context.GetNative().Retire([object] { [(id)object release]; });
     }
