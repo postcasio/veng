@@ -1,7 +1,7 @@
 #include <Veng/ImGui/ImGuiTexture.h>
 
 #include <Veng/ImGui/ImGuiLayer.h>
-#include "../Renderer/Backend/Vulkan/Natives.h"
+#include "ImGuiTextureNative.h"
 
 namespace Veng
 {
@@ -22,6 +22,6 @@ namespace Veng
 
     u64 ImGuiTexture::GetTextureId() const
     {
-        return reinterpret_cast<u64>(static_cast<VkDescriptorSet>(m_Native->Set));
+        return PackImGuiTextureId(m_Native->Texture, m_Native->Sampler);
     }
 }

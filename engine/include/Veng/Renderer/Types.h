@@ -173,28 +173,6 @@ namespace Veng::Renderer
         Type3D,
     };
 
-    /// @brief The state an image subresource is kept in for a class of use; used by barrier
-    ///        derivation.
-    enum class ImageLayout : u8
-    {
-        /// @brief Unknown or discard-on-transition layout.
-        Undefined,
-        /// @brief Supports all access types.
-        General,
-        /// @brief Optimal for color attachment read/write.
-        ColorAttachment,
-        /// @brief Optimal for depth/stencil attachment read/write.
-        DepthAttachment,
-        /// @brief Optimal for shader-sample reads.
-        ShaderReadOnly,
-        /// @brief Optimal for transfer source operations.
-        TransferSrc,
-        /// @brief Optimal for transfer destination operations.
-        TransferDst,
-        /// @brief Required for swapchain present.
-        PresentSrc,
-    };
-
     /// @brief Dimensionality and array structure of an ImageView.
     enum class ImageViewType : u8
     {

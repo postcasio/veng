@@ -163,9 +163,9 @@ namespace
 
     void RunVertexFormatUnknown()
     {
-        // RGBA8Unorm is not a vertex element format; GetFormatSize aborts while
+        // D32Sfloat is not a vertex element format; GetFormatSize aborts while
         // the layout's element is constructed.
-        const VertexBufferLayout layout = {{Format::RGBA8Unorm, "bad"}};
+        const VertexBufferLayout layout = {{Format::D32Sfloat, "bad"}};
         (void)layout.GetStride();
     }
 

@@ -799,7 +799,9 @@ is handed: `BarrierBatch` (the graph's barrier hook), `CreatePresentationSurface
 `Renderer::HasGpuDevice` (`Veng/Renderer/DeviceProbe.h`, the GPU test probe). Public doc comments
 state contracts in engine terms too. `include_hygiene` enforces the public half: it fails on any
 public header except `Native.h` that includes a backend header or names a Vulkan/VMA type, comments
-included. The `ImGui` layer still renders through the Vulkan backend's headers.
+included, and on any engine source outside `Renderer/Backend/` that includes a backend header or
+`Native.h`. The `ImGui` layer renders through `CommandBuffer` and the bindless registry like any
+other pass (see [engine/src/UI/CLAUDE.md](engine/src/UI/CLAUDE.md)).
 
 ### Identifier naming — no Hungarian notation
 

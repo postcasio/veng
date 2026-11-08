@@ -1,5 +1,5 @@
 // MaterialPreview GPU test: brings up a windowed Context + ImGuiLayer (the
-// preview owns a Ref<ImGuiTexture>, which needs the ImGui Vulkan backend), cooks
+// preview owns a Ref<ImGuiTexture>, which needs the ImGui layer), cooks
 // the brick g-buffer fixture in-process, and exercises the preview surface.
 //
 // It proves the preview renders the brick material on a sphere into a 256² target
@@ -78,9 +78,8 @@ int main()
 
     Time::Initialize();
 
-    // A windowed context: the ImGui Vulkan backend (and so ImGuiTexture's
-    // descriptor set) requires a swapchain image count, which is only available
-    // with a window. The window is never shown to a frame loop here.
+    // A windowed context: the ImGui layer reads input from a window. The window is
+    // never shown to a frame loop here.
     const Unique<Window> window = Window::Create({
         .Extent = {640, 480},
         .Resizable = false,
@@ -101,13 +100,12 @@ int main()
     // (InitializeTransferPools is unneeded — nothing submits async transfers).
     Unique<TaskSystem> tasks = CreateUnique<TaskSystem>(TaskSystemInfo{.WorkerCount = 2});
 
-    Unique<ImGuiLayer> imgui = ImGuiLayer::Create({}, context, *window);
-
     {
         TypeRegistry types;
         RegisterBuiltinTypes(types);
 
         AssetManager assets(context, *tasks, types);
+        Unique<ImGuiLayer> imgui = ImGuiLayer::Create({}, context, assets, *window);
 
         // Cook the brick fixture pack in-process and mount it over the auto-mounted
         // core pack.
@@ -212,8 +210,8 @@ int main()
         std::filesystem::remove(outArchive);
     }
 
-    // Teardown is by reverse declaration order (imgui, tasks, context, window), so
-    // the ImGui layer and task system release before ~Context and no GPU resource
-    // outlives the context; every submit here was synchronous, so the device is idle.
+    // Teardown is by reverse declaration order (the scope's preview, imgui and assets, then
+    // tasks, context, window), so no GPU resource outlives the context; every submit here was
+    // synchronous, so the device is idle.
     return g_Failures == 0 ? 0 : 1;
 }

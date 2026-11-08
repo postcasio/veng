@@ -9,8 +9,9 @@ namespace Veng::Renderer
     /// @brief Returns the byte size of a vertex element format.
     ///
     /// Vertex element formats are the float/vecN subset of Format that vertex shader
-    /// inputs accept. The backend maps the formats themselves; only byte size (for
-    /// buffer layout) is local here.
+    /// inputs accept, plus RGBA8Unorm, a packed colour the input assembler normalizes to
+    /// float4. The backend maps the formats themselves; only byte size (for buffer layout)
+    /// is local here.
     static u32 GetFormatSize(const Format format)
     {
         switch (format)
@@ -26,6 +27,8 @@ namespace Veng::Renderer
         case Format::RGBA16Uint:
             return 2 * 4;
         case Format::R32Uint:
+            return 4;
+        case Format::RGBA8Unorm:
             return 4;
         default:
             VE_ASSERT(false, "Unknown vertex element Format");
@@ -49,6 +52,8 @@ namespace Veng::Renderer
             return 4;
         case Format::R32Uint:
             return 1;
+        case Format::RGBA8Unorm:
+            return 4;
         default:
             VE_ASSERT(false, "Unknown vertex element Format");
         }

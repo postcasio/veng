@@ -5,8 +5,11 @@
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input/InputConsumer.h>
 
+struct ImDrawData;
+
 namespace Veng
 {
+    class AssetManager;
     class Window;
     class Event;
 }
@@ -18,7 +21,6 @@ namespace Veng::Renderer
     class Image;
     class ImageView;
     class Sampler;
-    class DescriptorPool;
 }
 
 namespace Veng
@@ -44,8 +46,14 @@ namespace Veng
         optional<path> IniPath;
     };
 
-    /// @brief Owns the ImGui/imnodes contexts, the Vulkan backend, a dedicated descriptor pool,
-    ///        and the offscreen image the UI renders into.
+    /// @brief Owns the ImGui/imnodes contexts, the renderer that draws ImGui's lists, and the
+    ///        offscreen image the UI renders into.
+    ///
+    /// The renderer is the engine's own: one graphics pipeline per target format over ImGui's
+    /// vertex layout, a per-frame-in-flight vertex and index ring, and textures addressed through
+    /// the bindless registry, so an `ImTextureID` packs a bindless texture slot and sampler slot.
+    /// ImGui's own textures (the dynamic font atlas among them) are created, updated and destroyed
+    /// on request as engine `Image`s, their uploads recorded into the frame's command buffer.
     ///
     /// The application opts in by setting `ApplicationInfo::ImGui`; headless and non-UI consumers
     /// never construct one and pay nothing for ImGui at runtime.
@@ -56,14 +64,16 @@ namespace Veng
     class VE_API ImGuiLayer : public InputConsumer
     {
     public:
-        /// @brief Creates an `ImGuiLayer`, initializing ImGui and the Vulkan backend.
+        /// @brief Creates an `ImGuiLayer`, initializing ImGui and its renderer.
         /// @param info     Font configuration.
         /// @param context  Renderer context owning the device.
+        /// @param assets   Asset manager the renderer's core shaders load through; it need not
+        ///                 outlive the layer.
         /// @param window   GLFW window ImGui reads input from.
         static Unique<ImGuiLayer> Create(const ImGuiLayerInfo& info, Renderer::Context& context,
-                                         Window& window);
+                                         AssetManager& assets, Window& window);
 
-        /// @brief Destroys the ImGui layer, shutting down ImGui and the Vulkan backend.
+        /// @brief Destroys the ImGui layer, shutting down ImGui and releasing its textures.
         ~ImGuiLayer() override;
 
         ImGuiLayer(const ImGuiLayer&) = delete;
@@ -117,9 +127,10 @@ namespace Veng
 
         /// @brief Renders the built UI into the output image, leaving it sampleable for compositing.
         ///
-        /// Ends the ImGui frame first; when the resulting draw data is empty (no command lists, or
-        /// no vertices) it records nothing — no clear, no store, no layout transition — and the
-        /// output image keeps whatever it last held. HasDrawnOutput reports which happened.
+        /// Ends the ImGui frame first and records ImGui's pending texture uploads. When the
+        /// resulting draw data is empty (no command lists, or no vertices) it records nothing on
+        /// the output image — no clear, no store, no layout transition — and the output image keeps
+        /// whatever it last held. HasDrawnOutput reports which happened.
         /// @param cmd  Command buffer the render pass is recorded into.
         void Render(Renderer::CommandBuffer& cmd);
 
@@ -141,29 +152,42 @@ namespace Veng
         /// It holds this frame's UI only when HasDrawnOutput is true.
         [[nodiscard]] Ref<Renderer::Image> GetOutputImage() const { return m_Image; }
 
-        /// @brief Registers a sampler/image pair with the ImGui Vulkan backend and returns an owning wrapper.
+        /// @brief Registers a sampler/image pair with the bindless registry and returns an owning wrapper.
+        ///
+        /// The texture holds its own view of the image, so the image stays alive while the texture
+        /// does. The sampler is matched by description to a registry-shared sampler slot.
         /// @param sampler    Sampler the texture is accessed through.
-        /// @param imageView  Image view to register.
+        /// @param imageView  Image view to register; a 2D view.
         Ref<ImGuiTexture> CreateTexture(const Renderer::Sampler& sampler,
                                         const Renderer::ImageView& imageView);
 
-        /// @brief Deregisters a texture, deferring the descriptor-set free until in-flight frames retire.
+        /// @brief Deregisters a texture, releasing its bindless slot once in-flight frames retire.
         /// @param texture  Texture previously created with `CreateTexture`.
         void DestroyTexture(const ImGuiTexture& texture);
 
     private:
         /// @brief Internal constructor; called only by `Create`.
-        ImGuiLayer(const ImGuiLayerInfo& info, Renderer::Context& context, Window& window);
+        ImGuiLayer(const ImGuiLayerInfo& info, Renderer::Context& context, AssetManager& assets,
+                   Window& window);
 
-        /// @brief Allocates the descriptor pool and offscreen image.
+        /// @brief Allocates the offscreen image.
         void CreateResources();
 
-        /// @brief Releases the descriptor pool and offscreen image.
+        /// @brief Releases the offscreen image.
         void ReleaseResources();
 
-        /// @brief Deferred texture removal: a descriptor set freed while command buffers that
-        ///        reference it are still in flight; the free runs after the retire window elapses.
-        struct PendingTextureRemoval;
+        /// @brief The renderer's pipelines, vertex and index rings, and ImGui's own textures.
+        struct DrawResources;
+
+        /// @brief Creates, updates and destroys ImGui's own textures as the draw data requests.
+        /// @param cmd       Command buffer the uploads are recorded into.
+        /// @param drawData  The frame's draw data, whose texture list carries the requests.
+        void UpdateTextures(Renderer::CommandBuffer& cmd, const ImDrawData& drawData);
+
+        /// @brief Records the draw data's command lists into the open rendering scope.
+        /// @param cmd       Command buffer rendering into the output image.
+        /// @param drawData  The frame's non-empty draw data.
+        void RecordDrawData(Renderer::CommandBuffer& cmd, const ImDrawData& drawData);
 
         /// @brief Renderer context providing the device and retire queue.
         Renderer::Context& m_Context;
@@ -171,18 +195,13 @@ namespace Veng
         /// @brief Borrowed window; its GLFWwindow backs the event forwarders.
         Window& m_Window;
 
-        /// @brief ImGui descriptor pool, forward-declared so this public header pulls in no Vulkan.
-        ///
-        /// Destroyed out-of-line after the backend shuts down.
-        Unique<Renderer::DescriptorPool> m_DescriptorPool;
+        /// @brief The renderer's state, defined out of line so this header pulls in no renderer.
+        Unique<DrawResources> m_Draw;
 
         /// @brief Offscreen image the UI is rendered into.
         Ref<Renderer::Image> m_Image;
-        /// @brief View of `m_Image` used by the backend.
+        /// @brief View of `m_Image` the UI renders through.
         Ref<Renderer::ImageView> m_ImageView;
-
-        /// @brief Textures awaiting deferred destruction.
-        vector<PendingTextureRemoval> m_PendingTextureRemovals;
 
         /// @brief Backing store for `ImGuiIO::IniFilename`.
         ///
@@ -204,8 +223,5 @@ namespace Veng
 
         /// @brief Set by SkipFrame; the next BeginFrame clears held input state and resets it.
         bool m_Skipped = false;
-
-        /// @brief Frees the descriptor sets whose deferred-removal window has elapsed this frame.
-        void DrainTextureRemovals();
     };
 }

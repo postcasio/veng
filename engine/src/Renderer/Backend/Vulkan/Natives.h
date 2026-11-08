@@ -17,21 +17,12 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Window.h>
-
-namespace Veng
-{
-    struct ImGuiTexture::Native
-    {
-        vk::DescriptorSet Set;
-    };
-}
 
 namespace Veng::Renderer
 {

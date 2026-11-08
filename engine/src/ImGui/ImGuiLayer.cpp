@@ -1,29 +1,35 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 
+#include <cstddef>
+#include <cstring>
 #include <filesystem>
 
+#include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Event.h>
 #include <Veng/InputEvents.h>
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
 #include <Veng/UI/Theme.h>
+#include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/Native.h>
-#include "../Renderer/Backend/Vulkan/Barrier.h"
-#include "../Renderer/Backend/Vulkan/DescriptorPool.h"
-#include "../Renderer/Backend/Vulkan/Natives.h"
-#include "../Renderer/Backend/Vulkan/TypeMapping.h"
+#include <Veng/Renderer/ShaderModule.h>
+#include <Veng/Renderer/VertexBufferLayout.h>
+#include "ImGuiTextureNative.h"
 
 #include <Veng/Vendor/ImGui.h>
 #include <Veng/Vendor/FontAwesome7.h>
 
 #include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
 
 #include <GLFW/glfw3.h>
 
@@ -47,49 +53,168 @@ namespace Veng
 {
     using Renderer::Context;
 
-    struct ImGuiLayer::PendingTextureRemoval
+    namespace
     {
-        vk::DescriptorSet Set;
-        u32 FramesRemaining;
-    };
+        // Core pack ImGui stages.
+        constexpr AssetId ImGuiVertId{0xE38A4ECAF908D31FULL};
+        constexpr AssetId ImGuiFragId{0x19BC9581419ECB59ULL};
 
-    Unique<ImGuiLayer> ImGuiLayer::Create(const ImGuiLayerInfo& info, Context& context,
-                                          Window& window)
-    {
-        return Unique<ImGuiLayer>(new ImGuiLayer(info, context, window));
+        // The display-to-clip transform and the draw's bindless texture and sampler slots. Matches
+        // imgui.vert and imgui.frag PushConstants byte-for-byte.
+        struct ImGuiPushConstants
+        {
+            vec2 Scale;
+            vec2 Translate;
+            u32 Texture;
+            u32 Sampler;
+        };
+
+        // The vertex layout below mirrors ImDrawVert field for field.
+        static_assert(sizeof(ImDrawVert) == 20 && offsetof(ImDrawVert, pos) == 0 &&
+                          offsetof(ImDrawVert, uv) == 8 && offsetof(ImDrawVert, col) == 16,
+                      "ImDrawVert no longer matches the ImGui vertex layout");
+        static_assert(sizeof(ImDrawIdx) == 2, "the index ring binds ImDrawIdx as 16-bit indices");
+
+        // The ring grows to at least this many bytes, so the first frames do not reallocate per
+        // widget added.
+        constexpr u64 MinRingBytes = 64 * 1024;
+
+        // Registered as ImGui's reset-render-state callback; the render loop recognizes it and
+        // re-applies its state rather than calling it.
+        void ResetRenderStateCallback(const ImDrawList* /*list*/, const ImDrawCmd* /*cmd*/) {}
     }
 
-    ImGuiLayer::ImGuiLayer(const ImGuiLayerInfo& info, Context& context, Window& window)
-        : m_Context(context), m_Window(window)
+    /// @brief One of ImGui's own textures, created on its request.
+    struct ImGuiDynamicTexture
+    {
+        Ref<Renderer::Image> Image;
+        Ref<Renderer::ImageView> View;
+        Renderer::TextureHandle Handle;
+    };
+
+    struct ImGuiLayer::DrawResources
+    {
+        /// @brief The vertex and index storage one frame in flight writes.
+        struct FrameRing
+        {
+            Ref<Renderer::Buffer> Vertices;
+            Ref<Renderer::Buffer> Indices;
+        };
+
+        Ref<Renderer::ShaderModule> VertexModule;
+        Ref<Renderer::ShaderModule> FragmentModule;
+        Ref<Renderer::PipelineLayout> Layout;
+        /// @brief One pipeline per target format, built on first use.
+        vector<std::pair<Renderer::Format, Ref<Renderer::GraphicsPipeline>>> Pipelines;
+        /// @brief Indexed by frame in flight.
+        vector<FrameRing> Rings;
+        /// @brief The sampler ImGui's own textures are drawn through.
+        Renderer::SamplerHandle LinearSampler;
+        /// @brief ImGui's own textures, keyed by the request record ImGui owns.
+        map<const ImTextureData*, ImGuiDynamicTexture> Textures;
+
+        /// @brief Returns the pipeline rendering into @p format, building it on first use.
+        const Ref<Renderer::GraphicsPipeline>& PipelineFor(Context& context,
+                                                           const Renderer::Format format)
+        {
+            for (const auto& [built, pipeline] : Pipelines)
+            {
+                if (built == format)
+                {
+                    return pipeline;
+                }
+            }
+
+            using namespace Renderer;
+            const Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
+                context,
+                {
+                    .Name = "ImGui Pipeline",
+                    .ColorAttachments = {{.Format = format, .Blend = BlendState::AlphaBlend()}},
+                    .VertexBufferLayout = VertexBufferLayout{{Format::RG32Sfloat, "a_Position"},
+                                                             {Format::RG32Sfloat, "a_UV"},
+                                                             {Format::RGBA8Unorm, "a_Color"}},
+                    .PipelineLayout = Layout,
+                    .ShaderStages =
+                        {
+                            {.Stage = ShaderStage::Vertex, .Module = VertexModule},
+                            {.Stage = ShaderStage::Fragment, .Module = FragmentModule},
+                        },
+                });
+            return Pipelines.emplace_back(format, pipeline).second;
+        }
+    };
+
+    namespace
+    {
+        // Returns @p buffer when it holds @p bytes, else a replacement that does; the replaced
+        // buffer's destruction is deferred past the frames that may still read it.
+        Ref<Renderer::Buffer> EnsureRing(Context& context, const Ref<Renderer::Buffer>& buffer,
+                                         const u64 bytes, const Renderer::BufferUsage usage,
+                                         const char* name)
+        {
+            if (buffer != nullptr && buffer->GetSize() >= bytes)
+            {
+                return buffer;
+            }
+            const u64 grown = buffer != nullptr ? buffer->GetSize() * 2 : MinRingBytes;
+            return Renderer::Buffer::Create(context, {
+                                                         .Name = name,
+                                                         .Size = std::max(bytes, grown),
+                                                         .Usage = usage,
+                                                         .HostMapped = true,
+                                                     });
+        }
+    }
+
+    Unique<ImGuiLayer> ImGuiLayer::Create(const ImGuiLayerInfo& info, Context& context,
+                                          AssetManager& assets, Window& window)
+    {
+        return Unique<ImGuiLayer>(new ImGuiLayer(info, context, assets, window));
+    }
+
+    ImGuiLayer::ImGuiLayer(const ImGuiLayerInfo& info, Context& context, AssetManager& assets,
+                           Window& window)
+        : m_Context(context), m_Window(window), m_Draw(CreateUnique<DrawResources>())
     {
         using namespace Renderer;
 
-        // The backend allocates separate SAMPLER and SAMPLED_IMAGE descriptors for its dynamic
-        // font atlas alongside the combined-image-sampler texture sets, so the pool must size
-        // every descriptor type it draws or vkAllocateDescriptorSets warns on the missing type.
-        m_DescriptorPool = DescriptorPool::Create(
-            m_Context, {.Name = "ImGui Descriptor Pool",
-                        .MaxSets = 100000,
-                        .PoolSizes = {{
-                                          .type = vk::DescriptorType::eUniformBuffer,
-                                          .descriptorCount = 100000,
-                                      },
-                                      {
-                                          .type = vk::DescriptorType::eCombinedImageSampler,
-                                          .descriptorCount = 100000,
-                                      },
-                                      {
-                                          .type = vk::DescriptorType::eSampler,
-                                          .descriptorCount = 100000,
-                                      },
-                                      {
-                                          .type = vk::DescriptorType::eSampledImage,
-                                          .descriptorCount = 100000,
-                                      }},
-                        .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
-                                 vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind});
+        // The modules are held rather than the asset handles, so the layer does not pin the
+        // manager that loaded them.
+        const AssetResult<AssetHandle<Shader>> vs = assets.LoadSync<Shader>(ImGuiVertId);
+        VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
+        m_Draw->VertexModule = vs->Get()->Module;
+        const AssetResult<AssetHandle<Shader>> fs = assets.LoadSync<Shader>(ImGuiFragId);
+        VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
+        m_Draw->FragmentModule = fs->Get()->Module;
+
+        m_Draw->Layout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "ImGui Layout",
+                           .PushConstantRanges = {PushConstantRange::Of<ImGuiPushConstants>(
+                               ShaderStage::Vertex | ShaderStage::Fragment)},
+                       });
+        m_Draw->Rings.resize(m_Context.GetMaxFramesInFlight());
+
+        // ImGui's own textures sample linearly and clamp, as its reference renderers do: the font
+        // atlas packs glyphs edge to edge, so a wrap would bleed one into its neighbour.
+        m_Draw->LinearSampler = m_Context.GetBindlessRegistry()
+                                    .AcquireSampler({
+                                        .Name = "ImGui Linear Sampler",
+                                        .MagFilter = Filter::Linear,
+                                        .MinFilter = Filter::Linear,
+                                        .MipmapMode = MipmapMode::Linear,
+                                        .AddressModeU = AddressMode::ClampToEdge,
+                                        .AddressModeV = AddressMode::ClampToEdge,
+                                        .AddressModeW = AddressMode::ClampToEdge,
+                                        .AnisotropyEnabled = false,
+                                        .MinLod = -1000.0f,
+                                        .MaxLod = 1000.0f,
+                                    })
+                                    .Handle;
 
         CreateResources();
+        (void)m_Draw->PipelineFor(m_Context, m_Image->GetFormat());
 
         ImGui::CreateContext();
         ImNodes::CreateContext();
@@ -120,38 +245,14 @@ namespace Veng
         // Callbacks off: the engine owns the GLFW callbacks and the InputRouter forwards
         // events to the backend through ForwardEvent, so input is routed by focus rather
         // than ingested behind the engine's back.
-        ImGui_ImplGlfw_InitForVulkan(handle, false);
+        ImGui_ImplGlfw_InitForOther(handle, false);
 
-        const vk::Format colorAttachmentFormat = ToVk(Format::RGBA16Sfloat);
-
-        const vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = {
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &colorAttachmentFormat,
-        };
-
-        // The ImGui Vulkan backend creates its own command pool on this family; it
-        // must be the device's graphics family (not the default 0, which need not be
-        // a created queue family on every device, e.g. MoltenVK).
-        const u32 graphicsFamily = context.GetQueueFamilies().GraphicsFamily.value();
-
-        ImGui_ImplVulkan_InitInfo initInfo = {
-            .Instance = GetVkInstance(context),
-            .PhysicalDevice = GetVkPhysicalDevice(context),
-            .Device = GetVkDevice(context),
-            .QueueFamily = graphicsFamily,
-            .Queue = GetVkGraphicsQueue(context),
-            .DescriptorPool = m_DescriptorPool->GetVkDescriptorPool(),
-            .MinImageCount = context.GetSwapChainImageCount(),
-            .ImageCount = context.GetSwapChainImageCount(),
-            .PipelineInfoMain =
-                {
-                    .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
-                    .PipelineRenderingCreateInfo = pipelineRenderingCreateInfo,
-                },
-            .UseDynamicRendering = true,
-        };
-
-        ImGui_ImplVulkan_Init(&initInfo);
+        // The renderer honours ImDrawCmd::VtxOffset, so a draw list may pass 64k vertices with
+        // 16-bit indices, and services ImGui's texture requests, so the font atlas grows on demand.
+        io.BackendRendererName = "veng";
+        io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+        io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+        ImGui::GetPlatformIO().DrawCallback_ResetRenderState = ResetRenderStateCallback;
 
         ApplyTheme();
 
@@ -337,22 +438,37 @@ namespace Veng
 
     ImGuiLayer::~ImGuiLayer()
     {
-        // The device is idle by teardown (Application waits before dropping the
-        // layer), so any sets still in the retire queue free immediately. Must run
-        // before the backend shuts down, while the sets are still valid.
-        for (const PendingTextureRemoval& removal : m_PendingTextureRemovals)
+        // ImGui's own textures are released while their request records are still alive, so each
+        // is marked destroyed for the context that is about to drop it.
+        Renderer::BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        for (ImTextureData* texture : ImGui::GetPlatformIO().Textures)
         {
-            ImGui_ImplVulkan_RemoveTexture(removal.Set);
+            const auto found = m_Draw->Textures.find(texture);
+            if (found != m_Draw->Textures.end())
+            {
+                bindless.Release(found->second.Handle);
+                m_Draw->Textures.erase(found);
+                texture->SetTexID(ImTextureID_Invalid);
+                texture->SetStatus(ImTextureStatus_Destroyed);
+            }
         }
-        m_PendingTextureRemovals.clear();
+        for (const auto& [record, texture] : m_Draw->Textures)
+        {
+            bindless.Release(texture.Handle);
+        }
+        m_Draw->Textures.clear();
 
-        ImGui_ImplVulkan_Shutdown();
+        ImGui::GetIO().BackendRendererName = nullptr;
+        ImGui::GetIO().BackendFlags &=
+            ~(ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures);
+        ImGui::GetPlatformIO().ClearRendererHandlers();
+
         ImGui_ImplGlfw_Shutdown();
         ImNodes::DestroyContext();
         ImGui::DestroyContext();
 
         ReleaseResources();
-        m_DescriptorPool.reset();
+        m_Draw.reset();
     }
 
     void ImGuiLayer::CreateResources()
@@ -382,32 +498,8 @@ namespace Veng
         m_Image.reset();
     }
 
-    void ImGuiLayer::DrainTextureRemovals()
-    {
-        // The free runs outside the erase_if predicate: a hardened STL may evaluate
-        // the predicate more than once per element, which would free the same set twice.
-        vector<vk::DescriptorSet> setsToFree;
-        std::erase_if(m_PendingTextureRemovals,
-                      [&setsToFree](PendingTextureRemoval& removal)
-                      {
-                          if (removal.FramesRemaining == 0)
-                          {
-                              setsToFree.push_back(removal.Set);
-                              return true;
-                          }
-                          --removal.FramesRemaining;
-                          return false;
-                      });
-        for (const vk::DescriptorSet set : setsToFree)
-        {
-            ImGui_ImplVulkan_RemoveTexture(set);
-        }
-    }
-
     void ImGuiLayer::BeginFrame()
     {
-        DrainTextureRemovals();
-
         if (!m_RenderedThisFrame)
         {
             ImGui::EndFrame();
@@ -429,7 +521,6 @@ namespace Veng
             // The platform half issues the per-frame window-system queries (size, focus, hover,
             // cursor), apart from ImGui's own NewFrame so a capture attributes the two separately.
             VE_PROFILE_SCOPE("ImGui/PlatformNewFrame");
-            ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
         }
         {
@@ -546,8 +637,6 @@ namespace Veng
 
     void ImGuiLayer::SkipFrame()
     {
-        DrainTextureRemovals();
-
         ImGuiIO& io = ImGui::GetIO();
         io.ClearEventsQueue();
         io.WantCaptureMouse = false;
@@ -567,30 +656,19 @@ namespace Veng
         m_FrameOpen = false;
 
         ImGui::Render();
-        ImDrawData* drawData = ImGui::GetDrawData();
+        const ImDrawData* drawData = ImGui::GetDrawData();
+
+        // Texture requests are serviced whether or not anything draws: an empty frame may still
+        // be the one ImGui retires a texture in.
+        UpdateTextures(commandBuffer, *drawData);
 
         m_DrewOutput = drawData->CmdListsCount > 0 && drawData->TotalVtxCount > 0;
         if (!m_DrewOutput)
         {
-            // Texture uploads ride RenderDrawData, which an empty frame skips; they submit on
-            // their own command buffer, so they are caught up here with nothing recorded.
-            if (drawData->Textures != nullptr)
-            {
-                // The backend submits and idles the shared graphics queue for each upload, so it
-                // takes the lock every other queue user does.
-                const std::scoped_lock lock(m_Context.GetNative().SubmitMutex);
-                for (ImTextureData* texture : *drawData->Textures)
-                {
-                    if (texture->Status != ImTextureStatus_OK)
-                    {
-                        ImGui_ImplVulkan_UpdateTexture(texture);
-                    }
-                }
-            }
             return;
         }
 
-        Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ColorAttachment);
+        commandBuffer.PrepareForAccess(m_ImageView, AccessKind::ColorAttachment);
 
         commandBuffer.BeginRendering({
             .Extent = m_Context.GetRenderExtent(),
@@ -602,37 +680,243 @@ namespace Veng
             }},
         });
 
-        {
-            // RenderDrawData uploads pending textures first, submitting and idling the shared
-            // graphics queue, so it takes the lock every other queue user does.
-            const std::scoped_lock lock(m_Context.GetNative().SubmitMutex);
-            ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
-        }
+        RecordDrawData(commandBuffer, *drawData);
 
         commandBuffer.EndRendering();
 
-        Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ShaderReadOnly);
+        commandBuffer.PrepareForAccess(m_ImageView, AccessKind::SampleGraphics);
+    }
+
+    void ImGuiLayer::UpdateTextures(Renderer::CommandBuffer& cmd, const ImDrawData& drawData)
+    {
+        using namespace Renderer;
+
+        if (drawData.Textures == nullptr)
+        {
+            return;
+        }
+
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        for (ImTextureData* texture : *drawData.Textures)
+        {
+            if (texture->Status == ImTextureStatus_OK)
+            {
+                continue;
+            }
+
+            if (texture->Status == ImTextureStatus_WantDestroy)
+            {
+                // The slot and the image retire past the frames in flight that may still sample
+                // them, so the request is honoured at once.
+                const auto found = m_Draw->Textures.find(texture);
+                if (found != m_Draw->Textures.end())
+                {
+                    bindless.Release(found->second.Handle);
+                    m_Draw->Textures.erase(found);
+                }
+                texture->SetTexID(ImTextureID_Invalid);
+                texture->SetStatus(ImTextureStatus_Destroyed);
+                continue;
+            }
+
+            const bool create = texture->Status == ImTextureStatus_WantCreate;
+            if (create)
+            {
+                VE_ASSERT(texture->Format == ImTextureFormat_RGBA32,
+                          "ImGuiLayer: texture {} requests format {}; only RGBA32 is served",
+                          texture->UniqueID, static_cast<i32>(texture->Format));
+                const Ref<Image> image = Image::Create(
+                    m_Context, {
+                                   .Name = fmt::format("ImGui Texture {}", texture->UniqueID),
+                                   .Extent = {static_cast<u32>(texture->Width),
+                                              static_cast<u32>(texture->Height), 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+                const Ref<ImageView> view =
+                    ImageView::Create(m_Context, {.Name = image->GetName(), .Image = image});
+                const TextureHandle handle = bindless.Register(view);
+                m_Draw->Textures.insert_or_assign(
+                    texture, ImGuiDynamicTexture{.Image = image, .View = view, .Handle = handle});
+                texture->SetTexID(PackImGuiTextureId(handle, m_Draw->LinearSampler));
+            }
+
+            const auto found = m_Draw->Textures.find(texture);
+            VE_ASSERT(found != m_Draw->Textures.end(),
+                      "ImGuiLayer: texture {} requests an update before it was created",
+                      texture->UniqueID);
+            const ImGuiDynamicTexture& dynamic = found->second;
+
+            // A create uploads the whole texture, which also clears it; an update uploads the
+            // bounding rectangle of the changed regions, which ImGui keeps in UpdateRect.
+            const u32 x = create ? 0u : texture->UpdateRect.x;
+            const u32 y = create ? 0u : texture->UpdateRect.y;
+            const u32 width = create ? static_cast<u32>(texture->Width) : texture->UpdateRect.w;
+            const u32 height = create ? static_cast<u32>(texture->Height) : texture->UpdateRect.h;
+            const usize pitch = static_cast<usize>(width) * texture->BytesPerPixel;
+
+            vector<u8> pixels(pitch * height);
+            for (u32 row = 0; row < height; ++row)
+            {
+                std::memcpy(pixels.data() + (pitch * row),
+                            texture->GetPixelsAt(static_cast<int>(x), static_cast<int>(y + row)),
+                            pitch);
+            }
+            const Ref<Buffer> staging =
+                Buffer::Create(m_Context, {
+                                              .Name = "ImGui Texture Upload",
+                                              .Size = pixels.size(),
+                                              .Usage = BufferUsage::TransferSrc,
+                                          });
+            staging->UploadSync(pixels);
+
+            const BufferImageCopyRegion region{
+                .BufferOffset = 0,
+                .MipLevel = 0,
+                .ImageOffset = {x, y, 0},
+                .Extent = {width, height, 1},
+            };
+            cmd.PrepareForAccess(dynamic.View, AccessKind::TransferDst);
+            cmd.CopyBufferToImage(staging, dynamic.Image, {&region, 1});
+            cmd.PrepareForAccess(dynamic.View, AccessKind::SampleGraphics);
+            // The staging Ref drops here; deferred destruction keeps it alive until the frame
+            // fence, so the recorded copy still has its source when the GPU runs it.
+
+            texture->SetStatus(ImTextureStatus_OK);
+        }
+    }
+
+    void ImGuiLayer::RecordDrawData(Renderer::CommandBuffer& cmd, const ImDrawData& drawData)
+    {
+        using namespace Renderer;
+
+        // Scissor rectangles are projected into framebuffer pixels, which differ from ImGui's
+        // display units on a scaled display.
+        const vec2 clipOffset = drawData.DisplayPos;
+        const vec2 clipScale = drawData.FramebufferScale;
+        const vec2 framebuffer = vec2(drawData.DisplaySize) * clipScale;
+        if (framebuffer.x <= 0.0f || framebuffer.y <= 0.0f)
+        {
+            return;
+        }
+        const uvec2 framebufferExtent = uvec2(framebuffer);
+
+        // Every list is packed into one vertex and one index stream this frame slot owns; a draw
+        // then addresses its list through the running offsets.
+        DrawResources::FrameRing& ring = m_Draw->Rings[m_Context.GetCurrentFrameInFlight()];
+        const u64 vertexBytes = static_cast<u64>(drawData.TotalVtxCount) * sizeof(ImDrawVert);
+        const u64 indexBytes = static_cast<u64>(drawData.TotalIdxCount) * sizeof(ImDrawIdx);
+        ring.Vertices = EnsureRing(m_Context, ring.Vertices, vertexBytes, BufferUsage::Vertex,
+                                   "ImGui Vertices");
+        ring.Indices =
+            EnsureRing(m_Context, ring.Indices, indexBytes, BufferUsage::Index, "ImGui Indices");
+
+        auto* vertices = static_cast<ImDrawVert*>(ring.Vertices->GetMappedData());
+        auto* indices = static_cast<ImDrawIdx*>(ring.Indices->GetMappedData());
+        for (const ImDrawList* list : drawData.CmdLists)
+        {
+            std::memcpy(vertices, list->VtxBuffer.Data, list->VtxBuffer.Size * sizeof(ImDrawVert));
+            std::memcpy(indices, list->IdxBuffer.Data, list->IdxBuffer.Size * sizeof(ImDrawIdx));
+            vertices += list->VtxBuffer.Size;
+            indices += list->IdxBuffer.Size;
+        }
+
+        // The display rectangle [DisplayPos, DisplayPos + DisplaySize] maps onto clip [-1, 1].
+        const vec2 scale = 2.0f / vec2(drawData.DisplaySize);
+        const vec2 translate = -1.0f - (vec2(drawData.DisplayPos) * scale);
+
+        const Ref<GraphicsPipeline>& pipeline =
+            m_Draw->PipelineFor(m_Context, m_Image->GetFormat());
+        const auto setupRenderState = [&]
+        {
+            cmd.BindPipeline(pipeline);
+            m_Context.GetBindlessRegistry().Bind(cmd);
+            cmd.BindVertexBuffer(ring.Vertices);
+            cmd.BindIndexBuffer(ring.Indices, IndexType::U16);
+            cmd.SetViewport({0, 0}, framebufferExtent);
+        };
+        setupRenderState();
+
+        u32 vertexBase = 0;
+        u32 indexBase = 0;
+        for (const ImDrawList* list : drawData.CmdLists)
+        {
+            for (const ImDrawCmd& draw : list->CmdBuffer)
+            {
+                if (draw.UserCallback != nullptr)
+                {
+                    if (draw.UserCallback == ResetRenderStateCallback)
+                    {
+                        setupRenderState();
+                    }
+                    else
+                    {
+                        draw.UserCallback(list, &draw);
+                    }
+                    continue;
+                }
+
+                // Clamped to the framebuffer, since a scissor may not leave it.
+                const vec2 clipMin = glm::max(
+                    (vec2(draw.ClipRect.x, draw.ClipRect.y) - clipOffset) * clipScale, vec2(0.0f));
+                const vec2 clipMax = glm::min(
+                    (vec2(draw.ClipRect.z, draw.ClipRect.w) - clipOffset) * clipScale, framebuffer);
+                if (clipMax.x <= clipMin.x || clipMax.y <= clipMin.y)
+                {
+                    continue;
+                }
+                cmd.SetScissor(ivec2(clipMin), uvec2(clipMax - clipMin));
+
+                const ImGuiTextureSlots slots = UnpackImGuiTextureId(draw.GetTexID());
+                cmd.PushConstants(ImGuiPushConstants{
+                    .Scale = scale,
+                    .Translate = translate,
+                    .Texture = slots.Texture,
+                    .Sampler = slots.Sampler,
+                });
+                cmd.DrawIndexed(draw.ElemCount, 1, draw.IdxOffset + indexBase,
+                                static_cast<i32>(draw.VtxOffset + vertexBase), 0);
+            }
+            vertexBase += static_cast<u32>(list->VtxBuffer.Size);
+            indexBase += static_cast<u32>(list->IdxBuffer.Size);
+        }
+
+        // A later draw that sets no scissor of its own inherits the whole target, not the last
+        // clip rectangle.
+        cmd.SetScissor({0, 0}, framebufferExtent);
     }
 
     Ref<ImGuiTexture> ImGuiLayer::CreateTexture(const Renderer::Sampler& sampler,
                                                 const Renderer::ImageView& imageView)
     {
-        auto native = CreateUnique<ImGuiTexture::Native>();
+        using namespace Renderer;
 
-        native->Set = ImGui_ImplVulkan_AddTexture(
-            GetVkSampler(sampler), GetVkImageView(imageView),
-            static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+        // The registration owns a view of its own over the same subresources, so the slot keeps
+        // the image alive for as long as a draw may sample it.
+        const Ref<ImageView> view =
+            ImageView::Create(m_Context, {
+                                             .Name = imageView.GetName(),
+                                             .Image = imageView.GetImage(),
+                                             .ViewType = imageView.GetViewType(),
+                                             .BaseMipLevel = imageView.GetBaseMipLevel(),
+                                             .MipLevels = imageView.GetMipLevels(),
+                                             .BaseArrayLayer = imageView.GetBaseArrayLayer(),
+                                             .ArrayLayers = imageView.GetArrayLayers(),
+                                         });
+
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        auto native = CreateUnique<ImGuiTexture::Native>(ImGuiTexture::Native{
+            .Texture = bindless.Register(view),
+            .Sampler = bindless.AcquireSampler(sampler.GetInfo()).Handle,
+        });
 
         return Ref<ImGuiTexture>(new ImGuiTexture(std::move(native), *this));
     }
 
     void ImGuiLayer::DestroyTexture(const ImGuiTexture& texture)
     {
-        // The drain runs in BeginFrame before this frame's fence is waited, so the
-        // count must cover the frame in flight at queueing time plus the subsequent
-        // MaxFramesInFlight cycles — hence MaxFramesInFlight + 1.
-        m_PendingTextureRemovals.push_back(
-            {.Set = texture.GetNative().Set,
-             .FramesRemaining = m_Context.GetMaxFramesInFlight() + 1});
+        // The registry defers the slot's reuse past every frame in flight that may still sample
+        // it; the sampler slot is the registry's shared one and is not the texture's to release.
+        m_Context.GetBindlessRegistry().Release(texture.GetNative().Texture);
     }
 }

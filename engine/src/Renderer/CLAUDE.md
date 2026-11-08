@@ -16,7 +16,7 @@ engine-typed, and meets the backend at a handful of private seams:
 
 - **Synchronization is decided device-free.** `BarrierDecision.h` holds the hazard rule
   (`DecideBarrier`, `ScopeFor`, `ScopeForLayout`) in the engine's own vocabulary — `SyncStage` and
-  `SyncAccess` bitmasks and the `ImageLayout` class of use — and `RenderGraphSchedule.h` and
+  `SyncAccess` bitmasks and the `ImageLayout` class of use (`ImageLayout.h`, private beside it) — and `RenderGraphSchedule.h` and
   `TransientAllocation.h` derive the graph's schedule from it. An image's tracked per-subresource
   state is that same vocabulary. The Vulkan backend maps a decision onto pipeline stages, access
   masks and layouts (`Backend/Vulkan/SyncMapping.h`, one Vulkan bit per engine bit) only when it
@@ -42,7 +42,9 @@ engine-typed, and meets the backend at a handful of private seams:
 
 `Veng/Renderer/Native.h` is the one public interop header: it compiles only in a Vulkan tree, holds
 the vulkan.hpp configuration the backend builds on, and declares the raw-handle accessors the
-backend defines. The `ImGui` layer still reaches the Vulkan backend's headers directly.
+backend defines. No engine source outside `Backend/` includes it or a backend header, which
+`include_hygiene` enforces; the `ImGui` layer renders on engine primitives (see
+[../UI/CLAUDE.md](../UI/CLAUDE.md)).
 
 ## RenderGraph: barriers fall out of declared use
 
@@ -3105,7 +3107,8 @@ that frame's fence has been waited.** How each kind of state keeps it:
 - **Readbacks** are read only after the staging frame's fence: `AsyncReadback`, the picking readback
   (more than frames-in-flight Executes after staging), and the timestamp queries (read at the slot's
   next `BeginFrame`).
-- **Every queue user takes `SubmitMutex`**, including the ImGui backend's own texture uploads.
+- **Every queue user takes `SubmitMutex`.** The ImGui layer submits nothing of its own: its texture
+  uploads record into the frame's command buffer.
 - **The drawable.** MoltenVK acquires the `CAMetalDrawable` when it encodes the frame's first use of
   the swap chain image, which is now on its own thread. The swap chain holds more images than frames in
   flight (warned otherwise), so an image acquired again has finished its last encode and no queued

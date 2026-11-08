@@ -617,8 +617,7 @@ target_link_libraries(veng PRIVATE
 set_source_files_properties(src/Text/GlyphSource.cpp PROPERTIES
         COMPILE_DEFINITIONS "MSDFGEN_PUBLIC=;MSDFGEN_EXTENSIONS")
 
-# The backend's libraries link only into a tree built against that backend. The include path and
-# the ImGui Vulkan renderer's TU (src/Vendor/ImGui.cpp) still need the Vulkan headers.
+# The backend's libraries link only into a tree built against that backend.
 if (VE_GPU_BACKEND STREQUAL "Vulkan")
     target_link_libraries(veng PRIVATE Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 endif ()

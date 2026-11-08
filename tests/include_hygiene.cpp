@@ -15,6 +15,10 @@
 // Vulkan / VMA name (vk::, Vk*, VK_*, Vma*, vma*) anywhere in it — comments included, since a
 // public doc comment states the contract in engine terms. Native.h is excluded there too.
 //
+// The same rule holds inside the engine: only engine/src/Renderer/Backend/ includes a backend
+// header or Native.h, so the scan also walks every other engine source and fails on such an
+// include there.
+//
 // The Veng/Asset/* headers come from libveng_assetpack,
 // linked PUBLIC by veng — this sweep also proves that boundary stays
 // Vulkan-free.
@@ -275,6 +279,38 @@ int main()
             if (std::regex_search(line, backendName))
             {
                 std::fprintf(stderr, "%s:%d names the GPU backend: %s\n",
+                             entry.path().string().c_str(), number, line.c_str());
+                ++failures;
+            }
+        }
+    }
+
+    const fs::path engineSource = VENG_ENGINE_SOURCE_DIR;
+    const fs::path backendSource = engineSource / "Renderer" / "Backend";
+    const std::regex backendInclude{
+        R"(^\s*#\s*(include|import)\s*[<"].*(Backend/|vulkan/|vk_mem_alloc|Veng/Renderer/Native\.h))"};
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(engineSource))
+    {
+        const fs::path extension = entry.path().extension();
+        if (!entry.is_regular_file() ||
+            (extension != ".h" && extension != ".cpp" && extension != ".mm"))
+        {
+            continue;
+        }
+        const fs::path relative = entry.path().lexically_relative(backendSource);
+        if (!relative.empty() && *relative.begin() != "..")
+        {
+            continue;
+        }
+        std::ifstream file(entry.path());
+        std::string line;
+        int number = 0;
+        while (std::getline(file, line))
+        {
+            ++number;
+            if (std::regex_search(line, backendInclude))
+            {
+                std::fprintf(stderr, "%s:%d includes the GPU backend outside it: %s\n",
                              entry.path().string().c_str(), number, line.c_str());
                 ++failures;
             }

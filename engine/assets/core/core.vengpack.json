@@ -177,6 +177,16 @@
       "source": "shaders/composite.frag.shader.json"
     },
     {
+      "id": "0xE38A4ECAF908D31F",
+      "type": "Shader",
+      "source": "shaders/imgui.vert.shader.json"
+    },
+    {
+      "id": "0x19BC9581419ECB59",
+      "type": "Shader",
+      "source": "shaders/imgui.frag.shader.json"
+    },
+    {
       "id": "0x657ADCF9558CA6B9",
       "type": "Shader",
       "source": "shaders/gather.frag.shader.json"

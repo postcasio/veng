@@ -683,10 +683,14 @@ extern "C"
 /// buffer offset alignments mid-struct, BlitImageInfo grows its layer range, Window::Native holds an
 /// opaque surface, and the Native.h accessors become exported functions. A module reads the
 /// capabilities and builds blits, so a stale one reads both at shifted offsets.
+/// Version 174 renders ImGui through the engine's own pipeline: ImGuiLayer drops its descriptor
+/// pool and texture retire queue for the renderer's state, and ImGuiLayer::Create takes the asset
+/// manager the renderer's shaders load through. A module drives the layer, so a stale one lays it
+/// out wrong.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 173u
+#define VENG_MODULE_ABI_VERSION 174u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

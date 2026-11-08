@@ -1,5 +1,3 @@
-#include "../Renderer/Backend/Vulkan/Vulkan.h"
-
 #include <imgui.cpp>
 #include <imgui_draw.cpp>
 #include <imgui_widgets.cpp>
@@ -9,4 +7,3 @@
 #include <imnodes.cpp>
 
 #include <backends/imgui_impl_glfw.cpp>
-#include <backends/imgui_impl_vulkan.cpp>

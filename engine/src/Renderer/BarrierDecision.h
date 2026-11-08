@@ -8,7 +8,8 @@
 // through it.
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Types.h> // AccessKind, ImageLayout, VE_ENUM_FLAGS
+#include <Veng/Renderer/Types.h> // AccessKind, VE_ENUM_FLAGS
+#include "ImageLayout.h"
 
 namespace Veng::Renderer
 {

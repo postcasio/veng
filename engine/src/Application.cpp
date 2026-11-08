@@ -404,7 +404,8 @@ namespace Veng
                               configDir.error());
                 }
             }
-            m_ImGuiLayer = ImGuiLayer::Create(imguiInfo, m_RenderContext, *m_Window);
+            m_ImGuiLayer =
+                ImGuiLayer::Create(imguiInfo, m_RenderContext, *m_AssetManager, *m_Window);
         }
 
         // Routes the window's events to the consumer registry and the Input snapshot by focus.

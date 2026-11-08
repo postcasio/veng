@@ -110,6 +110,7 @@ namespace
         u32 ImGuiTexture;
         u32 Sampler;
         u32 EncodeMode;
+        u32 BlendOverlay;
         f32 PaperWhiteNits;
         f32 PeakNits;
     };
@@ -198,6 +199,7 @@ namespace
                                 .ImGuiTexture = textureHandle.Index,
                                 .Sampler = samplerHandle.Index,
                                 .EncodeMode = 0,
+                                .BlendOverlay = 1,
                                 .PaperWhiteNits = 0.0f,
                                 .PeakNits = 0.0f,
                             });
@@ -263,9 +265,8 @@ int main()
 
     Time::Initialize();
 
-    // A windowed context: the ImGui Vulkan backend needs a swapchain image count,
-    // which is only available with a window. The window is never shown to a frame
-    // loop; the UI is rendered into the layer's offscreen image and read back.
+    // A windowed context: the ImGui layer reads input from a window. The window is never
+    // shown to a frame loop; the UI is rendered into the layer's offscreen image and read back.
     const Unique<Window> window = Window::Create({
         .Extent = {640, 480},
         .Resizable = false,
@@ -283,21 +284,21 @@ int main()
 
     Unique<TaskSystem> tasks = CreateUnique<TaskSystem>(TaskSystemInfo{.WorkerCount = 2});
 
-    // The layout file is given an explicit home, and the info carrying it is a temporary: ImGui
-    // borrows IniFilename for the context's lifetime rather than copying it, so a layer that held
-    // the caller's path by reference would leave a dangling pointer that mostly works. Checking
-    // the characters after the temporary has died is what catches that.
-    const path iniPath = Veng::TestSupport::TempDir() / "veng_multi_viewport_imgui.ini";
-    Unique<ImGuiLayer> imgui =
-        ImGuiLayer::Create(ImGuiLayerInfo{.IniPath = iniPath}, context, *window);
-    Check(ImGui::GetIO().IniFilename != nullptr && path(ImGui::GetIO().IniFilename) == iniPath,
-          "ImGui layout path is the one the layer was given");
-
     {
         TypeRegistry types;
         RegisterBuiltinTypes(types);
 
         AssetManager assets(context, *tasks, types);
+
+        // The layout file is given an explicit home, and the info carrying it is a temporary:
+        // ImGui borrows IniFilename for the context's lifetime rather than copying it, so a layer
+        // that held the caller's path by reference would leave a dangling pointer that mostly
+        // works. Checking the characters after the temporary has died is what catches that.
+        const path iniPath = Veng::TestSupport::TempDir() / "veng_multi_viewport_imgui.ini";
+        Unique<ImGuiLayer> imgui =
+            ImGuiLayer::Create(ImGuiLayerInfo{.IniPath = iniPath}, context, assets, *window);
+        Check(ImGui::GetIO().IniFilename != nullptr && path(ImGui::GetIO().IniFilename) == iniPath,
+              "ImGui layout path is the one the layer was given");
 
         // Cook the white-plane fixture pack in-process (over the auto-mounted core
         // pack, which supplies the canonical layout and the lighting/composite shaders).
@@ -370,7 +371,7 @@ int main()
         greenView->AttachToDriveList(driveList);
 
         // One sampler both UI textures are drawn through; each viewport's output is
-        // registered with the ImGui backend as a drawable texture (as a panel does).
+        // registered with the ImGui layer as a drawable texture (as a panel does).
         const Ref<Sampler> uiSampler = Sampler::Create(context, {
                                                                     .Name = "UI Viewport Sampler",
                                                                     .MagFilter = Filter::Linear,
@@ -455,8 +456,8 @@ int main()
         std::filesystem::remove(outArchive);
     }
 
-    // Teardown is by reverse declaration order (imgui, tasks, context, window), so
-    // the ImGui layer and task system release before ~Context; every submit here was
-    // synchronous, so the device is idle when the ImGui layer's backend shuts down.
+    // Teardown is by reverse declaration order (the scope's textures, imgui and assets, then
+    // tasks, context, window), so everything releases before ~Context; every submit here was
+    // synchronous, so the device is idle when the ImGui layer shuts down.
     return g_Failures == 0 ? 0 : 1;
 }

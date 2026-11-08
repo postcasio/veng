@@ -1553,7 +1553,8 @@ if (VENG_BUILD_TESTS)
             veng_editor::veng_editor)
 
     target_compile_definitions(veng_test_include_hygiene PRIVATE
-            VENG_PUBLIC_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/engine/include")
+            VENG_PUBLIC_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/engine/include"
+            VENG_ENGINE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/engine/src")
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
     set_tests_properties(include_hygiene PROPERTIES LABELS fast)
 
@@ -1984,6 +1985,10 @@ if (VENG_BUILD_TESTS)
             # the handle is released — plus the headless no-op of a swap-chain invalidation.
             tests/gpu/frame_retired.cpp
             tests/gpu/async_submit.cpp
+            # imgui_renderer.cpp draws a registered ImGuiTexture, an ImGui-owned dynamic texture
+            # updated between two frames, and a clipped fill through ImGuiLayer, and reads back a
+            # texel each of the three determines.
+            tests/gpu/imgui_renderer.cpp
             tests/gpu/async_upload.cpp
             tests/gpu/async_mesh_build.cpp
             tests/gpu/dynamic_mesh.cpp
@@ -2417,7 +2422,7 @@ if (VENG_BUILD_TESTS)
     # ---- MaterialPreview surface (editor src) ------------------------------
     # The one GPU target that links libveng_editor: it constructs a
     # VengEditor::MaterialPreview (which owns a SceneRenderer + a Ref<ImGuiTexture>),
-    # so it needs a windowed Context and the ImGui Vulkan backend. It cooks the brick
+    # so it needs a windowed Context and the ImGui layer. It cooks the brick
     # g-buffer fixture in-process (veng::cook), so it is gated on the editor library. A
     # second viewport-style SceneRenderer is recorded alongside the preview, so the
     # two-renderer cross-graph handoff runs under the validation gate. Skips
@@ -2445,7 +2450,7 @@ if (VENG_BUILD_TESTS)
     # ImGuiLayer::Render into the UI's offscreen image. It reads that composited
     # image back (veng::cook cooks the white-plane fixture in-process) and asserts
     # the two halves are different colors — the guard against viewport duplication.
-    # Windowed (ImGui Vulkan backend), so it skips (SKIP_RETURN_CODE 77) with no ICD.
+    # Windowed (the ImGui layer reads a window), so it skips (SKIP_RETURN_CODE 77) with no ICD.
     add_executable(veng_test_multi_viewport_imgui tests/multi_viewport_imgui.cpp)
     target_link_libraries(veng_test_multi_viewport_imgui PRIVATE
             veng::veng veng::cook veng_test_support)
@@ -2875,7 +2880,6 @@ install(FILES
 )
 install(FILES
         ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.h
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.h
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/backends
 )
 

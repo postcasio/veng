@@ -11,6 +11,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Types.h>
 #include "Vulkan.h"
+#include "../../ImageLayout.h"
 
 namespace Veng::Renderer
 {

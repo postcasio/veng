@@ -79,3 +79,37 @@ editor framework for a debug slider.)
   event/input system, which feeds gameplay; the `Key` enum is populated to the keys the call
   sites use. The only ImGui types remaining in panel src are those crossing into imnodes
   (`ImVec2` for node positioning), which is itself an editor-private dependency.
+
+## The ImGui renderer
+
+`ImGuiLayer` draws ImGui's lists itself, on engine primitives, so it carries no backend code and
+every GPU backend gets it unchanged. Only the platform half (`imgui_impl_glfw`, input and window
+queries) is a vendored ImGui backend.
+
+- **The pass.** `Render` records into the frame's command buffer: ImGui's texture requests first,
+  then — when the draw data is non-empty — one rendering scope over the layer's RGBA16F output,
+  prepared with `PrepareForAccess` for the colour write and left `SampleGraphics` for the
+  compositor. The core-pack `imgui.vert`/`imgui.frag` stages run through one graphics pipeline per
+  target format (`ImDrawVert`'s layout, its RGBA8 colour normalized by the input assembler; the
+  straight-alpha blend `BlendState::AlphaBlend`). Every list is packed into one vertex and one
+  16-bit index buffer per frame in flight, host-mapped and grown when a frame outgrows it; a draw
+  addresses its list by `VtxOffset`/`IdxOffset`, its clip rectangle becomes a scissor in
+  framebuffer pixels, and the push constants carry the display-to-clip scale and translate with
+  the draw's texture slots. ImGui's reset-render-state callback re-applies the pass's state; any
+  other user callback is called.
+- **An `ImTextureID` is two bindless slots.** The low 32 bits are a set-0 texture slot, the bits
+  above the sampler slot, and the top bit is set so no id is zero (ImGui's invalid id)
+  (`src/ImGui/ImGuiTextureNative.h`). `CreateTexture` registers its own view of the caller's image
+  (so the registration keeps the image alive) and takes the registry-shared sampler matching the
+  caller's sampler description, which the draw then samples through; destroying the
+  `ImGuiTexture` releases the texture slot through the registry's deferred release.
+- **ImGui's own textures** — the dynamic font atlas, and any `ImTextureData` registered with
+  ImGui — are served on request (`ImGuiBackendFlags_RendererHasTextures`). A create makes an
+  RGBA8 `Image` and registers it, sampled linearly and clamped; a create or update uploads the
+  whole texture or the request's `UpdateRect` through a staging buffer copied in the frame's
+  command buffer between `PrepareForAccess` transitions; a destroy releases the slot and drops
+  the image, both retired past the frames in flight. Requests are serviced on a frame that draws
+  nothing too.
+- **The layer loads its shaders at construction** (`ImGuiLayer::Create` takes the
+  `AssetManager`) and keeps their modules rather than the asset handles, so the manager need not
+  outlive it.
