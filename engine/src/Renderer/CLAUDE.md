@@ -194,7 +194,10 @@ logic lives in plain C++ headers beside it (`HeapAllocator.h`, `BindingModel.h`,
   validation layer (`MTL_DEBUG_LAYER`, which Xcode sets by default) faults inside the driver
   compiling against a lookup archive, and shader validation (`MTL_SHADER_VALIDATION`) instruments
   every pipeline, which no archive holds. So the validation gate never exercises the archive; the
-  ordinary band does. The archive lives at `<stem>.metal<extension>`
+  ordinary band does. **A capturable process also gives its pipelines no labels** (`Context::Native::
+  PipelineLabel`): Xcode's capture decoder crashes opening some Metal 4 traces whose pipeline
+  records carry labels, depending on how the records happen to lie in the trace, and a trace without
+  them opens. The passes stay named in a capture through their debug groups. The archive lives at `<stem>.metal<extension>`
   beside the path (see "Pipeline cache"). Its header is checked before Metal opens it, since Metal
   faults on a file that is not an archive rather than refusing it: anything that is not a Mach-O
   image (thin, or the universal form Metal writes), or cannot be read, is logged and ignored, and a

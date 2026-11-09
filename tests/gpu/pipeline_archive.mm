@@ -97,6 +97,17 @@ namespace
                  .ShaderStage = {.Stage = ShaderStage::Compute, .Module = compute->Get()->Module}});
             REQUIRE(graphics != nullptr);
             REQUIRE(kernel != nullptr);
+
+            // A pipeline carries its name as its label, except in a process that can be captured.
+            MTLCaptureManager* const capture = [MTLCaptureManager sharedCaptureManager];
+            CHECK(context.GetNative().OmitPipelineLabels ==
+                  ([capture supportsDestination:MTLCaptureDestinationDeveloperTools] ||
+                   [capture supportsDestination:MTLCaptureDestinationGPUTraceDocument]));
+            if (!context.GetNative().OmitPipelineLabels)
+            {
+                CHECK([kernel->GetNative().State.label isEqualToString:@"Archive Compute"]);
+                CHECK([graphics->GetNative().State.label isEqualToString:@"Archive Graphics"]);
+            }
         }
         const Context::Native& native = context.GetNative();
         return {.Hits = native.ArchiveHits,

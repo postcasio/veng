@@ -598,7 +598,7 @@ namespace Veng::Renderer
         descriptor.computeFunctionDescriptor = function;
         descriptor.requiredThreadsPerThreadgroup =
             MTLSizeMake(Metal::IndirectCountThreadgroupSize, 1, 1);
-        descriptor.label = @"Indirect Count Encoder";
+        descriptor.label = PipelineLabel("Indirect Count Encoder");
         IndirectCountEncoder = CreateComputePipeline(descriptor, &error);
         VE_ASSERT(IndirectCountEncoder != nil,
                   "Context: the indirect-count encoder failed to build: {}",
@@ -768,6 +768,12 @@ namespace Veng::Renderer
             [native.TransferQueue addResidencySet:native.Residency];
         }
 
+        {
+            MTLCaptureManager* const capture = [MTLCaptureManager sharedCaptureManager];
+            native.OmitPipelineLabels =
+                [capture supportsDestination:MTLCaptureDestinationDeveloperTools] ||
+                [capture supportsDestination:MTLCaptureDestinationGPUTraceDocument];
+        }
         if (info.PipelineCachePath.has_value())
         {
             native.OpenPipelineArchive(*info.PipelineCachePath);

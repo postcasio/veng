@@ -75,7 +75,7 @@ namespace Veng::Renderer
 
         MTL4RenderPipelineDescriptor* const descriptor =
             [[MTL4RenderPipelineDescriptor alloc] init];
-        descriptor.label = Metal::ToNSString(m_Name);
+        descriptor.label = context.GetNative().PipelineLabel(m_Name);
         for (const PipelineShaderStageInfo& stage : info.ShaderStages)
         {
             switch (stage.Stage)

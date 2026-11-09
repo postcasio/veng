@@ -306,7 +306,7 @@ namespace Veng::Renderer
         };
         MTL4RenderPipelineDescriptor* const descriptor =
             [[MTL4RenderPipelineDescriptor alloc] init];
-        descriptor.label = @"Veng Blit";
+        descriptor.label = PipelineLabel("Veng Blit");
         descriptor.vertexFunctionDescriptor = function(@"BlitVertex");
         descriptor.fragmentFunctionDescriptor = function(@"BlitFragment");
         descriptor.colorAttachments[0].pixelFormat = format;
@@ -346,7 +346,7 @@ namespace Veng::Renderer
 
         MTL4RenderPipelineDescriptor* const descriptor =
             [[MTL4RenderPipelineDescriptor alloc] init];
-        descriptor.label = @"Veng Area Clear";
+        descriptor.label = PipelineLabel("Veng Area Clear");
         MTL4LibraryFunctionDescriptor* const vertex = [[MTL4LibraryFunctionDescriptor alloc] init];
         vertex.library = library;
         vertex.name = @"ClearVertex";

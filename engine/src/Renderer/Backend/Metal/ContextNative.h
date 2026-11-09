@@ -69,6 +69,17 @@ namespace Veng::Renderer
         vector<u32> ImmediateOpenScopeStack;
         /// @brief The compiler pipelines are built with.
         id<MTL4Compiler> Compiler = nil;
+        /// @brief Whether pipeline descriptors carry no label (see PipelineLabel).
+        bool OmitPipelineLabels = false;
+
+        /// @brief The label a pipeline descriptor carries for @p name: nil in a process that can
+        ///        be GPU-captured, since Xcode's capture decoder crashes on some traces whose
+        ///        pipeline records carry labels.
+        [[nodiscard]] NSString* PipelineLabel(const string_view name) const
+        {
+            return OmitPipelineLabels ? nil : Metal::ToNSString(name);
+        }
+
         /// @brief The pipeline archive a previous run wrote, or nil.
         id<MTL4Archive> Archive = nil;
         /// @brief Compiler options naming the archive as a lookup, so a pipeline it holds is taken

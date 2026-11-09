@@ -41,7 +41,7 @@ namespace Veng::Renderer
             [[MTL4ComputePipelineDescriptor alloc] init];
         descriptor.computeFunctionDescriptor = function;
         descriptor.requiredThreadsPerThreadgroup = m_Native->ThreadsPerThreadgroup;
-        descriptor.label = Metal::ToNSString(m_Name);
+        descriptor.label = context.GetNative().PipelineLabel(m_Name);
 #ifdef VE_ENABLE_VALIDATION_LAYERS
         // A pipeline served from the shader cache is not instrumented for shader validation unless
         // it asks to be, so a process run under validation asks for every pipeline.
