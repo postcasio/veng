@@ -47,8 +47,8 @@ namespace
         MTLCaptureManager* const capture = [MTLCaptureManager sharedCaptureManager];
         return [capture supportsDestination:MTLCaptureDestinationDeveloperTools] ||
                [capture supportsDestination:MTLCaptureDestinationGPUTraceDocument] ||
-               std::getenv("MTL_DEBUG_LAYER") != nullptr ||
-               std::getenv("MTL_SHADER_VALIDATION") != nullptr;
+               Metal::IsEnvironmentSwitchOn("MTL_DEBUG_LAYER") ||
+               Metal::IsEnvironmentSwitchOn("MTL_SHADER_VALIDATION");
     }
 
     // Brings a context up on @p archive, builds one graphics and one compute pipeline from the

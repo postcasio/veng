@@ -11,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <filesystem>
 #include <map>
 
 #include <doctest/doctest.h>
@@ -99,6 +100,28 @@ namespace
         std::memcpy(out.data(), bytes.data(), out.size() * sizeof(T));
         return out;
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "A GPU capture refuses with a reason where none can be taken, and starts nothing")
+{
+    const path output = std::filesystem::temp_directory_path() / "veng_gpu_capture_test.gputrace";
+    std::filesystem::remove_all(output);
+
+    const VoidResult zero = Context.CaptureGpuFrames(output, 0);
+    CHECK_FALSE(zero.has_value());
+
+    if (Context.IsGpuCaptureAvailable())
+    {
+        MESSAGE(
+            "this process can capture; the refusal of an unavailable capture is not observable");
+        return;
+    }
+    const VoidResult refused = Context.CaptureGpuFrames(output, 1);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK_FALSE(refused.error().empty());
+    CHECK_FALSE(Context.IsGpuCaptureActive());
+    CHECK_FALSE(std::filesystem::exists(output));
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

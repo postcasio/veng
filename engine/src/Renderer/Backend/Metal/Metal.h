@@ -6,6 +6,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include <cstdlib>
+
 #include <Veng/Assert.h>
 #include <Veng/Veng.h>
 
@@ -16,6 +18,16 @@ extern "C" void objc_autoreleasePoolPop(void* pool);
 
 namespace Veng::Renderer::Metal
 {
+    /// @brief Whether a Metal environment switch (`MTL_SHADER_VALIDATION`, `MTL_DEBUG_LAYER`) is on.
+    ///
+    /// Metal reads a switch set to `0` as off, so set-and-not-zero is on.
+    /// @param name The variable's name.
+    inline bool IsEnvironmentSwitchOn(const char* const name)
+    {
+        const char* const value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && string_view(value) != "0";
+    }
+
     /// @brief Converts engine text to an NSString.
     /// @param text The UTF-8 text.
     /// @return The string, autoreleased.

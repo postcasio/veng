@@ -1386,6 +1386,21 @@ namespace Veng::Renderer
         return m_Native->MetalDevice;
     }
 
+    bool Context::IsGpuCaptureAvailable() const
+    {
+        return false;
+    }
+
+    bool Context::IsGpuCaptureActive() const
+    {
+        return false;
+    }
+
+    VoidResult Context::CaptureGpuFrames(const path&, u32)
+    {
+        return std::unexpected(string("GPU capture is unavailable on the Vulkan backend"));
+    }
+
     bool Context::IsFrameSplitSupported() const
     {
 #ifdef __APPLE__

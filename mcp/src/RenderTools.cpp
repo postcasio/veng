@@ -11,6 +11,7 @@
 #include <Veng/Asset/Texture.h>
 #include <Veng/Capture/FrameCapture.h>
 #include <Veng/Capture/VideoRecorder.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FormatInfo.h>
@@ -1262,6 +1263,49 @@ namespace Veng::Mcp
 
     void RegisterRenderCaptureWriteTools(McpServer& server, const McpHost& host)
     {
+        // render.gpu_capture — a GPU trace document of the next frames, for a frame debugger. It
+        // writes a file, so it is a write tool; the name is all it is given.
+        {
+            McpTool tool;
+            tool.Name = "render.gpu_capture";
+            tool.Description =
+                "Captures the device's GPU work for the next 'frames' frames (default 1) into a "
+                "GPU "
+                "trace document, '<name>.gputrace' under the engine's capture directory "
+                "('name' defaults to 'gpu-capture'). Needs a backend and a process that can "
+                "capture "
+                "to a trace document (the Metal backend, launched with MTL_CAPTURE_ENABLED=1); "
+                "otherwise a tool error says why. Returns the trace's path at once; the capture "
+                "completes when the frames have ended.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{)"
+                                   R"("frames":{"type":"integer","minimum":1,"maximum":60},)"
+                                   R"("name":{"type":"string"}},"additionalProperties":false})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const u32 frames =
+                    args.is_object() && args.contains("frames") ? args["frames"].get<u32>() : 1;
+                const string name = args.is_object() && args.contains("name")
+                                        ? args["name"].get<string>()
+                                        : string("gpu-capture");
+                if (name.empty() || name.find_first_of("/\\:") != string::npos ||
+                    name.starts_with('.'))
+                {
+                    return std::unexpected(fmt::format(
+                        "'{}' is not a capture name: no separators or leading dot", name));
+                }
+                const path output = Diagnostics::CaptureDirectory() / (name + ".gputrace");
+                if (const VoidResult started =
+                        host.Assets.GetContext().CaptureGpuFrames(output, frames);
+                    !started)
+                {
+                    return std::unexpected(started.error());
+                }
+                return Json{{"path", output.string()}, {"frames", frames}}.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
         // render.capture_start — begin recording the presented frame. Every setting is optional
         // and defaults to the recorder's own; there is no directory argument, so a capture is
         // named and the engine places it.

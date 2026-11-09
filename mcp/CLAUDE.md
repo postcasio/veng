@@ -382,6 +382,14 @@ family registers from the editor side.
   refuses the whole call. A host whose own interface holds a copy of the settings (the editor's
   viewport panel) may re-apply that copy over them.
 
+  **`render.gpu_capture` writes a GPU trace document** of the next `frames` frames (default 1)
+  through `Context::CaptureGpuFrames`, to `<name>.gputrace` under `Diagnostics::CaptureDirectory()`
+  (`name` defaults to `gpu-capture`), for opening in a frame debugger. It registers only under
+  `AllowMutations`, since it writes a file. It needs a backend and a process that can capture to a
+  trace document — the Metal backend in a process launched with `MTL_CAPTURE_ENABLED=1` — and is a
+  tool error naming why otherwise. It returns the path at once; the trace completes as the frames
+  end.
+
   **The `render.capture_*` trio records the presented frame to a video file**, through
   `McpHost::VideoRecorder` (`Capture::VideoRecorder`, `engine/src/Capture/CLAUDE.md`).
   **`render.capture_status`** is read-only and always registered: `available`, `status`

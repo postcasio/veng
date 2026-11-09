@@ -45,7 +45,7 @@ namespace Veng::Renderer
 #ifdef VE_ENABLE_VALIDATION_LAYERS
         // A pipeline served from the shader cache is not instrumented for shader validation unless
         // it asks to be, so a process run under validation asks for every pipeline.
-        if (std::getenv("MTL_SHADER_VALIDATION") != nullptr)
+        if (Metal::IsEnvironmentSwitchOn("MTL_SHADER_VALIDATION"))
         {
             MTL4PipelineOptions* const options = [[MTL4PipelineOptions alloc] init];
             options.shaderValidation = MTLShaderValidationEnabled;

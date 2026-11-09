@@ -219,6 +219,8 @@ namespace Veng::Renderer
         RetireBin PendingRetire;
         /// @brief Whether a frame is between BeginFrame and EndFrame.
         bool FrameRecording = false;
+        /// @brief Frames left before the running GPU capture stops; 0 when none is running.
+        u32 GpuCaptureFramesLeft = 0;
         /// @brief Whether the frame's command buffer is open.
         bool FrameCommandsOpen = false;
         /// @brief The autorelease pool the frame drains at EndFrame, or null.

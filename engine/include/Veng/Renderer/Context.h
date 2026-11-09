@@ -611,6 +611,24 @@ namespace Veng::Renderer
         /// @see IsExternalTextureImportSupported
         [[nodiscard]] void* GetExternalDevice() const;
 
+        /// @brief Whether CaptureGpuFrames can write a GPU trace in this process.
+        ///
+        /// True on the Metal backend when the process was launched able to capture to a trace
+        /// document (`MTL_CAPTURE_ENABLED=1`, or under Xcode). False on every other backend.
+        [[nodiscard]] bool IsGpuCaptureAvailable() const;
+
+        /// @brief Whether a GPU capture CaptureGpuFrames started is still recording.
+        [[nodiscard]] bool IsGpuCaptureActive() const;
+
+        /// @brief Captures the device's GPU work into a GPU trace document, for a frame debugger.
+        ///
+        /// The capture starts at once and stops after @p frameCount further frames have ended.
+        /// @param output      The trace document to write; it must not exist yet.
+        /// @param frameCount  How many frames to capture, at least one.
+        /// @return An error naming why no capture started: none is available, one is already
+        ///         recording, the output exists, or the platform refused it.
+        VoidResult CaptureGpuFrames(const path& output, u32 frameCount);
+
         /// @brief Whether platform GPU work can be scheduled inside a frame (SplitFrame).
         ///
         /// True on the Vulkan backend on Apple when the Metal-object interop extension was enabled.

@@ -621,8 +621,8 @@ namespace Veng::Renderer
         }
         // Metal's validation layers fault compiling against a lookup archive, and shader
         // validation instruments every pipeline, which no archive holds.
-        if (std::getenv("MTL_DEBUG_LAYER") != nullptr ||
-            std::getenv("MTL_SHADER_VALIDATION") != nullptr)
+        if (Metal::IsEnvironmentSwitchOn("MTL_DEBUG_LAYER") ||
+            Metal::IsEnvironmentSwitchOn("MTL_SHADER_VALIDATION"))
         {
             Log::Info("Pipeline archive off: Metal's validation layer is on");
             return;
@@ -822,7 +822,7 @@ namespace Veng::Renderer
         // shader validation executes no draw such a buffer holds, so a process running under it
         // takes the fixed-maximum path. A tile-based Apple GPU keeps a memoryless attachment in tile
         // memory alone.
-        capabilities.IndirectDrawCount = std::getenv("MTL_SHADER_VALIDATION") == nullptr;
+        capabilities.IndirectDrawCount = !Metal::IsEnvironmentSwitchOn("MTL_SHADER_VALIDATION");
         capabilities.MemorylessAttachments = true;
         native.BlockCompressionSupported = [native.Device supportsBCTextureCompression];
         native.AstcSupported = [native.Device supportsFamily:MTLGPUFamilyApple2];
@@ -937,6 +937,11 @@ namespace Veng::Renderer
         native.DrainTransferRetireList();
         native.DrainAllRetireBins();
         native.WaitFeedback();
+        if (native.GpuCaptureFramesLeft > 0)
+        {
+            [[MTLCaptureManager sharedCaptureManager] stopCapture];
+            native.GpuCaptureFramesLeft = 0;
+        }
         native.Disposed = true;
 
         native.TransferTimeline.reset();
@@ -1350,8 +1355,63 @@ namespace Veng::Renderer
         }
         // Retires from here until the next BeginFrame park in the pending bin.
         m_Native->FrameRecording = false;
+        if (m_Native->GpuCaptureFramesLeft > 0 && --m_Native->GpuCaptureFramesLeft == 0)
+        {
+            [[MTLCaptureManager sharedCaptureManager] stopCapture];
+            Log::Info("GPU capture finished");
+        }
         objc_autoreleasePoolPop(m_Native->FramePool);
         m_Native->FramePool = nullptr;
+    }
+
+    bool Context::IsGpuCaptureAvailable() const
+    {
+        return [[MTLCaptureManager sharedCaptureManager]
+                   supportsDestination:MTLCaptureDestinationGPUTraceDocument] == YES;
+    }
+
+    bool Context::IsGpuCaptureActive() const
+    {
+        return m_Native->GpuCaptureFramesLeft > 0;
+    }
+
+    VoidResult Context::CaptureGpuFrames(const path& output, const u32 frameCount)
+    {
+        if (frameCount == 0)
+        {
+            return std::unexpected(string("a GPU capture covers at least one frame"));
+        }
+        if (!IsGpuCaptureAvailable())
+        {
+            return std::unexpected(string(
+                "GPU capture is unavailable: launch the process with MTL_CAPTURE_ENABLED=1"));
+        }
+        MTLCaptureManager* const manager = [MTLCaptureManager sharedCaptureManager];
+        if (m_Native->GpuCaptureFramesLeft > 0 || manager.isCapturing)
+        {
+            return std::unexpected(string("a GPU capture is already recording"));
+        }
+        std::error_code exists;
+        if (std::filesystem::exists(output, exists))
+        {
+            return std::unexpected(fmt::format("'{}' already exists", output.string()));
+        }
+        std::error_code created;
+        std::filesystem::create_directories(output.parent_path(), created);
+
+        MTLCaptureDescriptor* const descriptor = [[MTLCaptureDescriptor alloc] init];
+        descriptor.captureObject = m_Native->Device;
+        descriptor.destination = MTLCaptureDestinationGPUTraceDocument;
+        descriptor.outputURL = [NSURL fileURLWithPath:Metal::ToNSString(output.string())];
+        NSError* error = nil;
+        if (![manager startCaptureWithDescriptor:descriptor error:&error])
+        {
+            return std::unexpected(
+                fmt::format("Metal refused the GPU capture: {}", Metal::Describe(error)));
+        }
+        m_Native->GpuCaptureFramesLeft = frameCount;
+        Log::Info("GPU capture of {} frame(s) to '{}'", frameCount, output.string());
+        return {};
     }
 
     void Context::SubmitFrame(const SynchronizationFrame& frame) const
