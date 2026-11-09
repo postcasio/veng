@@ -237,6 +237,23 @@ if (VE_GPU_BACKEND STREQUAL "Metal" AND NOT APPLE)
     message(FATAL_ERROR "VE_GPU_BACKEND=Metal builds only on Apple platforms")
 endif ()
 
+# A Metal tree targets macOS 26.0, the first release with Metal 4, so every image it builds declares
+# the floor the backend needs rather than whatever the SDK of the day defaults to. A deployment
+# target above it is kept; one below it is refused, since the backend cannot run there. Set after
+# project() as a normal variable, which still reaches every target this tree generates. The exported
+# package records it as VENG_OSX_DEPLOYMENT_TARGET, and a consumer that sets none of its own adopts
+# it, so the consumer's images agree with the engine's.
+if (VE_GPU_BACKEND STREQUAL "Metal")
+    set(VENG_METAL_MIN_MACOS 26.0)
+    if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET ${VENG_METAL_MIN_MACOS})
+    elseif (CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS VENG_METAL_MIN_MACOS)
+        message(FATAL_ERROR "VE_GPU_BACKEND=Metal needs macOS ${VENG_METAL_MIN_MACOS} (Metal 4), but "
+                "CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif ()
+endif ()
+set(VENG_OSX_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+
 # VE_SHADER_TARGETS names the GPU code every shader cooks to: Native (the default) cooks the target
 # of VE_GPU_BACKEND, so a Vulkan tree cooks SPIR-V and never runs the Metal toolchain, and All cooks
 # SPIR-V and Metal for a pack that must carry both. The cooker compiles it in as its default, the

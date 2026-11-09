@@ -10,6 +10,13 @@
 
 include("${CMAKE_CURRENT_LIST_DIR}/veng-targets.cmake")
 
+# A consumer that names no macOS deployment target of its own builds to the engine's, so an
+# application's images declare the same floor as the engine images they load. Set in the caller's
+# scope, which a package config shares, so it reaches every target the consumer declares after it.
+if (APPLE AND VENG_OSX_DEPLOYMENT_TARGET AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${VENG_OSX_DEPLOYMENT_TARGET}")
+endif ()
+
 # vengc is exported as an IMPORTED executable under the veng:: namespace. Recreate the
 # unqualified name so the helper modules' $<TARGET_FILE:vengc> resolves downstream exactly
 # as it does in-tree (a built target there, an aliased imported one here). ALIAS on an

@@ -47,6 +47,10 @@ set(VENG_PACKAGE_MODE "BUILD_TREE")
 # backend's interop header, or registering tests that only run on one backend, reads it here.
 set(VENG_GPU_BACKEND "@VE_GPU_BACKEND@")
 
+# The macOS deployment target the engine was built for (empty when the tree set none). The shared
+# body defaults the consumer's own CMAKE_OSX_DEPLOYMENT_TARGET to it.
+set(VENG_OSX_DEPLOYMENT_TARGET "@VENG_OSX_DEPLOYMENT_TARGET@")
+
 # The GPU targets the engine tree cooks shaders to (VE_SHADER_TARGETS: Native or All). The vengc
 # rules pass it to every cook, so a consumer's packs carry the code its engine's backend loads.
 set(VENG_SHADER_TARGETS "@VE_SHADER_TARGETS@")

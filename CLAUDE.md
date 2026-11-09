@@ -843,7 +843,10 @@ backend a tree compiles. Its sources and its libraries (`Vulkan::Vulkan` and VMA
 QuartzCore frameworks) are conditional on it; it is a PUBLIC compile definition
 (`VE_GPU_BACKEND_VULKAN` or `VE_GPU_BACKEND_METAL`) and the exported package records it as
 `VENG_GPU_BACKEND`. There is no runtime selection and no virtual dispatch:
-each public resource's `Native` struct is defined by the backend compiled in.
+each public resource's `Native` struct is defined by the backend compiled in. A Metal tree sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to **26.0** (Metal 4's floor; a lower one is a configure error), the
+package records it as `VENG_OSX_DEPLOYMENT_TARGET`, and a consumer naming no target of its own
+adopts it, so an application's images declare the same minimum macOS as the engine's.
 
 **`VE_SHADER_TARGETS`** (`Native`, the default, or `All`) is the GPU code shaders cook to: `Native`
 cooks the backend's own target, so a Vulkan tree cooks SPIR-V and never runs the Metal toolchain,
